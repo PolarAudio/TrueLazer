@@ -1,0 +1,159 @@
+const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
+const path = require('path');
+const fs = require('fs');
+
+const isDev = process.env.NODE_ENV === 'development';
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: true,
+      contextIsolation: true,
+    },
+  });
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173'); // Vite development server default port
+    win.webContents.openDevTools();
+  } else {
+    win.loadFile(path.join(__dirname, '..\dist', 'index.html'));
+  }
+
+  const menuTemplate = [
+    {
+      label: 'TrueLazer',
+      submenu: [
+        { label: 'About', click: () => { win.webContents.send('menu-action', 'about'); } },
+        { type: 'separator' },
+        { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => { app.quit(); } },
+      ],
+    },
+    {
+      label: 'Settings',
+      submenu: [
+        { label: 'General', click: () => { win.webContents.send('menu-action', 'settings-general'); } },
+      ],
+    },
+    {
+      label: 'Layer',
+      submenu: [
+        { label: 'New', click: () => { win.webContents.send('menu-action', 'layer-new'); } },
+        { label: 'Insert Above', click: () => { win.webContents.send('menu-action', 'layer-insert-above'); } },
+        { label: 'Insert Below', click: () => { win.webContents.send('menu-action', 'layer-insert-below'); } },
+        { label: 'Rename', click: () => { win.webContents.send('menu-action', 'layer-rename'); } },
+        { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'layer-clear-clips'); } },
+        { label: 'Delete', click: () => { win.webContents.send('menu-action', 'layer-delete'); } },
+      ],
+    },
+    {
+      label: 'Column',
+      submenu: [
+        { label: 'New', click: () => { win.webContents.send('menu-action', 'column-new'); } },
+        { label: 'Insert Before', click: () => { win.webContents.send('menu-action', 'column-insert-before'); } },
+        { label: 'Insert After', click: () => { win.webContents.send('menu-action', 'column-insert-after'); } },
+        { label: 'Duplicate', click: () => { win.webContents.send('menu-action', 'column-duplicate'); } },
+        { label: 'Rename', click: () => { win.webContents.send('menu-action', 'column-rename'); } },
+        { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'column-clear-clips'); } },
+        { label: 'Remove', click: () => { win.webContents.send('menu-action', 'column-remove'); } },
+      ],
+    },
+    {
+      label: 'Clip',
+      submenu: [
+        { label: 'Trigger Style', click: () => { win.webContents.send('menu-action', 'clip-trigger-style'); } },
+        { label: 'Thumbnail', click: () => { win.webContents.send('menu-action', 'clip-thumbnail'); } },
+        { label: 'Cut', click: () => { win.webContents.send('menu-action', 'clip-cut'); } },
+        { label: 'Copy', click: () => { win.webContents.send('menu-action', 'clip-copy'); } },
+        { label: 'Paste', click: () => { win.webContents.send('menu-action', 'clip-paste'); } },
+        { label: 'Rename', click: () => { win.webContents.send('menu-action', 'clip-rename'); } },
+        { label: 'Clear', click: () => { win.webContents.send('menu-action', 'clip-clear'); } },
+      ],
+    },
+    {
+      label: 'Output',
+      submenu: [
+        { label: 'Open Output Settings', click: () => { win.webContents.send('menu-action', 'output-settings'); } },
+      ],
+    },
+    {
+      label: 'Shortcuts',
+      submenu: [
+        { label: 'Open Shortcuts Window', click: () => { win.webContents.send('menu-action', 'shortcuts-window'); } },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Predefined Layouts', click: () => { win.webContents.send('menu-action', 'view-layouts'); } },
+        { label: 'Color Theme', click: () => { win.webContents.send('menu-action', 'view-color-theme'); } },
+        { label: 'Render Mode', click: () => { win.webContents.send('menu-action', 'view-render-mode'); } },
+      ],
+    },
+  ];
+
+  const menu = Menu.buildFromTemplate(menuTemplate);
+  Menu.setApplicationMenu(menu);
+
+  ipcMain.on('show-layer-context-menu', (event, index) => {
+    const layerContextMenu = Menu.buildFromTemplate([
+      { label: 'Rename Layer', click: () => win.webContents.send('context-menu-action', { type: 'rename-layer', index: index }) },
+      { label: 'Delete Layer', click: () => win.webContents.send('context-menu-action', { type: 'delete-layer', index: index }) },
+    ]);
+    layerContextMenu.popup({ window: win });
+  });
+
+  ipcMain.on('show-column-context-menu', (event, index) => {
+    const columnContextMenu = Menu.buildFromTemplate([
+      { label: 'Rename Column', click: () => win.webContents.send('context-menu-action', { type: 'rename-column', index: index }) },
+      { label: 'Delete Column', click: () => win.webContents.send('context-menu-action', { type: 'delete-column', index: index }) },
+    ]);
+    columnContextMenu.popup({ window: win });
+  });
+
+  // Listen for context menu actions from renderer and send back to renderer
+  ipcMain.on('context-menu-action', (event, action) => {
+    console.log(`Main process received context menu action: ${JSON.stringify(action)}`);
+    win.webContents.send('context-menu-action-from-main', action);
+  });
+
+  ipcMain.handle('open-file-explorer', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory'],
+    });
+    if (canceled) {
+      return null;
+    } else {
+      return filePaths[0];
+    }
+  });
+
+  ipcMain.handle('read-ild-files', async (event, directoryPath) => {
+    try {
+      const files = await fs.promises.readdir(directoryPath);
+      const ildFiles = files.filter(file => file.toLowerCase().endsWith('.ild'));
+      return ildFiles;
+    } catch (error) {
+      console.error('Failed to read directory:', error);
+      return [];
+    }
+  });
+}
+
+app.whenReady().then(() => {
+  createWindow();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
