@@ -130,10 +130,22 @@ function createWindow() {
     }
   });
 
+  ipcMain.handle('read-file-content', async (event, filePath) => {
+    try {
+      const content = await fs.promises.readFile(filePath);
+      return content;
+    } catch (error) {
+      console.error('Failed to read file content:', error);
+      return null;
+    }
+  });
+
   ipcMain.handle('read-ild-files', async (event, directoryPath) => {
     try {
       const files = await fs.promises.readdir(directoryPath);
-      const ildFiles = files.filter(file => file.toLowerCase().endsWith('.ild'));
+      const ildFiles = files
+        .filter(file => file.toLowerCase().endsWith('.ild'))
+        .map(file => path.join(directoryPath, file));
       return ildFiles;
     } catch (error) {
       console.error('Failed to read directory:', error);

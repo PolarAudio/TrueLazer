@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import IldaPlayer from './IldaPlayer';
+import { parseIldaFile } from '../utils/ilda-parser';
 
-const Clip = ({ clipName, onDropGenerator, generatorId, onDropEffect, clipEffects, onClick, isSelected, dacAssignment }) => {
+const Clip = ({ clipName, onDropGenerator, onUnsupportedFile, generatorId, onDropEffect, clipEffects, onClick, isSelected, dacAssignment }) => {
   const [currentGenerator, setCurrentGenerator] = useState(generatorId || null);
   const [appliedEffects, setAppliedEffects] = useState(clipEffects || []);
   const [assignedDac, setAssignedDac] = useState(dacAssignment || null);
@@ -25,36 +27,61 @@ const Clip = ({ clipName, onDropGenerator, generatorId, onDropEffect, clipEffect
     e.dataTransfer.dropEffect = 'copy'; // Visual feedback
   };
 
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
-    const droppedData = e.dataTransfer.getData('text/plain');
 
-    try {
-      const parsedData = JSON.parse(droppedData);
+    // Check if the dropped data is JSON (from FileBrowser for ILDA files)
+    if (e.dataTransfer.types.includes('application/json')) {
+      const droppedData = e.dataTransfer.getData('application/json');
+      try {
+        const { filePath, fileName } = JSON.parse(droppedData);
 
-      if (parsedData.type === 'dac') {
-        if (onDropGenerator) { // Assuming onDropGenerator is used for DAC assignment for now
-          onDropGenerator(parsedData.dacId + '-' + parsedData.channelId);
+        if (filePath.toLowerCase().endsWith('.ild')) {
+          if (window.electronAPI) {
+            const fileContent = await window.electronAPI.readFileContent(filePath);
+            if (fileContent) {
+              const arrayBuffer = fileContent.buffer;
+              const parsedData = parseIldaFile(arrayBuffer);
+
+              if (parsedData && parsedData.error) {
+                if (onUnsupportedFile) {
+                  onUnsupportedFile(parsedData.error);
+                }
+                return; // Stop processing if file is unsupported
+              }
+              onDropGenerator(parsedData, fileName);
+            }
+          }
         }
-      } else if (parsedData.type === 'effect') { // Assuming effects are also JSON now
-        if (onDropEffect) {
-          onDropEffect(parsedData.effectId);
-        }
-      } else { // Assume it's a generator (plain string)
-        if (onDropGenerator) {
-          onDropGenerator(droppedData);
-        }
+      } catch (error) {
+        console.error('Error parsing JSON dropped data:', error);
+        // Fallback or handle error for malformed JSON
       }
-    } catch (error) {
-      // Fallback for plain text (generators and old effects)
-      if (droppedData.startsWith('effect_')) {
-        const effectId = droppedData.replace('effect_', '');
-        if (onDropEffect) {
-          onDropEffect(effectId);
+    } else if (e.dataTransfer.types.includes('text/plain')) {
+      const plainTextData = e.dataTransfer.getData('text/plain');
+      try {
+        const parsedData = JSON.parse(plainTextData); // Try parsing as JSON for DAC/Effect
+
+        if (parsedData.type === 'dac') {
+          if (onDropGenerator) {
+            onDropGenerator(parsedData.dacId + '-' + parsedData.channelId);
+          }
+        } else if (parsedData.type === 'effect') {
+          if (onDropEffect) {
+            onDropEffect(parsedData.effectId);
+          }
         }
-      } else { // Assume it's a generator
-        if (onDropGenerator) {
-          onDropGenerator(droppedData);
+      } catch (error) {
+        // If not JSON, assume it's a plain generator string
+        if (plainTextData.startsWith('effect_')) {
+          const effectId = plainTextData.replace('effect_', '');
+          if (onDropEffect) {
+            onDropEffect(effectId);
+          }
+        } else {
+          if (onDropGenerator) {
+            onDropGenerator(plainTextData);
+          }
         }
       }
     }
@@ -75,6 +102,9 @@ const Clip = ({ clipName, onDropGenerator, generatorId, onDropEffect, clipEffect
       onClick={handleClick}
     >
       <div className="clip-thumbnail">
+        {currentGenerator && typeof currentGenerator === 'object' ? (
+          <IldaPlayer parsedData={currentGenerator} onUnsupportedFile={onUnsupportedFile} />
+        ) : null}
         {assignedDac && (
           <div className="dac-assignment-tag">
             {assignedDac.dacId.toUpperCase()} {assignedDac.channelId.toUpperCase()}

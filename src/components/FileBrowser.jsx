@@ -22,11 +22,19 @@ const FileBrowser = () => {
       {selectedDirectory && <p>Selected Directory: {selectedDirectory}</p>}
       <div className="ild-file-list">
         {ildFiles.length > 0 ? (
-          ildFiles.map((file, index) => (
-            <div key={index} className="ild-file-item">
-              {file}
-            </div>
-          ))
+          ildFiles.map((filePath, index) => {
+            const fileName = filePath.split('\\').pop();
+            return (
+              <div
+                key={index}
+                className="ild-file-item"
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ filePath, fileName }))}
+              >
+                {fileName}
+              </div>
+            );
+          })
         ) : (
           <p>No ILD files found in selected directory.</p>
         )}

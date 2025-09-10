@@ -7,6 +7,7 @@ import FileBrowser from './components/FileBrowser';
 import GeneratorPanel from './components/GeneratorPanel';
 import EffectPanel from './components/EffectPanel';
 import DacPanel from './components/DacPanel';
+import NotificationPopup from './components/NotificationPopup';
 
 const MasterIntensitySlider = () => (
   <div className="master-intensity-slider">
@@ -61,7 +62,20 @@ function App() {
   const [selectedLayerIndex, setSelectedLayerIndex] = useState(null);
   const [selectedColIndex, setSelectedColIndex] = useState(null);
   const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
-  const [showOutputSettingsWindow, setShowOutputSettingsWindow] = useState(false);
+  const [notification, setNotification] = useState({ message: '', visible: false });
+  const initialClipNames = Array(layers.length).fill(null).map((_, layerIndex) =>
+    Array(columns.length).fill(null).map((_, colIndex) => `Clip ${layerIndex + 1}-${colIndex + 1}`)
+  );
+  const [clipNames, setClipNames] = useState(initialClipNames);
+
+  const showNotification = useCallback((message) => {
+    setNotification({ message, visible: true });
+    setTimeout(() => {
+      setNotification({ message: '', visible: false });
+    }, 3000); // Hide after 3 seconds
+  }, []);
+
+  
 
   // Hardcoded DACs for now
   const [dacs, setDacs] = useState([
@@ -105,12 +119,19 @@ function App() {
     setClipDacs(prevDacs => prevDacs.map(layer => layer.filter((_, index) => index !== indexToDelete)));
   }, []);
 
-  const handleDropGenerator = useCallback((layerIndex, colIndex, generatorId) => {
+  const handleDropGenerator = useCallback((layerIndex, colIndex, parsedData, fileName) => {
     setClipContents(prevContents => {
       const newContents = [...prevContents];
-      newContents[layerIndex][colIndex] = generatorId;
+      newContents[layerIndex][colIndex] = parsedData;
       return newContents;
     });
+    if (fileName) {
+      setClipNames(prevNames => {
+        const newNames = [...prevNames];
+        newNames[layerIndex][colIndex] = fileName;
+        return newNames;
+      });
+    }
   }, []);
 
   const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectId) => {
@@ -245,10 +266,11 @@ function App() {
                 {columns.map((colName, colIndex) => (
                   <Clip
                     key={colIndex}
-                    clipName={`Clip ${layerIndex + 1}-${colIndex + 1}`}
-                    onDropGenerator={(generatorId) => handleDropGenerator(layerIndex, colIndex, generatorId)}
+                    clipName={clipNames[layerIndex][colIndex]}
+                    onDropGenerator={(generatorId, fileName) => handleDropGenerator(layerIndex, colIndex, generatorId, fileName)}
                     generatorId={clipContents[layerIndex][colIndex]}
                     onDropEffect={(effectId) => handleDropEffectOnClip(layerIndex, colIndex, effectId)}
+                    onUnsupportedFile={showNotification}
                     clipEffects={clipEffects[layerIndex][colIndex]}
                     onClick={() => handleClipClick(layerIndex, colIndex)}
                     isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
@@ -276,6 +298,9 @@ function App() {
       {/* Temporarily remove window components for simplification */}
       {/* {showShortcutsWindow && <ShortcutsWindow onClose={toggleShortcutsWindow} />}
       {showOutputSettingsWindow && <OutputSettingsWindow onClose={toggleOutputSettingsWindow} />} */}
+    {/* {showShortcutsWindow && <ShortcutsWindow onClose={toggleShortcutsWindow} />} */}
+      {/* {showOutputSettingsWindow && <OutputSettingsWindow onClose={toggleOutputSettingsWindow} />} */}
+      <NotificationPopup message={notification.message} visible={notification.visible} />
     </div>
   );
 }
