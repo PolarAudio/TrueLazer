@@ -8,10 +8,21 @@ contextBridge.exposeInMainWorld(
     },
     showLayerContextMenu: (index) => ipcRenderer.send('show-layer-context-menu', index),
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
+    showClipContextMenu: (layerIndex, colIndex) => ipcRenderer.send('show-clip-context-menu', layerIndex, colIndex), // Add this line
     sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action),
     onContextMenuActionFromMain: (callback) => {
       ipcRenderer.on('context-menu-action-from-main', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('context-menu-action-from-main', callback);
+    },
+    onClipContextMenuCommand: (callback) => {
+      const listener = (event, ...args) => callback(...args);
+      ipcRenderer.on('clip-context-command', listener);
+      return () => ipcRenderer.removeListener('clip-context-command', listener);
+    },
+    onRenderSettingsCommand: (callback) => {
+      const listener = (event, command) => callback(command);
+      ipcRenderer.on('render-settings-command', listener);
+      return () => ipcRenderer.removeListener('render-settings-command', listener);
     },
     openFileExplorer: () => ipcRenderer.invoke('open-file-explorer'),
     readIldFiles: (directoryPath) => ipcRenderer.invoke('read-ild-files', directoryPath),

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CompositionControls from './components/CompositionControls';
 import ColumnHeader from './components/ColumnHeader';
 import LayerControls from './components/LayerControls';
@@ -8,6 +8,7 @@ import GeneratorPanel from './components/GeneratorPanel';
 import EffectPanel from './components/EffectPanel';
 import DacPanel from './components/DacPanel';
 import NotificationPopup from './components/NotificationPopup';
+import IldaPlayer from './components/IldaPlayer';
 
 const MasterIntensitySlider = () => (
   <div className="master-intensity-slider">
@@ -16,14 +17,7 @@ const MasterIntensitySlider = () => (
 );
 
 const LaserOnOffButton = () => (
-  <button className="laser-on-off-button">Laser On/Off</button>
-);
-
-const SelectedClipPreview = () => (
-  <div className="selected-clip-preview">
-    <h3>Selected Clip Preview</h3>
-    <div className="preview-area"></div>
-  </div>
+  <div className="container"><input type="checkbox" /></div>
 );
 
 const WorldPreview = () => (
@@ -37,51 +31,53 @@ function App() {
   const [columns, setColumns] = useState(Array.from({ length: 13 }, (_, i) => `Col ${i + 1}`));
   const [layers, setLayers] = useState(Array.from({ length: 5 }, (_, i) => `Layer ${i + 1}`));
 
-  // Initialize clip content state
   const initialClipContent = Array(layers.length).fill(null).map(() =>
     Array(columns.length).fill(null)
   );
   const [clipContents, setClipContents] = useState(initialClipContent);
 
-  // Initialize clip effects state (2D array of arrays)
-  const initialClipEffects = Array(layers.length).fill(null).map(() =>
-    Array(columns.length).fill([])
-  );
-  const [clipEffects, setClipEffects] = useState(initialClipEffects);
-
-  // Initialize layer effects state (1D array of arrays)
-  const initialLayerEffects = Array(layers.length).fill([]);
-  const [layerEffects, setLayerEffects] = useState(initialLayerEffects);
-
-  // Initialize DAC assignment for clips (2D array of objects { dacId, channelId })
-  const initialClipDacs = Array(layers.length).fill(null).map(() =>
-    Array(columns.length).fill(null)
-  );
-  const [clipDacs, setClipDacs] = useState(initialClipDacs);
-
-  const [selectedLayerIndex, setSelectedLayerIndex] = useState(null);
-  const [selectedColIndex, setSelectedColIndex] = useState(null);
-  const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
-  const [notification, setNotification] = useState({ message: '', visible: false });
   const initialClipNames = Array(layers.length).fill(null).map((_, layerIndex) =>
     Array(columns.length).fill(null).map((_, colIndex) => `Clip ${layerIndex + 1}-${colIndex + 1}`)
   );
   const [clipNames, setClipNames] = useState(initialClipNames);
 
-  const showNotification = useCallback((message) => {
-    setNotification({ message, visible: true });
-    setTimeout(() => {
-      setNotification({ message: '', visible: false });
-    }, 3000); // Hide after 3 seconds
-  }, []);
+  const initialThumbnailIndexes = Array(layers.length).fill(null).map(() =>
+    Array(columns.length).fill(0)
+  );
+  const [thumbnailFrameIndexes, setThumbnailFrameIndexes] = useState(initialThumbnailIndexes);
 
-  
+  const initialLayerEffects = Array(layers.length).fill([]);
+  const [layerEffects, setLayerEffects] = useState(initialLayerEffects);
 
-  // Hardcoded DACs for now
+  const [selectedLayerIndex, setSelectedLayerIndex] = useState(null);
+  const [selectedColIndex, setSelectedColIndex] = useState(null);
+  const [notification, setNotification] = useState({ message: '', visible: false });
+
   const [dacs, setDacs] = useState([
     { id: 'dac1', name: 'Showbridge 1', channels: ['ch1', 'ch2'] },
     { id: 'dac2', name: 'Showbridge 2', channels: ['ch1', 'ch2'] },
   ]);
+
+  const [ildaFrames, setIldaFrames] = useState([]);
+  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
+  const animationFrameId = useRef(null);
+
+  // New state for rendering settings
+  const [showBeamEffect, setShowBeamEffect] = useState(true);
+  const [beamAlpha, setBeamAlpha] = useState(0.1);
+  const [fadeAlpha, setFadeAlpha] = useState(0.13); // User's preferred value
+  const [drawSpeed, setDrawSpeed] = useState(1000); // New state for drawSpeed
+
+  // New state for active clips (one per layer)
+  const [activeClipIndexes, setActiveClipIndexes] = useState(Array(layers.length).fill(null));
+  const [lastDroppedClip, setLastDroppedClip] = useState(null);
+
+  const showNotification = useCallback((message) => {
+    setNotification({ message, visible: true });
+    setTimeout(() => {
+      setNotification({ message: '', visible: false });
+    }, 3000);
+  }, []);
 
   const addLayer = useCallback(() => {
     setLayers(prevLayers => [...prevLayers, `Layer ${prevLayers.length + 1}`]);
@@ -119,21 +115,6 @@ function App() {
     setClipDacs(prevDacs => prevDacs.map(layer => layer.filter((_, index) => index !== indexToDelete)));
   }, []);
 
-  const handleDropGenerator = useCallback((layerIndex, colIndex, parsedData, fileName) => {
-    setClipContents(prevContents => {
-      const newContents = [...prevContents];
-      newContents[layerIndex][colIndex] = parsedData;
-      return newContents;
-    });
-    if (fileName) {
-      setClipNames(prevNames => {
-        const newNames = [...prevNames];
-        newNames[layerIndex][colIndex] = fileName;
-        return newNames;
-      });
-    }
-  }, []);
-
   const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectId) => {
     setClipEffects(prevEffects => {
       const newEffects = [...prevEffects];
@@ -159,10 +140,81 @@ function App() {
   }, []);
 
   const handleClipClick = useCallback((layerIndex, colIndex) => {
-    console.log(`Clip clicked: Layer ${layerIndex}, Column ${colIndex}`);
+    console.log(`Previewing clip: Layer ${layerIndex}, Column ${colIndex}`); // Add this log
     setSelectedLayerIndex(layerIndex);
     setSelectedColIndex(colIndex);
+    const clipData = clipContents[layerIndex][colIndex];
+    if (clipData && clipData.frames) {
+      console.log(`Found ${clipData.frames.length} frames for preview.`); // Add this log
+      setIldaFrames(clipData.frames);
+      setCurrentFrameIndex(0);
+    } else {
+      console.log("No frames found for preview."); // Add this log
+      setIldaFrames([]);
+    }
+  }, [clipContents]);
+
+  const handlePreviewClick = useCallback((layerIndex, colIndex) => {
+    const clipData = clipContents[layerIndex][colIndex];
+    if (clipData && clipData.frames) {
+      setIldaFrames(clipData.frames);
+      setCurrentFrameIndex(0);
+    } else {
+      setIldaFrames([]);
+    }
+  }, [clipContents]);
+
+  const handleActivateClick = useCallback((layerIndex, colIndex) => {
+    console.log(`Activating clip: Layer ${layerIndex}, Column ${colIndex}`); // Add this log
+    setActiveClipIndexes(prevActive => {
+      const newActive = [...prevActive];
+      newActive[layerIndex] = colIndex;
+      return newActive;
+    });
+    // Also set as selected for immediate preview update
+    setSelectedLayerIndex(layerIndex);
+    setSelectedColIndex(colIndex);
+    const clipData = clipContents[layerIndex][colIndex];
+    if (clipData && clipData.frames) {
+      setIldaFrames(clipData.frames);
+      setCurrentFrameIndex(0);
+    } else {
+      setIldaFrames([]);
+    }
+  }, [clipContents]);
+
+  const handleDropGenerator = useCallback((layerIndex, colIndex, parsedData, fileName) => {
+    setClipContents(prevContents => {
+      const newContents = [...prevContents];
+      newContents[layerIndex][colIndex] = parsedData;
+      return newContents;
+    });
+    setClipNames(prevNames => {
+        const newNames = [...prevNames];
+        newNames[layerIndex][colIndex] = fileName;
+        return newNames;
+    });
+    // Set the last dropped clip to be activated by useEffect
+    setLastDroppedClip({ layerIndex, colIndex });
   }, []);
+
+  // useEffect to activate the clip after it has been dropped
+  useEffect(() => {
+    if (lastDroppedClip) {
+      handleActivateClick(lastDroppedClip.layerIndex, lastDroppedClip.colIndex);
+      setLastDroppedClip(null); // Reset after activation
+    }
+  }, [lastDroppedClip]);
+
+  const handleUpdateThumbnail = useCallback((layerIndex, colIndex) => {
+    if (selectedLayerIndex === layerIndex && selectedColIndex === colIndex) {
+      setThumbnailFrameIndexes(prevIndexes => {
+        const newIndexes = [...prevIndexes];
+        newIndexes[layerIndex][colIndex] = currentFrameIndex;
+        return newIndexes;
+      });
+    }
+  }, [selectedLayerIndex, selectedColIndex, currentFrameIndex]);
 
   useEffect(() => {
     if (window.electronAPI) {
@@ -220,87 +272,94 @@ function App() {
     }
   }, [addLayer, deleteLayer, addColumn, deleteColumn]); // Dependencies are now the memoized functions
 
-  const selectedClipData = selectedLayerIndex !== null && selectedColIndex !== null
-    ? {
-        clipName: `Clip ${selectedLayerIndex + 1}-${selectedColIndex + 1}`,
-        generatorId: clipContents[selectedLayerIndex][selectedColIndex],
-        clipEffects: clipEffects[selectedLayerIndex][selectedColIndex],
-        dacAssignment: clipDacs[selectedLayerIndex][selectedColIndex],
-      }
-    : null;
+  useEffect(() => {
+    if (ildaFrames.length > 1) {
+        const interval = setInterval(() => {
+            setCurrentFrameIndex(prevIndex => (prevIndex + 1) % ildaFrames.length);
+        }, 100); // Change frame every 100ms
+        return () => clearInterval(interval);
+    }
+  }, [ildaFrames]);
+
+  const activeClipsData = layers.map((_, layerIndex) => {
+    const activeColIndex = activeClipIndexes[layerIndex];
+    if (activeColIndex !== null) {
+        return clipContents[layerIndex][activeColIndex];
+    }
+    return null;
+  }).filter(Boolean);
 
   return (
     <div className="app">
-      <div className="main-content">
-        <div className="left-panel">
-          <div className="composition-row">
-		    <div className="composition-controls-top">
-              <span className="composition-label">Comp</span>
-              <span className="comp-control-button">X</span>
-              <span className="comp-control-button">B</span>
-			  <MasterIntensitySlider />
-			  <LaserOnOffButton />
-            </div>
-          </div>
-          {layers.map((layerName, index) => (
-            <LayerControls
-              key={index}
-              layerName={layerName}
-              index={index}
-              onDropEffect={(effectId) => handleDropEffectOnLayer(index, effectId)}
-              layerEffects={layerEffects[index]}
-            />
-          ))}
-        </div>
-        <div className="clip-deck">
-          <div className="composition-header-row">
-            <div className="column-headers">
-              {columns.map((colName, index) => (
-                <ColumnHeader key={index} name={colName} index={index} />
-              ))}
-            </div>
-          </div>
-          {layers.map((layerName, layerIndex) => (
-            <div key={layerIndex} className="layer-row">
-              <div className="clip-container">
-                {columns.map((colName, colIndex) => (
-                  <Clip
-                    key={colIndex}
-                    clipName={clipNames[layerIndex][colIndex]}
-                    onDropGenerator={(generatorId, fileName) => handleDropGenerator(layerIndex, colIndex, generatorId, fileName)}
-                    generatorId={clipContents[layerIndex][colIndex]}
-                    onDropEffect={(effectId) => handleDropEffectOnClip(layerIndex, colIndex, effectId)}
-                    onUnsupportedFile={showNotification}
-                    clipEffects={clipEffects[layerIndex][colIndex]}
-                    onClick={() => handleClipClick(layerIndex, colIndex)}
-                    isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
-                    dacAssignment={clipDacs[layerIndex][colIndex]}
-                  />
-                ))}
-              </div>
-            </div>
+      <NotificationPopup message={notification.message} visible={notification.visible} />
+
+      {/* Top Bar */}
+      <div className="top-bar">
+        <CompositionControls />
+        <MasterIntensitySlider />
+        <LaserOnOffButton />
+        <div className="column-headers-container">
+          {columns.map((colName, colIndex) => (
+            <ColumnHeader key={colIndex} name={colName} />
           ))}
         </div>
       </div>
-		<div className="bottom-panel">
-			<SelectedClipPreview selectedClipData={selectedClipData} />
-			<WorldPreview
-				allClipContents={clipContents}
-				allClipEffects={clipEffects}
-				allLayerEffects={layerEffects}
-			/>
-			<GeneratorPanel />
-			<EffectPanel />
-			<DacPanel dacs={dacs} />
-			<FileBrowser />
-		</div>
 
-      {/* Temporarily remove window components for simplification */}
-      {/* {showShortcutsWindow && <ShortcutsWindow onClose={toggleShortcutsWindow} />}
-      {showOutputSettingsWindow && <OutputSettingsWindow onClose={toggleOutputSettingsWindow} />} */}
-    {/* {showShortcutsWindow && <ShortcutsWindow onClose={toggleShortcutsWindow} />} */}
-      {/* {showOutputSettingsWindow && <OutputSettingsWindow onClose={toggleOutputSettingsWindow} />} */}
-      <NotificationPopup message={notification.message} visible={notification.visible} />
+      {/* Main Content Area */}
+      <div className="main-content">
+        {/* Clip Deck */}
+        <div className="clip-deck">
+          {layers.map((layerName, layerIndex) => {
+            const activeColIndex = activeClipIndexes[layerIndex];
+            const activeClipDataForLayer = activeColIndex !== null ? clipContents[layerIndex][activeColIndex] : null;
+
+            return (
+              <div key={layerIndex} className="layer-row">
+                <LayerControls
+                  layerName={layerName}
+                  layerIndex={layerIndex}
+                  layerEffects={layerEffects[layerIndex]}
+                  activeClipData={activeClipDataForLayer}
+                />
+                {columns.map((colName, colIndex) => (
+                  <Clip
+                    key={colIndex}
+                    layerIndex={layerIndex}
+                    colIndex={colIndex}
+                    clipName={clipNames[layerIndex][colIndex]}
+                    clipContent={clipContents[layerIndex][colIndex]}
+                    thumbnailFrameIndex={thumbnailFrameIndexes[layerIndex][colIndex]}
+                    onPreviewClick={() => handleClipClick(layerIndex, colIndex)}
+                    onActivateClick={() => handleActivateClick(layerIndex, colIndex)}
+                    onUpdateThumbnail={handleUpdateThumbnail}
+                    isActive={activeClipIndexes[layerIndex] === colIndex}
+                    onUnsupportedFile={showNotification}
+                    onDropGenerator={(parsedData, fileName) => handleDropGenerator(layerIndex, colIndex, parsedData, fileName)}
+                  />
+                ))}
+              </div>
+            );
+          })}}
+        </div>
+      </div>
+
+      {/* Bottom Panel for Previews */}
+      <div className="bottom-panel">
+        <IldaPlayer
+          ildaFrames={ildaFrames}
+          currentFrameIndex={currentFrameIndex}
+          setCurrentFrameIndex={setCurrentFrameIndex}
+          showBeamEffect={showBeamEffect}
+          beamAlpha={beamAlpha}
+          fadeAlpha={fadeAlpha}
+          drawSpeed={drawSpeed}
+        />
+		<FileBrowser onDropIld={handleDropGenerator} />
+        <GeneratorPanel />
+        <EffectPanel />
+        <DacPanel dacs={dacs} />
+        <WorldPreview worldData={activeClipsData} />
+      </div>
     </div>
   );
 }

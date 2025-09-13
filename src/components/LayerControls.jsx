@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects }) => {
+const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
 
   // Update internal state when layerEffects prop changes
   useEffect(() => {
-    setAppliedEffects(layerEffects);
+    setAppliedEffects(layerEffects || []);
   }, [layerEffects]);
 
   const handleContextMenu = (e) => {
@@ -52,17 +53,21 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects }) => {
           <option>Subtract</option>
         </select>
       </div>
-      <div className="layer-control-row">
-        <span className="layer-control-label"></span>
-        <input type="range" min="0" max="100" defaultValue="100" className="layer-intensity-slider" />
-      </div>
-      <div className="layer-preview-thumbnail">
-        {appliedEffects.length > 0 && (
-          <div className="applied-effects">
-            {appliedEffects.map(effect => (
-              <span key={effect} className="effect-tag">{effect.substring(0, 3).toUpperCase()}</span>
-            ))}
-          </div>
+		<div className="layer-control-row">
+			<input type="range" min="0" max="100" defaultValue="100" className="layer-intensity-slider" />
+		</div>
+		<div className="layer-preview-thumbnail">
+			{activeClipData && activeClipData.frames && activeClipData.frames.length > 0 ? (
+				<IldaThumbnail frame={activeClipData.frames[0]} /> // Render thumbnail of active clip
+			) : (
+         // Existing applied effects or placeholder
+			appliedEffects.length > 0 && (
+            <div className="applied-effects">
+              {appliedEffects.map(effect => (
+                <span key={effect} className="effect-tag">{effect.substring(0, 3).toUpperCase()}</span>
+              ))}
+            </div>
+          )
         )}
       </div>
       <span className="layer-name-label">{layerName}</span>

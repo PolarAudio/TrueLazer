@@ -1,124 +1,123 @@
-import React, { useState, useEffect } from 'react';
-import IldaPlayer from './IldaPlayer';
+import React, { useState } from 'react';
 import { parseIldaFile } from '../utils/ilda-parser';
+import IldaThumbnail from './IldaThumbnail';
 
-const Clip = ({ clipName, onDropGenerator, onUnsupportedFile, generatorId, onDropEffect, clipEffects, onClick, isSelected, dacAssignment }) => {
-  const [currentGenerator, setCurrentGenerator] = useState(generatorId || null);
-  const [appliedEffects, setAppliedEffects] = useState(clipEffects || []);
-  const [assignedDac, setAssignedDac] = useState(dacAssignment || null);
+const Clip = ({
+  clipName,
+  layerIndex,
+  colIndex,
+  onDropGenerator,
+  generatorId,
+  clipContent,
+  thumbnailFrameIndex,
+  onUnsupportedFile,
+  onPreviewClick, 
+  onActivateClick, 
+  isSelected,
+  isActive // New prop
+}) => {
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Update internal state when generatorId prop changes
-  useEffect(() => {
-    setCurrentGenerator(generatorId);
-  }, [generatorId]);
-
-  // Update internal state when clipEffects prop changes
-  useEffect(() => {
-    setAppliedEffects(clipEffects);
-  }, [clipEffects]);
-
-  // Update internal state when dacAssignment prop changes
-  useEffect(() => {
-    setAssignedDac(dacAssignment);
-  }, [dacAssignment]);
+  const thumbnailFrame = clipContent && clipContent.frames && clipContent.frames[thumbnailFrameIndex]
+    ? clipContent.frames[thumbnailFrameIndex]
+    : null;
 
   const handleDragOver = (e) => {
-    e.preventDefault(); // Necessary to allow dropping
-    e.dataTransfer.dropEffect = 'copy'; // Visual feedback
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
   };
 
   const handleDrop = async (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
 
-    // Check if the dropped data is JSON (from FileBrowser for ILDA files)
-    if (e.dataTransfer.types.includes('application/json')) {
-      const droppedData = e.dataTransfer.getData('application/json');
-      try {
-        const { filePath, fileName } = JSON.parse(droppedData);
+    let droppedFileContent = null;
+    let droppedFileName = null;
 
-        if (filePath.toLowerCase().endsWith('.ild')) {
-          if (window.electronAPI) {
-            const fileContent = await window.electronAPI.readFileContent(filePath);
-            if (fileContent) {
-              const arrayBuffer = fileContent.buffer;
-              const parsedData = parseIldaFile(arrayBuffer);
-
-              if (parsedData && parsedData.error) {
-                if (onUnsupportedFile) {
-                  onUnsupportedFile(parsedData.error);
+    if (e.dataTransfer.items) {
+      for (let i = 0; i < e.dataTransfer.items.length; i++) {
+        const item = e.dataTransfer.items[i];
+        if (item.kind === 'file') {
+          const file = item.getAsFile();
+          if (file && file.name.toLowerCase().endsWith('.ild')) {
+            droppedFileName = file.name;
+            const reader = new FileReader();
+            droppedFileContent = await new Promise((resolve) => {
+              reader.onload = (event) => resolve(event.target.result);
+              reader.readAsArrayBuffer(file);
+            });
+            break;
+          }
+        } else if (item.kind === 'string' && item.type === 'application/json') {
+          const jsonString = await new Promise((resolve) => item.getAsString(resolve));
+          try {
+            const data = JSON.parse(jsonString);
+            if (data.filePath && data.fileName.toLowerCase().endsWith('.ild')) {
+              droppedFileName = data.fileName;
+              if (window.electronAPI && window.electronAPI.readFileContent) {
+                const buffer = await window.electronAPI.readFileContent(data.filePath);
+                if (buffer && buffer.buffer instanceof ArrayBuffer) {
+                  droppedFileContent = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+                } else if (buffer instanceof ArrayBuffer) {
+                  droppedFileContent = buffer;
                 }
-                return; // Stop processing if file is unsupported
               }
-              onDropGenerator(parsedData, fileName);
+              break;
             }
-          }
-        }
-      } catch (error) {
-        console.error('Error parsing JSON dropped data:', error);
-        // Fallback or handle error for malformed JSON
-      }
-    } else if (e.dataTransfer.types.includes('text/plain')) {
-      const plainTextData = e.dataTransfer.getData('text/plain');
-      try {
-        const parsedData = JSON.parse(plainTextData); // Try parsing as JSON for DAC/Effect
-
-        if (parsedData.type === 'dac') {
-          if (onDropGenerator) {
-            onDropGenerator(parsedData.dacId + '-' + parsedData.channelId);
-          }
-        } else if (parsedData.type === 'effect') {
-          if (onDropEffect) {
-            onDropEffect(parsedData.effectId);
-          }
-        }
-      } catch (error) {
-        // If not JSON, assume it's a plain generator string
-        if (plainTextData.startsWith('effect_')) {
-          const effectId = plainTextData.replace('effect_', '');
-          if (onDropEffect) {
-            onDropEffect(effectId);
-          }
-        } else {
-          if (onDropGenerator) {
-            onDropGenerator(plainTextData);
+          } catch (error) {
+            console.error("Error parsing dropped JSON data:", error);
           }
         }
       }
     }
+
+    if (!droppedFileContent) {
+      onUnsupportedFile("No valid ILD file dropped.");
+      return;
+    }
+
+    try {
+      const parsedData = parseIldaFile(droppedFileContent);
+      if (parsedData.error || parsedData.frames.length === 0) {
+        onUnsupportedFile(`Error parsing ILDA file: ${parsedData.error || 'No frames found'}`);
+        return;
+      }
+      onDropGenerator(parsedData, droppedFileName);
+    } catch (error) {
+      onUnsupportedFile(`Error processing file: ${error.message}`);
+    }
   };
 
-  const handleClick = () => {
-    console.log(`Clip clicked: ${clipName}`); // Added console.log
-    if (onClick) {
-      onClick();
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    console.log(`Right-clicked clip: Layer ${layerIndex}, Column ${colIndex}`); // Add log
+    if (window.electronAPI && window.electronAPI.showClipContextMenu) {
+      window.electronAPI.showClipContextMenu(layerIndex, colIndex);
     }
   };
 
   return (
     <div
-      className={`clip ${isSelected ? 'selected-clip' : ''}`}
+      className={`clip ${isDragging ? 'dragging' : ''} ${isSelected ? 'selected-clip' : ''} ${isActive ? 'active-clip' : ''}`}
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onClick={handleClick}
+      onContextMenu={handleContextMenu}
     >
-      <div className="clip-thumbnail">
-        {currentGenerator && typeof currentGenerator === 'object' ? (
-          <IldaPlayer parsedData={currentGenerator} onUnsupportedFile={onUnsupportedFile} />
-        ) : null}
-        {assignedDac && (
-          <div className="dac-assignment-tag">
-            {assignedDac.dacId.toUpperCase()} {assignedDac.channelId.toUpperCase()}
-          </div>
-        )}
-        {appliedEffects.length > 0 && (
-          <div className="applied-effects">
-            {appliedEffects.map(effect => (
-              <span key={effect} className="effect-tag">{effect.substring(0, 3).toUpperCase()}</span>
-            ))}
-          </div>
+      <div className="clip-thumbnail" onClick={onActivateClick}>
+        {thumbnailFrame ? (
+          <IldaThumbnail frame={thumbnailFrame} />
+        ) : (
+          <p>Drag ILD Here</p>
         )}
       </div>
-      <span className="clip-label">{clipName}</span>
+      <span className="clip-label" onClick={onPreviewClick}>{clipName}</span>
     </div>
   );
 };

@@ -1,22 +1,15 @@
 import React, { useEffect, useRef } from 'react';
-import { parseIldaFile } from '../utils/ilda-parser';
 
-const defaultPalette = [
-  { r: 255, g: 0, b: 0 }, { r: 0, g: 255, b: 0 }, { r: 0, g: 0, b: 255 }, { r: 255, g: 255, b: 0 },
-  { r: 0, g: 255, b: 255 }, { r: 255, g: 0, b: 255 }, { r: 255, g: 128, b: 0 }, { r: 128, g: 255, b: 0 },
-  { r: 0, g: 255, b: 128 }, { r: 0, g: 128, b: 255 }, { r: 128, g: 0, b: 255 }, { r: 255, g: 0, b: 128 },
-  { r: 255, g: 255, b: 255 }, { r: 128, g: 128, b: 128 }, { r: 255, g: 128, b: 128 }, { r: 128, g: 255, b: 128 },
-  { r: 128, g: 128, b: 255 }, { r: 255, g: 255, b: 128 }, { r: 128, g: 255, b: 255 }, { r: 255, g: 128, b: 255 },
-];
-
-const IldaPlayer = ({ parsedData, onUnsupportedFile }) => {
+const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed }) => {
   const canvasRef = useRef(null);
+  const animationFrameId = useRef(null);
+
+  const frame = ildaFrames && ildaFrames[currentFrameIndex] ? ildaFrames[currentFrameIndex] : null;
 
   useEffect(() => {
-    if (!parsedData || parsedData.error) {
-      // If there's no data or an error, clear the canvas and return.
-      if (canvasRef.current) {
-        const canvas = canvasRef.current;
+    if (!canvasRef.current || !frame || !frame.points || frame.points.length === 0) {
+      const canvas = canvasRef.current;
+      if (canvas) {
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = 'black';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -24,49 +17,102 @@ const IldaPlayer = ({ parsedData, onUnsupportedFile }) => {
       return;
     }
 
-    if (parsedData && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
 
-      // Clear canvas
+    // Clear canvas for new frame
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, width, height);
+
+    let pointIndex = 0;
+    // Initialize lastX, lastY to the center of the ILDA coordinate system (0,0)
+    // which maps to the center of the canvas.
+    let lastX = ((0 + 32768) / 65535) * width;
+    let lastY = height - (((0 + 32768) / 65535) * height);
+    let wasPenUp = true; // Track if the pen was up before the current point
+
+    const renderSegment = () => {
+      // Apply fading effect once per animation frame
+      ctx.globalAlpha = fadeAlpha; // Use fadeAlpha prop
       ctx.fillStyle = 'black';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalAlpha = 0.13;
 
-      const palette = parsedData.palette || defaultPalette;
+      // Number of segments to draw per animation frame (for performance)
+      // const drawSpeed = 1000; // Old hardcoded value
 
-      // Draw points
-      ctx.beginPath();
-
-      parsedData.points.forEach(point => {
-        const x = ((point.x + 32768) / 65535) * canvas.width;
-        const y = ((point.y + 32768) / 65535) * canvas.height;
-
-        const isBlanking = (point.status & 0x40) !== 0;
-
-        if (!isBlanking) {
-          let color;
-          if (parsedData.format === 4 || parsedData.format === 5) {
-            color = palette[point.color];
-          } else {
-            color = { r: point.r, g: point.g, b: point.b };
-          }
-
-          ctx.strokeStyle = `rgb(${color.r}, ${color.g}, ${color.b})`;
-          if ((point.status & 0x80) !== 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
+      for (let i = 0; i < drawSpeed; i++) {
+        if (pointIndex >= frame.points.length) {
+          pointIndex = 0; // Loop the frame animation
+          // Reset lastX, lastY to the center for the start of the new frame
+          lastX = ((0 + 32768) / 65535) * width;
+          lastY = height - (((0 + 32768) / 65535) * height);
+          wasPenUp = true; // Reset pen state for new frame
         }
-      });
 
-      ctx.stroke();
-    }
-  }, [parsedData, onUnsupportedFile]);
+        const currentPoint = frame.points[pointIndex];
+        const x = ((currentPoint.x + 32768) / 65535) * width;
+        const y = height - (((currentPoint.y + 32768) / 65535) * height);
+
+        if (!currentPoint.blanking) { // If current point is visible
+            const lineColor = `rgb(${currentPoint.r}, ${currentPoint.g}, ${currentPoint.b})`;
+
+            if (wasPenUp) { // If this is the start of a new visible segment
+              // Draw a dot for the isolated point
+              ctx.fillStyle = lineColor;
+              ctx.beginPath();
+              ctx.arc(x, y, 1, 0, Math.PI * 2); // Small circle
+              ctx.fill();
+            } else { // Continue drawing a line
+              // Draw the beam effect
+              if (showBeamEffect) {
+                const centerX = width / 2;
+                const centerY = height / 2;
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(lastX, lastY);
+                ctx.lineTo(x, y);
+                ctx.closePath();
+                ctx.fillStyle = `rgba(${currentPoint.r}, ${currentPoint.g}, ${currentPoint.b}, ${beamAlpha})`;
+                ctx.fill();
+              }
+
+              // Draw the line
+              ctx.beginPath();
+              ctx.moveTo(lastX, lastY);
+              ctx.lineTo(x, y);
+              ctx.strokeStyle = lineColor;
+              ctx.lineWidth = 0.3;
+              ctx.stroke();
+            }
+            wasPenUp = false; // Pen is now down
+        } else { // If current point is blanked
+            wasPenUp = true; // Pen is now up
+        }
+        
+        // Always update lastX, lastY to the current point's coordinates
+        lastX = x;
+        lastY = y;
+        pointIndex++;
+      }
+
+      animationFrameId.current = requestAnimationFrame(renderSegment);
+    };
+
+    renderSegment();
+
+    return () => {
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
+      }
+    };
+  }, [frame, showBeamEffect, beamAlpha, fadeAlpha]); // Add new props to dependencies
 
   return (
     <div className="ilda-player">
-      <canvas ref={canvasRef} width="100" height="100"></canvas>
+      <h3>Selected Preview</h3>
+      <canvas ref={canvasRef} width="250" height="250" style={{ backgroundColor: 'black' }} />
     </div>
   );
 };

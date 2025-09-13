@@ -89,7 +89,37 @@ function createWindow() {
       submenu: [
         { label: 'Predefined Layouts', click: () => { win.webContents.send('menu-action', 'view-layouts'); } },
         { label: 'Color Theme', click: () => { win.webContents.send('menu-action', 'view-color-theme'); } },
-        { label: 'Render Mode', click: () => { win.webContents.send('menu-action', 'view-render-mode'); } },
+        {
+          label: 'Render Mode',
+          submenu: [
+            { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { win.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
+            { type: 'separator' },
+            {
+              label: 'Beam Alpha',
+              submenu: [
+                { label: 'Low (0.05)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.05 }); } },
+                { label: 'Medium (0.1)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
+                { label: 'High (0.2)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
+              ]
+            },
+            {
+              label: 'Fade Alpha',
+              submenu: [
+                { label: 'Short (0.1)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.1 }); } },
+                { label: 'Medium (0.13)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.13 }); } },
+                { label: 'Long (0.2)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.2 }); } },
+              ]
+            },
+            {
+              label: 'Draw Speed',
+              submenu: [
+                { label: 'Slow (100)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 100 }); } },
+                { label: 'Medium (500)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 500 }); } },
+                { label: 'Fast (1000)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 1000 }); } },
+              ]
+            },
+          ]
+        },
       ],
     },
   ];
@@ -111,6 +141,21 @@ function createWindow() {
       { label: 'Delete Column', click: () => win.webContents.send('context-menu-action', { type: 'delete-column', index: index }) },
     ]);
     columnContextMenu.popup({ window: win });
+  });
+
+  ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex) => {
+    console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}`); // Add log
+    const clipContextMenu = Menu.buildFromTemplate([
+      { label: 'Update Thumbnail', click: () => win.webContents.send('clip-context-command', { command: 'update-thumbnail', layerIndex, colIndex }) },
+      { type: 'separator' },
+      { label: 'Cut', click: () => win.webContents.send('clip-context-command', { command: 'cut-clip', layerIndex, colIndex }) },
+      { label: 'Copy', click: () => win.webContents.send('clip-context-command', { command: 'copy-clip', layerIndex, colIndex }) },
+      { label: 'Paste', click: () => win.webContents.send('clip-context-command', { command: 'paste-clip', layerIndex, colIndex }) },
+      { type: 'separator' },
+      { label: 'Rename', click: () => win.webContents.send('clip-context-command', { command: 'rename-clip', layerIndex, colIndex }) },
+      { label: 'Clear', click: () => win.webContents.send('clip-context-command', { command: 'clear-clip', layerIndex, colIndex }) },
+    ]);
+    clipContextMenu.popup({ window: win });
   });
 
   // Listen for context menu actions from renderer and send back to renderer

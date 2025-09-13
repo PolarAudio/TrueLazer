@@ -15,6 +15,12 @@ body {
   height: 100vh;
 }
 
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 .top-bar {
   display: flex;
   justify-content: space-between;
@@ -25,28 +31,164 @@ body {
 }
 
 .main-content {
-  display: flex; /* Simple flexbox for main content */
+  display: flex;
   flex-grow: 1;
+  overflow: hidden; /* Hide overflow from clip-deck scrolling */
 }
 
 .left-panel {
-  width: 250px; /* Fixed width for settings/control area */
+  width: 250px;
   background-color: #20232a;
   border-right: 1px solid #3a3f47;
+  display: flex;
   flex-direction: column;
-}
-
-.column-one, .column-two {
-
+  padding: 10px;
+  gap: 10px;
+  overflow-y: auto; /* Allow scrolling if content overflows */
 }
 
 .clip-deck {
   display: flex;
   flex-direction: column;
-  overflow-x: auto;
-  flex-grow: 1; /* Allow clip deck to take remaining space */
+  flex-grow: 1;
+  overflow-x: auto; /* Allow horizontal scrolling for columns */
 }
 
+.column-headers-container {
+  display: flex;
+  flex-grow: 1;
+  justify-content: space-around; /* Distribute space evenly */
+  margin-left: 10px; /* Adjust as needed */
+  margin-right: 10px; /* Adjust as needed */
+}
+
+.column-header {
+  min-width: 150px;
+  text-align: center;
+  padding: 3px;
+  background-color: #3a3f47;
+  margin-right: 2px;
+  margin-left: 2px;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.layer-row {
+  display: flex;
+  height: 110px; /* Fixed height for each layer row */
+}
+
+.layer-controls {
+  width: 250px; /* Fixed width to match left-panel */
+  height: 100px; /* Fixed height to match clip height */
+  padding-top: 5px;
+  padding-bottom: 5px;
+  background-color: #20232a;
+  display: grid;
+  grid-template-columns: 6rem 1.1rem 8rem; /* X and (B&S) */
+  grid-template-rows: 5rem 1rem; /* Rows for X/BS, Blend/I, Preview/Name */
+  gap: 2px;
+  align-items: center;
+}
+
+.clip {
+  min-width: 150px; /* Fixed width for clips */
+  height: 100px; /* Fixed height for clips */
+  margin-left: 2px;
+  margin-right: 2px;
+  background-color: #3a3f47;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px;
+  border-radius: 5px;
+}
+
+.bottom-panel {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-start;
+  padding: 10px;
+  background-color: #20232a;
+  border-top: 1px solid #3a3f47;
+  height: 37.5vh;
+}
+
+
+
+.ilda-player canvas,
+.world-preview .preview-area {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background-color: black; /* Ensure canvas background is black */
+}
+
+
+
+/* Styles for the Laser On/Off Button (checkbox) */
+.container {
+	width: 46%;
+	height: 2rem;
+	border-radius: 0.3em;
+	position: relative;
+}
+input[type="checkbox"] {
+	-webkit-appearance: none;
+	-moz-appearance: none;
+	appearance: none;
+	cursor: pointer;
+	outline: none;
+	height: 31px;
+	width: 72px;
+	background-color: #000000;
+	-webkit-transition: 0.3s;
+	-o-transition: 0.3s;
+	transition: 0.3s;
+	border-radius: 5px;
+}
+input[type="checkbox"]:before {
+	font-size: 1.5em;
+	content: "OFF";
+	position: absolute;
+	width: 2.75em;
+	height: 31px;
+	background-color: #3a3f47;
+	color: #fff;
+	left: 0.14em;
+	-webkit-transition: 0.3s;
+	-o-transition: 0.3s;
+	transition: 0.3s;
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-webkit-box-align: center;
+	-ms-flex-align: center;
+	align-items: center;
+	-webkit-box-pack: center;
+	-ms-flex-pack: center;
+	justify-content: center;
+	font-family: "Poppins", sans-serif;
+	font-weight: 600;
+	letter-spacing: 1px;
+	border-radius: 5px;
+}
+input[type="checkbox"]:checked {
+	background: -o-linear-gradient(315deg, #ff8100, #ffa75b);
+	background: linear-gradient(135deg, #ff8100, #ffa75b);
+}
+input[type="checkbox"]:checked:before {
+	content: "ON";
+	left: 1.1em;
+	color: #ff6039;
+}
+/*end off toggle button*/
+
+/* Other existing styles that might be relevant */
 .composition-row {
 	width: 250px;
 	min-height: 37px;
@@ -63,86 +205,26 @@ body {
   z-index: 100;
 }
 
-.span-two-columns {
-  grid-column: 1 / 3; /* Starts at grid line 1 and ends before grid line 3 (spanning two columns) */
-  /* Alternatively: grid-column: span 2; */
-}
-
-
 .composition-controls-top {
   display: flex;
   align-items: center;
 }
 
-.composition-label {
-  width: 50px; /* Adjust as needed */
-  text-align: center;
+.composition-label-button {
+  padding: 5px;
+  cursor: pointer;
+  outline: 1px solid #3a3f47;
+  border-radius: 5px;
+  margin-left: 6px;
 }
 
 .comp-control-button {
   padding: 5px;
   cursor: pointer;
+  outline: 1px solid #3a3f47;
+  border-radius: 5px;
+  margin-left: 4px;
 }
-
-.master-intensity-slider {
-  flex-grow: 1;
-}
-
-.master-intensity-slider .slider {
-  width: 100%;
-}
-
-.laser-on-off-button {
-  background-color: #ff4d4d;
-  color: white;
-  border: none;
-  cursor: pointer;
-  margin-left: 10px;
-  height: 37px;
-  border-radius: 10px;
-}
-
-.column-headers {
-  display: flex;
-  flex-grow: 1;
-}
-
-.column-header {
-    min-width: 150px;
-    text-align: center;
-    padding: 3px;
-    background-color: #3a3f47;
-    margin-right: 2px;
-    margin-left: 2px;
-    border-radius: 5px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.layer-row {
-  display: flex;
-  height: 110px; /* Added height */
-}
-
-.layer-controls {
-  width: 99%;
-  height: 100px; /* Fixed height to match clip height */
-  padding-top: 5px;
-  padding-bottom: 5px;
-  background-color: #20232a;
-  display: grid;
-  grid-template-columns: 6rem 1.1rem 8rem; /* X and (B&S) */
-  grid-template-rows: 5rem 1rem; /* Rows for X/BS, Blend/I, Preview/Name */
-  gap: 2px;
-  align-items: center;
-}
-
-.layer-control-row {
-
-}
-
 .grid-layer{
   width: 5rem; /* Match left-panel width */
   height: 100%; /* Fixed height to match clip height */
@@ -152,6 +234,13 @@ body {
   align-items: center;
   padding-left: 5px;
 }
+.master-intensity-slider {
+  width: 5rem;
+}
+.slider {
+	width: 100%;
+	height: 100%;
+}
 
 .layer-control-button {
   padding: 2px 5px;
@@ -159,11 +248,12 @@ body {
   cursor: pointer;
   text-align: center;
   font-size: 0.8em;
+  border-radius: 5px;
 }
 
 .full-height {
   height: 90%;
-  grid-row: span 2; /* Span two rows for X */
+  grid-row: span 2;
   place-content: center;
 }
 
@@ -186,14 +276,16 @@ body {
 
 .layer-blend-dropdown {
 	grid-column: span 2;
+	background-color: #20232a;
+	color: white;
+	border-color: #313131;
+	border-radius: 5px;
 }
 .layer-intensity-slider {
   flex-grow: 1;
-  -webkit-appearance: slider-vertical; /* Chrome, Safari, Opera */
-  -moz-appearance: slider-vertical; /* Firefox */
-  appearance: slider-vertical; /* Standard */
-  width: 1rem; /* Adjust width as needed */
-  height: 5rem; /* Adjust height as needed */
+  transform: translate(-40%, 0%) rotate(-90deg);
+  width: 5rem;
+  height: 1rem;
   margin-left: 4px;
 }
 
@@ -202,21 +294,22 @@ body {
   height: 95%;
   background-color: #000;
   display: flex;
-  flex-direction: column; /* Changed to column */
-  justify-content: flex-start; /* Align content to top */
+  flex-direction: column;
+  justify-content: flex-start;
   align-items: center;
   font-size: 0.7em;
-  position: relative; /* For positioning effects */
-  overflow: hidden; /* Hide overflowing content */
+  position: relative;
+  overflow: hidden;
   margin-left: 5px;
 }
 
 .layer-name-label {
   font-size: 0.8em;
   font-weight: bold;
-  grid-column: span 3; /* Span across both columns */
+  grid-column: span 3;
   text-align: center;
-  border: solid 1px #313131
+  border: solid 1px #313131;
+  border-radius: 5px;
 }
 
 .clip-container {
@@ -224,46 +317,22 @@ body {
   flex-grow: 1;
 }
 
-.clip {
-  min-width: 150px; /* Fixed width for clips */
-  height: 100px; /* Fixed height for clips */
-  margin-left: 2px;
-  margin-right: 2px;
-  background-color: #3a3f47;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: center;
-  padding: 3px; /* Changed padding */
-  border-radius: 5px;
-}
-
 .clip-thumbnail {
   width: 150px;
   height: 80px;
   background-color: #000;
   display: flex;
-  flex-direction: column; /* Changed to column */
-  justify-content: flex-start; /* Align content to top */
+  flex-direction: column;
+  justify-content: flex-start;
   align-items: center;
   font-size: 0.8em;
-  position: relative; /* For positioning effects */
-  overflow: hidden; /* Hide overflowing content */
+  position: relative;
+  overflow: hidden;
 }
 
 .clip-label {
   font-size: 0.7em;
-}
-
-.selected-clip-preview,
-.world-preview {
-  background-color: #1a1a1a;
-  border: 1px solid #3a3f47;
-  margin-top: 10px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  cursor: pointer;
 }
 
 .preview-area {
@@ -271,23 +340,32 @@ body {
   flex-grow: 1;
   background-color: #000;
   margin-top: 10px;
+  height: 100%;
 }
+
+.preview-area canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.ilda-player,
 .world-preview,
-.selected-clip-preview,
 .file-browser,
 .generator-panel,
 .effect-panel,
 .dac-panel {
-  /* Removed flex properties for now */
+  flex: 1;
+  min-width: 200px;
   background-color: #1a1a1a;
   border: 1px solid #3a3f47;
-  margin-top: 10px;
   padding: 10px;
   display: flex;
   flex-direction: column;
-  height: 90%;
   border-radius: 10px;
+  margin: 5px;
+  height: 95%;
 }
+
 
 .file-browser button {
   background-color: #4CAF50;
@@ -299,7 +377,7 @@ body {
 }
 
 .ild-file-list {
-  max-height: 200px; /* Scrollable area for files */
+  max-height: 200px;
   overflow-y: auto;
   border: 1px solid #3a3f47;
   padding: 5px;
@@ -314,10 +392,6 @@ body {
   border-bottom: none;
 }
 
-.generator-panel {
-  /* Removed flex properties for now */
-}
-
 .generator-list {
   display: flex;
   flex-wrap: wrap;
@@ -330,10 +404,6 @@ body {
   border: 1px solid #555;
   cursor: grab;
   border-radius: 4px;
-}
-
-.effect-panel {
-  /* Removed flex properties for now */
 }
 
 .effect-list {
@@ -359,9 +429,9 @@ body {
   gap: 2px;
   justify-content: center;
   flex-wrap: wrap;
-  background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent background */
-  padding: 2px 0; /* Some padding */
-  height: auto; /* Allow height to adjust to content */
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 2px 0;
+  height: auto;
 }
 
 .effect-tag {
@@ -380,33 +450,26 @@ body {
   align-items: center;
   width: 100%;
   flex-shrink: 0;
-  /* Removed height: 100%; */
 }
 
 .bottom-panel {
   display: flex;
   justify-content: space-around;
-  align-items: flex-start; /* Align items to the top of the container */
+  align-items: flex-start;
   padding: 10px;
   background-color: #20232a;
   border-top: 1px solid #3a3f47;
-  flex-wrap: wrap; /* Allow items to wrap to the next line if space is limited */
   height: 37.5vh;
   position: fixed;
   bottom: 0;
 }
 
-.bottom-panel > div {
-  flex: 1;
-  min-width: 200px;
-  margin: 5px;
-  background-color: #1a1a1a;
-  border: 1px solid #3a3f47;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-}
+
 
 .clip.selected-clip {
-  border: 2px solid #007bff; /* Blue border for selected clip */
+  outline: 2px solid #007bff; /* Blue outline for selected clip */
+}
+
+.clip.active-clip {
+  outline: 2px solid red; /* Red outline for active clip */
 }
