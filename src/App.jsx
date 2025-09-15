@@ -148,6 +148,36 @@ function App() {
     });
   }, []);
 
+  const handleClearClip = useCallback((layerIndex, colIndex) => {
+    setClipContents(prevContents => {
+      const newContents = [...prevContents];
+      newContents[layerIndex][colIndex] = null;
+      return newContents;
+    });
+    setClipNames(prevNames => {
+      const newNames = [...prevNames];
+      newNames[layerIndex][colIndex] = `Clip ${layerIndex + 1}-${colIndex + 1}`;
+      return newNames;
+    });
+    setThumbnailFrameIndexes(prevIndexes => {
+      const newIndexes = [...prevIndexes];
+      newIndexes[layerIndex][colIndex] = 0;
+      return newIndexes;
+    });
+    setActiveClipIndexes(prevActive => {
+      const newActive = [...prevActive];
+      if (newActive[layerIndex] === colIndex) {
+        newActive[layerIndex] = null;
+      }
+      return newActive;
+    });
+    // Clear IldaPlayer if the cleared clip was the one being previewed
+    if (selectedLayerIndex === layerIndex && selectedColIndex === colIndex) {
+      setIldaFrames([]);
+      setCurrentFrameIndex(0);
+    }
+  }, [selectedLayerIndex, selectedColIndex, clipContents, clipNames, thumbnailFrameIndexes, activeClipIndexes]);
+
   const handleUpdateThumbnail = useCallback(() => {
     if (selectedLayerIndex !== null && selectedColIndex !== null) {
       setThumbnailFrameIndexes(prevIndexes => {
@@ -176,11 +206,22 @@ function App() {
         // For simplicity, remove the last column for now
         deleteColumn(columns.length - 1);
         break;
+      case 'render-mode-high-performance':
+        setDrawSpeed(10000); // Example high draw speed
+        setFadeAlpha(0.05); // Example crisper fade
+        break;
+      case 'render-mode-low-performance':
+        setDrawSpeed(1000); // Example low draw speed
+        setFadeAlpha(0.13); // Example smoother fade
+        break;
+      case 'toggle-beam-effect':
+        setShowBeamEffect(prev => !prev);
+        break;
       // Handle other menu actions as needed
       default:
         console.log(`Menu action: ${action}`);
     }
-  }, [addLayer, deleteLayer, addColumn, deleteColumn, layers.length, columns.length]);
+  }, [addLayer, deleteLayer, addColumn, deleteColumn, layers.length, columns.length, setDrawSpeed, setFadeAlpha, setShowBeamEffect]);
 
   const handleContextMenuAction = useCallback((action) => {
     console.log(`Received context menu action: ${JSON.stringify(action)}`);
@@ -199,10 +240,16 @@ function App() {
         console.log(`Rename column at index ${action.index}`);
         // Implement rename logic here
         break;
+      case 'update-thumbnail':
+        handleUpdateThumbnail(action.layerIndex, action.colIndex);
+        break;
+      case 'clear-clip':
+        handleClearClip(action.layerIndex, action.colIndex);
+        break;
       default:
         console.log(`Context menu action: ${action.type} for index ${action.index}`);
     }
-  }, [deleteLayer, deleteColumn]);
+  }, [deleteLayer, deleteColumn, handleUpdateThumbnail, handleClearClip]);
 
   useEffect(() => {
     if (window.electronAPI) {
@@ -283,7 +330,7 @@ function App() {
                 ))}
               </div>
             );
-          })}}
+          })}
         </div>
       </div>
 
@@ -296,13 +343,18 @@ function App() {
           beamAlpha={beamAlpha}
           fadeAlpha={fadeAlpha}
           drawSpeed={drawSpeed}
-          onUpdateThumbnail={handleUpdateThumbnail}
         />
 		<FileBrowser onDropIld={handleDropGenerator} />
         <GeneratorPanel />
         <EffectPanel />
         <DacPanel dacs={dacs} />
-        <WorldPreview worldData={activeClipsData} />
+        <WorldPreview
+          worldData={activeClipsData}
+          showBeamEffect={showBeamEffect}
+          beamAlpha={beamAlpha}
+          fadeAlpha={fadeAlpha}
+          drawSpeed={drawSpeed}
+        />
       </div>
     </div>
   );

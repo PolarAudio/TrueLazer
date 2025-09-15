@@ -1,8 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 
-const WorldPreview = ({ worldData }) => {
+const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed }) => {
   const canvasRef = useRef(null);
   const frameIndexesRef = useRef([]);
+  const lastUpdateTime = useRef(0);
+  const animationFrameId = useRef(null);
 
   useEffect(() => {
     // Initialize frame indexes when worldData changes
@@ -15,11 +17,29 @@ const WorldPreview = ({ worldData }) => {
 
     const ctx = canvas.getContext('2d');
     const { width, height } = canvas;
-    let animationFrameId;
 
-    const render = () => {
+    const animate = (currentTime) => {
+      if (!lastUpdateTime.current) lastUpdateTime.current = currentTime;
+      const deltaTime = currentTime - lastUpdateTime.current;
+
+      // Update frame indexes only if enough time has passed (e.g., 100ms per frame)
+      const frameUpdateInterval = 100; // milliseconds per frame
+      if (deltaTime >= frameUpdateInterval) {
+        frameIndexesRef.current = frameIndexesRef.current.map((frameIndex, clipIndex) => {
+          const clip = worldData[clipIndex];
+          if (clip && clip.frames && clip.frames.length > 0) {
+            return (frameIndex + 1) % clip.frames.length;
+          }
+          return 0;
+        });
+        lastUpdateTime.current = currentTime;
+      }
+
+      // Apply fading effect
+      ctx.globalAlpha = fadeAlpha;
       ctx.fillStyle = 'black';
       ctx.fillRect(0, 0, width, height);
+      ctx.globalAlpha = 1; // Reset globalAlpha for drawing content
 
       worldData.forEach((clip, clipIndex) => {
         if (clip && clip.frames && clip.frames.length > 0) {
@@ -31,7 +51,8 @@ const WorldPreview = ({ worldData }) => {
             let lastY = height - (((0 + 32768) / 65535) * height);
             let wasPenUp = true;
 
-            for (let i = 0; i < frame.points.length; i++) {
+            // Use drawSpeed to control how many points are drawn per animation frame
+            for (let i = 0; i < frame.points.length; i += Math.max(1, Math.floor(frame.points.length / drawSpeed))) {
               const currentPoint = frame.points[i];
               const x = ((currentPoint.x + 32768) / 65535) * width;
               const y = height - (((currentPoint.y + 32768) / 65535) * height);
@@ -44,6 +65,19 @@ const WorldPreview = ({ worldData }) => {
                   ctx.arc(x, y, 1, 0, Math.PI * 2);
                   ctx.fill();
                 } else {
+                  // Draw beam effect if enabled
+                  if (showBeamEffect) {
+                    const centerX = width / 2;
+                    const centerY = height / 2;
+                    ctx.beginPath();
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(lastX, lastY);
+                    ctx.lineTo(x, y);
+                    ctx.closePath();
+                    ctx.fillStyle = `rgba(${currentPoint.r}, ${currentPoint.g}, ${currentPoint.b}, ${beamAlpha})`;
+                    ctx.fill();
+                  }
+
                   ctx.beginPath();
                   ctx.moveTo(lastX, lastY);
                   ctx.lineTo(x, y);
@@ -62,21 +96,15 @@ const WorldPreview = ({ worldData }) => {
         }
       });
 
-      frameIndexesRef.current = frameIndexesRef.current.map((frameIndex, clipIndex) => {
-        const clip = worldData[clipIndex];
-        if (clip && clip.frames && clip.frames.length > 0) {
-          return (frameIndex + 1) % clip.frames.length;
-        }
-        return 0;
-      });
-
-      animationFrameId = requestAnimationFrame(render);
+      animationFrameId.current = requestAnimationFrame(animate);
     };
 
-    render();
+    animationFrameId.current = requestAnimationFrame(animate);
 
     return () => {
-      cancelAnimationFrame(animationFrameId);
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
+      }
     };
   }, [worldData]);
 
