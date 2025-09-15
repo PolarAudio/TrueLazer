@@ -7,12 +7,11 @@ const Clip = ({
   layerIndex,
   colIndex,
   onDropGenerator,
-  generatorId,
   clipContent,
   thumbnailFrameIndex,
   onUnsupportedFile,
-  onPreviewClick, 
   onActivateClick, 
+  onLabelClick,
   isSelected,
   isActive // New prop
 }) => {
@@ -104,7 +103,7 @@ const Clip = ({
 
   return (
     <div
-      className={`clip ${isDragging ? 'dragging' : ''} ${isSelected ? 'selected-clip' : ''} ${isActive ? 'active-clip' : ''}`}
+      className={`clip ${isDragging ? 'dragging' : ''} ${isActive ? 'active-clip' : ''} ${isSelected ? 'selected-clip' : ''}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -117,7 +116,7 @@ const Clip = ({
           <p>Drag ILD Here</p>
         )}
       </div>
-      <span className="clip-label" onClick={onPreviewClick}>{clipName}</span>
+      <span className="clip-label" onClick={onLabelClick}>{clipName}</span>
     </div>
   );
 };

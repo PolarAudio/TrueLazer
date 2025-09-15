@@ -2,6 +2,12 @@ import React, { useEffect, useRef } from 'react';
 
 const WorldPreview = ({ worldData }) => {
   const canvasRef = useRef(null);
+  const frameIndexesRef = useRef([]);
+
+  useEffect(() => {
+    // Initialize frame indexes when worldData changes
+    frameIndexesRef.current = worldData.map(() => 0);
+  }, [worldData]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -9,13 +15,17 @@ const WorldPreview = ({ worldData }) => {
 
     const ctx = canvas.getContext('2d');
     const { width, height } = canvas;
+    let animationFrameId;
 
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, width, height);
+    const render = () => {
+      ctx.fillStyle = 'black';
+      ctx.fillRect(0, 0, width, height);
 
-    worldData.forEach(clip => {
-      if (clip && clip.frames) {
-        clip.frames.forEach(frame => {
+      worldData.forEach((clip, clipIndex) => {
+        if (clip && clip.frames && clip.frames.length > 0) {
+          const frameIndex = frameIndexesRef.current[clipIndex] || 0;
+          const frame = clip.frames[frameIndex];
+
           if (frame && frame.points) {
             let lastX = ((0 + 32768) / 65535) * width;
             let lastY = height - (((0 + 32768) / 65535) * height);
@@ -49,9 +59,25 @@ const WorldPreview = ({ worldData }) => {
               lastY = y;
             }
           }
-        });
-      }
-    });
+        }
+      });
+
+      frameIndexesRef.current = frameIndexesRef.current.map((frameIndex, clipIndex) => {
+        const clip = worldData[clipIndex];
+        if (clip && clip.frames && clip.frames.length > 0) {
+          return (frameIndex + 1) % clip.frames.length;
+        }
+        return 0;
+      });
+
+      animationFrameId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
   }, [worldData]);
 
   return (

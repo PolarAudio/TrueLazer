@@ -9,6 +9,7 @@ import EffectPanel from './components/EffectPanel';
 import DacPanel from './components/DacPanel';
 import NotificationPopup from './components/NotificationPopup';
 import IldaPlayer from './components/IldaPlayer';
+import WorldPreview from './components/WorldPreview';
 
 const MasterIntensitySlider = () => (
   <div className="master-intensity-slider">
@@ -18,13 +19,6 @@ const MasterIntensitySlider = () => (
 
 const LaserOnOffButton = () => (
   <div className="container"><input type="checkbox" /></div>
-);
-
-const WorldPreview = () => (
-  <div className="world-preview">
-    <h3>World Preview</h3>
-    <div className="preview-area"></div>
-  </div>
 );
 
 function App() {
@@ -70,8 +64,6 @@ function App() {
 
   // New state for active clips (one per layer)
   const [activeClipIndexes, setActiveClipIndexes] = useState(Array(layers.length).fill(null));
-  const [lastDroppedClip, setLastDroppedClip] = useState(null);
-
   const showNotification = useCallback((message) => {
     setNotification({ message, visible: true });
     setTimeout(() => {
@@ -82,45 +74,35 @@ function App() {
   const addLayer = useCallback(() => {
     setLayers(prevLayers => [...prevLayers, `Layer ${prevLayers.length + 1}`]);
     setClipContents(prevContents => [...prevContents, Array(columns.length).fill(null)]);
-    setClipEffects(prevEffects => [...prevEffects, Array(columns.length).fill([])]);
     setLayerEffects(prevEffects => [...prevEffects, []]);
-    setClipDacs(prevDacs => [...prevDacs, Array(columns.length).fill(null)]);
-  }, [columns.length]);
+    setActiveClipIndexes(prevActive => [...prevActive, null]);
+    setClipNames(prevNames => [...prevNames, Array(columns.length).fill(null).map((_, colIndex) => `Clip ${layers.length + 1}-${colIndex + 1}`)]);
+    setThumbnailFrameIndexes(prevIndexes => [...prevIndexes, Array(columns.length).fill(0)]);
+  }, [columns.length, layers.length]);
 
   const deleteLayer = useCallback((indexToDelete) => {
-    setLayers(prevLayers => {
-      console.log(`Deleting layer at index: ${indexToDelete}`);
-      return prevLayers.filter((_, index) => index !== indexToDelete);
-    });
+    setLayers(prevLayers => prevLayers.filter((_, index) => index !== indexToDelete));
     setClipContents(prevContents => prevContents.filter((_, index) => index !== indexToDelete));
-    setClipEffects(prevEffects => prevEffects.filter((_, index) => index !== indexToDelete));
     setLayerEffects(prevEffects => prevEffects.filter((_, index) => index !== indexToDelete));
-    setClipDacs(prevDacs => prevDacs.filter((_, index) => index !== indexToDelete));
+    setActiveClipIndexes(prevActive => prevActive.filter((_, index) => index !== indexToDelete));
+    setClipNames(prevNames => prevNames.filter((_, index) => index !== indexToDelete));
+    setThumbnailFrameIndexes(prevIndexes => prevIndexes.filter((_, index) => index !== indexToDelete));
   }, []);
 
   const addColumn = useCallback(() => {
     setColumns(prevColumns => [...prevColumns, `Col ${prevColumns.length + 1}`]);
     setClipContents(prevContents => prevContents.map(layer => [...layer, null]));
-    setClipEffects(prevEffects => prevEffects.map(layer => [...layer, []]));
-    setClipDacs(prevDacs => prevDacs.map(layer => [...layer, null]));
-  }, []);
+    setLayerEffects(prevEffects => prevEffects.map(layer => [...layer, []]));
+    setClipNames(prevNames => prevNames.map((layer, layerIndex) => [...layer, `Clip ${layerIndex + 1}-${columns.length + 1}`]));
+    setThumbnailFrameIndexes(prevIndexes => prevIndexes.map(layer => [...layer, 0]));
+  }, [columns.length]);
 
   const deleteColumn = useCallback((indexToDelete) => {
-    setColumns(prevColumns => {
-      console.log(`Deleting column at index: ${indexToDelete}`);
-      return prevColumns.filter((_, index) => index !== indexToDelete);
-    });
+    setColumns(prevColumns => prevColumns.filter((_, index) => index !== indexToDelete));
     setClipContents(prevContents => prevContents.map(layer => layer.filter((_, index) => index !== indexToDelete)));
-    setClipEffects(prevEffects => prevEffects.map(layer => layer.filter((_, index) => index !== indexToDelete)));
-    setClipDacs(prevDacs => prevDacs.map(layer => layer.filter((_, index) => index !== indexToDelete)));
-  }, []);
-
-  const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectId) => {
-    setClipEffects(prevEffects => {
-      const newEffects = [...prevEffects];
-      newEffects[layerIndex][colIndex] = [...newEffects[layerIndex][colIndex], effectId];
-      return newEffects;
-    });
+    setLayerEffects(prevEffects => prevEffects.map(layer => layer.filter((_, index) => index !== indexToDelete)));
+    setClipNames(prevNames => prevNames.map(layer => layer.filter((_, index) => index !== indexToDelete)));
+    setThumbnailFrameIndexes(prevIndexes => prevIndexes.map(layer => layer.filter((_, index) => index !== indexToDelete)));
   }, []);
 
   const handleDropEffectOnLayer = useCallback((layerIndex, effectId) => {
@@ -131,57 +113,27 @@ function App() {
     });
   }, []);
 
-  const handleDropDacOnClip = useCallback((layerIndex, colIndex, dacId, channelId) => {
-    setClipDacs(prevDacs => {
-      const newDacs = [...prevDacs];
-      newDacs[layerIndex][colIndex] = { dacId, channelId };
-      return newDacs;
-    });
-  }, []);
-
-  const handleClipClick = useCallback((layerIndex, colIndex) => {
-    console.log(`Previewing clip: Layer ${layerIndex}, Column ${colIndex}`); // Add this log
+  const handleClipPreview = useCallback((layerIndex, colIndex) => {
     setSelectedLayerIndex(layerIndex);
     setSelectedColIndex(colIndex);
     const clipData = clipContents[layerIndex][colIndex];
     if (clipData && clipData.frames) {
-      console.log(`Found ${clipData.frames.length} frames for preview.`); // Add this log
       setIldaFrames(clipData.frames);
       setCurrentFrameIndex(0);
     } else {
-      console.log("No frames found for preview."); // Add this log
       setIldaFrames([]);
     }
   }, [clipContents]);
 
-  const handlePreviewClick = useCallback((layerIndex, colIndex) => {
-    const clipData = clipContents[layerIndex][colIndex];
-    if (clipData && clipData.frames) {
-      setIldaFrames(clipData.frames);
-      setCurrentFrameIndex(0);
-    } else {
-      setIldaFrames([]);
-    }
-  }, [clipContents]);
+  
 
   const handleActivateClick = useCallback((layerIndex, colIndex) => {
-    console.log(`Activating clip: Layer ${layerIndex}, Column ${colIndex}`); // Add this log
     setActiveClipIndexes(prevActive => {
       const newActive = [...prevActive];
       newActive[layerIndex] = colIndex;
       return newActive;
     });
-    // Also set as selected for immediate preview update
-    setSelectedLayerIndex(layerIndex);
-    setSelectedColIndex(colIndex);
-    const clipData = clipContents[layerIndex][colIndex];
-    if (clipData && clipData.frames) {
-      setIldaFrames(clipData.frames);
-      setCurrentFrameIndex(0);
-    } else {
-      setIldaFrames([]);
-    }
-  }, [clipContents]);
+  }, []);
 
   const handleDropGenerator = useCallback((layerIndex, colIndex, parsedData, fileName) => {
     setClipContents(prevContents => {
@@ -194,74 +146,66 @@ function App() {
         newNames[layerIndex][colIndex] = fileName;
         return newNames;
     });
-    // Set the last dropped clip to be activated by useEffect
-    setLastDroppedClip({ layerIndex, colIndex });
   }, []);
 
-  // useEffect to activate the clip after it has been dropped
-  useEffect(() => {
-    if (lastDroppedClip) {
-      handleActivateClick(lastDroppedClip.layerIndex, lastDroppedClip.colIndex);
-      setLastDroppedClip(null); // Reset after activation
-    }
-  }, [lastDroppedClip]);
-
-  const handleUpdateThumbnail = useCallback((layerIndex, colIndex) => {
-    if (selectedLayerIndex === layerIndex && selectedColIndex === colIndex) {
+  const handleUpdateThumbnail = useCallback(() => {
+    if (selectedLayerIndex !== null && selectedColIndex !== null) {
       setThumbnailFrameIndexes(prevIndexes => {
         const newIndexes = [...prevIndexes];
-        newIndexes[layerIndex][colIndex] = currentFrameIndex;
+        newIndexes[selectedLayerIndex][selectedColIndex] = currentFrameIndex;
         return newIndexes;
       });
     }
   }, [selectedLayerIndex, selectedColIndex, currentFrameIndex]);
 
+  
+
+  const handleMenuAction = useCallback((action) => {
+    switch (action) {
+      case 'layer-new':
+        addLayer();
+        break;
+      case 'layer-delete':
+        // For simplicity, delete the last layer for now
+        deleteLayer(layers.length - 1);
+        break;
+      case 'column-new':
+        addColumn();
+        break;
+      case 'column-remove':
+        // For simplicity, remove the last column for now
+        deleteColumn(columns.length - 1);
+        break;
+      // Handle other menu actions as needed
+      default:
+        console.log(`Menu action: ${action}`);
+    }
+  }, [addLayer, deleteLayer, addColumn, deleteColumn, layers.length, columns.length]);
+
+  const handleContextMenuAction = useCallback((action) => {
+    console.log(`Received context menu action: ${JSON.stringify(action)}`);
+    switch (action.type) {
+      case 'delete-layer':
+        deleteLayer(action.index);
+        break;
+      case 'rename-layer':
+        console.log(`Rename layer at index ${action.index}`);
+        // Implement rename logic here
+        break;
+      case 'delete-column':
+        deleteColumn(action.index);
+        break;
+      case 'rename-column':
+        console.log(`Rename column at index ${action.index}`);
+        // Implement rename logic here
+        break;
+      default:
+        console.log(`Context menu action: ${action.type} for index ${action.index}`);
+    }
+  }, [deleteLayer, deleteColumn]);
+
   useEffect(() => {
     if (window.electronAPI) {
-      const handleMenuAction = (action) => {
-        switch (action) {
-          case 'layer-new':
-            addLayer();
-            break;
-          case 'layer-delete':
-            // For simplicity, delete the last layer for now
-            deleteLayer(layers.length - 1);
-            break;
-          case 'column-new':
-            addColumn();
-            break;
-          case 'column-remove':
-            // For simplicity, remove the last column for now
-            deleteColumn(columns.length - 1);
-            break;
-          // Handle other menu actions as needed
-          default:
-            console.log(`Menu action: ${action}`);
-        }
-      };
-
-      const handleContextMenuAction = (action) => {
-        console.log(`Received context menu action: ${JSON.stringify(action)}`);
-        switch (action.type) {
-          case 'delete-layer':
-            deleteLayer(action.index);
-            break;
-          case 'rename-layer':
-            console.log(`Rename layer at index ${action.index}`);
-            // Implement rename logic here
-            break;
-          case 'delete-column':
-            deleteColumn(action.index);
-            break;
-          case 'rename-column':
-            console.log(`Rename column at index ${action.index}`);
-            // Implement rename logic here
-            break;
-          default:
-            console.log(`Context menu action: ${action.type} for index ${action.index}`);
-        }
-      };
-
       const cleanupMenu = window.electronAPI.onMenuAction(handleMenuAction);
       const cleanupContext = window.electronAPI.onContextMenuActionFromMain(handleContextMenuAction);
 
@@ -270,7 +214,7 @@ function App() {
         cleanupContext();
       };
     }
-  }, [addLayer, deleteLayer, addColumn, deleteColumn]); // Dependencies are now the memoized functions
+  }, [handleMenuAction, handleContextMenuAction]);
 
   useEffect(() => {
     if (ildaFrames.length > 1) {
@@ -329,12 +273,12 @@ function App() {
                     clipName={clipNames[layerIndex][colIndex]}
                     clipContent={clipContents[layerIndex][colIndex]}
                     thumbnailFrameIndex={thumbnailFrameIndexes[layerIndex][colIndex]}
-                    onPreviewClick={() => handleClipClick(layerIndex, colIndex)}
                     onActivateClick={() => handleActivateClick(layerIndex, colIndex)}
-                    onUpdateThumbnail={handleUpdateThumbnail}
                     isActive={activeClipIndexes[layerIndex] === colIndex}
                     onUnsupportedFile={showNotification}
                     onDropGenerator={(parsedData, fileName) => handleDropGenerator(layerIndex, colIndex, parsedData, fileName)}
+                    onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
+                    isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                   />
                 ))}
               </div>
@@ -348,11 +292,11 @@ function App() {
         <IldaPlayer
           ildaFrames={ildaFrames}
           currentFrameIndex={currentFrameIndex}
-          setCurrentFrameIndex={setCurrentFrameIndex}
           showBeamEffect={showBeamEffect}
           beamAlpha={beamAlpha}
           fadeAlpha={fadeAlpha}
           drawSpeed={drawSpeed}
+          onUpdateThumbnail={handleUpdateThumbnail}
         />
 		<FileBrowser onDropIld={handleDropGenerator} />
         <GeneratorPanel />

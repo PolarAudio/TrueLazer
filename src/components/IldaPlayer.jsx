@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed }) => {
+const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed, onUpdateThumbnail }) => {
   const canvasRef = useRef(null);
   const animationFrameId = useRef(null);
 
@@ -37,7 +37,7 @@ const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, 
       ctx.globalAlpha = fadeAlpha; // Use fadeAlpha prop
       ctx.fillStyle = 'black';
       ctx.fillRect(0, 0, width, height);
-      ctx.globalAlpha = 0.13;
+      ctx.globalAlpha = 1;
 
       // Number of segments to draw per animation frame (for performance)
       // const drawSpeed = 1000; // Old hardcoded value
@@ -107,7 +107,7 @@ const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, 
         cancelAnimationFrame(animationFrameId.current);
       }
     };
-  }, [frame, showBeamEffect, beamAlpha, fadeAlpha]); // Add new props to dependencies
+  }, [frame, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed]); // Add new props to dependencies
 
   return (
     <div className="ilda-player">
