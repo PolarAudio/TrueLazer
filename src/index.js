@@ -103,19 +103,11 @@ function createWindow() {
               ]
             },
             {
-              label: 'Fade Alpha',
+              label: 'Refresh Rate',
               submenu: [
-                { label: 'Short (0.1)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.1 }); } },
-                { label: 'Medium (0.13)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.13 }); } },
-                { label: 'Long (0.2)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.2 }); } },
-              ]
-            },
-            {
-              label: 'Draw Speed',
-              submenu: [
-                { label: 'Slow (100)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 100 }); } },
+                { label: 'Low (100)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 100 }); } },
                 { label: 'Medium (500)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 500 }); } },
-                { label: 'Fast (1000)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 1000 }); } },
+                { label: 'High (1000)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 1000 }); } },
               ]
             },
           ]
@@ -133,6 +125,20 @@ function createWindow() {
       { label: 'Delete Layer', click: () => win.webContents.send('context-menu-action', { type: 'delete-layer', index: index }) },
     ]);
     layerContextMenu.popup({ window: win });
+  });
+
+  ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
+    console.log(`Received show-layer-full-context-menu for layer: ${layerIndex}`);
+    const layerFullContextMenu = Menu.buildFromTemplate([
+      { label: 'New', click: () => win.webContents.send('layer-full-context-command', 'layer-new', layerIndex) },
+      { label: 'Insert Above', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex) },
+      { label: 'Insert Below', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex) },
+      { type: 'separator' },
+      { label: 'Rename', click: () => win.webContents.send('layer-full-context-command', 'layer-rename', layerIndex) },
+      { label: 'Clear Clips', click: () => win.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex) },
+      { label: 'Delete', click: () => win.webContents.send('layer-full-context-command', 'layer-delete', layerIndex) },
+    ]);
+    layerFullContextMenu.popup({ window: win });
   });
 
   ipcMain.on('show-column-context-menu', (event, index) => {
@@ -156,6 +162,21 @@ function createWindow() {
       { label: 'Clear', click: () => win.webContents.send('clip-context-command', { command: 'clear-clip', layerIndex, colIndex }) },
     ]);
     clipContextMenu.popup({ window: win });
+  });
+
+  ipcMain.on('show-column-header-clip-context-menu', (event, colIndex) => {
+    console.log(`Received show-column-header-clip-context-menu for column: ${colIndex}`);
+    const columnHeaderClipContextMenu = Menu.buildFromTemplate([
+      { label: 'Update Thumbnail', click: () => win.webContents.send('column-header-clip-context-command', { command: 'update-thumbnail', colIndex }) },
+      { type: 'separator' },
+      { label: 'Cut', click: () => win.webContents.send('column-header-clip-context-command', { command: 'cut-clip', colIndex }) },
+      { label: 'Copy', click: () => win.webContents.send('column-header-clip-context-command', { command: 'copy-clip', colIndex }) },
+      { label: 'Paste', click: () => win.webContents.send('column-header-clip-context-command', { command: 'paste-clip', colIndex }) },
+      { type: 'separator' },
+      { label: 'Rename', click: () => win.webContents.send('column-header-clip-context-command', { command: 'rename-clip', colIndex }) },
+      { label: 'Clear', click: () => win.webContents.send('column-header-clip-context-command', { command: 'clear-column-clips', colIndex }) },
+    ]);
+    columnHeaderClipContextMenu.popup({ window: win });
   });
 
   // Listen for context menu actions from renderer and send back to renderer

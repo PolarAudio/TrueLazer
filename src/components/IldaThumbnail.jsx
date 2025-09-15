@@ -42,11 +42,12 @@ const IldaThumbnail = ({ frame }) => {
           ctx.moveTo(lastX, lastY);
           ctx.lineTo(x, y);
           ctx.strokeStyle = lineColor;
-          ctx.lineWidth = 0.5; // Use a thin line for thumbnails
+          ctx.lineWidth = 2; // Increased line width for visibility
           ctx.stroke();
         }
         wasPenUp = false; // Pen is now down
       } else { // If current point is blanked
+        // console.log("Blanked point:", currentPoint); // Debug blanked points
         wasPenUp = true; // Pen is now up
       }
       

@@ -13,7 +13,6 @@ export const parseIldaFile = (arrayBuffer) => {
 
   while (offset < view.byteLength) {
     if (offset + 32 > view.byteLength) {
-      console.log("Parser: Not enough data for a header. Breaking.");
       break; 
     }
 
@@ -28,11 +27,10 @@ export const parseIldaFile = (arrayBuffer) => {
     const totalFrames = view.getUint16(offset + 28, false); // New
 
     if (pointCount === 0) {
-        console.log("Parser: Found header with 0 points. Assuming end of file.");
         break;
     }
 
-    console.log(`Parser: Found header. Format: ${formatCode}, Point Count: ${pointCount}, Frame Number: ${frameNumber}, Total Frames: ${totalFrames}`);
+    
 
     offset += 32; 
 
@@ -44,7 +42,6 @@ export const parseIldaFile = (arrayBuffer) => {
     else if (formatCode === 4) recordSize = 10; // 3D True Color
     else if (formatCode === 5) recordSize = 8; // 2D True Color
     else if (formatCode === 2) { 
-        console.log("Parser: Skipping palette section.");
         offset += pointCount * 3;
         continue;
     }

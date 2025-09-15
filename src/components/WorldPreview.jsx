@@ -2,31 +2,63 @@ import React, { useEffect, useRef } from 'react';
 
 const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed }) => {
   const canvasRef = useRef(null);
-  const frameIndexesRef = useRef([]);
-  const lastUpdateTime = useRef(0);
   const animationFrameId = useRef(null);
+  const lastUpdateTime = useRef(0);
+  const frameIndexesRef = useRef([]);
+  const pointIndexesRef = useRef([]); // New ref for point indexes per clip
+  const worldDataRef = useRef(worldData); // Ref to hold the latest worldData
 
+  // Effect to keep worldDataRef updated without re-running the animation loop
   useEffect(() => {
-    // Initialize frame indexes when worldData changes
-    frameIndexesRef.current = worldData.map(() => 0);
+    const oldWorldData = worldDataRef.current;
+    worldDataRef.current = worldData;
+
+    // Preserve frame and point indexes for clips that are still present
+    const newFrameIndexes = [];
+    const newPointIndexes = [];
+
+    worldData.forEach((newClip, newClipIndex) => {
+      const oldClipIndex = oldWorldData.findIndex(oldClip => oldClip === newClip); // Assuming clip objects are stable references
+      if (oldClipIndex !== -1) {
+        newFrameIndexes[newClipIndex] = frameIndexesRef.current[oldClipIndex] || 0;
+        newPointIndexes[newClipIndex] = pointIndexesRef.current[oldClipIndex] || 0;
+      } else {
+        newFrameIndexes[newClipIndex] = 0;
+        newPointIndexes[newClipIndex] = 0;
+      }
+    });
+
+    frameIndexesRef.current = newFrameIndexes;
+    pointIndexesRef.current = newPointIndexes;
+
   }, [worldData]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !worldData) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     const { width, height } = canvas;
 
     const animate = (currentTime) => {
+      // Access worldData from the ref
+      const currentWorldData = worldDataRef.current;
+
+      if (!currentWorldData || currentWorldData.length === 0) {
+        // Clear canvas if no data
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, width, height);
+        animationFrameId.current = requestAnimationFrame(animate);
+        return;
+      }
+
       if (!lastUpdateTime.current) lastUpdateTime.current = currentTime;
       const deltaTime = currentTime - lastUpdateTime.current;
 
-      // Update frame indexes only if enough time has passed (e.g., 100ms per frame)
       const frameUpdateInterval = 100; // milliseconds per frame
       if (deltaTime >= frameUpdateInterval) {
         frameIndexesRef.current = frameIndexesRef.current.map((frameIndex, clipIndex) => {
-          const clip = worldData[clipIndex];
+          const clip = currentWorldData[clipIndex]; // Use currentWorldData
           if (clip && clip.frames && clip.frames.length > 0) {
             return (frameIndex + 1) % clip.frames.length;
           }
@@ -35,13 +67,11 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpe
         lastUpdateTime.current = currentTime;
       }
 
-      // Apply fading effect
-      ctx.globalAlpha = fadeAlpha;
+      // Clear canvas at the beginning of each frame
       ctx.fillStyle = 'black';
       ctx.fillRect(0, 0, width, height);
-      ctx.globalAlpha = 1; // Reset globalAlpha for drawing content
 
-      worldData.forEach((clip, clipIndex) => {
+      currentWorldData.forEach((clip, clipIndex) => { // Use currentWorldData
         if (clip && clip.frames && clip.frames.length > 0) {
           const frameIndex = frameIndexesRef.current[clipIndex] || 0;
           const frame = clip.frames[frameIndex];
@@ -50,10 +80,17 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpe
             let lastX = ((0 + 32768) / 65535) * width;
             let lastY = height - (((0 + 32768) / 65535) * height);
             let wasPenUp = true;
+            let currentPointIndex = pointIndexesRef.current[clipIndex];
 
-            // Use drawSpeed to control how many points are drawn per animation frame
-            for (let i = 0; i < frame.points.length; i += Math.max(1, Math.floor(frame.points.length / drawSpeed))) {
-              const currentPoint = frame.points[i];
+            for (let i = 0; i < drawSpeed; i++) { // Use drawSpeed
+              if (currentPointIndex >= frame.points.length) {
+                currentPointIndex = 0; // Loop the frame animation
+                lastX = ((0 + 32768) / 65535) * width;
+                lastY = height - (((0 + 32768) / 65535) * height);
+                wasPenUp = true;
+              }
+
+              const currentPoint = frame.points[currentPointIndex];
               const x = ((currentPoint.x + 32768) / 65535) * width;
               const y = height - (((currentPoint.y + 32768) / 65535) * height);
 
@@ -65,7 +102,6 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpe
                   ctx.arc(x, y, 1, 0, Math.PI * 2);
                   ctx.fill();
                 } else {
-                  // Draw beam effect if enabled
                   if (showBeamEffect) {
                     const centerX = width / 2;
                     const centerY = height / 2;
@@ -91,7 +127,9 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpe
               }
               lastX = x;
               lastY = y;
+              currentPointIndex++;
             }
+            pointIndexesRef.current[clipIndex] = currentPointIndex; // Update the ref
           }
         }
       });
@@ -106,7 +144,7 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpe
         cancelAnimationFrame(animationFrameId.current);
       }
     };
-  }, [worldData]);
+  }, [canvasRef, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed]); // Empty dependency array for continuous loop
 
   return (
     <div className="world-preview">

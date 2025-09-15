@@ -53,7 +53,7 @@ function App() {
   ]);
 
   const [ildaFrames, setIldaFrames] = useState([]);
-  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
+  const [ildaPlayerCurrentFrameIndex, setIldaPlayerCurrentFrameIndex] = useState(0);
   const animationFrameId = useRef(null);
 
   // New state for rendering settings
@@ -119,7 +119,6 @@ function App() {
     const clipData = clipContents[layerIndex][colIndex];
     if (clipData && clipData.frames) {
       setIldaFrames(clipData.frames);
-      setCurrentFrameIndex(0);
     } else {
       setIldaFrames([]);
     }
@@ -174,19 +173,43 @@ function App() {
     // Clear IldaPlayer if the cleared clip was the one being previewed
     if (selectedLayerIndex === layerIndex && selectedColIndex === colIndex) {
       setIldaFrames([]);
-      setCurrentFrameIndex(0);
+      setIldaPlayerCurrentFrameIndex(0);
     }
-  }, [selectedLayerIndex, selectedColIndex, clipContents, clipNames, thumbnailFrameIndexes, activeClipIndexes]);
+  }, [selectedLayerIndex, selectedColIndex, clipContents, clipNames, thumbnailFrameIndexes, activeClipIndexes, setIldaPlayerCurrentFrameIndex]);
 
-  const handleUpdateThumbnail = useCallback(() => {
-    if (selectedLayerIndex !== null && selectedColIndex !== null) {
-      setThumbnailFrameIndexes(prevIndexes => {
-        const newIndexes = [...prevIndexes];
-        newIndexes[selectedLayerIndex][selectedColIndex] = currentFrameIndex;
-        return newIndexes;
-      });
+  const handleClearLayerClips = useCallback((layerIndex) => {
+    for (let colIndex = 0; colIndex < columns.length; colIndex++) {
+      handleClearClip(layerIndex, colIndex);
     }
-  }, [selectedLayerIndex, selectedColIndex, currentFrameIndex]);
+  }, [columns.length, handleClearClip]);
+
+  const handleDeactivateLayerClips = useCallback((layerIndex) => {
+    setActiveClipIndexes(prevActive => {
+      const newActive = [...prevActive];
+      newActive[layerIndex] = null;
+      return newActive;
+    });
+  }, []);
+
+  const handleShowLayerFullContextMenu = useCallback((layerIndex) => {
+    if (window.electronAPI) {
+      window.electronAPI.showLayerContextMenu(layerIndex); // Reusing existing layer context menu for now
+    }
+  }, []);
+
+  const handleShowColumnHeaderContextMenu = useCallback((colIndex) => {
+    if (window.electronAPI) {
+      window.electronAPI.showColumnHeaderClipContextMenu(colIndex);
+    }
+  }, []);
+
+  const handleUpdateThumbnail = useCallback((layerIndex, colIndex) => {
+    setThumbnailFrameIndexes(prevIndexes => {
+      const newIndexes = [...prevIndexes];
+      newIndexes[layerIndex][colIndex] = ildaPlayerCurrentFrameIndex;
+      return newIndexes;
+    });
+  }, [ildaPlayerCurrentFrameIndex]);
 
   
 
@@ -217,14 +240,20 @@ function App() {
       case 'toggle-beam-effect':
         setShowBeamEffect(prev => !prev);
         break;
+      case 'clip-clear':
+        if (selectedLayerIndex !== null && selectedColIndex !== null) {
+          handleClearClip(selectedLayerIndex, selectedColIndex);
+        }
+        break;
       // Handle other menu actions as needed
       default:
         console.log(`Menu action: ${action}`);
     }
-  }, [addLayer, deleteLayer, addColumn, deleteColumn, layers.length, columns.length, setDrawSpeed, setFadeAlpha, setShowBeamEffect]);
+  }, [addLayer, deleteLayer, addColumn, deleteColumn, layers.length, columns.length, setDrawSpeed, setFadeAlpha, setShowBeamEffect, selectedLayerIndex, selectedColIndex, handleClearClip]);
 
   const handleContextMenuAction = useCallback((action) => {
     console.log(`Received context menu action: ${JSON.stringify(action)}`);
+    console.log("Context menu action type:", action.type);
     switch (action.type) {
       case 'delete-layer':
         deleteLayer(action.index);
@@ -251,26 +280,182 @@ function App() {
     }
   }, [deleteLayer, deleteColumn, handleUpdateThumbnail, handleClearClip]);
 
+  const handleClipContextMenuCommand = useCallback(({ command, layerIndex, colIndex }) => {
+    console.log(`Received clip context command: ${command} for clip L${layerIndex} C${colIndex}`);
+    switch (command) {
+      case 'update-thumbnail':
+        handleUpdateThumbnail(layerIndex, colIndex);
+        break;
+      case 'cut-clip':
+        console.log(`Cut clip L${layerIndex} C${colIndex}`);
+        // Implement cut logic here
+        break;
+      case 'copy-clip':
+        console.log(`Copy clip L${layerIndex} C${colIndex}`);
+        // Implement copy logic here
+        break;
+      case 'paste-clip':
+        console.log(`Paste clip L${layerIndex} C${colIndex}`);
+        // Implement paste logic here
+        break;
+      case 'rename-clip':
+        console.log(`Rename clip L${layerIndex} C${colIndex}`);
+        // Implement rename logic here
+        break;
+      case 'clear-clip':
+        handleClearClip(layerIndex, colIndex);
+        break;
+      default:
+        console.log(`Unknown clip context command: ${command}`);
+    }
+  }, [handleUpdateThumbnail, handleClearClip]);
+
+  const handleRenderSettingsCommand = useCallback(({ setting, value }) => {
+    console.log(`Received render settings command: ${setting} with value ${value}`);
+    switch (setting) {
+      case 'showBeamEffect':
+        setShowBeamEffect(value);
+        break;
+      case 'beamAlpha':
+        setBeamAlpha(value);
+        break;
+      case 'fadeAlpha':
+        setFadeAlpha(value);
+        break;
+      case 'drawSpeed':
+        setDrawSpeed(value);
+        break;
+      default:
+        console.log(`Unknown render setting: ${setting}`);
+    }
+  }, []);
+
+  const handleClearColumnClips = useCallback((colIndex) => {
+    setClipContents(prevContents => {
+      const newContents = prevContents.map(layer => {
+        const newLayer = [...layer];
+        newLayer[colIndex] = null;
+        return newLayer;
+      });
+      return newContents;
+    });
+    setClipNames(prevNames => {
+      const newNames = prevNames.map((layer, layerIndex) => {
+        const newLayer = [...layer];
+        newLayer[colIndex] = `Clip ${layerIndex + 1}-${colIndex + 1}`;
+        return newLayer;
+      });
+      return newNames;
+    });
+    setThumbnailFrameIndexes(prevIndexes => {
+      const newIndexes = prevIndexes.map(layer => {
+        const newLayer = [...layer];
+        newLayer[colIndex] = 0;
+        return newLayer;
+      });
+      return newIndexes;
+    });
+    setActiveClipIndexes(prevActive => {
+      const newActive = [...prevActive];
+      // If any layer had an active clip in this column, deactivate it
+      return newActive.map(activeCol => (activeCol === colIndex ? null : activeCol));
+    });
+    // Clear IldaPlayer if any clip in the cleared column was being previewed
+    if (selectedColIndex === colIndex) {
+      setIldaFrames([]);
+      setIldaPlayerCurrentFrameIndex(0);
+    }
+  }, [selectedColIndex, setIldaFrames, setIldaPlayerCurrentFrameIndex]);
+
+  const handleColumnHeaderClipContextMenuCommand = useCallback(({ command, colIndex }) => {
+    if (command === 'clear-column-clips') {
+      handleClearColumnClips(colIndex);
+      return;
+    }
+
+    if (selectedLayerIndex !== null && selectedColIndex !== null) {
+      console.log(`Received column header clip context command: ${command} for selected clip L${selectedLayerIndex} C${selectedColIndex}`);
+      switch (command) {
+        case 'update-thumbnail':
+          handleUpdateThumbnail(selectedLayerIndex, selectedColIndex);
+          break;
+        case 'cut-clip':
+          console.log(`Cut selected clip L${selectedLayerIndex} C${selectedColIndex}`);
+          // Implement cut logic here
+          break;
+        case 'copy-clip':
+          console.log(`Copy selected clip L${selectedLayerIndex} C${selectedColIndex}`);
+          // Implement copy logic here
+          break;
+        case 'paste-clip':
+          console.log(`Paste selected clip L${selectedLayerIndex} C${selectedColIndex}`);
+          // Implement paste logic here
+          break;
+        case 'rename-clip':
+          console.log(`Rename selected clip L${selectedLayerIndex} C${selectedColIndex}`);
+          // Implement rename logic here
+          break;
+        case 'clear-clip':
+          handleClearClip(selectedLayerIndex, selectedColIndex);
+          break;
+        default:
+          console.log(`Unknown column header clip context command: ${command}`);
+      }
+    } else {
+      console.log(`No clip selected for column header clip context command: ${command}`);
+    }
+  }, [selectedLayerIndex, selectedColIndex, handleUpdateThumbnail, handleClearClip, handleClearColumnClips]);
+
+  const handleLayerFullContextMenuCommand = useCallback((command, layerIndex) => {
+    console.log(`Received layer full context command: ${command} for layer: ${layerIndex}`);
+    switch (command) {
+      case 'layer-new':
+        addLayer();
+        break;
+      case 'layer-insert-above':
+        console.log(`Insert layer above index ${layerIndex}`);
+        // Implement insert above logic here
+        break;
+      case 'layer-insert-below':
+        console.log(`Insert layer below index ${layerIndex}`);
+        // Implement insert below logic here
+        break;
+      case 'layer-rename':
+        console.log(`Rename layer at index ${layerIndex}`);
+        // Implement rename logic here
+        break;
+      case 'layer-clear-clips':
+        handleClearLayerClips(layerIndex);
+        break;
+      case 'layer-delete':
+        deleteLayer(layerIndex);
+        break;
+      default:
+        console.log(`Unknown layer full context command: ${command}`);
+    }
+  }, [addLayer, deleteLayer, handleClearLayerClips]);
+
   useEffect(() => {
     if (window.electronAPI) {
       const cleanupMenu = window.electronAPI.onMenuAction(handleMenuAction);
       const cleanupContext = window.electronAPI.onContextMenuActionFromMain(handleContextMenuAction);
+      const cleanupClipContext = window.electronAPI.onClipContextMenuCommand(handleClipContextMenuCommand);
+      const cleanupRenderSettings = window.electronAPI.onRenderSettingsCommand(handleRenderSettingsCommand);
+      const cleanupColumnHeaderClipContext = window.electronAPI.onColumnHeaderClipContextMenuCommand(handleColumnHeaderClipContextMenuCommand);
+      const cleanupLayerFullContext = window.electronAPI.onLayerFullContextMenuCommand(handleLayerFullContextMenuCommand);
 
       return () => {
         cleanupMenu();
         cleanupContext();
+        cleanupClipContext();
+        cleanupRenderSettings();
+        cleanupColumnHeaderClipContext();
+        cleanupLayerFullContext();
       };
     }
-  }, [handleMenuAction, handleContextMenuAction]);
+  }, [handleMenuAction, handleContextMenuAction, handleClipContextMenuCommand, handleRenderSettingsCommand, handleColumnHeaderClipContextMenuCommand, handleLayerFullContextMenuCommand, selectedLayerIndex, selectedColIndex]);
 
-  useEffect(() => {
-    if (ildaFrames.length > 1) {
-        const interval = setInterval(() => {
-            setCurrentFrameIndex(prevIndex => (prevIndex + 1) % ildaFrames.length);
-        }, 100); // Change frame every 100ms
-        return () => clearInterval(interval);
-    }
-  }, [ildaFrames]);
+  
 
   const activeClipsData = layers.map((_, layerIndex) => {
     const activeColIndex = activeClipIndexes[layerIndex];
@@ -291,7 +476,7 @@ function App() {
         <LaserOnOffButton />
         <div className="column-headers-container">
           {columns.map((colName, colIndex) => (
-            <ColumnHeader key={colIndex} name={colName} />
+            <ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
           ))}
         </div>
       </div>
@@ -311,6 +496,8 @@ function App() {
                   layerIndex={layerIndex}
                   layerEffects={layerEffects[layerIndex]}
                   activeClipData={activeClipDataForLayer}
+                  onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
+                  onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
                 />
                 {columns.map((colName, colIndex) => (
                   <Clip
@@ -338,11 +525,13 @@ function App() {
       <div className="bottom-panel">
         <IldaPlayer
           ildaFrames={ildaFrames}
-          currentFrameIndex={currentFrameIndex}
           showBeamEffect={showBeamEffect}
           beamAlpha={beamAlpha}
           fadeAlpha={fadeAlpha}
           drawSpeed={drawSpeed}
+          onFrameChange={(frameIndex) => {
+            setIldaPlayerCurrentFrameIndex(frameIndex);
+            }}
         />
 		<FileBrowser onDropIld={handleDropGenerator} />
         <GeneratorPanel />

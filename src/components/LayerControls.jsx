@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData }) => {
+const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
 
   // Update internal state when layerEffects prop changes
@@ -12,8 +12,8 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
   const handleContextMenu = (e) => {
     e.preventDefault();
     console.log(`Right-clicked LayerControls at index: ${index}`);
-    if (window.electronAPI) {
-      window.electronAPI.sendContextMenuAction({ type: 'delete-layer', index: index });
+    if (onShowLayerFullContextMenu) {
+      onShowLayerFullContextMenu(index);
     }
   };
 
@@ -42,7 +42,7 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
       onDrop={handleDrop}
     >
       <div className="layer-control-row grid-layer">
-        <span className="layer-control-button full-height">X</span>
+        <span className="layer-control-button full-height" onClick={() => onDeactivateLayerClips(index)}>X</span>
         <div className="layer-control-group">
           <span className="layer-control-button half-height">B</span>
           <span className="layer-control-button half-height">S</span>

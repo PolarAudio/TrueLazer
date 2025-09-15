@@ -1,43 +1,50 @@
 import React, { useEffect, useRef } from 'react';
 
-const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed }) => {
+const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed, onFrameChange }) => {
   const canvasRef = useRef(null);
   const animationFrameId = useRef(null);
-
-  const frame = ildaFrames && ildaFrames[currentFrameIndex] ? ildaFrames[currentFrameIndex] : null;
+  const lastUpdateTime = useRef(0);
+  const currentFrameIndexRef = useRef(0);
 
   useEffect(() => {
-    if (!canvasRef.current || !frame || !frame.points || frame.points.length === 0) {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = 'black';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-      return;
-    }
-
     const canvas = canvasRef.current;
+    if (!canvas) return;
+
     const ctx = canvas.getContext('2d');
     const { width, height } = canvas;
 
-    // Clear canvas for new frame
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, width, height);
-
     let pointIndex = 0;
-    // Initialize lastX, lastY to the center of the ILDA coordinate system (0,0)
-    // which maps to the center of the canvas.
     let lastX = ((0 + 32768) / 65535) * width;
     let lastY = height - (((0 + 32768) / 65535) * height);
-    let wasPenUp = true; // Track if the pen was up before the current point
+    let wasPenUp = true;
 
-    const renderSegment = () => {
-      // Apply fading effect once per animation frame
-      ctx.globalAlpha = fadeAlpha; // Use fadeAlpha prop
+    const animate = (currentTime) => {
+      // Clear canvas at the beginning of each frame
       ctx.fillStyle = 'black';
       ctx.fillRect(0, 0, width, height);
-      ctx.globalAlpha = 0.13;
+
+      if (!ildaFrames || ildaFrames.length === 0) {
+        animationFrameId.current = requestAnimationFrame(animate);
+        return;
+      }
+
+      if (!lastUpdateTime.current) lastUpdateTime.current = currentTime;
+      const deltaTime = currentTime - lastUpdateTime.current;
+
+      const frameUpdateInterval = 100; // milliseconds per frame
+      if (deltaTime >= frameUpdateInterval) {
+        currentFrameIndexRef.current = (currentFrameIndexRef.current + 1) % ildaFrames.length;
+        lastUpdateTime.current = currentTime;
+        if (onFrameChange) {
+          onFrameChange(currentFrameIndexRef.current);
+        }
+      }
+
+      const frame = ildaFrames[currentFrameIndexRef.current];
+      if (!frame || !frame.points) {
+        animationFrameId.current = requestAnimationFrame(animate);
+        return;
+      }
 
       // Number of segments to draw per animation frame (for performance)
       // const drawSpeed = 1000; // Old hardcoded value
@@ -64,7 +71,7 @@ const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, 
               ctx.beginPath();
               ctx.arc(x, y, 1, 0, Math.PI * 2); // Small circle
               ctx.fill();
-            } else { // Continue drawing a line
+            } else {
               // Draw the beam effect
               if (showBeamEffect) {
                 const centerX = width / 2;
@@ -97,17 +104,17 @@ const IldaPlayer = ({ ildaFrames, currentFrameIndex, showBeamEffect, beamAlpha, 
         pointIndex++;
       }
 
-      animationFrameId.current = requestAnimationFrame(renderSegment);
+      animationFrameId.current = requestAnimationFrame(animate);
     };
 
-    renderSegment();
+    animationFrameId.current = requestAnimationFrame(animate);
 
     return () => {
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
       }
     };
-  }, [frame, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed]); // Add new props to dependencies
+  }, [ildaFrames, showBeamEffect, beamAlpha, fadeAlpha, drawSpeed, onFrameChange]);
 
   return (
     <div className="ilda-player">
