@@ -471,13 +471,17 @@ function App() {
 
       {/* Top Bar */}
       <div className="top-bar">
-        <CompositionControls />
-        <MasterIntensitySlider />
-        <LaserOnOffButton />
-        <div className="column-headers-container">
-          {columns.map((colName, colIndex) => (
-            <ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
-          ))}
+        <div className="top-bar-left-area">
+          <CompositionControls />
+          <MasterIntensitySlider />
+          <LaserOnOffButton />
+        </div>
+        <div className="top-bar-right-area">
+          <div className="column-headers-container">
+            {columns.map((colName, colIndex) => (
+              <ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
+            ))}
+          </div>
         </div>
       </div>
 

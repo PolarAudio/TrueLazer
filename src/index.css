@@ -23,7 +23,6 @@ body {
 
 .top-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   padding: 10px;
   background-color: #20232a;
@@ -472,4 +471,25 @@ input[type="checkbox"]:checked:before {
 
 .clip.active-clip {
   outline: 2px solid red; /* Red outline for active clip */
+}
+
+.top-bar-left-area {
+  width: 250px; /* Same width as layer controls */
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-right: 10px;
+}
+
+.top-bar-right-area {
+  flex-grow: 1;
+  display: flex;
+}
+
+.column-headers-container {
+  display: flex;
+  flex-grow: 1;
+  justify-content: flex-start; /* Align to start */
+  margin-left: 10px; /* Adjust as needed */
+  margin-right: 10px; /* Adjust as needed */
 }
