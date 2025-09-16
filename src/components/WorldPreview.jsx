@@ -149,7 +149,7 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, drawSpe
   return (
     <div className="world-preview">
       <h3>World Preview</h3>
-      <canvas ref={canvasRef} width="250" height="250" style={{ backgroundColor: 'black' }} />
+      <canvas ref={canvasRef} width="300" height="300" style={{ backgroundColor: 'black' }} />
     </div>
   );
 };

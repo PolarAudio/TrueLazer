@@ -527,6 +527,12 @@ function App() {
 
       {/* Bottom Panel for Previews */}
       <div className="bottom-panel">
+		<FileBrowser onDropIld={handleDropGenerator} />
+        <GeneratorPanel />
+        <EffectPanel />
+        <DacPanel dacs={dacs} />
+      </div>
+	  <div className="side-panel">
         <IldaPlayer
           ildaFrames={ildaFrames}
           showBeamEffect={showBeamEffect}
@@ -537,10 +543,6 @@ function App() {
             setIldaPlayerCurrentFrameIndex(frameIndex);
             }}
         />
-		<FileBrowser onDropIld={handleDropGenerator} />
-        <GeneratorPanel />
-        <EffectPanel />
-        <DacPanel dacs={dacs} />
         <WorldPreview
           worldData={activeClipsData}
           showBeamEffect={showBeamEffect}

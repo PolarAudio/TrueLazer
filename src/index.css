@@ -7,14 +7,27 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: #282c34;
   color: white;
+  overflow: hidden;
 }
-
 #root {
   display: flex;
   flex-direction: column;
   height: 100vh;
 }
-
+h3 {
+  z-index: 2;
+  margin: 0;
+  margin-bottom: 0,5rem;
+}
+p1 {
+  margin: 0;
+  display: block;
+  margin-block-start: .2rem;
+  margin-block-end: .2rem;
+  margin-inline-start: 0px;
+  margin-inline-end: 0px;
+  unicode-bidi: isolate;
+}
 .app {
   display: flex;
   flex-direction: column;
@@ -22,17 +35,22 @@ body {
 }
 
 .top-bar {
-  display: flex;
+  display: grid;
   align-items: center;
-  padding: 10px;
+  padding: 5px;
+  padding-right: 11px;
   background-color: #20232a;
   border-bottom: 1px solid #3a3f47;
+  grid-template-columns: 240px auto;
+  max-width: 95rem;
 }
 
 .main-content {
   display: flex;
   flex-grow: 1;
   overflow: hidden; /* Hide overflow from clip-deck scrolling */
+  max-height: 34.1rem;
+  max-width: 96rem;
 }
 
 .left-panel {
@@ -50,15 +68,10 @@ body {
   display: flex;
   flex-direction: column;
   flex-grow: 1;
-  overflow-x: auto; /* Allow horizontal scrolling for columns */
-}
-
-.column-headers-container {
-  display: flex;
-  flex-grow: 1;
-  justify-content: space-around; /* Distribute space evenly */
-  margin-left: 10px; /* Adjust as needed */
-  margin-right: 10px; /* Adjust as needed */
+  overflow-x: hidden; /* Allow horizontal scrolling for columns */
+  overflow-y: auto;
+  scrollbar-color: #555 #eee;
+  scrollbar-width: thin;
 }
 
 .column-header {
@@ -111,30 +124,30 @@ body {
   display: flex;
   justify-content: space-around;
   align-items: flex-start;
-  padding: 10px;
   background-color: #20232a;
   border-top: 1px solid #3a3f47;
-  height: 37.5vh;
-}
-
-
-
-.ilda-player canvas,
-.world-preview .preview-area {
+  height: 40vh;
+  position: fixed;
+  top: 36.5rem;
   width: 100%;
-  height: 100%;
-  display: block;
-  background-color: black; /* Ensure canvas background is black */
 }
-
-
+.side-panel {
+  align-items: flex-start;
+  background-color: #20232a;
+  height: 100%;
+  position: fixed;
+  right: 0;
+  width: 24rem;
+  max-height: 36.6rem
+}
 
 /* Styles for the Laser On/Off Button (checkbox) */
 .container {
-	width: 46%;
-	height: 2rem;
+	position: absolute;
+	width: 75px;
+	left: 168px;
+	top: 2px;
 	border-radius: 0.3em;
-	position: relative;
 }
 input[type="checkbox"] {
 	-webkit-appearance: none;
@@ -142,7 +155,7 @@ input[type="checkbox"] {
 	appearance: none;
 	cursor: pointer;
 	outline: none;
-	height: 31px;
+	height: 27px;
 	width: 72px;
 	background-color: #000000;
 	-webkit-transition: 0.3s;
@@ -155,7 +168,7 @@ input[type="checkbox"]:before {
 	content: "OFF";
 	position: absolute;
 	width: 2.75em;
-	height: 31px;
+	height: 27px;
 	background-color: #3a3f47;
 	color: #fff;
 	left: 0.14em;
@@ -234,7 +247,10 @@ input[type="checkbox"]:checked:before {
   padding-left: 5px;
 }
 .master-intensity-slider {
-  width: 5rem;
+  width: 4rem;
+  position: absolute;
+  left: 102px;
+  top: 8.5px;
 }
 .slider {
 	width: 100%;
@@ -246,7 +262,7 @@ input[type="checkbox"]:checked:before {
   border: 1px solid #3a3f47;
   cursor: pointer;
   text-align: center;
-  font-size: 0.8em;
+  font-size: 1em;
   border-radius: 5px;
 }
 
@@ -347,8 +363,33 @@ input[type="checkbox"]:checked:before {
   height: 100%;
   display: block;
 }
+.ilda-player canvas,
+.world-preview canvas {
+  display: block;
+  aspect-ratio: 1 / 1;
+  position: absolute;
+  border-radius: 10px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-height: 100%;
+}
 .ilda-player,
-.world-preview,
+.world-preview {
+  background-color: #000;
+  border: 1px solid #3a3f47;
+  padding: 10px;
+  border-radius: 10px;
+  margin: 5px;
+  display: grid;
+  justify-content: center;
+  text-align: center;
+  width: 90%;
+  aspect-ratio: 11.7 / 9;
+  position: relative;
+  overflow: hidden;
+}
+
 .file-browser,
 .generator-panel,
 .effect-panel,
@@ -362,7 +403,8 @@ input[type="checkbox"]:checked:before {
   flex-direction: column;
   border-radius: 10px;
   margin: 5px;
-  height: 95%;
+  height: 92%;
+  text-align: center;
 }
 
 
@@ -372,11 +414,12 @@ input[type="checkbox"]:checked:before {
   border: none;
   padding: 8px 15px;
   cursor: pointer;
-  margin-bottom: 10px;
+  margin-bottom: 5px;
+  border-radius: 5px;
 }
 
 .ild-file-list {
-  max-height: 200px;
+  max-height: 100%;
   overflow-y: auto;
   border: 1px solid #3a3f47;
   padding: 5px;
@@ -451,20 +494,6 @@ input[type="checkbox"]:checked:before {
   flex-shrink: 0;
 }
 
-.bottom-panel {
-  display: flex;
-  justify-content: space-around;
-  align-items: flex-start;
-  padding: 10px;
-  background-color: #20232a;
-  border-top: 1px solid #3a3f47;
-  height: 37.5vh;
-  position: fixed;
-  bottom: 0;
-}
-
-
-
 .clip.selected-clip {
   outline: 2px solid #007bff; /* Blue outline for selected clip */
 }
@@ -474,22 +503,21 @@ input[type="checkbox"]:checked:before {
 }
 
 .top-bar-left-area {
-  width: 250px; /* Same width as layer controls */
+  width: 100%; /* Same width as layer controls */
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-right: 10px;
 }
 
 .top-bar-right-area {
-  flex-grow: 1;
   display: flex;
+  overflow-x: hidden;
 }
 
 .column-headers-container {
   display: flex;
   flex-grow: 1;
   justify-content: flex-start; /* Align to start */
-  margin-left: 10px; /* Adjust as needed */
   margin-right: 10px; /* Adjust as needed */
+  margin-left: 1px;
 }

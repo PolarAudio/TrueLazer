@@ -119,7 +119,7 @@ const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, fadeAlpha, drawSpee
   return (
     <div className="ilda-player">
       <h3>Selected Preview</h3>
-      <canvas ref={canvasRef} width="250" height="250" style={{ backgroundColor: 'black' }} />
+      <canvas ref={canvasRef} width="300" height="300" style={{ backgroundColor: 'black' }} />
     </div>
   );
 };
