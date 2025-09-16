@@ -124,7 +124,7 @@ p1 {
 }
 
 .clip {
-  min-width: 150px; /* Fixed width for clips */
+  width: 150px; /* Fixed width for clips */
   height: 100px; /* Fixed height for clips */
   margin-left: 2px;
   margin-right: 2px;

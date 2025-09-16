@@ -53,7 +53,7 @@ function App() {
   ]);
 
   const [ildaFrames, setIldaFrames] = useState([]);
-  const [ildaPlayerCurrentFrameIndex, setIldaPlayerCurrentFrameIndex] = useState(0);
+  const ildaPlayerCurrentFrameIndex = useRef(0);
   const animationFrameId = useRef(null);
 
   // New state for rendering settings
@@ -64,6 +64,11 @@ function App() {
 
   // New state for active clips (one per layer)
   const [activeClipIndexes, setActiveClipIndexes] = useState(Array(layers.length).fill(null));
+
+  const handleFrameChange = useCallback((frameIndex) => {
+    ildaPlayerCurrentFrameIndex.current = frameIndex;
+  }, []);
+
   const showNotification = useCallback((message) => {
     setNotification({ message, visible: true });
     setTimeout(() => {
@@ -144,9 +149,9 @@ function App() {
     // Clear IldaPlayer if the cleared clip was the one being previewed
     if (selectedLayerIndex === layerIndex && selectedColIndex === colIndex) {
       setIldaFrames([]);
-      setIldaPlayerCurrentFrameIndex(0);
+      ildaPlayerCurrentFrameIndex.current = 0;
     }
-  }, [selectedLayerIndex, selectedColIndex, clipContents, clipNames, thumbnailFrameIndexes, activeClipIndexes, setIldaPlayerCurrentFrameIndex]);
+  }, [selectedLayerIndex, selectedColIndex, clipContents, clipNames, thumbnailFrameIndexes, activeClipIndexes]);
 
   const handleClearLayerClips = useCallback((layerIndex) => {
     for (let colIndex = 0; colIndex < columns.length; colIndex++) {
@@ -177,10 +182,10 @@ function App() {
   const handleUpdateThumbnail = useCallback((layerIndex, colIndex) => {
     setThumbnailFrameIndexes(prevIndexes => {
       const newIndexes = [...prevIndexes];
-      newIndexes[layerIndex][colIndex] = ildaPlayerCurrentFrameIndex;
+      newIndexes[layerIndex][colIndex] = ildaPlayerCurrentFrameIndex.current;
       return newIndexes;
     });
-  }, [ildaPlayerCurrentFrameIndex]);
+  }, []);
 
   
 
@@ -192,7 +197,7 @@ function App() {
     }
     switch (action) {
       case 'render-mode-high-performance':
-        setDrawSpeed(10000); // Example high draw speed
+        setDrawSpeed(5000); // Example high draw speed
         setFadeAlpha(0.05); // Example crisper fade
         break;
       case 'render-mode-low-performance':
@@ -319,9 +324,9 @@ function App() {
     // Clear IldaPlayer if any clip in the cleared column was being previewed
     if (selectedColIndex === colIndex) {
       setIldaFrames([]);
-      setIldaPlayerCurrentFrameIndex(0);
+      ildaPlayerCurrentFrameIndex.current = 0;
     }
-  }, [selectedColIndex, setIldaFrames, setIldaPlayerCurrentFrameIndex]);
+  }, [selectedColIndex, setIldaFrames]);
 
   const handleColumnHeaderClipContextMenuCommand = useCallback(({ command, colIndex }) => {
     if (command === 'clear-column-clips') {
@@ -489,9 +494,7 @@ function App() {
           beamAlpha={beamAlpha}
           fadeAlpha={fadeAlpha}
           drawSpeed={drawSpeed}
-          onFrameChange={(frameIndex) => {
-            setIldaPlayerCurrentFrameIndex(frameIndex);
-            }}
+          onFrameChange={handleFrameChange}
         />
         <WorldPreview
           worldData={activeClipsData}
