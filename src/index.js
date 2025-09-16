@@ -40,24 +40,20 @@ function createWindow() {
     {
       label: 'Layer',
       submenu: [
-        { label: 'New', click: () => { win.webContents.send('menu-action', 'layer-new'); } },
         { label: 'Insert Above', click: () => { win.webContents.send('menu-action', 'layer-insert-above'); } },
         { label: 'Insert Below', click: () => { win.webContents.send('menu-action', 'layer-insert-below'); } },
         { label: 'Rename', click: () => { win.webContents.send('menu-action', 'layer-rename'); } },
         { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'layer-clear-clips'); } },
-        { label: 'Delete', click: () => { win.webContents.send('menu-action', 'layer-delete'); } },
       ],
     },
     {
       label: 'Column',
       submenu: [
-        { label: 'New', click: () => { win.webContents.send('menu-action', 'column-new'); } },
         { label: 'Insert Before', click: () => { win.webContents.send('menu-action', 'column-insert-before'); } },
         { label: 'Insert After', click: () => { win.webContents.send('menu-action', 'column-insert-after'); } },
         { label: 'Duplicate', click: () => { win.webContents.send('menu-action', 'column-duplicate'); } },
         { label: 'Rename', click: () => { win.webContents.send('menu-action', 'column-rename'); } },
         { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'column-clear-clips'); } },
-        { label: 'Remove', click: () => { win.webContents.send('menu-action', 'column-remove'); } },
       ],
     },
     {
@@ -88,7 +84,18 @@ function createWindow() {
       label: 'View',
       submenu: [
         { label: 'Predefined Layouts', click: () => { win.webContents.send('menu-action', 'view-layouts'); } },
-        { label: 'Color Theme', click: () => { win.webContents.send('menu-action', 'view-color-theme'); } },
+                {
+          label: 'Color Theme',
+          submenu: [
+            { label: 'Orange', type: 'radio', checked: true, click: () => { win.webContents.send('menu-action', 'set-theme-orange'); } },
+            { label: 'Yellow', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-yellow'); } },
+            { label: 'Cyan', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-cyan'); } },
+            { label: 'Light Blue', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-light-blue'); } },
+            { label: 'Blue', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-blue'); } },
+            { label: 'Magenta', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-magenta'); } },
+            { label: 'Red', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-red'); } },
+          ]
+        },
         {
           label: 'Render Mode',
           submenu: [
@@ -122,7 +129,6 @@ function createWindow() {
   ipcMain.on('show-layer-context-menu', (event, index) => {
     const layerContextMenu = Menu.buildFromTemplate([
       { label: 'Rename Layer', click: () => win.webContents.send('context-menu-action', { type: 'rename-layer', index: index }) },
-      { label: 'Delete Layer', click: () => win.webContents.send('context-menu-action', { type: 'delete-layer', index: index }) },
     ]);
     layerContextMenu.popup({ window: win });
   });
@@ -130,13 +136,11 @@ function createWindow() {
   ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
     console.log(`Received show-layer-full-context-menu for layer: ${layerIndex}`);
     const layerFullContextMenu = Menu.buildFromTemplate([
-      { label: 'New', click: () => win.webContents.send('layer-full-context-command', 'layer-new', layerIndex) },
       { label: 'Insert Above', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex) },
       { label: 'Insert Below', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex) },
       { type: 'separator' },
       { label: 'Rename', click: () => win.webContents.send('layer-full-context-command', 'layer-rename', layerIndex) },
       { label: 'Clear Clips', click: () => win.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex) },
-      { label: 'Delete', click: () => win.webContents.send('layer-full-context-command', 'layer-delete', layerIndex) },
     ]);
     layerFullContextMenu.popup({ window: win });
   });
@@ -144,7 +148,6 @@ function createWindow() {
   ipcMain.on('show-column-context-menu', (event, index) => {
     const columnContextMenu = Menu.buildFromTemplate([
       { label: 'Rename Column', click: () => win.webContents.send('context-menu-action', { type: 'rename-column', index: index }) },
-      { label: 'Delete Column', click: () => win.webContents.send('context-menu-action', { type: 'delete-column', index: index }) },
     ]);
     columnContextMenu.popup({ window: win });
   });

@@ -22,7 +22,7 @@ const LaserOnOffButton = () => (
 );
 
 function App() {
-  const [columns, setColumns] = useState(Array.from({ length: 13 }, (_, i) => `Col ${i + 1}`));
+  const [columns, setColumns] = useState(Array.from({ length: 8 }, (_, i) => `Col ${i + 1}`));
   const [layers, setLayers] = useState(Array.from({ length: 5 }, (_, i) => `Layer ${i + 1}`));
 
   const initialClipContent = Array(layers.length).fill(null).map(() =>
@@ -71,39 +71,10 @@ function App() {
     }, 3000);
   }, []);
 
-  const addLayer = useCallback(() => {
-    setLayers(prevLayers => [...prevLayers, `Layer ${prevLayers.length + 1}`]);
-    setClipContents(prevContents => [...prevContents, Array(columns.length).fill(null)]);
-    setLayerEffects(prevEffects => [...prevEffects, []]);
-    setActiveClipIndexes(prevActive => [...prevActive, null]);
-    setClipNames(prevNames => [...prevNames, Array(columns.length).fill(null).map((_, colIndex) => `Clip ${layers.length + 1}-${colIndex + 1}`)]);
-    setThumbnailFrameIndexes(prevIndexes => [...prevIndexes, Array(columns.length).fill(0)]);
-  }, [columns.length, layers.length]);
-
-  const deleteLayer = useCallback((indexToDelete) => {
-    setLayers(prevLayers => prevLayers.filter((_, index) => index !== indexToDelete));
-    setClipContents(prevContents => prevContents.filter((_, index) => index !== indexToDelete));
-    setLayerEffects(prevEffects => prevEffects.filter((_, index) => index !== indexToDelete));
-    setActiveClipIndexes(prevActive => prevActive.filter((_, index) => index !== indexToDelete));
-    setClipNames(prevNames => prevNames.filter((_, index) => index !== indexToDelete));
-    setThumbnailFrameIndexes(prevIndexes => prevIndexes.filter((_, index) => index !== indexToDelete));
-  }, []);
-
-  const addColumn = useCallback(() => {
-    setColumns(prevColumns => [...prevColumns, `Col ${prevColumns.length + 1}`]);
-    setClipContents(prevContents => prevContents.map(layer => [...layer, null]));
-    setLayerEffects(prevEffects => prevEffects.map(layer => [...layer, []]));
-    setClipNames(prevNames => prevNames.map((layer, layerIndex) => [...layer, `Clip ${layerIndex + 1}-${columns.length + 1}`]));
-    setThumbnailFrameIndexes(prevIndexes => prevIndexes.map(layer => [...layer, 0]));
-  }, [columns.length]);
-
-  const deleteColumn = useCallback((indexToDelete) => {
-    setColumns(prevColumns => prevColumns.filter((_, index) => index !== indexToDelete));
-    setClipContents(prevContents => prevContents.map(layer => layer.filter((_, index) => index !== indexToDelete)));
-    setLayerEffects(prevEffects => prevEffects.map(layer => layer.filter((_, index) => index !== indexToDelete)));
-    setClipNames(prevNames => prevNames.map(layer => layer.filter((_, index) => index !== indexToDelete)));
-    setThumbnailFrameIndexes(prevIndexes => prevIndexes.map(layer => layer.filter((_, index) => index !== indexToDelete)));
-  }, []);
+  const setTheme = (theme) => {
+    document.documentElement.style.setProperty('--theme-color', `var(--theme-color-${theme})`);
+    document.documentElement.style.setProperty('--theme-color-transparent', `var(--theme-color-${theme}-transparent)`);
+  };
 
   const handleDropEffectOnLayer = useCallback((layerIndex, effectId) => {
     setLayerEffects(prevEffects => {
@@ -214,21 +185,12 @@ function App() {
   
 
   const handleMenuAction = useCallback((action) => {
+    if (action.startsWith('set-theme-')) {
+      const theme = action.substring('set-theme-'.length);
+      setTheme(theme);
+      return;
+    }
     switch (action) {
-      case 'layer-new':
-        addLayer();
-        break;
-      case 'layer-delete':
-        // For simplicity, delete the last layer for now
-        deleteLayer(layers.length - 1);
-        break;
-      case 'column-new':
-        addColumn();
-        break;
-      case 'column-remove':
-        // For simplicity, remove the last column for now
-        deleteColumn(columns.length - 1);
-        break;
       case 'render-mode-high-performance':
         setDrawSpeed(10000); // Example high draw speed
         setFadeAlpha(0.05); // Example crisper fade
@@ -249,21 +211,15 @@ function App() {
       default:
         console.log(`Menu action: ${action}`);
     }
-  }, [addLayer, deleteLayer, addColumn, deleteColumn, layers.length, columns.length, setDrawSpeed, setFadeAlpha, setShowBeamEffect, selectedLayerIndex, selectedColIndex, handleClearClip]);
+  }, [layers.length, columns.length, setDrawSpeed, setFadeAlpha, setShowBeamEffect, selectedLayerIndex, selectedColIndex, handleClearClip]);
 
   const handleContextMenuAction = useCallback((action) => {
     console.log(`Received context menu action: ${JSON.stringify(action)}`);
     console.log("Context menu action type:", action.type);
     switch (action.type) {
-      case 'delete-layer':
-        deleteLayer(action.index);
-        break;
       case 'rename-layer':
         console.log(`Rename layer at index ${action.index}`);
         // Implement rename logic here
-        break;
-      case 'delete-column':
-        deleteColumn(action.index);
         break;
       case 'rename-column':
         console.log(`Rename column at index ${action.index}`);
@@ -278,7 +234,7 @@ function App() {
       default:
         console.log(`Context menu action: ${action.type} for index ${action.index}`);
     }
-  }, [deleteLayer, deleteColumn, handleUpdateThumbnail, handleClearClip]);
+  }, [handleUpdateThumbnail, handleClearClip]);
 
   const handleClipContextMenuCommand = useCallback(({ command, layerIndex, colIndex }) => {
     console.log(`Received clip context command: ${command} for clip L${layerIndex} C${colIndex}`);
@@ -409,9 +365,6 @@ function App() {
   const handleLayerFullContextMenuCommand = useCallback((command, layerIndex) => {
     console.log(`Received layer full context command: ${command} for layer: ${layerIndex}`);
     switch (command) {
-      case 'layer-new':
-        addLayer();
-        break;
       case 'layer-insert-above':
         console.log(`Insert layer above index ${layerIndex}`);
         // Implement insert above logic here
@@ -427,13 +380,10 @@ function App() {
       case 'layer-clear-clips':
         handleClearLayerClips(layerIndex);
         break;
-      case 'layer-delete':
-        deleteLayer(layerIndex);
-        break;
       default:
         console.log(`Unknown layer full context command: ${command}`);
     }
-  }, [addLayer, deleteLayer, handleClearLayerClips]);
+  }, [handleClearLayerClips]);
 
   useEffect(() => {
     if (window.electronAPI) {

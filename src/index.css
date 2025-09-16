@@ -1,3 +1,24 @@
+:root {
+  --theme-color-orange: #ff5e00;
+  --theme-color-yellow: #ffd400;
+  --theme-color-cyan: #00fff3;
+  --theme-color-light-blue: #0089ff;
+  --theme-color-blue: #005aff;
+  --theme-color-magenta: #fb00ff;
+  --theme-color-red: #ff0000;
+
+  --theme-color-orange-transparent: #ff5e0038;
+  --theme-color-yellow-transparent: #ffd40038;
+  --theme-color-cyan-transparent: #00fff338;
+  --theme-color-light-blue-transparent: #0089ff38;
+  --theme-color-blue-transparent: #005aff38;
+  --theme-color-magenta-transparent: #fb00ff38;
+  --theme-color-red-transparent: #ff000038;
+
+  --theme-color: var(--theme-color-orange);
+  --theme-color-transparent: var(--theme-color-orange-transparent);
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -38,11 +59,9 @@ p1 {
   display: grid;
   align-items: center;
   padding: 5px;
-  padding-right: 11px;
   background-color: #20232a;
-  border-bottom: 1px solid #3a3f47;
   grid-template-columns: 240px auto;
-  max-width: 95rem;
+  max-width: 96rem;
 }
 
 .main-content {
@@ -68,10 +87,8 @@ p1 {
   display: flex;
   flex-direction: column;
   flex-grow: 1;
-  overflow-x: hidden; /* Allow horizontal scrolling for columns */
-  overflow-y: auto;
-  scrollbar-color: #555 #eee;
-  scrollbar-width: thin;
+  overflow: hidden; /* Allow horizontal scrolling for columns */
+  background: #20232a;
 }
 
 .column-header {
@@ -125,8 +142,7 @@ p1 {
   justify-content: space-around;
   align-items: flex-start;
   background-color: #20232a;
-  border-top: 1px solid #3a3f47;
-  height: 40vh;
+  height: 41vh;
   position: fixed;
   top: 36.5rem;
   width: 100%;
@@ -190,13 +206,12 @@ input[type="checkbox"]:before {
 	border-radius: 5px;
 }
 input[type="checkbox"]:checked {
-	background: -o-linear-gradient(315deg, #ff8100, #ffa75b);
-	background: linear-gradient(135deg, #ff8100, #ffa75b);
+	background: var(--theme-color);
 }
 input[type="checkbox"]:checked:before {
 	content: "ON";
 	left: 1.1em;
-	color: #ff6039;
+	color: var(--theme-color);
 }
 /*end off toggle button*/
 
@@ -259,7 +274,7 @@ input[type="checkbox"]:checked:before {
 
 .layer-control-button {
   padding: 2px 5px;
-  border: 1px solid #3a3f47;
+  outline: 1px solid var(--theme-color);
   cursor: pointer;
   text-align: center;
   font-size: 1em;
@@ -267,7 +282,7 @@ input[type="checkbox"]:checked:before {
 }
 
 .full-height {
-  height: 90%;
+  height: 92%;
   grid-row: span 2;
   place-content: center;
 }
@@ -293,8 +308,9 @@ input[type="checkbox"]:checked:before {
 	grid-column: span 2;
 	background-color: #20232a;
 	color: white;
-	border-color: #313131;
+	border: solid 1px var(--theme-color);
 	border-radius: 5px;
+	cursor: pointer;
 }
 .layer-intensity-slider {
   flex-grow: 1;
@@ -302,6 +318,7 @@ input[type="checkbox"]:checked:before {
   width: 5rem;
   height: 1rem;
   margin-left: 4px;
+  cursor: pointer;
 }
 
 .layer-preview-thumbnail {
@@ -323,8 +340,9 @@ input[type="checkbox"]:checked:before {
   font-weight: bold;
   grid-column: span 3;
   text-align: center;
-  border: solid 1px #313131;
+  outline: solid 1px var(--theme-color);
   border-radius: 5px;
+  cursor: pointer;
 }
 
 .clip-container {
@@ -343,6 +361,7 @@ input[type="checkbox"]:checked:before {
   font-size: 0.8em;
   position: relative;
   overflow: hidden;
+  border-radius: 5px;
 }
 
 .clip-label {
@@ -377,7 +396,7 @@ input[type="checkbox"]:checked:before {
 .ilda-player,
 .world-preview {
   background-color: #000;
-  border: 1px solid #3a3f47;
+  outline: 1px solid var(--theme-color);
   padding: 10px;
   border-radius: 10px;
   margin: 5px;
@@ -397,7 +416,7 @@ input[type="checkbox"]:checked:before {
   flex: 1;
   min-width: 200px;
   background-color: #1a1a1a;
-  border: 1px solid #3a3f47;
+  outline: 1px solid var(--theme-color);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -409,7 +428,7 @@ input[type="checkbox"]:checked:before {
 
 
 .file-browser button {
-  background-color: #4CAF50;
+  background-color: var(--theme-color-transparent);
   color: white;
   border: none;
   padding: 8px 15px;
@@ -423,6 +442,9 @@ input[type="checkbox"]:checked:before {
   overflow-y: auto;
   border: 1px solid #3a3f47;
   padding: 5px;
+  border-radius: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--theme-color) #00000000
 }
 
 .ild-file-item {
@@ -495,11 +517,11 @@ input[type="checkbox"]:checked:before {
 }
 
 .clip.selected-clip {
-  outline: 2px solid #007bff; /* Blue outline for selected clip */
+  
 }
 
 .clip.active-clip {
-  outline: 2px solid red; /* Red outline for active clip */
+  outline: 1px solid var(--theme-color); /* Red outline for active clip */
 }
 
 .top-bar-left-area {
@@ -519,5 +541,5 @@ input[type="checkbox"]:checked:before {
   flex-grow: 1;
   justify-content: flex-start; /* Align to start */
   margin-right: 10px; /* Adjust as needed */
-  margin-left: 1px;
+  margin-left: 5px;
 }
