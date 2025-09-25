@@ -35,11 +35,277 @@ body {
   flex-direction: column;
   height: 100vh;
 }
+
+@media only screen and (min-width: 768px) {
+  /* Styles for tablets and desktops */
+  .top-bar {
+	display: grid;
+	align-items: center;
+	background-color: #20232a;
+	grid-template-columns: 250px auto;
+	position: fixed;
+	height: 3.5%;
+  }
+  .top-bar-left-area {
+	width: 250px; /* Same width as layer controls */
+	height: 3.5%;
+	position: fixed;
+  }
+  .composition-controls {
+	height:95%;
+	display:flex;
+	justify-content: flex-start;
+	align-items: center;
+  }
+  .layer-control-button {
+	padding: 2px 6px;
+	outline: 1px solid var(--theme-color);
+	cursor: pointer;
+	text-align: center;
+	font-size: 1em;
+	border-radius: 5px;
+	align-items: center;
+  }
+  .master-intensity-slider {
+	width: 4rem;
+	position: fixed;
+	left: 102px;
+	top: 0.7%;
+  }
+  .container {
+	position: absolute;
+	width: 75px;
+	height: 95%;
+	left: 168px;
+	top: 0;
+  } 
+  .top-bar-right-area {
+	height: 3.5%;
+	display: flex;
+	max-width: calc(100% - 18rem);
+	overflow-x: hidden;
+	position: absolute;
+	width: calc(100% - 18rem - 250px);
+	left: 250px;
+  }
+  .layer-controls-container {
+	width: 250px;
+	max-height: 565px;
+	background-color: #20232a;
+	border-right: 1px solid #3a3f47;
+	display: flex;
+	flex-direction: column;
+	position: fixed;
+	top: 3.5%;
+	height: 60%;
+	overflow: hidden;
+  }
+  .layer-controls {
+	width: 100%; /* Fixed width to match left-panel */
+	height: 100%; /* Fixed height to match clip height */
+	padding-top: 8px;
+	padding-bottom: 5px;
+	background-color: #20232a;
+	display: grid;
+	grid-template-columns: 38% 7% 53%; /* X and (B&S) */
+	grid-template-rows: 5rem 1rem; /* Rows for X/BS, Blend/I, Preview/Name */
+	align-items: center;
+  }
+  .grid-layer {
+	width: 6rem; /* Match left-panel width */
+	height: 100%; /* Fixed height to match clip height */
+	display: grid;
+	grid-template-columns: 2.9rem 2.9rem; /* X and (B&S) */
+	grid-template-rows: 33% 33% 33%; /* Rows for X/BS, Blend/I, Preview/Name */
+	align-items: center;
+	padding-left: 5px;
+  }
+  .layer-control-row {
+	margin-left: 2px;
+  }
+  .layer-preview-thumbnail {
+	height: 100%;
+	background-color: #000;
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-start;
+	align-items: center;
+	font-size: 0.7em;
+	position: relative;
+	overflow: hidden;
+	margin-left: 5px;
+	border-radius: 5px;
+  }
+  .layer-name-label {
+	font-size: 0.8em;
+	font-weight: bold;
+	grid-column: span 3;
+	text-align: center;
+	outline: solid 1px var(--theme-color);
+	border-radius: 5px;
+	cursor: pointer;
+	margin-top: 3px;
+  }
+  .clip-deck-container {
+	position: fixed;
+	top: 3.5%;
+	left: 250px;
+	display: flex;
+	width: calc(100% - 18rem - 250px);
+  }
+  .clip-deck {
+	display: flex;
+	flex-direction: column;
+	flex-grow: 1;
+	overflow: hidden; /* Allow horizontal scrolling for columns */
+	background: #20232a;
+	max-height: 565px;
+	height: 60%;
+  }
+  .layer-row {
+	display: flex;
+	height: 100%; /* Fixed height for each layer row */
+  }
+  .clip {
+	width: 11.8%; /* Fixed width for clips */
+	height: 101px; /* Fixed height for clips */
+	margin-left: 2px;
+	margin-right: 2px;
+	background-color: #3a3f47;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	align-items: center;
+	padding: 3px;
+	border-radius: 5px;
+	margin-bottom: 4px;
+	margin-top: 2px;
+  }
+  .clip-thumbnail {
+	width: 98%;
+	height: 80px;
+	background-color: #000;
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-start;
+	align-items: center;
+	font-size: 0.8em;
+	position: relative;
+	overflow: hidden;
+	border-radius: 5px;
+  }
+  .side-panel {
+	background-color: #20232a;
+	position: fixed;
+	right: 0;
+	width: 18rem;
+	height: 59%;
+	max-height: 601px;
+	place-items: center;
+  }
+  .ilda-player,
+  .world-preview {
+	background-color: #000;
+	outline: 1px solid var(--theme-color);
+	border-radius: 10px;
+	display: grid;
+	text-align: center;
+	width: 97%;
+	aspect-ratio: 1 / 1;
+	position: relative;
+	overflow: hidden;
+	margin-top: 2px;
+	margin-bottom: 4px;
+	height: 49%;
+  }
+  .middle-bar {
+	bottom: 37.7%;
+	width: 100%;
+	display: grid;
+	background-color: #20232a;
+	grid-template-columns: 240px auto;
+	position: fixed;
+	height: 3.5%;
+	align-items: center;
+  }
+  .middle-bar-left-area {
+	display: flex;
+  }
+  .middle-bar-right-area {
+	display: flex;
+  }
+  .bpm-controls {
+	position: absolute;
+	width: 25%;
+  }
+  .master-speed-slider {
+	position: relative;
+	width: 35%;
+	left: 100%;
+  }
+  .bottom-panel {
+	display: flex;
+	justify-content: space-around;
+	align-items: flex-start;
+	background-color: #20232a;
+	height: 35.7%;
+	position: fixed;
+	bottom: 20px;
+	width: 100%;
+  }
+  .file-browser,
+  .generator-panel,
+  .effect-panel,
+  .dac-panel {
+	min-width: 15%;
+	background-color: #1a1a1a;
+	outline: 1px solid var(--theme-color);
+	display: flex;
+	flex-direction: column;
+	border-radius: 10px;
+	margin-left: 3px;
+	margin-right: 3px;
+	margin-top: 3px;
+	height: 95%;
+	text-align: center;
+  }
+  .column-headers-container {
+	display: flex;
+	flex-grow: 1;
+	justify-content: flex-start; /* Align to start */
+	width: 100%; /* Adjust as needed */
+  }
+  .column-header {
+	min-width: 11.8%;
+	text-align: center;
+	padding: 3px;
+	background-color: #3a3f47;
+	margin-right: 2px;
+	margin-left: 2px;
+	border-radius: 5px;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	align-items: center;
+  }
+}
+
+
+
+
+
+@media only screen and (min-width: 1024px) {
+  /* Styles specifically for larger desktops */
+  
+}
+
 h3 {
   z-index: 2;
   margin: 0;
-  margin-bottom: 0,5rem;
+  margin-bottom: 0.5rem;
 }
+
+
 p1 {
   margin: 0;
   display: block;
@@ -49,29 +315,11 @@ p1 {
   margin-inline-end: 0px;
   unicode-bidi: isolate;
 }
+
 .app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
 }
-
-.top-bar {
-  display: grid;
-  align-items: center;
-  padding: 5px;
-  background-color: #20232a;
-  grid-template-columns: 240px auto;
-  max-width: 96rem;
-}
-
 .main-content {
-  display: flex;
-  flex-grow: 1;
-  overflow: hidden; /* Hide overflow from clip-deck scrolling */
-  max-height: 34.1rem;
-  max-width: 96rem;
 }
-
 .left-panel {
   width: 250px;
   background-color: #20232a;
@@ -83,7 +331,7 @@ p1 {
   overflow-y: auto; /* Allow scrolling if content overflows */
 }
 
-.clip-deck {
+.layer-control {
   display: flex;
   flex-direction: column;
   flex-grow: 1;
@@ -91,100 +339,29 @@ p1 {
   background: #20232a;
 }
 
-.column-header {
-  min-width: 150px;
-  text-align: center;
-  padding: 3px;
-  background-color: #3a3f47;
-  margin-right: 2px;
-  margin-left: 2px;
-  border-radius: 5px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.layer-row {
-  display: flex;
-  height: 110px; /* Fixed height for each layer row */
-}
-
-.layer-controls {
-  width: 250px; /* Fixed width to match left-panel */
-  height: 100px; /* Fixed height to match clip height */
-  padding-top: 5px;
-  padding-bottom: 5px;
-  background-color: #20232a;
-  display: grid;
-  grid-template-columns: 6rem 1.1rem 8rem; /* X and (B&S) */
-  grid-template-rows: 5rem 1rem; /* Rows for X/BS, Blend/I, Preview/Name */
-  gap: 2px;
-  align-items: center;
-}
-
-.clip {
-  width: 150px; /* Fixed width for clips */
-  height: 100px; /* Fixed height for clips */
-  margin-left: 2px;
-  margin-right: 2px;
-  background-color: #3a3f47;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: center;
-  padding: 3px;
-  border-radius: 5px;
-}
-
-.bottom-panel {
-  display: flex;
-  justify-content: space-around;
-  align-items: flex-start;
-  background-color: #20232a;
-  height: 41vh;
-  position: fixed;
-  top: 36.5rem;
-  width: 100%;
-}
-.side-panel {
-  align-items: flex-start;
-  background-color: #20232a;
-  height: 100%;
-  position: fixed;
-  right: 0;
-  width: 24rem;
-  max-height: 36.6rem
-}
-
 /* Styles for the Laser On/Off Button (checkbox) */
-.container {
-	position: absolute;
-	width: 75px;
-	left: 168px;
-	top: 2px;
-	border-radius: 0.3em;
-}
+
 input[type="checkbox"] {
 	-webkit-appearance: none;
 	-moz-appearance: none;
 	appearance: none;
 	cursor: pointer;
 	outline: none;
-	height: 27px;
+	height: 100%;
 	width: 72px;
 	background-color: #000000;
 	-webkit-transition: 0.3s;
 	-o-transition: 0.3s;
 	transition: 0.3s;
 	border-radius: 5px;
+	margin: 0 4px;
 }
 input[type="checkbox"]:before {
 	font-size: 1.5em;
 	content: "OFF";
 	position: absolute;
 	width: 2.75em;
-	height: 27px;
+	height: 100%;
 	background-color: #3a3f47;
 	color: #fff;
 	left: 0.14em;
@@ -204,6 +381,7 @@ input[type="checkbox"]:before {
 	font-weight: 600;
 	letter-spacing: 1px;
 	border-radius: 5px;
+	align-items: center;
 }
 input[type="checkbox"]:checked {
 	background: var(--theme-color);
@@ -220,7 +398,6 @@ input[type="checkbox"]:checked:before {
 	width: 250px;
 	min-height: 37px;
 }
-
 .composition-header-row {
   display: flex;
   align-items: center;
@@ -231,12 +408,10 @@ input[type="checkbox"]:checked:before {
   top: 0;
   z-index: 100;
 }
-
 .composition-controls-top {
   display: flex;
   align-items: center;
 }
-
 .composition-label-button {
   padding: 5px;
   cursor: pointer;
@@ -244,7 +419,6 @@ input[type="checkbox"]:checked:before {
   border-radius: 5px;
   margin-left: 6px;
 }
-
 .comp-control-button {
   padding: 5px;
   cursor: pointer;
@@ -252,58 +426,29 @@ input[type="checkbox"]:checked:before {
   border-radius: 5px;
   margin-left: 4px;
 }
-.grid-layer{
-  width: 5rem; /* Match left-panel width */
-  height: 100%; /* Fixed height to match clip height */
-  display: grid;
-  grid-template-columns: 2.9rem 2.9rem; /* X and (B&S) */
-  grid-template-rows: 33% 33% 33%; /* Rows for X/BS, Blend/I, Preview/Name */
-  align-items: center;
-  padding-left: 5px;
-}
-.master-intensity-slider {
-  width: 4rem;
-  position: absolute;
-  left: 102px;
-  top: 8.5px;
-}
 .slider {
 	width: 100%;
 	height: 100%;
 }
-
-.layer-control-button {
-  padding: 2px 5px;
-  outline: 1px solid var(--theme-color);
-  cursor: pointer;
-  text-align: center;
-  font-size: 1em;
-  border-radius: 5px;
-}
-
 .full-height {
   height: 92%;
   grid-row: span 2;
   place-content: center;
 }
-
 .half-height {
   height: 50%;
 }
-
 .layer-control-group {
   display: flex;
   flex-direction: column;
   height: 100%;
   grid-row: span 2
 }
-
 .layer-control-label {
   width: auto;
   text-align: left;
   font-size: 0.8em;
 }
-
 .layer-blend-dropdown {
 	grid-column: span 2;
 	background-color: #20232a;
@@ -320,55 +465,14 @@ input[type="checkbox"]:checked:before {
   margin-left: 4px;
   cursor: pointer;
 }
-
-.layer-preview-thumbnail {
-  width: 95%;
-  height: 95%;
-  background-color: #000;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: center;
-  font-size: 0.7em;
-  position: relative;
-  overflow: hidden;
-  margin-left: 5px;
-}
-
-.layer-name-label {
-  font-size: 0.8em;
-  font-weight: bold;
-  grid-column: span 3;
-  text-align: center;
-  outline: solid 1px var(--theme-color);
-  border-radius: 5px;
-  cursor: pointer;
-}
-
 .clip-container {
   display: flex;
   flex-grow: 1;
 }
-
-.clip-thumbnail {
-  width: 150px;
-  height: 80px;
-  background-color: #000;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: center;
-  font-size: 0.8em;
-  position: relative;
-  overflow: hidden;
-  border-radius: 5px;
-}
-
 .clip-label {
   font-size: 0.7em;
   cursor: pointer;
 }
-
 .preview-area {
   width: 100%;
   flex-grow: 1;
@@ -376,7 +480,6 @@ input[type="checkbox"]:checked:before {
   margin-top: 10px;
   height: 100%;
 }
-
 .preview-area canvas {
   width: 100%;
   height: 100%;
@@ -393,38 +496,7 @@ input[type="checkbox"]:checked:before {
   transform: translate(-50%, -50%);
   max-height: 100%;
 }
-.ilda-player,
-.world-preview {
-  background-color: #000;
-  outline: 1px solid var(--theme-color);
-  padding: 10px;
-  border-radius: 10px;
-  margin: 5px;
-  display: grid;
-  justify-content: center;
-  text-align: center;
-  width: 90%;
-  aspect-ratio: 11.7 / 9;
-  position: relative;
-  overflow: hidden;
-}
 
-.file-browser,
-.generator-panel,
-.effect-panel,
-.dac-panel {
-  flex: 1;
-  min-width: 200px;
-  background-color: #1a1a1a;
-  outline: 1px solid var(--theme-color);
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  border-radius: 10px;
-  margin: 5px;
-  height: 92%;
-  text-align: center;
-}
 
 
 .file-browser button {
@@ -524,22 +596,6 @@ input[type="checkbox"]:checked:before {
   outline: 1px solid var(--theme-color); /* Red outline for active clip */
 }
 
-.top-bar-left-area {
-  width: 100%; /* Same width as layer controls */
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 
-.top-bar-right-area {
-  display: flex;
-  overflow-x: hidden;
-}
 
-.column-headers-container {
-  display: flex;
-  flex-grow: 1;
-  justify-content: flex-start; /* Align to start */
-  margin-right: 10px; /* Adjust as needed */
-  margin-left: 5px;
-}
+

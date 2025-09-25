@@ -10,6 +10,13 @@ import DacPanel from './components/DacPanel';
 import NotificationPopup from './components/NotificationPopup';
 import IldaPlayer from './components/IldaPlayer';
 import WorldPreview from './components/WorldPreview';
+import BPMControls from './components/BPMControls';
+
+const MasterSpeedSlider = () => (
+  <div className="master-speed-slider">
+    <input type="range" min="0" max="100" defaultValue="50" className="slider" id="masterRange" />
+  </div>
+);
 
 const MasterIntensitySlider = () => (
   <div className="master-intensity-slider">
@@ -197,11 +204,11 @@ function App() {
     }
     switch (action) {
       case 'render-mode-high-performance':
-        setDrawSpeed(5000); // Example high draw speed
+        setDrawSpeed(1000); // Example high draw speed
         setFadeAlpha(0.05); // Example crisper fade
         break;
       case 'render-mode-low-performance':
-        setDrawSpeed(1000); // Example low draw speed
+        setDrawSpeed(100); // Example low draw speed
         setFadeAlpha(0.13); // Example smoother fade
         break;
       case 'toggle-beam-effect':
@@ -423,41 +430,42 @@ function App() {
   return (
     <div className="app">
       <NotificationPopup message={notification.message} visible={notification.visible} />
-
-      {/* Top Bar */}
-      <div className="top-bar">
-        <div className="top-bar-left-area">
-          <CompositionControls />
-          <MasterIntensitySlider />
-          <LaserOnOffButton />
-        </div>
-        <div className="top-bar-right-area">
-          <div className="column-headers-container">
-            {columns.map((colName, colIndex) => (
-              <ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
-            ))}
-          </div>
-        </div>
-      </div>
-
       {/* Main Content Area */}
       <div className="main-content">
-        {/* Clip Deck */}
-        <div className="clip-deck">
+		{/* Top Bar */}
+		<div className="top-bar-left-area">
+			<CompositionControls />
+			<MasterIntensitySlider />
+			<LaserOnOffButton />
+		</div>
+		<div className="top-bar-right-area">
+			<div className="column-headers-container">
+				{columns.map((colName, colIndex) => (
+				<ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
+				))}
+			</div>
+		</div>
+        <div className="layer-controls-container">
           {layers.map((layerName, layerIndex) => {
             const activeColIndex = activeClipIndexes[layerIndex];
             const activeClipDataForLayer = activeColIndex !== null ? clipContents[layerIndex][activeColIndex] : null;
-
             return (
+              <LayerControls
+                key={layerIndex}
+                layerName={layerName}
+                layerIndex={layerIndex}
+                layerEffects={layerEffects[layerIndex]}
+                activeClipData={activeClipDataForLayer}
+                onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
+                onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
+              />
+            );
+          })}
+        </div>
+        <div className="clip-deck-container">
+          <div className="clip-deck">
+            {layers.map((layerName, layerIndex) => (
               <div key={layerIndex} className="layer-row">
-                <LayerControls
-                  layerName={layerName}
-                  layerIndex={layerIndex}
-                  layerEffects={layerEffects[layerIndex]}
-                  activeClipData={activeClipDataForLayer}
-                  onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
-                  onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
-                />
                 {columns.map((colName, colIndex) => (
                   <Clip
                     key={colIndex}
@@ -475,34 +483,43 @@ function App() {
                   />
                 ))}
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
-      </div>
+		<div className="side-panel">
+			<IldaPlayer
+			ildaFrames={ildaFrames}
+			showBeamEffect={showBeamEffect}
+			beamAlpha={beamAlpha}
+			fadeAlpha={fadeAlpha}
+			drawSpeed={drawSpeed}
+			onFrameChange={handleFrameChange}
+			/>
+			<WorldPreview
+			worldData={activeClipsData}
+			showBeamEffect={showBeamEffect}
+			beamAlpha={beamAlpha}
+			fadeAlpha={fadeAlpha}
+			drawSpeed={drawSpeed}
+			/>
+		</div>
+		{/* Middle Bar */}
+		<div className="middle-bar">
+			<div className="middle-bar-left-area">
+				<BPMControls />
+				<MasterSpeedSlider />
+			</div>
+			<div className="middle-bar-right-area">
 
-      {/* Bottom Panel for Previews */}
-      <div className="bottom-panel">
-		<FileBrowser onDropIld={handleDropGenerator} />
-        <GeneratorPanel />
-        <EffectPanel />
-        <DacPanel dacs={dacs} />
-      </div>
-	  <div className="side-panel">
-        <IldaPlayer
-          ildaFrames={ildaFrames}
-          showBeamEffect={showBeamEffect}
-          beamAlpha={beamAlpha}
-          fadeAlpha={fadeAlpha}
-          drawSpeed={drawSpeed}
-          onFrameChange={handleFrameChange}
-        />
-        <WorldPreview
-          worldData={activeClipsData}
-          showBeamEffect={showBeamEffect}
-          beamAlpha={beamAlpha}
-          fadeAlpha={fadeAlpha}
-          drawSpeed={drawSpeed}
-        />
+			</div>
+		</div>
+		{/* Bottom Panel for Previews */}
+		<div className="bottom-panel">
+			<FileBrowser onDropIld={handleDropGenerator} />
+			<GeneratorPanel />
+			<EffectPanel />
+			<DacPanel dacs={dacs} />
+		</div>
       </div>
     </div>
   );

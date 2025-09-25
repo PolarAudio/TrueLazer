@@ -139,20 +139,6 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 
 **Next Steps:**
 
-*	Create that Project in JavaSricpt
-*   Develop the ILDA clip deck and layers:
-*	The Clipdeck will be a layer and column system like in resolume. on the left side a fixed controll/settings window to the right side all collumns with fixed width scrollable if window is to small.
-*	Ontop Of the Clip-deck we add a Composition Label at the left followed by X , B & Master Intensity Slider(Horizontal)matching the 1.5 layout from the bellow settings. in the same row we add the labels for the columns above each column.
-, Above the layer preview window we add a Laser On/Off Button in the same row.
-*	The Settings/Controll area for layers will have Clear Clips (X) Blackout (B) Solo (S) Blend-mode (dropdown) Layer-name and a Intensity Slider(Vertical)
-*	The layout for the Settings Area is 2.5 = 1.25 X(full hight)B&S each half Hight, .25 Intensity Slider, 1 Preview thumbnail active clip. layer name under all the items (this settings window we aplly to each individual layer.)
-*	The Clip-Deck will not scale with the window size it will remain in fixed size to get more space for more columns if needed.
-*	We let the option to add more layer and also more column in the title-bar under the menu point layer & Column. With the option to delete a layer or column by right click its label field.
-*	Each Clip has a Thumbnail Picture that we can update by right click on it. Each inactive Clip is Dark-grey. Each Clip has a label field under the preview.
-*	The Preview Window "Selected Clip Preview" will be previewing what ever we have active selected like layer,clip or composition/world
-*	The World Preview will render all Active Outputs to all Channels 
-*	Integrate a file system to search and look for ild files on our system that we use via drag'n'drop to our clips.
-
 *   Develop the Generator system:
 	We want to drag generators to empty clips to create our own ild clips.
 	Therefore we need a Simple Set of Shape Generators to choose from as base layer that we later can modify with effects.
