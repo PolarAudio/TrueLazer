@@ -438,13 +438,6 @@ function App() {
 			<MasterIntensitySlider />
 			<LaserOnOffButton />
 		</div>
-		<div className="top-bar-right-area">
-			<div className="column-headers-container">
-				{columns.map((colName, colIndex) => (
-				<ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
-				))}
-			</div>
-		</div>
         <div className="layer-controls-container">
           {layers.map((layerName, layerIndex) => {
             const activeColIndex = activeClipIndexes[layerIndex];
@@ -463,7 +456,12 @@ function App() {
           })}
         </div>
         <div className="clip-deck-container">
-          <div className="clip-deck">
+		  <div className="clip-deck">
+			<div className="column-headers-container">
+				{columns.map((colName, colIndex) => (
+				<ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
+				))}
+		    </div>
             {layers.map((layerName, layerIndex) => (
               <div key={layerIndex} className="layer-row">
                 {columns.map((colName, colIndex) => (
