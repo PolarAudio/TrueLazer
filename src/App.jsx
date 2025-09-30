@@ -11,6 +11,7 @@ import NotificationPopup from './components/NotificationPopup';
 import IldaPlayer from './components/IldaPlayer';
 import WorldPreview from './components/WorldPreview';
 import BPMControls from './components/BPMControls';
+import SettingsPanel from './components/SettingsPanel';
 
 const MasterSpeedSlider = () => (
   <div className="master-speed-slider">
@@ -425,7 +426,21 @@ function App() {
         return clipContents[layerIndex][activeColIndex];
     }
     return null;
-  }).filter(Boolean);
+  const handleEffectParameterChange = useCallback((layerIndex, colIndex, effectIndex, paramName, newValue) => {
+    setClipContents(prevContents => {
+      const newContents = [...prevContents];
+      const clip = { ...newContents[layerIndex][colIndex] };
+      if (clip && clip.effects) {
+        const newEffects = [...clip.effects];
+        const effectToUpdate = { ...newEffects[effectIndex] };
+        effectToUpdate.params = { ...effectToUpdate.params, [paramName]: newValue };
+        newEffects[effectIndex] = effectToUpdate;
+        clip.effects = newEffects;
+        newContents[layerIndex][colIndex] = clip;
+      }
+      return newContents;
+    });
+  }, []);
 
   return (
     <div className="app">
@@ -499,6 +514,12 @@ function App() {
 			beamAlpha={beamAlpha}
 			fadeAlpha={fadeAlpha}
 			drawSpeed={drawSpeed}
+			/>
+			<SettingsPanel
+			effects={selectedClipEffects}
+			onParameterChange={handleEffectParameterChange}
+			selectedLayerIndex={selectedLayerIndex}
+			selectedColIndex={selectedColIndex}
 			/>
 		</div>
 		{/* Middle Bar */}
