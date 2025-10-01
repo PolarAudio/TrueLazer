@@ -221,6 +221,15 @@ function createWindow() {
       return [];
     }
   });
+  ipcMain.handle('read-file-as-binary', async (event, filePath) => {
+  try {
+    const buffer = await fs.promises.readFile(filePath);
+    return buffer;
+  } catch (error) {
+    console.error('Error reading file:', error);
+    throw error;
+  }
+  });
 }
 
 app.whenReady().then(() => {

@@ -258,6 +258,7 @@ body {
   .file-browser,
   .generator-panel,
   .effect-panel,
+  .settings-panel,
   .dac-panel {
 	min-width: 15%;
 	background-color: #1a1a1a;
@@ -307,7 +308,7 @@ h3 {
 }
 
 
-p1 {
+.fileBrowser {
   margin: 0;
   display: block;
   margin-block-start: .2rem;

@@ -1,0 +1,150 @@
+const defaultPalette = [
+  { r: 255, g: 0, b: 0 }, { r: 0, g: 255, b: 0 }, { r: 0, g: 0, b: 255 }, { r: 255, g: 255, b: 0 },
+  { r: 0, g: 255, b: 255 }, { r: 255, g: 0, b: 255 }, { r: 255, g: 128, b: 0 }, { r: 128, g: 255, b: 0 },
+  { r: 0, g: 255, b: 128 }, { r: 0, g: 128, b: 255 }, { r: 128, g: 0, b: 255 }, { r: 255, g: 0, b: 128 },
+  { r: 255, g: 255, b: 255 }, { r: 128, g: 128, b: 128 }, { r: 255, g: 128, b: 128 }, { r: 128, g: 255, b: 128 },
+  { r: 128, g: 128, b: 255 }, { r: 255, g: 255, b: 128 }, { r: 128, g: 255, b: 255 }, { r: 255, g: 128, b: 255 },
+];
+
+  while (currentOffset + 32 <= arrayBuffer.byteLength) { // Ensure at least 32 bytes for a header
+    const frameStartOffset = currentOffset;
+
+    // Check for ILDA signature "ILDA"
+    const signature = String.fromCharCode(
+      view.getUint8(frameStartOffset),
+      view.getUint8(frameStartOffset + 1),
+      view.getUint8(frameStartOffset + 2),
+      view.getUint8(frameStartOffset + 3)
+    );
+
+    if (signature !== 'ILDA') {
+      console.warn(`Parser: Invalid ILDA signature at offset ${frameStartOffset}, got: ${signature}. Skipping 32 bytes.`);
+      currentOffset += 32; // Skip this invalid header
+      continue;
+    }
+
+    // Verify format byte
+    const formatCode = view.getUint8(frameStartOffset + 7);
+    if (formatCode > 5) {
+      console.warn(`Parser: Unknown format code: ${formatOffset} at offset ${frameStartOffset}. Skipping 32 bytes.`);
+      currentOffset += 32; // Skip this header and try next
+      continue;
+    }
+
+    const pointCount = view.getUint16(frameStartOffset + 24, false); // Big-endian
+    const frameNumber = view.getUint16(frameStartOffset + 26, false);
+    const totalFrames = view.getUint16(frameStartOffset + 28, false);
+    const projectorNumber = view.getUint8(frameStartOffset + 30); // Usually 0
+
+    // Calculate record size based on format
+    let recordSize;
+    switch (formatCode) {
+      case 0: recordSize = 8; break;  // 3D Indexed Color
+      case 1: recordSize = 6; break;  // 2D Indexed Color  
+      case 2: recordSize = 8; break;  // Color Palette (skip)
+      case 4: recordSize = 10; break; // 3D True Color
+      case 5: recordSize = 8; break;  // 2D True Color
+      default:
+        console.warn(`Parser: Unsupported format ${formatCode}, skipping 32 bytes.`);
+        currentOffset += 32; // Skip this header and try next
+        continue;
+    }
+
+    const pointsDataSize = pointCount * recordSize;
+    const frameTotalSize = 32 + pointsDataSize;
+
+    // Check if we have enough data for all points
+    if (frameStartOffset + frameTotalSize > arrayBuffer.byteLength) {
+      console.warn(`Parser: Incomplete frame data for ${pointCount} points at offset ${frameStartOffset}. Expected ${frameTotalSize} bytes, but only ${arrayBuffer.byteLength - frameStartOffset} bytes remaining. Breaking.`);
+      break; // Not enough data for this frame, stop parsing
+    }
+
+    if (pointCount === 0) {
+      console.log("Parser: Empty frame, skipping");
+      currentOffset += frameTotalSize; // Skip empty frame
+      continue;
+    }
+
+    const points = [];
+    let pointDataOffset = frameStartOffset + 32; // Start of point data for current frame
+    
+    try {
+      for (let i = 0; i < pointCount; i++) {
+        let x, y, z = 0, r, g, b;
+        let statusByte;
+
+        // Read coordinates based on format
+        if (formatCode === 0 || formatCode === 4) { // 3D formats
+          x = view.getInt16(pointDataOffset, false);
+          y = view.getInt16(pointDataOffset + 2, false);
+          z = view.getInt16(pointDataOffset + 4, false);
+          statusByte = view.getUint8(pointDataOffset + 6);
+        } else { // 2D formats
+          x = view.getInt16(pointDataOffset, false);
+          y = view.getInt16(pointDataOffset + 2, false);
+          statusByte = view.getUint8(pointDataOffset + 4);
+        }
+
+        const blanking = (statusByte & 64) === 64;
+        const lastPoint = (statusByte & 128) === 128;
+
+        // Read color data
+        if (formatCode === 0 || formatCode === 1) { // Indexed Color
+          const colorIndex = view.getUint8(pointDataOffset + (formatCode === 0 ? 7 : 5));
+          const color = defaultPalette[colorIndex % defaultPalette.length] || defaultPalette[0];
+          r = color.r;
+          g = color.g;
+          b = color.b;
+        } else if (formatCode === 4 || formatCode === 5) { // True Color formats
+			// FIX: The byte order in ILDA files is typically B, G, R (not R, G, B)
+			b = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
+			g = view.getUint8(pointDataOffset + (formatCode === 4 ? 8 : 6));
+			r = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
+		} else if (formatCode === 2) {
+          // Color table entry - skip
+          pointDataOffset += recordSize;
+          continue;
+        }
+
+        points.push({ 
+          x, y, z, 
+          r: r === undefined ? 255 : r, g: g === undefined ? 255 : g, b: b === undefined ? 255 : b,
+          blanking, 
+          lastPoint 
+        });
+        pointDataOffset += recordSize;
+      }
+    } catch (error) {
+      console.warn("Parser: Error reading points:", error);
+      break;
+    }
+
+    if (points.length > 0) {
+      frames.push({ 
+        frameNumber, 
+        totalFrames, 
+        projectorNumber,
+        points 
+      });
+    }
+    currentOffset += frameTotalSize; // Advance offset by the size of the entire frame
+  }
+  return { frames, error: frames.length === 0 ? 'No valid frames found' : null };
+
+
+self.onmessage = function(e) {
+
+  console.log('[ilda-parser.worker] Message received');
+  const { arrayBuffer, type, fileName } = e.data;
+  
+  if (type === 'parse-ilda') {
+    try {
+      const parsedData = parseIldaFile(arrayBuffer);
+      console.log('[ilda-parser.worker] Posting message back to main thread');
+      self.postMessage({ success: true, data: parsedData, fileName: fileName });
+    } catch (error) {
+      console.error('[ilda-parser.worker] Error parsing file:', error);
+      self.postMessage({ success: false, error: error.message });
+    }
+  }
+};

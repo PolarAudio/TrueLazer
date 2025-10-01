@@ -19,7 +19,7 @@ const FileBrowser = () => {
     <div className="file-browser">
       <h3>ILD File Browser</h3>
       <button onClick={handleOpenExplorer}>Open Folder</button>
-      {selectedDirectory && <p1>Selected Directory: {selectedDirectory.split('\\').filter(Boolean).pop()}</p1>}
+      {selectedDirectory && <p className="fileBrowser">Selected Directory: {selectedDirectory.split('\\').filter(Boolean).pop()}</p>}
       <div className="ild-file-list">
         {ildFiles.length > 0 ? (
           ildFiles.map((filePath, index) => {

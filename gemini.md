@@ -137,8 +137,8 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *   The user can select a DAC and channel from the list.
 *   The SDK is initialized on-demand when communication is required (e.g., sending frames, getting show info), preventing crashes on device selection.
 
-**Next Steps:**
-
+**Next Steps:**	
+	
 *   Develop the Generator system:
 	We want to drag generators to empty clips to create our own ild clips.
 	Therefore we need a Simple Set of Shape Generators to choose from as base layer that we later can modify with effects.

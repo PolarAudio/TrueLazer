@@ -1,10 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
+import { useWorldOptimizer } from '../hooks/useWorldOptimizer';
 
 const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`world-preview-${Math.random()}`);
+  const optimizedWorldData = useWorldOptimizer(worldData);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -18,7 +20,7 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed }) => {
         id: canvasId.current,
         canvas: offscreen,
         type: 'world',
-        data: { worldData, showBeamEffect, beamAlpha, drawSpeed }
+        data: { worldData: optimizedWorldData, showBeamEffect, beamAlpha, drawSpeed }
       }
     }, [offscreen]);
 
@@ -34,10 +36,10 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed }) => {
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { worldData, showBeamEffect, beamAlpha, drawSpeed }
+        data: { worldData: optimizedWorldData, showBeamEffect, beamAlpha, drawSpeed }
       }
     });
-  }, [worker, worldData, showBeamEffect, beamAlpha, drawSpeed]);
+  }, [worker, optimizedWorldData, showBeamEffect, beamAlpha, drawSpeed]);
 
   return (
     <div className="world-preview">

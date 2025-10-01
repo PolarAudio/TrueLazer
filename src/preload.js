@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld(
     openFileExplorer: () => ipcRenderer.invoke('open-file-explorer'),
     readIldFiles: (directoryPath) => ipcRenderer.invoke('read-ild-files', directoryPath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
+	readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
     toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
     toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
   }

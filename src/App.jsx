@@ -12,16 +12,17 @@ import IldaPlayer from './components/IldaPlayer';
 import WorldPreview from './components/WorldPreview';
 import BPMControls from './components/BPMControls';
 import SettingsPanel from './components/SettingsPanel';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const MasterSpeedSlider = () => (
   <div className="master-speed-slider">
-    <input type="range" min="0" max="100" defaultValue="50" className="slider" id="masterRange" />
+    <input type="range" min="0" max="100" defaultValue="50" className="slider" id="masterSpeedRange" />
   </div>
 );
 
 const MasterIntensitySlider = () => (
   <div className="master-intensity-slider">
-    <input type="range" min="0" max="100" defaultValue="50" className="slider" id="masterRange" />
+    <input type="range" min="0" max="100" defaultValue="50" className="slider" id="masterIntensityRange" />
   </div>
 );
 
@@ -62,7 +63,7 @@ function App() {
 
   const [ildaFrames, setIldaFrames] = useState([]);
   const ildaPlayerCurrentFrameIndex = useRef(0);
-  const animationFrameId = useRef(null);
+
 
   // New state for rendering settings
   const [showBeamEffect, setShowBeamEffect] = useState(true);
@@ -89,22 +90,50 @@ function App() {
     document.documentElement.style.setProperty('--theme-color-transparent', `var(--theme-color-${theme}-transparent)`);
   };
 
-  const handleDropEffectOnLayer = useCallback((layerIndex, effectId) => {
+  const handleDropEffectOnLayer = useCallback((layerIndex, effectData) => {
     setLayerEffects(prevEffects => {
       const newEffects = [...prevEffects];
-      newEffects[layerIndex] = [...newEffects[layerIndex], effectId];
+      newEffects[layerIndex] = [...newEffects[layerIndex], effectData];
       return newEffects;
     });
-  }, []);
+  }, [setLayerEffects]);
+  
+  const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectData) => {
+  // Here you can store the effect data with the clip
+  // For example, you might want to add it to clipContents or create a separate state
+  setClipContents(prevContents => {
+    const newContents = [...prevContents];
+    if (!newContents[layerIndex][colIndex]) {
+      newContents[layerIndex][colIndex] = { effects: [] };
+    } else if (!newContents[layerIndex][colIndex].effects) {
+      newContents[layerIndex][colIndex] = {
+        ...newContents[layerIndex][colIndex],
+        effects: []
+      };
+    }
+    
+    newContents[layerIndex][colIndex].effects = [
+      ...(newContents[layerIndex][colIndex].effects || []),
+      effectData
+    ];
+    
+    return newContents;
+  });
+  
+  showNotification(`Effect "${effectData.name}" added to clip`);
+}, [showNotification]);
 
   const handleClipPreview = useCallback((layerIndex, colIndex) => {
     setSelectedLayerIndex(layerIndex);
     setSelectedColIndex(colIndex);
     const clipData = clipContents[layerIndex][colIndex];
+    console.log('handleClipPreview - clipData:', clipData);
     if (clipData && clipData.frames) {
       setIldaFrames(clipData.frames);
+      console.log('handleClipPreview - setting IldaFrames:', clipData.frames.length);
     } else {
       setIldaFrames([]);
+      console.log('handleClipPreview - setting empty IldaFrames');
     }
   }, [clipContents]);
 
@@ -119,17 +148,28 @@ function App() {
   }, []);
 
   const handleDropGenerator = useCallback((layerIndex, colIndex, parsedData, fileName) => {
-    setClipContents(prevContents => {
-      const newContents = [...prevContents];
-      newContents[layerIndex][colIndex] = parsedData;
-      return newContents;
-    });
-    setClipNames(prevNames => {
-        const newNames = [...prevNames];
-        newNames[layerIndex][colIndex] = fileName;
-        return newNames;
-    });
-  }, []);
+  if (!parsedData || !parsedData.frames) {
+    showNotification('Invalid file format');
+    return;
+  }
+  // Check if this is actually effect data
+  if (parsedData && parsedData.type === 'effect') {
+    handleDropEffectOnClip(layerIndex, colIndex, parsedData);
+    return;
+  }
+  
+  // Original ILD file handling
+  setClipContents(prevContents => {
+    const newContents = [...prevContents];
+    newContents[layerIndex][colIndex] = parsedData;
+    return newContents;
+  });
+  setClipNames(prevNames => {
+    const newNames = [...prevNames];
+    newNames[layerIndex][colIndex] = fileName;
+    return newNames;
+  });
+}, [showNotification, handleDropEffectOnClip]);
 
   const handleClearClip = useCallback((layerIndex, colIndex) => {
     setClipContents(prevContents => {
@@ -159,7 +199,7 @@ function App() {
       setIldaFrames([]);
       ildaPlayerCurrentFrameIndex.current = 0;
     }
-  }, [selectedLayerIndex, selectedColIndex, clipContents, clipNames, thumbnailFrameIndexes, activeClipIndexes]);
+  }, [selectedLayerIndex, selectedColIndex, setClipContents, setClipNames, setThumbnailFrameIndexes, setActiveClipIndexes, setIldaFrames]);
 
   const handleClearLayerClips = useCallback((layerIndex) => {
     for (let colIndex = 0; colIndex < columns.length; colIndex++) {
@@ -222,65 +262,36 @@ function App() {
         break;
       // Handle other menu actions as needed
       default:
-        console.log(`Menu action: ${action}`);
     }
   }, [layers.length, columns.length, setDrawSpeed, setFadeAlpha, setShowBeamEffect, selectedLayerIndex, selectedColIndex, handleClearClip]);
 
-  const handleContextMenuAction = useCallback((action) => {
-    console.log(`Received context menu action: ${JSON.stringify(action)}`);
-    console.log("Context menu action type:", action.type);
-    switch (action.type) {
-      case 'rename-layer':
-        console.log(`Rename layer at index ${action.index}`);
-        // Implement rename logic here
-        break;
-      case 'rename-column':
-        console.log(`Rename column at index ${action.index}`);
-        // Implement rename logic here
-        break;
-      case 'update-thumbnail':
-        handleUpdateThumbnail(action.layerIndex, action.colIndex);
-        break;
-      case 'clear-clip':
-        handleClearClip(action.layerIndex, action.colIndex);
-        break;
-      default:
-        console.log(`Context menu action: ${action.type} for index ${action.index}`);
-    }
-  }, [handleUpdateThumbnail, handleClearClip]);
+
 
   const handleClipContextMenuCommand = useCallback(({ command, layerIndex, colIndex }) => {
-    console.log(`Received clip context command: ${command} for clip L${layerIndex} C${colIndex}`);
     switch (command) {
       case 'update-thumbnail':
         handleUpdateThumbnail(layerIndex, colIndex);
         break;
       case 'cut-clip':
-        console.log(`Cut clip L${layerIndex} C${colIndex}`);
-        // Implement cut logic here
+        showNotification('Cut clip not implemented yet');
         break;
       case 'copy-clip':
-        console.log(`Copy clip L${layerIndex} C${colIndex}`);
-        // Implement copy logic here
+        showNotification('Copy clip not implemented yet');
         break;
       case 'paste-clip':
-        console.log(`Paste clip L${layerIndex} C${colIndex}`);
-        // Implement paste logic here
+        showNotification('Paste clip not implemented yet');
         break;
       case 'rename-clip':
-        console.log(`Rename clip L${layerIndex} C${colIndex}`);
-        // Implement rename logic here
+        showNotification('Rename clip not implemented yet');
         break;
       case 'clear-clip':
         handleClearClip(layerIndex, colIndex);
         break;
       default:
-        console.log(`Unknown clip context command: ${command}`);
     }
-  }, [handleUpdateThumbnail, handleClearClip]);
+  }, [handleUpdateThumbnail, handleClearClip, showNotification]);
 
   const handleRenderSettingsCommand = useCallback(({ setting, value }) => {
-    console.log(`Received render settings command: ${setting} with value ${value}`);
     switch (setting) {
       case 'showBeamEffect':
         setShowBeamEffect(value);
@@ -295,7 +306,6 @@ function App() {
         setDrawSpeed(value);
         break;
       default:
-        console.log(`Unknown render setting: ${setting}`);
     }
   }, []);
 
@@ -334,7 +344,7 @@ function App() {
       setIldaFrames([]);
       ildaPlayerCurrentFrameIndex.current = 0;
     }
-  }, [selectedColIndex, setIldaFrames]);
+  }, [selectedColIndex, setIldaFrames, setClipContents, setClipNames, setThumbnailFrameIndexes, setActiveClipIndexes]);
 
   const handleColumnHeaderClipContextMenuCommand = useCallback(({ command, colIndex }) => {
     if (command === 'clear-column-clips') {
@@ -343,65 +353,52 @@ function App() {
     }
 
     if (selectedLayerIndex !== null && selectedColIndex !== null) {
-      console.log(`Received column header clip context command: ${command} for selected clip L${selectedLayerIndex} C${selectedColIndex}`);
       switch (command) {
         case 'update-thumbnail':
           handleUpdateThumbnail(selectedLayerIndex, selectedColIndex);
           break;
         case 'cut-clip':
-          console.log(`Cut selected clip L${selectedLayerIndex} C${selectedColIndex}`);
-          // Implement cut logic here
+          showNotification('Cut clip not implemented yet');
           break;
         case 'copy-clip':
-          console.log(`Copy selected clip L${selectedLayerIndex} C${selectedColIndex}`);
-          // Implement copy logic here
+          showNotification('Copy clip not implemented yet');
           break;
         case 'paste-clip':
-          console.log(`Paste selected clip L${selectedLayerIndex} C${selectedColIndex}`);
-          // Implement paste logic here
+          showNotification('Paste clip not implemented yet');
           break;
         case 'rename-clip':
-          console.log(`Rename selected clip L${selectedLayerIndex} C${selectedColIndex}`);
-          // Implement rename logic here
+          showNotification('Rename clip not implemented yet');
           break;
         case 'clear-clip':
           handleClearClip(selectedLayerIndex, selectedColIndex);
           break;
         default:
-          console.log(`Unknown column header clip context command: ${command}`);
       }
     } else {
-      console.log(`No clip selected for column header clip context command: ${command}`);
     }
-  }, [selectedLayerIndex, selectedColIndex, handleUpdateThumbnail, handleClearClip, handleClearColumnClips]);
+  }, [selectedLayerIndex, selectedColIndex, handleUpdateThumbnail, handleClearClip, handleClearColumnClips, showNotification]);
 
   const handleLayerFullContextMenuCommand = useCallback((command, layerIndex) => {
-    console.log(`Received layer full context command: ${command} for layer: ${layerIndex}`);
     switch (command) {
       case 'layer-insert-above':
-        console.log(`Insert layer above index ${layerIndex}`);
-        // Implement insert above logic here
+        showNotification('Insert layer above not implemented yet');
         break;
       case 'layer-insert-below':
-        console.log(`Insert layer below index ${layerIndex}`);
-        // Implement insert below logic here
+        showNotification('Insert layer below not implemented yet');
         break;
       case 'layer-rename':
-        console.log(`Rename layer at index ${layerIndex}`);
-        // Implement rename logic here
+        showNotification('Rename layer not implemented yet');
         break;
       case 'layer-clear-clips':
         handleClearLayerClips(layerIndex);
         break;
       default:
-        console.log(`Unknown layer full context command: ${command}`);
     }
-  }, [handleClearLayerClips]);
+  }, [handleClearLayerClips, showNotification]);
 
   useEffect(() => {
     if (window.electronAPI) {
       const cleanupMenu = window.electronAPI.onMenuAction(handleMenuAction);
-      const cleanupContext = window.electronAPI.onContextMenuActionFromMain(handleContextMenuAction);
       const cleanupClipContext = window.electronAPI.onClipContextMenuCommand(handleClipContextMenuCommand);
       const cleanupRenderSettings = window.electronAPI.onRenderSettingsCommand(handleRenderSettingsCommand);
       const cleanupColumnHeaderClipContext = window.electronAPI.onColumnHeaderClipContextMenuCommand(handleColumnHeaderClipContextMenuCommand);
@@ -409,14 +406,13 @@ function App() {
 
       return () => {
         cleanupMenu();
-        cleanupContext();
         cleanupClipContext();
         cleanupRenderSettings();
         cleanupColumnHeaderClipContext();
         cleanupLayerFullContext();
       };
     }
-  }, [handleMenuAction, handleContextMenuAction, handleClipContextMenuCommand, handleRenderSettingsCommand, handleColumnHeaderClipContextMenuCommand, handleLayerFullContextMenuCommand, selectedLayerIndex, selectedColIndex]);
+  }, [handleMenuAction, handleClipContextMenuCommand, handleRenderSettingsCommand, handleColumnHeaderClipContextMenuCommand, handleLayerFullContextMenuCommand]);
 
   
 
@@ -426,120 +422,106 @@ function App() {
         return clipContents[layerIndex][activeColIndex];
     }
     return null;
-  const handleEffectParameterChange = useCallback((layerIndex, colIndex, effectIndex, paramName, newValue) => {
-    setClipContents(prevContents => {
-      const newContents = [...prevContents];
-      const clip = { ...newContents[layerIndex][colIndex] };
-      if (clip && clip.effects) {
-        const newEffects = [...clip.effects];
-        const effectToUpdate = { ...newEffects[effectIndex] };
-        effectToUpdate.params = { ...effectToUpdate.params, [paramName]: newValue };
-        newEffects[effectIndex] = effectToUpdate;
-        clip.effects = newEffects;
-        newContents[layerIndex][colIndex] = clip;
-      }
-      return newContents;
-    });
-  }, []);
+  }).filter(Boolean);
 
   return (
     <div className="app">
-      <NotificationPopup message={notification.message} visible={notification.visible} />
-      {/* Main Content Area */}
-      <div className="main-content">
-		{/* Top Bar */}
-		<div className="top-bar-left-area">
-			<CompositionControls />
-			<MasterIntensitySlider />
-			<LaserOnOffButton />
-		</div>
-        <div className="layer-controls-container">
-          {layers.map((layerName, layerIndex) => {
-            const activeColIndex = activeClipIndexes[layerIndex];
-            const activeClipDataForLayer = activeColIndex !== null ? clipContents[layerIndex][activeColIndex] : null;
-            return (
-              <LayerControls
-                key={layerIndex}
-                layerName={layerName}
-                layerIndex={layerIndex}
-                layerEffects={layerEffects[layerIndex]}
-                activeClipData={activeClipDataForLayer}
-                onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
-                onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
-              />
-            );
-          })}
-        </div>
-        <div className="clip-deck-container">
-		  <div className="clip-deck">
-			<div className="column-headers-container">
-				{columns.map((colName, colIndex) => (
-				<ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
-				))}
-		    </div>
-            {layers.map((layerName, layerIndex) => (
-              <div key={layerIndex} className="layer-row">
-                {columns.map((colName, colIndex) => (
-                  <Clip
-                    key={colIndex}
-                    layerIndex={layerIndex}
-                    colIndex={colIndex}
-                    clipName={clipNames[layerIndex][colIndex]}
-                    clipContent={clipContents[layerIndex][colIndex]}
-                    thumbnailFrameIndex={thumbnailFrameIndexes[layerIndex][colIndex]}
-                    onActivateClick={() => handleActivateClick(layerIndex, colIndex)}
-                    isActive={activeClipIndexes[layerIndex] === colIndex}
-                    onUnsupportedFile={showNotification}
-                    onDropGenerator={(parsedData, fileName) => handleDropGenerator(layerIndex, colIndex, parsedData, fileName)}
-                    onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
-                    isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
-                  />
-                ))}
-              </div>
-            ))}
+      <ErrorBoundary>
+        <NotificationPopup message={notification.message} visible={notification.visible} />
+        {/* Main Content Area */}
+        <div className="main-content">
+  		{/* Top Bar */}
+  		<div className="top-bar-left-area">
+  			<CompositionControls />
+  			<MasterIntensitySlider />
+  			<LaserOnOffButton />
+  		</div>
+  		<div className="top-bar-right-area">
+  			<div className="column-headers-container">
+  				{columns.map((colName, colIndex) => (
+  				<ColumnHeader key={colIndex} name={colName} index={colIndex} onShowColumnHeaderContextMenu={() => handleShowColumnHeaderContextMenu(colIndex)} />
+  				))}
+  			</div>
+  		</div>
+          <div className="layer-controls-container">
+            {layers.map((layerName, layerIndex) => {
+              const activeColIndex = activeClipIndexes[layerIndex];
+              const activeClipDataForLayer = activeColIndex !== null ? clipContents[layerIndex][activeColIndex] : null;
+              return (
+                <LayerControls
+                  key={layerIndex}
+                  layerName={layerName}
+                  layerIndex={layerIndex}
+                  layerEffects={layerEffects[layerIndex]}
+                  activeClipData={activeClipDataForLayer}
+                  onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
+                  onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
+                />
+              );
+            })}
           </div>
-        </div>
-		<div className="side-panel">
-			<IldaPlayer
-			ildaFrames={ildaFrames}
-			showBeamEffect={showBeamEffect}
-			beamAlpha={beamAlpha}
-			fadeAlpha={fadeAlpha}
-			drawSpeed={drawSpeed}
-			onFrameChange={handleFrameChange}
-			/>
-			<WorldPreview
-			worldData={activeClipsData}
-			showBeamEffect={showBeamEffect}
-			beamAlpha={beamAlpha}
-			fadeAlpha={fadeAlpha}
-			drawSpeed={drawSpeed}
-			/>
-			<SettingsPanel
-			effects={selectedClipEffects}
-			onParameterChange={handleEffectParameterChange}
-			selectedLayerIndex={selectedLayerIndex}
-			selectedColIndex={selectedColIndex}
-			/>
-		</div>
-		{/* Middle Bar */}
-		<div className="middle-bar">
-			<div className="middle-bar-left-area">
-				<BPMControls />
-				<MasterSpeedSlider />
-			</div>
-			<div className="middle-bar-right-area">
+          <div className="clip-deck-container">
+            <div className="clip-deck">
+              {layers.map((layerName, layerIndex) => (
+                <div key={layerIndex} className="layer-row">
+                  {columns.map((colName, colIndex) => (
+                    <Clip
+  					key={colIndex}
+  					layerIndex={layerIndex}
+  					colIndex={colIndex}
+  					clipName={clipNames[layerIndex][colIndex]}
+  					clipContent={clipContents[layerIndex][colIndex]}
+  					thumbnailFrameIndex={thumbnailFrameIndexes[layerIndex][colIndex]}
+  					onActivateClick={() => handleActivateClick(layerIndex, colIndex)}
+  					isActive={activeClipIndexes[layerIndex] === colIndex}
+  					onUnsupportedFile={showNotification}
+  					onDropGenerator={(parsedData, fileName) => handleDropGenerator(layerIndex, colIndex, parsedData, fileName)}
+  					onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)} // Add this
+  					onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
+  					isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
+  					/>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+  		<div className="side-panel">
+  			<IldaPlayer
+  			ildaFrames={ildaFrames}
+  			showBeamEffect={showBeamEffect}
+  			beamAlpha={beamAlpha}
+  			fadeAlpha={fadeAlpha}
+  			drawSpeed={drawSpeed}
+  			onFrameChange={handleFrameChange}
+  			/>
+  			<WorldPreview
+  			worldData={activeClipsData}
+  			showBeamEffect={showBeamEffect}
+  			beamAlpha={beamAlpha}
+  			fadeAlpha={fadeAlpha}
+  			drawSpeed={drawSpeed}
+  			/>
+  		</div>
+  		{/* Middle Bar */}
+  		<div className="middle-bar">
+  			<div className="middle-bar-left-area">
+  				<BPMControls />
+  				<MasterSpeedSlider />
+  			</div>
+  			<div className="middle-bar-right-area">
 
-			</div>
-		</div>
-		{/* Bottom Panel for Previews */}
-		<div className="bottom-panel">
-			<FileBrowser onDropIld={handleDropGenerator} />
-			<GeneratorPanel />
-			<EffectPanel />
-			<DacPanel dacs={dacs} />
-		</div>
-      </div>
+  			</div>
+  		</div>
+  		{/* Bottom Panel for Previews */}
+            <div className="bottom-panel">
+  			<FileBrowser onDropIld={handleDropGenerator} />
+  			<GeneratorPanel />
+  			<EffectPanel />
+  			<DacPanel dacs={dacs} />
+              <SettingsPanel />
+            </div>
+        </div>
+      </ErrorBoundary>
     </div>
   );
 }

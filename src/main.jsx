@@ -4,9 +4,12 @@ import App from './App.jsx';
 import './index.css';
 
 import { SharedWorkerProvider } from './contexts/WorkerContext.jsx';
+import { IldaParserWorkerProvider } from './contexts/IldaParserWorkerContext.jsx';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <SharedWorkerProvider>
-      <App />
+      <IldaParserWorkerProvider>
+        <App />
+      </IldaParserWorkerProvider>
     </SharedWorkerProvider>
 );

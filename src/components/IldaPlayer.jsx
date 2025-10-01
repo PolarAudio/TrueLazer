@@ -1,10 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
+import { useFrameOptimizer } from '../hooks/useFrameOptimizer';
 
 const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameChange }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`ilda-player-${Math.random()}`);
+  const optimizedFrames = useFrameOptimizer(ildaFrames);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -18,7 +20,7 @@ const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameC
         id: canvasId.current,
         canvas: offscreen,
         type: 'single',
-        data: { ildaFrames, showBeamEffect, beamAlpha, drawSpeed }
+        data: { ildaFrames: optimizedFrames, showBeamEffect, beamAlpha, drawSpeed }
       }
     }, [offscreen]);
 
@@ -42,10 +44,10 @@ const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameC
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { ildaFrames, showBeamEffect, beamAlpha, drawSpeed }
+        data: { ildaFrames: optimizedFrames, showBeamEffect, beamAlpha, drawSpeed }
       }
     });
-  }, [worker, ildaFrames, showBeamEffect, beamAlpha, drawSpeed]);
+  }, [worker, optimizedFrames, showBeamEffect, beamAlpha, drawSpeed]);
 
   return (
     <div className="ilda-player">
