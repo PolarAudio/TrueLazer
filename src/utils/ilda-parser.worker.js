@@ -6,6 +6,32 @@ const defaultPalette = [
   { r: 128, g: 128, b: 255 }, { r: 255, g: 255, b: 128 }, { r: 128, g: 255, b: 255 }, { r: 255, g: 128, b: 255 },
 ];
 
+const calculateBounds = (points) => {
+  if (!points || points.length === 0) {
+    return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+  }
+
+  let minX = points[0].x;
+  let maxX = points[0].x;
+  let minY = points[0].y;
+  let maxY = points[0].y;
+
+  for (let i = 1; i < points.length; i++) {
+    const point = points[i];
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+  }
+
+  return { minX, maxX, minY, maxY };
+};
+
+function parseIldaFile(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const frames = [];
+  let currentOffset = 0;
+
   while (currentOffset + 32 <= arrayBuffer.byteLength) { // Ensure at least 32 bytes for a header
     const frameStartOffset = currentOffset;
 
@@ -26,12 +52,12 @@ const defaultPalette = [
     // Verify format byte
     const formatCode = view.getUint8(frameStartOffset + 7);
     if (formatCode > 5) {
-      console.warn(`Parser: Unknown format code: ${formatOffset} at offset ${frameStartOffset}. Skipping 32 bytes.`);
+      console.warn(`Parser: Unknown format code: ${formatCode} at offset ${frameStartOffset}. Skipping 32 bytes.`);
       currentOffset += 32; // Skip this header and try next
       continue;
     }
 
-    const pointCount = view.getUint16(frameStartOffset + 24, false); // Big-endian
+    let pointCount = view.getUint16(frameStartOffset + 24, false); // Big-endian
     const frameNumber = view.getUint16(frameStartOffset + 26, false);
     const totalFrames = view.getUint16(frameStartOffset + 28, false);
     const projectorNumber = view.getUint8(frameStartOffset + 30); // Usually 0
@@ -50,8 +76,21 @@ const defaultPalette = [
         continue;
     }
 
-    const pointsDataSize = pointCount * recordSize;
-    const frameTotalSize = 32 + pointsDataSize;
+    let pointsDataSize = pointCount * recordSize;
+    let frameTotalSize = 32 + pointsDataSize;
+
+    // Heuristic to handle malformed files with incorrect point counts
+    const remainingBytes = arrayBuffer.byteLength - currentOffset;
+    if (frameTotalSize < remainingBytes) {
+        const leftover = remainingBytes - frameTotalSize;
+        if (leftover > 0 && leftover <= 32) {
+            console.warn(`Parser: Malformed frame, ${leftover} leftover bytes. Adjusting size.`);
+            frameTotalSize += leftover;
+            pointsDataSize += leftover;
+            pointCount = Math.floor(pointsDataSize / recordSize);
+        }
+    }
+
 
     // Check if we have enough data for all points
     if (frameStartOffset + frameTotalSize > arrayBuffer.byteLength) {
@@ -113,6 +152,9 @@ const defaultPalette = [
           lastPoint 
         });
         pointDataOffset += recordSize;
+        if (lastPoint) {
+          break; // Stop processing points for this frame
+        }
       }
     } catch (error) {
       console.warn("Parser: Error reading points:", error);
@@ -124,24 +166,26 @@ const defaultPalette = [
         frameNumber, 
         totalFrames, 
         projectorNumber,
-        points 
+        points,
+        bounds: calculateBounds(points)
       });
     }
     currentOffset += frameTotalSize; // Advance offset by the size of the entire frame
   }
   return { frames, error: frames.length === 0 ? 'No valid frames found' : null };
+}
 
 
 self.onmessage = function(e) {
 
   console.log('[ilda-parser.worker] Message received');
-  const { arrayBuffer, type, fileName } = e.data;
+  const { arrayBuffer, type, fileName, layerIndex, colIndex } = e.data;
   
   if (type === 'parse-ilda') {
     try {
       const parsedData = parseIldaFile(arrayBuffer);
       console.log('[ilda-parser.worker] Posting message back to main thread');
-      self.postMessage({ success: true, data: parsedData, fileName: fileName });
+      self.postMessage({ success: true, data: parsedData, fileName: fileName, layerIndex, colIndex });
     } catch (error) {
       console.error('[ilda-parser.worker] Error parsing file:', error);
       self.postMessage({ success: false, error: error.message });

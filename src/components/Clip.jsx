@@ -20,22 +20,6 @@ const Clip = ({
   const [isDragging, setIsDragging] = useState(false);
   const worker = useIldaParserWorker();
 
-  useEffect(() => {
-    if (!worker) return;
-
-    worker.onmessage = (e) => {
-      if (e.data.success) {
-        onDropGenerator(e.data.data, e.data.fileName);
-      } else {
-        onUnsupportedFile(`Error parsing ILDA file: ${e.data.error || 'Unknown error'}`);
-      }
-    };
-
-    return () => {
-      worker.onmessage = null; // Clean up the message handler
-    };
-  }, [worker, onDropGenerator, onUnsupportedFile]);
-
   const thumbnailFrame = clipContent && clipContent.frames && clipContent.frames[thumbnailFrameIndex]
     ? clipContent.frames[thumbnailFrameIndex]
     : null;
@@ -68,7 +52,7 @@ const Clip = ({
       try {
         const arrayBuffer = await file.arrayBuffer();
         console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFileDrop): ${arrayBuffer.byteLength}`);
-        worker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName }, [arrayBuffer]);
+        worker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, layerIndex, colIndex }, [arrayBuffer]);
       } catch (error) {
         console.error('Error reading file:', error);
         onUnsupportedFile(`Error reading file: ${error.message}`);
@@ -100,7 +84,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
       // Convert Uint8Array to ArrayBuffer - this is much simpler!
       const arrayBuffer = uint8Array.buffer;
       console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFilePathDrop): ${arrayBuffer.byteLength}`);
-      worker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName }, [arrayBuffer]);
+      worker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, layerIndex, colIndex }, [arrayBuffer]);
     } else {
       onUnsupportedFile("Binary file access not available");
     }

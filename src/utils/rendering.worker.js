@@ -7,7 +7,7 @@ self.onmessage = (e) => {
 
     if (action === 'register') {
         const { id, canvas, type, data } = payload;
-        const renderer = new WebGLRenderer(canvas);
+        const renderer = new WebGLRenderer(canvas, type);
         renderers.set(id, { renderer, type, data });
         renderer.render(data);
     } else if (action === 'deregister') {
