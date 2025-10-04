@@ -53,6 +53,11 @@
   Your support, whether through contributions, feedback, or spreading the word, helps us build a powerful tool
    for the entire laser show community.
 
+  creative minds should not be slowed down by a paywall.
+  That is why we believe in this project  Open-Source and free for everyone.
+  In the future, support for significantly more hardware will be added, either by us or by the community
+  for now we focus on developing with the hardware we have on hand.
+
   ## Development Status
 
   TrueLazer is currently in its early development phase. We have established the foundational project
@@ -129,22 +134,22 @@
   ### Getting Started
 
   1.  Clone the Repository:
-      `bash
+      `
       git clone https://github.com/PolarAudio/TrueLazer.git
       cd TrueLazer
       `
 
   2.  Install Dependencies:
-      `bash
+      `
       npm install
       `
 
   3.  Run the Development Server:
       TrueLazer uses Vite for a fast development experience.
-      `bash
+      `
       npm start
       `
-      This will start the development server, usually accessible at http://localhost:5174.
+      This will start the development application with Console for debbuging.
 
   ### Project Structure Overview
 
