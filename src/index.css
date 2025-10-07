@@ -185,6 +185,7 @@ body {
 	margin-bottom: 4px;
 	margin-top: 2px;
 	text-align: center;
+	overflow: auto;
   }
   .clip-thumbnail {
 	width: 98%;

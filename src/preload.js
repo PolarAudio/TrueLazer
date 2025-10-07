@@ -2,7 +2,13 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld(
   'electronAPI', {
-    send: (channel, data) => ipcRenderer.send(channel, data),
+    send: (channel, data, networkInterface) => {
+      if (channel === 'discover-dacs') {
+        ipcRenderer.send(channel, data, networkInterface);
+      } else {
+        ipcRenderer.send(channel, data);
+      }
+    },
     on: (channel, callback) => {
       const listener = (event, ...args) => callback(...args);
       ipcRenderer.on(channel, listener);
@@ -12,6 +18,7 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('menu-action', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('menu-action', callback);
     },
+    getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     showLayerContextMenu: (index) => ipcRenderer.send('show-layer-context-menu', index),
     showLayerFullContextMenu: (index) => ipcRenderer.send('show-layer-full-context-menu', index),
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
@@ -45,8 +52,9 @@ contextBridge.exposeInMainWorld(
     openFileExplorer: () => ipcRenderer.invoke('open-file-explorer'),
     readIldFiles: (directoryPath) => ipcRenderer.invoke('read-ild-files', directoryPath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
-	readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
-    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
-    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
-  }
-);
+	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
+	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
+	    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
+	    stopDacDiscovery: () => ipcRenderer.send('stop-dac-discovery'),
+	  }
+	);

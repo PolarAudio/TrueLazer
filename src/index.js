@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { discoverDacs, sendFrame } = require('./utils/dac-communication');
+const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery } = require('./utils/dac-communication');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -134,10 +134,18 @@ function createWindow() {
   const menu = Menu.buildFromTemplate(menuTemplate);
   Menu.setApplicationMenu(menu);
 
-  ipcMain.on('discover-dacs', () => {
+  ipcMain.on('discover-dacs', (event, networkInterface) => {
     discoverDacs((dacs) => {
       win.webContents.send('dacs-discovered', dacs);
-    });
+    }, networkInterface);
+  });
+
+  ipcMain.handle('get-network-interfaces', () => {
+    return getNetworkInterfaces();
+  });
+
+  ipcMain.on('stop-dac-discovery', () => {
+    stopDiscovery();
   });
 
   ipcMain.on('send-frame', (event, { ip, frame }) => {
