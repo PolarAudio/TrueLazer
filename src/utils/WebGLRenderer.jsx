@@ -8,6 +8,7 @@ export class WebGLRenderer {
     this.showBeamEffect = false; // Default value
     this.beamAlpha = 0.5; // Default value
     this.fadeAlpha = 0.13; // Default value
+    this.beamRenderMode = 'lines'; // Default value
 
     this.positionBuffer = null;
     this.colorBuffer = null;
@@ -100,7 +101,7 @@ export class WebGLRenderer {
     gl.useProgram(program);
 
     // Create and initialize buffers once
-    const MAX_POINTS_PER_SEGMENT = 1000; // Max points in a single continuous segment
+    const MAX_POINTS_PER_SEGMENT = 131072; // Max points in a single continuous segment
 
     this.positionBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
@@ -116,6 +117,12 @@ export class WebGLRenderer {
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+
+  reset() {
+    this.currentPointIndex = 0;
+    this.frameIndexes.fill(0);
+    this.clearCanvas();
   }
 
   createShader(type, source) {
@@ -158,6 +165,9 @@ export class WebGLRenderer {
     if (data.fadeAlpha !== undefined) {
       this.setFadeAlpha(data.fadeAlpha);
     }
+    if (data.beamRenderMode !== undefined) {
+      this.beamRenderMode = data.beamRenderMode;
+    }
 
     if (this.type === 'world') {
       this.renderWorld(data.worldData, data.previewScanRate);
@@ -177,7 +187,7 @@ export class WebGLRenderer {
     }
 
     const frame = ildaFrames[this.frameIndexes[0] % ildaFrames.length];
-    this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate);
+    this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -194,7 +204,7 @@ export class WebGLRenderer {
       if (clip && clip.frames && clip.frames.length > 0) {
         const frame = clip.frames[this.frameIndexes[index] % clip.frames.length];
         if (frame) { // Add null check for frame
-          this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate);
+          this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode);
         }
       }
     });
@@ -221,63 +231,87 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(points, showBeamEffect, beamAlpha, previewScanRate) {
+  draw(points, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode) {
     const gl = this.gl;
-
-    if (!points || points.length === 0) {
-      return;
-    }
+    if (!points || points.length === 0) return;
 
     const pointsToDraw = Math.max(1, Math.floor(points.length / previewScanRate));
     const startIndex = this.currentPointIndex;
-    let endIndex = (startIndex + pointsToDraw);
+    const endIndex = Math.min(startIndex + pointsToDraw, points.length);
 
-    // Ensure endIndex does not exceed points.length and wraps around correctly
-    if (endIndex > points.length) {
-      endIndex = points.length;
-    }
-
-    let currentSegmentPositions = [];
-    let currentSegmentColors = [];
-    let numPointsInSegment = 0;
-
-    const drawSegment = (positions, colors, alpha, count) => {
-      if (count > 0) {
-        this._drawSegment(new Float32Array(positions), new Float32Array(colors), alpha, count);
+    // --- Helper function to draw normal frame segments ---
+    const drawNormalFrame = () => {
+      let currentSegmentPositions = [];
+      let currentSegmentColors = [];
+      for (let i = startIndex; i < endIndex; i++) {
+        const point = points[i];
+        if (point.blanking) {
+          if (currentSegmentPositions.length > 0) {
+            this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2);
+            currentSegmentPositions = [];
+            currentSegmentColors = [];
+          }
+          continue;
+        }
+        currentSegmentPositions.push(point.x, point.y);
+        currentSegmentColors.push(point.r / 255, point.g / 255, point.b / 255);
+      }
+      if (currentSegmentPositions.length > 0) {
+        this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2);
       }
     };
 
-    for (let i = startIndex; i < endIndex; i++) {
-      const point = points[i];
-
-      if (point.blanking) {
-        if (numPointsInSegment > 0) {
-          drawSegment(currentSegmentPositions, currentSegmentColors, 1.0, numPointsInSegment);
-          if (showBeamEffect) {
-            drawSegment(currentSegmentPositions, currentSegmentColors, beamAlpha, numPointsInSegment);
-          }
+    // --- Helper function for 'points' mode (center-to-point beams) ---
+    const drawPointsEffect = () => {
+      const beamPositions = [];
+      const beamColors = [];
+      for (let i = startIndex; i < endIndex; i++) {
+        const point = points[i];
+        if (!point.blanking) {
+          beamPositions.push(0, 0, point.x, point.y);
+          const color = [point.r / 255, point.g / 255, point.b / 255];
+          beamColors.push(...color, ...color);
         }
-        currentSegmentPositions = [];
-        currentSegmentColors = [];
-        numPointsInSegment = 0;
-        continue;
       }
+      if (beamPositions.length > 0) {
+        this._drawLines(new Float32Array(beamPositions), new Float32Array(beamColors), beamAlpha, beamPositions.length / 2);
+      }
+    };
 
-      currentSegmentPositions.push(point.x, point.y);
-      currentSegmentColors.push(point.r / 255, point.g / 255, point.b / 255);
-      numPointsInSegment++;
-
-      // If this is the last point of a segment or the frame, draw it
-      if (i === endIndex -1 || point.lastPoint) {
-        drawSegment(currentSegmentPositions, currentSegmentColors, 1.0, numPointsInSegment);
-        if (showBeamEffect) {
-          drawSegment(currentSegmentPositions, currentSegmentColors, beamAlpha, numPointsInSegment);
+    // --- Helper function for 'lines' mode (volumetric cone) ---
+    const drawLinesEffect = () => {
+      const trianglePositions = [];
+      const triangleColors = [];
+      for (let i = startIndex + 1; i < endIndex; i++) {
+        const p1 = points[i - 1];
+        const p2 = points[i];
+        if (!p1.blanking && !p2.blanking) {
+          trianglePositions.push(0, 0, p1.x, p1.y, p2.x, p2.y);
+          const color1 = [p1.r / 255, p1.g / 255, p1.b / 255];
+          const color2 = [p2.r / 255, p2.g / 255, p2.b / 255];
+          const centerColor = [(color1[0] + color2[0]) / 2, (color1[1] + color2[1]) / 2, (color1[2] + color2[2]) / 2];
+          triangleColors.push(...centerColor, ...color1, ...color2);
         }
-        currentSegmentPositions = [];
-        currentSegmentColors = [];
-        numPointsInSegment = 0;
+      }
+      if (trianglePositions.length > 0) {
+        this._drawTriangles(new Float32Array(trianglePositions), new Float32Array(triangleColors), beamAlpha, trianglePositions.length / 2);
+      }
+    };
+
+    // --- Main rendering logic ---
+    drawNormalFrame();
+
+    if (showBeamEffect) {
+      if (beamRenderMode === 'points') {
+        drawPointsEffect();
+      } else if (beamRenderMode === 'lines') {
+        drawLinesEffect();
+      } else if (beamRenderMode === 'both') {
+        drawLinesEffect();
+        drawPointsEffect();
       }
     }
+
     this.currentPointIndex = (this.currentPointIndex + pointsToDraw) % points.length;
   }
 
@@ -307,6 +341,62 @@ export class WebGLRenderer {
 
     gl.drawArrays(gl.LINE_STRIP, 0, numPoints);
   }
+
+  _drawLines(positions, colors, alpha, numPoints) {
+    const gl = this.gl;
+
+    gl.useProgram(this.program);
+
+    // Positions
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.enableVertexAttribArray(this.positionAttributeLocation);
+    gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+    // Colors
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.enableVertexAttribArray(this.colorAttributeLocation);
+    gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
+
+    // Alpha
+    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
+    gl.enableVertexAttribArray(this.alphaAttributeLocation);
+    gl.vertexAttribPointer(this.alphaAttributeLocation, 1, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.LINES, 0, numPoints);
+  }
+
+  _drawTriangles(positions, colors, alpha, numPoints) {
+    const gl = this.gl;
+
+    gl.useProgram(this.program);
+
+    // Positions
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.enableVertexAttribArray(this.positionAttributeLocation);
+    gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+    // Colors
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.enableVertexAttribArray(this.colorAttributeLocation);
+    gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
+
+    // Alpha
+    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
+    gl.enableVertexAttribArray(this.alphaAttributeLocation);
+    gl.vertexAttribPointer(this.alphaAttributeLocation, 1, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, numPoints);
+  }
+
+  
 
   clearCanvas() {
     const gl = this.gl;

@@ -19,7 +19,7 @@ import { applyEffects } from './utils/effects';
 
 const MasterSpeedSlider = ({ drawSpeed, onSpeedChange }) => (
   <div className="master-speed-slider">
-    <label htmlFor="masterSpeedRange">Clip Playback Speed</label>
+    <label htmlFor="masterSpeedRange">Playback Speed</label>
     <input type="range" min="50" max="250" value={drawSpeed} className="slider" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
   </div>
 );
@@ -56,6 +56,7 @@ const initialState = {
   fadeAlpha: 0.13,
   drawSpeed: 100,
   previewScanRate: 1,
+  beamRenderMode: 'points',
   activeClipIndexes: Array(5).fill(null),
   isPlaying: false,
 };
@@ -163,13 +164,86 @@ function App() {
     fadeAlpha,
     drawSpeed,
     previewScanRate,
+    beamRenderMode,
     activeClipIndexes,
     isPlaying,
   } = state;
 
+  const [liveFrames, setLiveFrames] = React.useState({});
+  const frameIndexesRef = React.useRef({});
+  const lastFrameFetchTimeRef = React.useRef({});
+
   const ildaParserWorker = useIldaParserWorker();
   const generatorWorker = useGeneratorWorker();
   const ildaPlayerCurrentFrameIndex = useRef(0);
+
+  const activeClipsData = layers.map((_, layerIndex) => {
+    const activeColIndex = activeClipIndexes[layerIndex];
+    if (activeColIndex !== null) {
+        const clip = clipContents[layerIndex][activeColIndex];
+        if (clip && clip.workerId && clip.totalFrames) {
+            return {
+                workerId: clip.workerId,
+                totalFrames: clip.totalFrames,
+                effects: clip.effects || [], // Keep effects
+            };
+        }
+    }
+    return null;
+  }).filter(Boolean);
+
+  const workerIdsToFetch = useMemo(() => {
+    const ids = new Set();
+    if (selectedIldaWorkerId) {
+      ids.add(selectedIldaWorkerId);
+    }
+    activeClipsData.forEach(clip => {
+      if (clip && clip.workerId) {
+        ids.add(clip.workerId);
+      }
+    });
+    return Array.from(ids);
+  }, [selectedIldaWorkerId, activeClipsData]);
+
+  useEffect(() => {
+    if (!ildaParserWorker) return;
+
+    const handleMessage = (e) => {
+      if (e.data.type === 'get-frame' && e.data.success) {
+        setLiveFrames(prev => ({ ...prev, [e.data.workerId]: e.data.frame }));
+      }
+    };
+    ildaParserWorker.addEventListener('message', handleMessage);
+    
+    let animationFrameId;
+    const frameFetcherLoop = (timestamp) => {
+      workerIdsToFetch.forEach(workerId => {
+        if (!lastFrameFetchTimeRef.current[workerId]) {
+          lastFrameFetchTimeRef.current[workerId] = 0;
+        }
+        if (timestamp - lastFrameFetchTimeRef.current[workerId] > drawSpeed) {
+          lastFrameFetchTimeRef.current[workerId] = timestamp;
+          
+          const clip = clipContents.flat().find(c => c && c.workerId === workerId);
+          if (clip && clip.totalFrames > 0) {
+            if (frameIndexesRef.current[workerId] === undefined) {
+              frameIndexesRef.current[workerId] = 0;
+            }
+            ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: frameIndexesRef.current[workerId] });
+            frameIndexesRef.current[workerId] = (frameIndexesRef.current[workerId] + 1) % clip.totalFrames;
+          }
+        }
+      });
+      animationFrameId = requestAnimationFrame(frameFetcherLoop);
+    };
+
+    animationFrameId = requestAnimationFrame(frameFetcherLoop);
+
+    return () => {
+      ildaParserWorker.removeEventListener('message', handleMessage);
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [ildaParserWorker, workerIdsToFetch, drawSpeed, clipContents]);
 
   const handleFrameChange = useCallback((frameIndex) => {
     ildaPlayerCurrentFrameIndex.current = frameIndex;
@@ -240,17 +314,15 @@ function App() {
     if (!ildaParserWorker) return;
 
     ildaParserWorker.onmessage = (e) => {
-      // Only process 'parse-ilda' success messages here
       if (e.data.type === 'parse-ilda' && e.data.success) {
         const { workerId, totalFrames, fileName, layerIndex, colIndex } = e.data;
         const newClipContent = { workerId, totalFrames };
         dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
         dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: fileName } });
-      } else if (!e.data.success) { // Handle general errors from worker
+      } else if (e.data.type === 'parse-ilda' && !e.data.success) {
         console.error("Worker parsing error:", e.data.error);
         showNotification(`Error parsing ${e.data.fileName}: ${e.data.error}`);
       }
-      // Ignore 'get-frame' messages here, they are handled by IldaPlayer/WorldPreview
     };
 
     return () => {
@@ -318,7 +390,6 @@ function App() {
       setTheme(theme);
       return;
     }
-    // Render modes are now controlled by sliders
     switch (action) {
       case 'toggle-beam-effect':
         dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'showBeamEffect', value: !showBeamEffect } });
@@ -429,25 +500,10 @@ function App() {
     }
   }, [handleMenuAction, handleClipContextMenuCommand, handleRenderSettingsCommand, handleColumnHeaderClipContextMenuCommand, handleLayerFullContextMenuCommand]);
 
-  const activeClipsData = layers.map((_, layerIndex) => {
-    const activeColIndex = activeClipIndexes[layerIndex];
-    if (activeColIndex !== null) {
-        const clip = clipContents[layerIndex][activeColIndex];
-        if (clip && clip.workerId && clip.totalFrames) {
-            return {
-                workerId: clip.workerId,
-                totalFrames: clip.totalFrames,
-                effects: clip.effects || [], // Keep effects
-            };
-        }
-    }
-    return null;
-  }).filter(Boolean);
-
   useEffect(() => {
     let animationFrameId;
     let lastFrameTime = 0;
-    const DAC_REFRESH_INTERVAL = 30; // Approximately 33 frames per second for DAC output
+    const DAC_REFRESH_INTERVAL = 30;
 
     const animate = (currentTime) => {
       if (!isPlaying) {
@@ -459,14 +515,13 @@ function App() {
         if (window.electronAPI && activeClipsData.length > 0 && selectedDac) {
           const ip = selectedDac.ip;
           activeClipsData.forEach(clip => {
-            if (clip && clip.frames) {
+            if (clip && liveFrames[clip.workerId]) {
               const effects = clip.effects || [];
-              const frame = clip.frames[ildaPlayerCurrentFrameIndex.current % clip.frames.length];
+              const frame = liveFrames[clip.workerId];
               const modifiedFrame = applyEffects(frame, effects);
               window.electronAPI.send('send-frame', { ip, frame: modifiedFrame });
             }
           });
-          ildaPlayerCurrentFrameIndex.current++;
         }
         lastFrameTime = currentTime;
       }
@@ -482,7 +537,7 @@ function App() {
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [activeClipsData, selectedDac, isPlaying]);
+  }, [activeClipsData, selectedDac, isPlaying, liveFrames]);
 
   const selectedClipEffects =
     selectedLayerIndex !== null && selectedColIndex !== null
@@ -492,6 +547,21 @@ function App() {
   const handleEffectParameterChange = useCallback((layerIndex, colIndex, effectIndex, paramName, newValue) => {
     dispatch({ type: 'UPDATE_EFFECT_PARAMETER', payload: { layerIndex, colIndex, effectIndex, paramName, newValue } });
   }, []);
+  
+  const selectedClipFrame = liveFrames[selectedIldaWorkerId] || null;
+
+  const worldFrames = useMemo(() => {
+    const frames = {};
+    activeClipsData.forEach(clip => {
+      if (clip && clip.workerId && liveFrames[clip.workerId]) {
+        frames[clip.workerId] = {
+          frame: liveFrames[clip.workerId],
+          effects: clip.effects || []
+        };
+      }
+    });
+    return frames;
+  }, [activeClipsData, liveFrames]);
 
   return (
     <GeneratorWorkerProvider>
@@ -559,24 +629,20 @@ function App() {
           </div>
           <div className="side-panel">
             <IldaPlayer
-              ildaWorkerId={selectedIldaWorkerId}
-              totalFrames={selectedIldaTotalFrames}
+              frame={selectedClipFrame}
               showBeamEffect={showBeamEffect}
               beamAlpha={beamAlpha}
               fadeAlpha={fadeAlpha}
               previewScanRate={previewScanRate}
-              drawSpeed={drawSpeed}
-              onFrameChange={handleFrameChange}
-              ildaParserWorker={ildaParserWorker}
+              beamRenderMode={beamRenderMode}
             />
             <WorldPreview
-              worldData={activeClipsData}
+              activeFrames={worldFrames}
               showBeamEffect={showBeamEffect}
               beamAlpha={beamAlpha}
               fadeAlpha={fadeAlpha}
               previewScanRate={previewScanRate}
-              drawSpeed={drawSpeed}
-              ildaParserWorker={ildaParserWorker}
+              beamRenderMode={beamRenderMode}
             />
             
           </div>

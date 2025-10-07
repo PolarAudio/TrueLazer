@@ -7,8 +7,8 @@ const isDev = process.env.NODE_ENV === 'development';
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1920,
+    height: 1080,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
@@ -97,6 +97,15 @@ function createWindow() {
           label: 'Render Mode',
           submenu: [
             { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { win.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
+            { type: 'separator' },
+            {
+              label: 'Effect Mode',
+              submenu: [
+                { label: 'Points', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
+                { label: 'Lines', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
+                { label: 'Points & Lines', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
+              ]
+            },
             { type: 'separator' },
             {
               label: 'Preview Scan Rate',
