@@ -1,13 +1,30 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
-const dacs = [
-  { id: 'dac1-ch1', name: 'DAC 1 - Channel 1' },
-  { id: 'dac1-ch2', name: 'DAC 1 - Channel 2' },
-  { id: 'dac2-ch1', name: 'DAC 2 - Channel 1' },
-  { id: 'dac2-ch2', name: 'DAC 2 - Channel 2' },
-];
+const DacPanel = ({ onDacSelected }) => {
+  const [dacs, setDacs] = useState([]);
+  const [selectedDac, setSelectedDac] = useState(null);
 
-const DacPanel = () => {
+  useEffect(() => {
+    if (window.electronAPI) {
+      window.electronAPI.send('discover-dacs');
+
+      const handleDacsDiscovered = (event, discoveredDacs) => {
+        setDacs(discoveredDacs);
+      };
+
+      const cleanup = window.electronAPI.on('dacs-discovered', handleDacsDiscovered);
+
+      return () => {
+        cleanup();
+      };
+    }
+  }, []);
+
+  const handleDacClick = (dac) => {
+    setSelectedDac(dac);
+    onDacSelected(dac);
+  };
+
   const handleDragStart = (e, dacId) => {
     e.dataTransfer.setData('application/x-dac', dacId);
   };
@@ -18,12 +35,13 @@ const DacPanel = () => {
       <div className="dac-list">
         {dacs.map((dac) => (
           <div
-            key={dac.id}
-            className="dac-item"
+            key={dac.ip}
+            className={`dac-item ${selectedDac && selectedDac.ip === dac.ip ? 'selected' : ''}`}
             draggable
-            onDragStart={(e) => handleDragStart(e, dac.id)}
+            onDragStart={(e) => handleDragStart(e, dac.ip)}
+            onClick={() => handleDacClick(dac)}
           >
-            {dac.name}
+            {dac.ip}
           </div>
         ))}
       </div>

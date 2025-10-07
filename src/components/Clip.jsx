@@ -15,14 +15,42 @@ const Clip = ({
   onActivateClick, 
   onLabelClick,
   isSelected,
-  isActive
+  isActive,
+  ildaParserWorker
 }) => {
   const [isDragging, setIsDragging] = useState(false);
-  const worker = useIldaParserWorker();
+  const [thumbnailFrame, setThumbnailFrame] = useState(null); // New state for thumbnail frame
 
-  const thumbnailFrame = clipContent && clipContent.frames && clipContent.frames[thumbnailFrameIndex]
-    ? clipContent.frames[thumbnailFrameIndex]
-    : null;
+  useEffect(() => {
+    if (!ildaParserWorker || !clipContent || !clipContent.workerId || clipContent.totalFrames === 0) {
+      setThumbnailFrame(null);
+      return;
+    }
+
+    const fetchThumbnail = () => {
+      ildaParserWorker.postMessage({
+        type: 'get-frame',
+        workerId: clipContent.workerId,
+        frameIndex: thumbnailFrameIndex % clipContent.totalFrames // Ensure index is within bounds
+      });
+    };
+
+    const messageHandler = (e) => {
+      // Ensure we are only processing 'get-frame' messages for *this* clip's workerId
+      if (e.data.type === 'get-frame' && e.data.workerId === clipContent.workerId) {
+        if (e.data.frameIndex === (thumbnailFrameIndex % clipContent.totalFrames)) {
+          setThumbnailFrame(e.data.frame);
+        }
+      }
+    };
+
+    ildaParserWorker.addEventListener('message', messageHandler);
+    fetchThumbnail(); // Initial fetch
+
+    return () => {
+      ildaParserWorker.removeEventListener('message', messageHandler);
+    };
+  }, [ildaParserWorker, clipContent, thumbnailFrameIndex]);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -42,7 +70,7 @@ const Clip = ({
   const handleFileDrop = async (file) => {
     const droppedFileName = file.name;
 
-    if (!worker) {
+    if (!ildaParserWorker) {
       onUnsupportedFile("ILDA parser not available.");
       return;
     }
@@ -52,7 +80,7 @@ const Clip = ({
       try {
         const arrayBuffer = await file.arrayBuffer();
         console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFileDrop): ${arrayBuffer.byteLength}`);
-        worker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, layerIndex, colIndex }, [arrayBuffer]);
+        ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, layerIndex, colIndex }, [arrayBuffer]);
       } catch (error) {
         console.error('Error reading file:', error);
         onUnsupportedFile(`Error reading file: ${error.message}`);
@@ -72,7 +100,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
     return;
   }
 
-  if (!worker) {
+  if (!ildaParserWorker) {
     onUnsupportedFile("ILDA parser not available.");
     return;
   }
@@ -82,9 +110,9 @@ const handleFilePathDrop = async (filePath, fileName) => {
     if (window.electronAPI && window.electronAPI.readFileAsBinary) {
       const uint8Array = await window.electronAPI.readFileAsBinary(filePath);
       // Convert Uint8Array to ArrayBuffer - this is much simpler!
-      const arrayBuffer = uint8Array.buffer;
+      const arrayBuffer = uint8Array.slice().buffer;
       console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFilePathDrop): ${arrayBuffer.byteLength}`);
-      worker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, layerIndex, colIndex }, [arrayBuffer]);
+      ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, layerIndex, colIndex }, [arrayBuffer]);
     } else {
       onUnsupportedFile("Binary file access not available");
     }
@@ -100,48 +128,41 @@ const handleFilePathDrop = async (filePath, fileName) => {
     e.stopPropagation();
     setIsDragging(false);
 
-    // Check if it's an effect drop (from your EffectPanel)
-    const effectData = e.dataTransfer.getData('application/x-laser-effect');
-    
+    const effectData = e.dataTransfer.getData('application/json');
     if (effectData) {
       try {
-        const parsedEffect = JSON.parse(effectData);
-        if (onDropEffect) {
-          onDropEffect(parsedEffect);
-          return; // Important: return after handling effect
-        } else {
-          console.error('onDropEffect prop is not defined!');
-        }
-      } catch (error) {
-        console.error('Error parsing effect data:', error);
-      }
-    }
-    
-    // Check for file path data (common in Electron apps)
-    const jsonData = e.dataTransfer.getData('application/json');
-    if (jsonData) {
-      try {
-        const parsedJson = JSON.parse(jsonData);
+        const parsedData = JSON.parse(effectData);
         
         // Check if this is file path data from the file system
-        if (parsedJson.filePath && parsedJson.fileName) {
-          handleFilePathDrop(parsedJson.filePath, parsedJson.fileName);
+        if (parsedData.filePath && parsedData.fileName) {
+          handleFilePathDrop(parsedData.filePath, parsedData.fileName);
           return; // Important: return after handling file path
         }
+
+        if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color') {
+          if (onDropEffect) {
+            onDropEffect(parsedData);
+            return;
+          }
+        } else if (parsedData.name) {
+          if (onDropGenerator) {
+            onDropGenerator(layerIndex, colIndex, parsedData);
+            return;
+          }
+        }
       } catch (error) {
-        console.error('Error parsing JSON data:', error);
+        console.error('Error parsing dropped data:', error);
       }
     }
     
-    // Check if it's a direct file drop
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       handleFileDrop(files[0]);
-      return; // Important: return after handling file
+      return;
     }
     
     console.log('No recognized data format found in drop');
-    onUnsupportedFile("No valid ILD file or effect dropped.");
+    onUnsupportedFile("No valid ILD file, effect, or generator dropped.");
   };
 
   const handleDragEnter = (e) => {
@@ -158,7 +179,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
 
   return (
     <div
-      className={`clip ${isDragging ? 'dragging' : ''} ${isActive ? 'active-clip' : ''} ${isSelected ? 'selected-clip' : ''}`}
+      className={`clip ${isDragging ? 'dragging' : ''} ${isActive ? 'active-clip' : ''} `}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -169,10 +190,10 @@ const handleFilePathDrop = async (filePath, fileName) => {
         {thumbnailFrame ? (
           <IldaThumbnail frame={thumbnailFrame} />
         ) : (
-          <p>Drag ILD Here</p>
+          <p></p>
         )}
       </div>
-      <span className="clip-label" onClick={onLabelClick}>{clipName}</span>
+      <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{clipName}</span>
     </div>
   );
 };

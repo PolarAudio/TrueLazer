@@ -1,10 +1,11 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameChange }) => {
+const IldaPlayer = ({ ildaWorkerId, totalFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameChange, ildaParserWorker }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`ilda-player-${Math.random()}`);
+  const [currentFrame, setCurrentFrame] = useState(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -18,7 +19,7 @@ const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameC
         id: canvasId.current,
         canvas: offscreen,
         type: 'single',
-        data: { ildaFrames, showBeamEffect, beamAlpha, drawSpeed }
+        data: { showBeamEffect, beamAlpha, drawSpeed }
       }
     }, [offscreen]);
 
@@ -37,15 +38,51 @@ const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameC
   }, []);
 
   useEffect(() => {
-    if (!worker) return;
+    if (!ildaParserWorker || !ildaWorkerId || totalFrames === 0) {
+      setCurrentFrame(null);
+      return;
+    }
+
+    let frameIndex = 0; // Start with the first frame
+
+    const fetchFrame = () => {
+      if (ildaParserWorker && ildaWorkerId && totalFrames > 0) {
+        ildaParserWorker.postMessage({ type: 'get-frame', workerId: ildaWorkerId, frameIndex });
+      }
+    };
+
+    const messageHandler = (e) => {
+      if (e.data.type === 'get-frame' && e.data.workerId === ildaWorkerId) {
+        setCurrentFrame(e.data.frame);
+        // Advance frameIndex for the next request
+        frameIndex = (frameIndex + 1) % totalFrames;
+      }
+    };
+
+    ildaParserWorker.addEventListener('message', messageHandler);
+
+    // Initial fetch
+    fetchFrame();
+
+    // Set up interval for fetching subsequent frames
+    const intervalId = setInterval(fetchFrame, drawSpeed); // Use drawSpeed for fetching interval
+
+    return () => {
+      clearInterval(intervalId);
+      ildaParserWorker.removeEventListener('message', messageHandler);
+    };
+  }, [ildaParserWorker, ildaWorkerId, totalFrames, drawSpeed]);
+
+  useEffect(() => {
+    if (!worker || !currentFrame) return;
     worker.postMessage({
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { ildaFrames, showBeamEffect, beamAlpha, drawSpeed }
+        data: { ildaFrames: [currentFrame], showBeamEffect, beamAlpha, drawSpeed }
       }
     });
-  }, [worker, ildaFrames, showBeamEffect, beamAlpha, drawSpeed]);
+  }, [worker, currentFrame, showBeamEffect, beamAlpha, drawSpeed]);
 
   return (
     <div className="ilda-player">

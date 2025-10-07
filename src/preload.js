@@ -2,6 +2,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld(
   'electronAPI', {
+    send: (channel, data) => ipcRenderer.send(channel, data),
+    on: (channel, callback) => {
+      const listener = (event, ...args) => callback(...args);
+      ipcRenderer.on(channel, listener);
+      return () => ipcRenderer.removeListener(channel, listener);
+    },
     onMenuAction: (callback) => {
       ipcRenderer.on('menu-action', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('menu-action', callback);

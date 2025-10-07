@@ -16,6 +16,11 @@ const IldaThumbnail = ({ frame }) => {
     ctx.fillRect(0, 0, width, height);
     ctx.lineWidth = 1.5;
 
+    const scaleX = width / 2;
+    const scaleY = height / 2;
+    const offsetX = width / 2;
+    const offsetY = height / 2;
+
     for (let i = 0; i < frame.points.length; i++) {
       const point = frame.points[i];
       const prevPoint = i > 0 ? frame.points[i - 1] : null;
@@ -24,23 +29,28 @@ const IldaThumbnail = ({ frame }) => {
         continue;
       }
 
-      const x = ((point.x + 32768) / 65535) * width;
-      const y = height - (((point.y + 32768) / 65535) * height);
+      const x = point.x * scaleX + offsetX;
+      const y = -point.y * scaleY + offsetY; // Invert Y-coordinate
       const color = `rgb(${point.r}, ${point.g}, ${point.b})`;
+
+      let prevX, prevY; // Declare here
 
       if (prevPoint && !prevPoint.blanking) {
         // Previous point was visible, so draw a line
-        const prevX = ((prevPoint.x + 32768) / 65535) * width;
-        const prevY = height - (((prevPoint.y + 32768) / 65535) * height);
+        prevX = prevPoint.x * scaleX + offsetX;
+        prevY = -prevPoint.y * scaleY + offsetY; // Invert Y-coordinate
         ctx.beginPath();
         ctx.moveTo(prevX, prevY);
         ctx.lineTo(x, y);
         ctx.strokeStyle = color;
         ctx.stroke();
       } else {
-        // Previous point was blanked or this is the first point, so draw a dot
-        ctx.fillStyle = color;
-        ctx.fillRect(x, y, 2, 2); // Draw a 2x2 dot for visibility
+        // Previous point was blanked or this is the first point, so draw a small line segment
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + 1, y + 1); // Draw a tiny line segment to make it visible
+        ctx.strokeStyle = color;
+        ctx.stroke();
       }
     }
   }, [frame]);

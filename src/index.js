@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { discoverDacs, sendFrame } = require('./utils/dac-communication');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -112,9 +113,10 @@ function createWindow() {
             {
               label: 'Refresh Rate',
               submenu: [
-                { label: 'Low (100)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 100 }); } },
-                { label: 'Medium (500)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 500 }); } },
-                { label: 'High (1000)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 1000 }); } },
+                { label: 'No Stutter (Perfect Render)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 10 }); } },
+                { label: 'Low Stutter', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 25 }); } },
+                { label: 'Medium Stutter', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 50 }); } },
+                { label: 'High Stutter', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 100 }); } },
               ]
             },
           ]
@@ -125,6 +127,16 @@ function createWindow() {
 
   const menu = Menu.buildFromTemplate(menuTemplate);
   Menu.setApplicationMenu(menu);
+
+  ipcMain.on('discover-dacs', () => {
+    discoverDacs((dacs) => {
+      win.webContents.send('dacs-discovered', dacs);
+    });
+  });
+
+  ipcMain.on('send-frame', (event, { ip, frame }) => {
+    sendFrame(ip, frame);
+  });
 
   ipcMain.on('show-layer-context-menu', (event, index) => {
     const layerContextMenu = Menu.buildFromTemplate([

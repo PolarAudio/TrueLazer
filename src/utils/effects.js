@@ -1,69 +1,102 @@
-const applyRotate = (frame, angle, axis) => {
-  const newFrame = JSON.parse(JSON.stringify(frame)); // Deep copy
+export function applyEffects(frame, effects) {
+  let modifiedFrame = { ...frame };
 
-  const cosA = Math.cos(angle);
-  const sinA = Math.sin(angle);
-
-  newFrame.points = newFrame.points.map(p => {
-    const x = p.x;
-    const y = p.y;
-    const z = p.z || 0;
-
-    let newX, newY, newZ;
-
-    switch (axis) {
-      case 'x':
-        newX = x;
-        newY = y * cosA - z * sinA;
-        newZ = y * sinA + z * cosA;
+  for (const effect of effects) {
+    switch (effect.name) {
+      case 'rotate':
+        modifiedFrame = applyRotate(modifiedFrame, effect.params);
         break;
-      case 'y':
-        newX = x * cosA + z * sinA;
-        newY = y;
-        newZ = -x * sinA + z * cosA;
+      case 'scale':
+        modifiedFrame = applyScale(modifiedFrame, effect.params);
         break;
-      case 'z':
+      case 'translate':
+        modifiedFrame = applyTranslate(modifiedFrame, effect.params);
+        break;
+      case 'color':
+        modifiedFrame = applyColor(modifiedFrame, effect.params);
+        break;
+      case 'wave':
+        modifiedFrame = applyWave(modifiedFrame, effect.params);
+        break;
+      // Add other effects here
       default:
-        newX = x * cosA - y * sinA;
-        newY = x * sinA + y * cosA;
-        newZ = z;
         break;
     }
+  }
 
-    return { ...p, x: newX, y: newY, z: newZ };
+  return modifiedFrame;
+}
+
+function applyRotate(frame, params) {
+  const angle = params.angle || 0;
+  const sin = Math.sin(angle);
+  const cos = Math.cos(angle);
+
+  const newPoints = frame.points.map(point => {
+    const x = point.x * cos - point.y * sin;
+    const y = point.x * sin + point.y * cos;
+    return { ...point, x, y };
   });
 
-  return newFrame;
-};
+  return { ...frame, points: newPoints };
+}
 
-const applyScale = (frame, scaleX, scaleY, scaleZ) => {
-  const newFrame = JSON.parse(JSON.stringify(frame)); // Deep copy
+function applyScale(frame, params) {
+  const scaleX = params.scaleX || 1;
+  const scaleY = params.scaleY || 1;
 
-  newFrame.points = newFrame.points.map(p => {
-    const x = p.x * scaleX;
-    const y = p.y * scaleY;
-    const z = (p.z || 0) * scaleZ;
-    return { ...p, x, y, z };
+  const newPoints = frame.points.map(point => {
+    const x = point.x * scaleX;
+    const y = point.y * scaleY;
+    return { ...point, x, y };
   });
 
-  return newFrame;
-};
+  return { ...frame, points: newPoints };
+}
 
-const applyTransform = (frame, translateX, translateY, translateZ) => {
-  const newFrame = JSON.parse(JSON.stringify(frame)); // Deep copy
+function applyTranslate(frame, params) {
+  const translateX = params.translateX || 0;
+  const translateY = params.translateY || 0;
 
-  newFrame.points = newFrame.points.map(p => {
-    const x = p.x + translateX;
-    const y = p.y + translateY;
-    const z = (p.z || 0) + translateZ;
-    return { ...p, x, y, z };
+  const newPoints = frame.points.map(point => {
+    const x = point.x + translateX;
+    const y = point.y + translateY;
+    return { ...point, x, y };
   });
 
-  return newFrame;
-};
+  return { ...frame, points: newPoints };
+}
 
-export {
-  applyRotate,
-  applyScale,
-  applyTransform,
-};
+function applyColor(frame, params) {
+  const r = params.r || 255;
+  const g = params.g || 255;
+  const b = params.b || 255;
+
+  const newPoints = frame.points.map(point => {
+    return { ...point, r, g, b };
+  });
+
+  return { ...frame, points: newPoints };
+}
+
+function applyWave(frame, params) {
+  const amplitude = params.amplitude || 0.1;
+  const frequency = params.frequency || 10;
+  const speed = params.speed || 1;
+  const direction = params.direction || 'x';
+
+  const newPoints = frame.points.map(point => {
+    let x = point.x;
+    let y = point.y;
+
+    if (direction === 'x') {
+      y += amplitude * Math.sin(point.x * frequency + Date.now() * 0.001 * speed);
+    } else if (direction === 'y') {
+      x += amplitude * Math.sin(point.y * frequency + Date.now() * 0.001 * speed);
+    }
+
+    return { ...point, x, y };
+  });
+
+  return { ...frame, points: newPoints };
+}

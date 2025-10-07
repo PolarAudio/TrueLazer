@@ -29,6 +29,8 @@ body {
   background-color: #282c34;
   color: white;
   overflow: hidden;
+  scrollbar-color: var(--theme-color) #1a1a1a;
+  scrollbar-width: thin;
 }
 #root {
   display: flex;
@@ -182,6 +184,7 @@ body {
 	border-radius: 5px;
 	margin-bottom: 4px;
 	margin-top: 2px;
+	text-align: center;
   }
   .clip-thumbnail {
 	width: 98%;
@@ -262,7 +265,6 @@ body {
   .dac-panel {
 	min-width: 15%;
 	background-color: #1a1a1a;
-	outline: 1px solid var(--theme-color);
 	display: flex;
 	flex-direction: column;
 	border-radius: 10px;
@@ -271,7 +273,11 @@ body {
 	margin-top: 3px;
 	height: 95%;
 	text-align: center;
+	overflow-y: auto;
+	row-gap: 3px;
+	clip-path: inset(0 round 10px);
   }
+  
   .column-headers-container {
 	display: flex;
   }
@@ -474,6 +480,11 @@ input[type="checkbox"]:checked:before {
 .clip-label {
   font-size: 0.7em;
   cursor: pointer;
+  width: 98%;
+  height: 19%;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: #1a1a1a;
 }
 .preview-area {
   width: 100%;
@@ -591,13 +602,16 @@ input[type="checkbox"]:checked:before {
 }
 
 .clip.selected-clip {
-  
+
 }
 
 .clip.active-clip {
   outline: 1px solid var(--theme-color); /* Red outline for active clip */
 }
-
+.clip-label.selected-clip {
+	outline: 1px solid var(--theme-color);
+}
+	
 
 
 

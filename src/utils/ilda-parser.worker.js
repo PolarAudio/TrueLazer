@@ -6,6 +6,8 @@ const defaultPalette = [
   { r: 128, g: 128, b: 255 }, { r: 255, g: 255, b: 128 }, { r: 128, g: 255, b: 255 }, { r: 255, g: 128, b: 255 },
 ];
 
+const ildaDataStore = new Map(); // Store parsed ILDA data by a unique ID
+
 const calculateBounds = (points) => {
   if (!points || points.length === 0) {
     return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
@@ -114,13 +116,13 @@ function parseIldaFile(arrayBuffer) {
 
         // Read coordinates based on format
         if (formatCode === 0 || formatCode === 4) { // 3D formats
-          x = view.getInt16(pointDataOffset, false);
-          y = view.getInt16(pointDataOffset + 2, false);
-          z = view.getInt16(pointDataOffset + 4, false);
+          x = view.getInt16(pointDataOffset, false) / 32768;
+          y = view.getInt16(pointDataOffset + 2, false) / 32768;
+          z = view.getInt16(pointDataOffset + 4, false) / 32768;
           statusByte = view.getUint8(pointDataOffset + 6);
         } else { // 2D formats
-          x = view.getInt16(pointDataOffset, false);
-          y = view.getInt16(pointDataOffset + 2, false);
+          x = view.getInt16(pointDataOffset, false) / 32768;
+          y = view.getInt16(pointDataOffset + 2, false) / 32768;
           statusByte = view.getUint8(pointDataOffset + 4);
         }
 
@@ -135,10 +137,9 @@ function parseIldaFile(arrayBuffer) {
           g = color.g;
           b = color.b;
         } else if (formatCode === 4 || formatCode === 5) { // True Color formats
-			// FIX: The byte order in ILDA files is typically B, G, R (not R, G, B)
-			b = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
+			r = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
 			g = view.getUint8(pointDataOffset + (formatCode === 4 ? 8 : 6));
-			r = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
+			b = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
 		} else if (formatCode === 2) {
           // Color table entry - skip
           pointDataOffset += recordSize;
@@ -179,16 +180,34 @@ function parseIldaFile(arrayBuffer) {
 self.onmessage = function(e) {
 
   console.log('[ilda-parser.worker] Message received');
-  const { arrayBuffer, type, fileName, layerIndex, colIndex } = e.data;
+  const { arrayBuffer, type, fileName, layerIndex, colIndex, workerId, frameIndex } = e.data;
   
   if (type === 'parse-ilda') {
     try {
       const parsedData = parseIldaFile(arrayBuffer);
+      const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      ildaDataStore.set(newWorkerId, parsedData.frames);
+
       console.log('[ilda-parser.worker] Posting message back to main thread');
-      self.postMessage({ success: true, data: parsedData, fileName: fileName, layerIndex, colIndex });
+      self.postMessage({ 
+        success: true, 
+        workerId: newWorkerId, 
+        totalFrames: parsedData.frames.length, 
+        fileName: fileName, 
+        layerIndex, 
+        colIndex,
+        type: 'parse-ilda' 
+      });
     } catch (error) {
       console.error('[ilda-parser.worker] Error parsing file:', error);
       self.postMessage({ success: false, error: error.message });
+    }
+  } else if (type === 'get-frame') {
+    const frames = ildaDataStore.get(workerId);
+    if (frames && frames[frameIndex]) {
+      self.postMessage({ success: true, frame: frames[frameIndex], workerId, frameIndex, type: 'get-frame' });
+    } else {
+      self.postMessage({ success: false, error: 'Frame not found', workerId, frameIndex });
     }
   }
 };
