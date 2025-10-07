@@ -17,9 +17,10 @@ import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { GeneratorWorkerProvider, useGeneratorWorker } from './contexts/GeneratorWorkerContext';
 import { applyEffects } from './utils/effects';
 
-const MasterSpeedSlider = () => (
+const MasterSpeedSlider = ({ drawSpeed, onSpeedChange }) => (
   <div className="master-speed-slider">
-    <input type="range" min="0" max="100" defaultValue="50" className="slider" id="masterSpeedRange" />
+    <label htmlFor="masterSpeedRange">Clip Playback Speed</label>
+    <input type="range" min="50" max="250" value={drawSpeed} className="slider" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
   </div>
 );
 
@@ -53,7 +54,8 @@ const initialState = {
   showBeamEffect: true,
   beamAlpha: 0.1,
   fadeAlpha: 0.13,
-  drawSpeed: 1000,
+  drawSpeed: 100,
+  previewScanRate: 1,
   activeClipIndexes: Array(5).fill(null),
   isPlaying: false,
 };
@@ -160,6 +162,7 @@ function App() {
     beamAlpha,
     fadeAlpha,
     drawSpeed,
+    previewScanRate,
     activeClipIndexes,
     isPlaying,
   } = state;
@@ -201,8 +204,6 @@ function App() {
     } else {
         dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0 } });
     }
-    // Clear ildaFrames as it will now be fetched by IldaPlayer
-    dispatch({ type: 'SET_ILDA_FRAMES', payload: [] });
   }, [clipContents]);
 
   const handleActivateClick = useCallback((layerIndex, colIndex) => {
@@ -317,15 +318,8 @@ function App() {
       setTheme(theme);
       return;
     }
+    // Render modes are now controlled by sliders
     switch (action) {
-      case 'render-mode-high-performance':
-        dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'drawSpeed', value: 1000 } });
-        dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'fadeAlpha', value: 0.05 } });
-        break;
-      case 'render-mode-low-performance':
-        dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'drawSpeed', value: 100 } });
-        dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'fadeAlpha', value: 0.13 } });
-        break;
       case 'toggle-beam-effect':
         dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'showBeamEffect', value: !showBeamEffect } });
         break;
@@ -570,6 +564,7 @@ function App() {
               showBeamEffect={showBeamEffect}
               beamAlpha={beamAlpha}
               fadeAlpha={fadeAlpha}
+              previewScanRate={previewScanRate}
               drawSpeed={drawSpeed}
               onFrameChange={handleFrameChange}
               ildaParserWorker={ildaParserWorker}
@@ -579,6 +574,7 @@ function App() {
               showBeamEffect={showBeamEffect}
               beamAlpha={beamAlpha}
               fadeAlpha={fadeAlpha}
+              previewScanRate={previewScanRate}
               drawSpeed={drawSpeed}
               ildaParserWorker={ildaParserWorker}
             />
@@ -587,9 +583,9 @@ function App() {
           <div className="middle-bar">
             <div className="middle-bar-left-area">
               <BPMControls onPlay={handlePlay} onPause={handlePause} onStop={handleStop} />
-              <MasterSpeedSlider />
             </div>
             <div className="middle-bar-right-area">
+				<MasterSpeedSlider drawSpeed={drawSpeed} onSpeedChange={(value) => dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'drawSpeed', value } })} />
             </div>
           </div>
           <div className="bottom-panel">

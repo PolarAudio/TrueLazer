@@ -41,8 +41,6 @@ function createWindow() {
     {
       label: 'Layer',
       submenu: [
-        { label: 'Insert Above', click: () => { win.webContents.send('menu-action', 'layer-insert-above'); } },
-        { label: 'Insert Below', click: () => { win.webContents.send('menu-action', 'layer-insert-below'); } },
         { label: 'Rename', click: () => { win.webContents.send('menu-action', 'layer-rename'); } },
         { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'layer-clear-clips'); } },
       ],
@@ -50,9 +48,7 @@ function createWindow() {
     {
       label: 'Column',
       submenu: [
-        { label: 'Insert Before', click: () => { win.webContents.send('menu-action', 'column-insert-before'); } },
-        { label: 'Insert After', click: () => { win.webContents.send('menu-action', 'column-insert-after'); } },
-        { label: 'Duplicate', click: () => { win.webContents.send('menu-action', 'column-duplicate'); } },
+		{ label: 'Duplicate', click: () => { win.webContents.send('menu-action', 'column-duplicate'); } },
         { label: 'Rename', click: () => { win.webContents.send('menu-action', 'column-rename'); } },
         { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'column-clear-clips'); } },
       ],
@@ -103,20 +99,30 @@ function createWindow() {
             { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { win.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
             { type: 'separator' },
             {
-              label: 'Beam Alpha',
+              label: 'Preview Scan Rate',
               submenu: [
-                { label: 'Low (0.05)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.05 }); } },
-                { label: 'Medium (0.1)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
-                { label: 'High (0.2)', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
+                { label: 'Fast', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1 }); } },
+                { label: 'Madium', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.1 }); } },
+                { label: 'Slow', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.3 }); } },
               ]
             },
             {
-              label: 'Refresh Rate',
+              label: 'Fade Alpha',
               submenu: [
-                { label: 'No Stutter (Perfect Render)', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 10 }); } },
-                { label: 'Low Stutter', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 25 }); } },
-                { label: 'Medium Stutter', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 50 }); } },
-                { label: 'High Stutter', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'drawSpeed', value: 100 }); } },
+                { label: '0.0', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.0 }); } },
+                { label: '0.1', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.1 }); } },
+                { label: '0.2', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.2 }); } },
+                { label: '0.5', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.5 }); } },
+                { label: '1.0', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 1.0 }); } },
+              ]
+            },
+            {
+              label: 'Beam Alpha',
+              submenu: [
+                { label: '0.1', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
+                { label: '0.2', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
+                { label: '0.5', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.5 }); } },
+                { label: '1.0', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 1.0 }); } },
               ]
             },
           ]

@@ -160,30 +160,32 @@ export class WebGLRenderer {
     }
 
     if (this.type === 'world') {
-      this.renderWorld(data.worldData, data.drawSpeed);
+      this.renderWorld(data.worldData, data.previewScanRate);
     }
     else {
-      this.renderSingle(data.ildaFrames, data.drawSpeed);
+      this.renderSingle(data.ildaFrames, data.previewScanRate);
     }
   }
 
-  renderSingle(ildaFrames, drawSpeed) {
+  renderSingle(ildaFrames, previewScanRate) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    if (ildaFrames && ildaFrames.length > 0) {
-      const frame = ildaFrames[this.frameIndexes[0] % ildaFrames.length];
-      this.draw(frame.points, this.showBeamEffect, this.beamAlpha, drawSpeed);
+    if (!ildaFrames || ildaFrames.length === 0) {
+      return;
+    }
 
-      this.frameIndexes[0]++;
-      if (this.frameIndexes[0] >= ildaFrames.length) {
-        this.frameIndexes[0] = 0;
-      }
+    const frame = ildaFrames[this.frameIndexes[0] % ildaFrames.length];
+    this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate);
+
+    this.frameIndexes[0]++;
+    if (this.frameIndexes[0] >= ildaFrames.length) {
+      this.frameIndexes[0] = 0;
     }
   }
 
-  renderWorld(worldData, drawSpeed) {
+  renderWorld(worldData, previewScanRate) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -191,7 +193,9 @@ export class WebGLRenderer {
     worldData.forEach((clip, index) => {
       if (clip && clip.frames && clip.frames.length > 0) {
         const frame = clip.frames[this.frameIndexes[index] % clip.frames.length];
-        this.draw(frame.points, this.showBeamEffect, this.beamAlpha, drawSpeed);
+        if (frame) { // Add null check for frame
+          this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate);
+        }
       }
     });
 
@@ -217,23 +221,20 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(points, showBeamEffect, beamAlpha, drawSpeed) {
+  draw(points, showBeamEffect, beamAlpha, previewScanRate) {
     const gl = this.gl;
 
     if (!points || points.length === 0) {
       return;
     }
 
-    // Determine skip factor based on drawSpeed
-    let skipFactor = 1;
-    if (drawSpeed === 10) { // No Stutter
-      skipFactor = 1;
-    } else if (drawSpeed === 25) { // Low Stutter
-      skipFactor = 2;
-    } else if (drawSpeed === 50) { // Medium Stutter
-      skipFactor = 5;
-    } else if (drawSpeed === 100) { // High Stutter (new value for high stutter)
-      skipFactor = 10;
+    const pointsToDraw = Math.max(1, Math.floor(points.length / previewScanRate));
+    const startIndex = this.currentPointIndex;
+    let endIndex = (startIndex + pointsToDraw);
+
+    // Ensure endIndex does not exceed points.length and wraps around correctly
+    if (endIndex > points.length) {
+      endIndex = points.length;
     }
 
     let currentSegmentPositions = [];
@@ -246,12 +247,7 @@ export class WebGLRenderer {
       }
     };
 
-    for (let i = 0; i < points.length; i++) {
-      // Apply skip factor
-      if (skipFactor > 1 && i % skipFactor !== 0) {
-        continue;
-      }
-
+    for (let i = startIndex; i < endIndex; i++) {
       const point = points[i];
 
       if (point.blanking) {
@@ -272,7 +268,7 @@ export class WebGLRenderer {
       numPointsInSegment++;
 
       // If this is the last point of a segment or the frame, draw it
-      if (i === points.length - 1 || point.lastPoint) {
+      if (i === endIndex -1 || point.lastPoint) {
         drawSegment(currentSegmentPositions, currentSegmentColors, 1.0, numPointsInSegment);
         if (showBeamEffect) {
           drawSegment(currentSegmentPositions, currentSegmentColors, beamAlpha, numPointsInSegment);
@@ -282,9 +278,10 @@ export class WebGLRenderer {
         numPointsInSegment = 0;
       }
     }
+    this.currentPointIndex = (this.currentPointIndex + pointsToDraw) % points.length;
   }
 
-  _drawSegment(positions, colors, alpha, numPoints, drawSpeed) {
+  _drawSegment(positions, colors, alpha, numPoints) {
     const gl = this.gl;
 
     gl.useProgram(this.program);
@@ -309,6 +306,12 @@ export class WebGLRenderer {
     gl.vertexAttribPointer(this.alphaAttributeLocation, 1, gl.FLOAT, false, 0, 0);
 
     gl.drawArrays(gl.LINE_STRIP, 0, numPoints);
+  }
+
+  clearCanvas() {
+    const gl = this.gl;
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
   destroy() {

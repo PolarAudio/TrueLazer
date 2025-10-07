@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const IldaPlayer = ({ ildaWorkerId, totalFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameChange, ildaParserWorker }) => {
+const IldaPlayer = ({ ildaWorkerId, totalFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, drawSpeed, onFrameChange, ildaParserWorker }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`ilda-player-${Math.random()}`);
@@ -19,7 +19,7 @@ const IldaPlayer = ({ ildaWorkerId, totalFrames, showBeamEffect, beamAlpha, draw
         id: canvasId.current,
         canvas: offscreen,
         type: 'single',
-        data: { showBeamEffect, beamAlpha, drawSpeed }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate }
       }
     }, [offscreen]);
 
@@ -38,51 +38,69 @@ const IldaPlayer = ({ ildaWorkerId, totalFrames, showBeamEffect, beamAlpha, draw
   }, []);
 
   useEffect(() => {
-    if (!ildaParserWorker || !ildaWorkerId || totalFrames === 0) {
+    if (!ildaParserWorker) {
       setCurrentFrame(null);
       return;
     }
 
-    let frameIndex = 0; // Start with the first frame
+    let frameIndex = 0;
+    let intervalId = null;
 
-    const fetchFrame = () => {
-      if (ildaParserWorker && ildaWorkerId && totalFrames > 0) {
-        ildaParserWorker.postMessage({ type: 'get-frame', workerId: ildaWorkerId, frameIndex });
-      }
-    };
-
-    const messageHandler = (e) => {
+    const handleIldaParserMessage = (e) => {
       if (e.data.type === 'get-frame' && e.data.workerId === ildaWorkerId) {
-        setCurrentFrame(e.data.frame);
-        // Advance frameIndex for the next request
-        frameIndex = (frameIndex + 1) % totalFrames;
+        // Only update if the frame data has actually changed (deep comparison for objects)
+        if (!currentFrame || JSON.stringify(currentFrame) !== JSON.stringify(e.data.frame)) {
+          setCurrentFrame(e.data.frame);
+        }
       }
     };
 
-    ildaParserWorker.addEventListener('message', messageHandler);
+    ildaParserWorker.addEventListener('message', handleIldaParserMessage);
 
-    // Initial fetch
-    fetchFrame();
+    const setupFrameFetching = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+      if (ildaWorkerId && totalFrames > 0) {
+        frameIndex = 0;
+        const fetchFrame = () => {
+          ildaParserWorker.postMessage({ type: 'get-frame', workerId: ildaWorkerId, frameIndex });
+          frameIndex = (frameIndex + 1) % totalFrames;
+        };
+        fetchFrame(); // Initial fetch
+        intervalId = setInterval(fetchFrame, drawSpeed);
+      } else {
+        setCurrentFrame(null);
+        // Explicitly clear the canvas in the rendering worker
+        if (worker) {
+          worker.postMessage({ action: 'clear', payload: { id: canvasId.current } });
+        }
+      }
+    };
 
-    // Set up interval for fetching subsequent frames
-    const intervalId = setInterval(fetchFrame, drawSpeed); // Use drawSpeed for fetching interval
+    setupFrameFetching();
 
     return () => {
-      clearInterval(intervalId);
-      ildaParserWorker.removeEventListener('message', messageHandler);
+      ildaParserWorker.removeEventListener('message', handleIldaParserMessage);
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
     };
-  }, [ildaParserWorker, ildaWorkerId, totalFrames, drawSpeed]);
+  }, [ildaParserWorker, ildaWorkerId, totalFrames, drawSpeed, worker, canvasId]);
 
   useEffect(() => {
-    if (!worker || !currentFrame) return;
+    if (!worker) return;
+
+    const framesToSend = currentFrame ? [currentFrame] : [];
+
     worker.postMessage({
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { ildaFrames: [currentFrame], showBeamEffect, beamAlpha, drawSpeed }
+        data: { ildaFrames: framesToSend, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate }
       }
     });
-  }, [worker, currentFrame, showBeamEffect, beamAlpha, drawSpeed]);
+  }, [worker, currentFrame, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate]);
 
   return (
     <div className="ilda-player">

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed, ildaParserWorker }) => {
+const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, drawSpeed, ildaParserWorker }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`world-preview-${Math.random()}`);
@@ -19,7 +19,7 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed, ildaPar
         id: canvasId.current,
         canvas: offscreen,
         type: 'world',
-        data: { showBeamEffect, beamAlpha, drawSpeed }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate }
       }
     }, [offscreen]);
 
@@ -30,69 +30,136 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed, ildaPar
   }, []);
 
   useEffect(() => {
-    if (!ildaParserWorker || worldData.length === 0) {
+    if (!ildaParserWorker) {
       setActiveFrames({});
       return;
     }
 
-    const frameIndexes = {}; // Keep track of current frame index for each workerId
-    const intervalIds = {}; // Store interval IDs for cleanup
+    const currentFrameIndexes = {};
+    const currentIntervalIds = {};
 
+    const handleIldaParserMessage = (e) => {
+      if (e.data.type === 'get-frame') {
+        const { workerId, frame, effects } = e.data;
+        setActiveFrames(prevFrames => {
+          const isWorkerIdActive = worldData.some(clip => clip.workerId === workerId);
+          if (isWorkerIdActive) {
+            const existingFrameData = prevFrames[workerId];
+            // Only update if the frame data has actually changed (deep comparison for objects)
+            if (!existingFrameData || JSON.stringify(existingFrameData.frame) !== JSON.stringify(frame) || JSON.stringify(existingFrameData.effects) !== JSON.stringify(effects)) {
+              return {
+                ...prevFrames,
+                [workerId]: { frame, effects } // Store frame and effects
+              };
+            }
+          }
+          return prevFrames;
+        });
+      }
+    };
+
+    ildaParserWorker.addEventListener('message', handleIldaParserMessage);
+
+    // Initialize or update frame fetching for current worldData
+    const newActiveFrames = {};
     worldData.forEach(clip => {
-      if (clip.workerId && clip.totalFrames > 0) {
-        frameIndexes[clip.workerId] = 0;
+      if (clip && clip.workerId && clip.totalFrames > 0) {
+        currentFrameIndexes[clip.workerId] = 0;
+        newActiveFrames[clip.workerId] = activeFrames[clip.workerId] || { frame: null, effects: clip.effects }; // Preserve existing frame if available
 
         const fetchFrame = () => {
           if (ildaParserWorker && clip.workerId && clip.totalFrames > 0) {
-            ildaParserWorker.postMessage({ type: 'get-frame', workerId: clip.workerId, frameIndex: frameIndexes[clip.workerId] });
+            ildaParserWorker.postMessage({ type: 'get-frame', workerId: clip.workerId, frameIndex: currentFrameIndexes[clip.workerId] });
+            currentFrameIndexes[clip.workerId] = (currentFrameIndexes[clip.workerId] + 1) % clip.totalFrames;
           }
         };
 
-        const messageHandler = (e) => {
-          if (e.data.type === 'get-frame' && e.data.workerId === clip.workerId) {
-            setActiveFrames(prevFrames => ({
-              ...prevFrames,
-              [e.data.workerId]: { frame: e.data.frame, effects: clip.effects } // Store frame and effects
-            }));
-            // Advance frameIndex for the next request
-            frameIndexes[clip.workerId] = (frameIndexes[clip.workerId] + 1) % clip.totalFrames;
-          }
-        };
-
-        ildaParserWorker.addEventListener('message', messageHandler);
+        // Clear existing interval for this workerId if it exists
+        if (currentIntervalIds[clip.workerId]) {
+          clearInterval(currentIntervalIds[clip.workerId]);
+        }
         // Initial fetch
         fetchFrame();
         // Set up interval for fetching subsequent frames
-        intervalIds[clip.workerId] = setInterval(fetchFrame, drawSpeed);
+        currentIntervalIds[clip.workerId] = setInterval(fetchFrame, drawSpeed);
+      } else {
+        // Explicitly clear the canvas in the rendering worker for this clip
+        if (worker && clip && clip.workerId) {
+          worker.postMessage({ action: 'clear', payload: { id: `world-preview-${clip.workerId}` } }); // Assuming a unique ID for each clip's rendering
+        }
       }
     });
 
+    // Clean up intervals for clips that are no longer in worldData
+    Object.keys(activeFrames).forEach(workerId => {
+      if (!newActiveFrames[workerId]) {
+        if (currentIntervalIds[workerId]) {
+          clearInterval(currentIntervalIds[workerId]);
+          delete currentIntervalIds[workerId];
+        }
+        // Also remove from activeFrames if it's no longer active
+        setActiveFrames(prevFrames => {
+          const updatedFrames = { ...prevFrames };
+          delete updatedFrames[workerId];
+          return updatedFrames;
+        });
+        // Explicitly clear the canvas in the rendering worker for this workerId
+        if (worker) {
+          worker.postMessage({ action: 'clear', payload: { id: `world-preview-${workerId}` } });
+        }
+      }
+    });
+
+    // If worldData is empty, clear all active frames and send a clear message to the worker
+    if (worldData.length === 0) {
+      setActiveFrames({});
+      if (worker) {
+        worker.postMessage({ action: 'clear', payload: { id: canvasId.current } });
+      }
+    }
+
+    // Update activeFrames to reflect only currently active clips
+    // This line needs to be carefully placed to avoid overwriting during the loop
+    // It's better to manage newActiveFrames directly and then set it once.
+    // For now, let's assume setActiveFrames inside the loop is sufficient for individual updates.
+
+    // After all processing, ensure activeFrames only contains relevant clips
+    setActiveFrames(prevFrames => {
+      const updatedFrames = {};
+      worldData.forEach(clip => {
+        if (clip && clip.workerId && prevFrames[clip.workerId]) {
+          updatedFrames[clip.workerId] = prevFrames[clip.workerId];
+        }
+      });
+      return updatedFrames;
+    });
+
     return () => {
-      Object.values(intervalIds).forEach(clearInterval);
-      // Remove event listeners for each clip's workerId
-      // This part is tricky as removeEventListener needs the exact same function reference.
-      // For simplicity, we'll rely on the worker being terminated or the component unmounting.
-      // A more robust solution would involve a dedicated message handler for each clip or a more complex cleanup.
+      ildaParserWorker.removeEventListener('message', handleIldaParserMessage);
+      Object.values(currentIntervalIds).forEach(clearInterval);
     };
-  }, [ildaParserWorker, worldData, drawSpeed]);
+  }, [ildaParserWorker, worldData, drawSpeed, worker, canvasId]);
 
   useEffect(() => {
     if (!worker) return;
-    // Transform activeFrames into a format rendering.worker.js expects for worldData
-    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects }]) => ({
-      frames: [frame], // rendering.worker.js expects an array of frames
-      effects: effects,
-      workerId: workerId, // Include workerId for identification if needed in rendering worker
-    }));
+
+    let transformedWorldData = [];
+    if (Object.keys(activeFrames).length > 0) {
+      transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects }]) => ({
+        frames: [frame], // rendering.worker.js expects an array of frames
+        effects: effects,
+        workerId: workerId, // Include workerId for identification if needed in rendering worker
+      }));
+    }
 
     worker.postMessage({
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, drawSpeed }
+        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate }
       }
     });
-  }, [worker, activeFrames, showBeamEffect, beamAlpha, drawSpeed]);
+  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate]);
 
   return (
     <div className="world-preview">

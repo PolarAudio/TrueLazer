@@ -231,22 +231,21 @@ body {
 	grid-template-columns: 240px auto;
 	position: fixed;
 	height: 3.5%;
-	align-items: center;
+	align-items: flex-start;
   }
   .middle-bar-left-area {
 	display: flex;
   }
   .middle-bar-right-area {
-	display: flex;
   }
   .bpm-controls {
 	position: absolute;
 	width: 25%;
   }
   .master-speed-slider {
-	position: relative;
+	position: absolute;
 	width: 35%;
-	left: 100%;
+	display: flex;
   }
   .bottom-panel {
 	display: flex;
