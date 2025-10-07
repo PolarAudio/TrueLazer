@@ -54,7 +54,7 @@ const initialState = {
   showBeamEffect: true,
   beamAlpha: 0.1,
   fadeAlpha: 0.13,
-  drawSpeed: 100,
+  drawSpeed: 33,
   previewScanRate: 1,
   beamRenderMode: 'points',
   activeClipIndexes: Array(5).fill(null),
