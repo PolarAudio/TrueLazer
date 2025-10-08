@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery } = require('./utils/dac-communication');
+const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery, sendPlayCommand } = require('./utils/dac-communication');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -159,6 +159,10 @@ function createWindow() {
 
   ipcMain.on('send-frame', (event, { ip, frame }) => {
     sendFrame(ip, frame);
+  });
+
+  ipcMain.on('send-play-command', (event, ip) => {
+    sendPlayCommand(ip);
   });
 
   ipcMain.on('show-layer-context-menu', (event, index) => {

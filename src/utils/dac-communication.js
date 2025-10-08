@@ -4,6 +4,29 @@ const os = require('os');
 const DISCOVERY_PORT = 8089;
 const SERVER_PORT = 8089;
 const CLIENT_PORT = 8099;
+const BROADCAST_IP = '255.255.255.255'; // Added BROADCAST_IP
+
+function getLocalIpAddress() {
+  const interfaces = os.networkInterfaces();
+  for (const name in interfaces) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1'; // Fallback
+}
+
+function calculateBroadcastAddress(address, netmask) {
+  const ip = address.split('.').map(Number);
+  const nm = netmask.split('.').map(Number);
+  const broadcast = [];
+  for (let i = 0; i < 4; i++) {
+    broadcast[i] = (ip[i] & nm[i]) | (~nm[i] & 255);
+  }
+  return broadcast.join('.');
+}
 
 function getNetworkInterfaces() {
   const interfaces = os.networkInterfaces();
@@ -35,59 +58,74 @@ function calculateBroadcastAddress(address, netmask) {
   return broadcast.join('.');
 }
 
-let activeDiscoverySocket = null;
-let discoveryCallback = null; // Store the callback to be used by the active socket
-
-function discoverDacs(callback, networkInterface) {
-  console.log('Starting DAC discovery...');
-  discoveryCallback = callback; // Update the callback
-
-  if (activeDiscoverySocket) {
-    console.log('Reusing existing discovery socket to send broadcast.');
-    sendBroadcast(activeDiscoverySocket, networkInterface);
-    return;
-  }
-
-  const socket = dgram.createSocket('udp4');
-  activeDiscoverySocket = socket; // Track the new active socket
-  const dacs = [];
-
-  socket.on('listening', () => {
-    const address = socket.address();
-    console.log(`Socket listening on ${address.address}:${address.port}`);
-    socket.setBroadcast(true);
-    sendBroadcast(socket, networkInterface);
-  });
-
-  socket.on('message', (msg, rinfo) => {
-    console.log(`Received message from ${rinfo.address}:${rinfo.port}: ${msg.toString('hex')}`);
-    if (msg[0] === 0x16 && msg[1] === 0x1a && msg[2] === 0x01) { // Vendor ID (22,26) and Type (1)
-      console.log('Received valid DAC response.');
-      const dacInfo = {
-        ip: rinfo.address,
-        // Extracting version, max_pps, max_points from the message
-        // Assuming version is msg[4], max_pps is msg[5] * 1000, max_points is 5000
-        // These are placeholders and need to be verified with actual protocol
-        version: msg[4],
-        max_pps: msg[5] * 1000,
-        max_points: 5000,
-        channel: msg[3], // Channel is msg[3]
-      };
-
-      // Further parsing of Device ID, Value, Checksum will go here
-      // For now, let's just get the basic info
-      if (!dacs.some(d => d.ip === dacInfo.ip)) {
-        dacs.push(dacInfo);
-        console.log('Discovered DAC:', dacInfo);
-        if (discoveryCallback) {
-          discoveryCallback(dacs);
-        }
-      }
-    } else {
-      console.log('Received non-DAC message or invalid format.');
+  let activeDiscoverySocket = null;
+  let discoveryCallback = null; // Store the callback to be used by the active socket
+  const discoveredDacsMap = new Map(); // Map to store discovered DACs by IP
+  
+  function discoverDacs(callback, networkInterface) {
+    console.log('Starting DAC discovery...');
+    discoveryCallback = callback; // Update the callback
+  
+    if (activeDiscoverySocket) {
+      console.log('Reusing existing discovery socket to send broadcast.');
+      sendDiscoveryBroadcast(); // Call the new function
+      return;
     }
-  });
+  
+    const socket = dgram.createSocket('udp4');
+    activeDiscoverySocket = socket; // Track the new active socket
+  
+    socket.on('listening', () => {
+      const address = socket.address();
+      console.log(`Socket listening on ${address.address}:${address.port}`);
+      socket.setBroadcast(true);
+      sendDiscoveryBroadcast();
+    });
+  
+    socket.on('message', (msg, rinfo) => {
+      console.log(`Received message from ${rinfo.address}:${rinfo.port}: ${msg.toString('hex')}`);
+      if (msg[0] === 0x16 && msg[1] === 0x1a && msg[2] === 0x01) { // Vendor ID (22,26) and Type (1)
+        console.log('Received valid DAC response.');
+        const dacIp = rinfo.address;
+        const channel = msg[3]; // Channel is msg[3]
+  
+        let dacEntry = discoveredDacsMap.get(dacIp);
+        const isNewDac = !dacEntry;
+        if (isNewDac) {
+          dacEntry = {
+            ip: dacIp,
+            channels: new Set(),
+            // Extracting version, max_pps, max_points from the message
+            // Assuming version is msg[4], max_pps is msg[5] * 1000, max_points is 5000
+            // These are placeholders and need to be verified with actual protocol
+            version: msg[4],
+            max_pps: msg[5] * 1000,
+            max_points: 5000,
+          };
+          discoveredDacsMap.set(dacIp, dacEntry);
+          console.log('Newly discovered DAC:', dacEntry.ip);
+        }
 
+        const isNewChannel = !dacEntry.channels.has(channel);
+        if (isNewChannel) {
+          dacEntry.channels.add(channel);
+          console.log(`Added new channel ${channel} to DAC: ${dacEntry.ip}`);
+        }
+  
+        console.log('Current state of DAC:', dacEntry); // Log the current state of the DAC
+        if (discoveryCallback) {
+          // Convert the Map values to an array, and channels Set to an array for the callback
+          const dacsForCallback = Array.from(discoveredDacsMap.values()).map(dac => ({
+            ...dac,
+            channels: Array.from(dac.channels)
+          }));
+          console.log('DACS sent to callback:', dacsForCallback); // Log what's sent to the callback
+          discoveryCallback(dacsForCallback);
+        }
+      } else {
+        console.log('Received non-DAC message or invalid format.');
+      }
+    });
   socket.on('error', (err) => {
     console.error('Socket error:', err);
     if (activeDiscoverySocket === socket) {
@@ -108,34 +146,24 @@ function discoverDacs(callback, networkInterface) {
   });
 }
 
-function sendBroadcast(socket, networkInterface) {
-  const broadcastAddress = '255.255.255.255';
-  let targetIpBuffer = Buffer.from([0, 0, 0, 0]); // Default to 0.0.0.0
+function sendDiscoveryBroadcast() {
+    const localIp = getLocalIpAddress();
+    const command = Buffer.alloc(6);
+    // Assuming target IP is part of the command, as per SDKSocket.h
+    // This part needs to be carefully constructed based on the actual SDK
+    // For now, let's use a placeholder or assume it's the local IP
+    const ipParts = localIp.split('.').map(Number);
+    command.writeUInt8(ipParts[0], 0);
+    command.writeUInt8(ipParts[1], 1);
+    command.writeUInt8(ipParts[2], 2);
+    command.writeUInt8(ipParts[3], 3);
+    command.writeUInt8(163, 4); // Flag 1
+    command.writeUInt8(31, 5);  // Flag 2
 
-  if (networkInterface && networkInterface.address) {
-    const ipParts = networkInterface.address.split('.').map(Number);
-    targetIpBuffer = Buffer.from(ipParts);
-  }
-
-  // Command: 6 bytes = Target IP (4 bytes) + Flags (2 bytes)
-  const command = Buffer.concat([
-    targetIpBuffer, // Our station IP
-    Buffer.from([163, 31]) // Flags
-  ]);
-
-  // The actual discovery message to send is just the 6-byte command
-  const DISCOVERY_MESSAGE_TO_SEND = command;
-
-  console.log(`Sending discovery message to ${broadcastAddress}:${DISCOVERY_PORT} with command: ${DISCOVERY_MESSAGE_TO_SEND.toString('hex')}`);
-
-  socket.send(DISCOVERY_MESSAGE_TO_SEND, DISCOVERY_PORT, broadcastAddress, (err) => {
-    if (err) {
-      console.error('Error sending discovery message:', err);
-      socket.close();
-    } else {
-      console.log('Discovery message sent.');
-    }
-  });
+    activeDiscoverySocket.send(command, DISCOVERY_PORT, BROADCAST_IP, (err) => {
+        if (err) console.error(`Error sending discovery broadcast: ${err}`);
+        else console.log(`Sent discovery broadcast to ${BROADCAST_IP}:${DISCOVERY_PORT}`);
+    });
 }
 
 function stopDiscovery() {
@@ -143,41 +171,110 @@ function stopDiscovery() {
     console.log('Stopping DAC discovery. Closing socket.');
     activeDiscoverySocket.close();
     activeDiscoverySocket = null;
+    discoveredDacsMap.clear(); // Clear the map on stop
   }
 }
 
 function sendFrame(ip, frame) {
     const socket = dgram.createSocket('udp4');
-    const message = Buffer.alloc(4 + 2 + 1 + 1 + (frame.points.length * 8));
 
-    let offset = 0;
-    message.write('DM', offset, 2, 'ascii');
-    offset += 2;
-    message.writeUInt8(0x01, offset++); // version
-    message.writeUInt8(0x10, offset++); // command for send frame
+    // 1. Construct the 16-byte Application Data Header
+    const applicationHeader = Buffer.from('fdb41f99120c8322030040008700001e', 'hex');
 
-    message.writeUInt16LE(frame.points.length, offset);
-    offset += 2;
-    message.writeUInt8(0, offset++); // status
-    message.writeUInt8(0, offset++); // delay
+    // 2. Vector Data: Multiple 8-byte vector structures (X, Y, command, RGB)
+    const MAX_POINTS_PER_PACKET = 574; // Derived from (4612 total app data - 16 header) / 8 bytes per point = 574.5, so 574 points with 4 bytes padding
+    const pointsToProcess = frame.points.slice(0, MAX_POINTS_PER_PACKET);
 
-    for (const point of frame.points) {
-        message.writeFloatLE(point.x, offset);
-        offset += 4;
-        message.writeFloatLE(point.y, offset);
-        offset += 4;
-        message.writeUInt8(point.blanking ? 1 : 0, offset++);
-        message.writeUInt8(point.r, offset++);
-        message.writeUInt8(point.g, offset++);
-        message.writeUInt8(point.b, offset++);
+    const fixedPointDataSize = MAX_POINTS_PER_PACKET * 8; // 8 bytes per point
+    const pointDataBuffer = Buffer.alloc(fixedPointDataSize);
+    let pointOffset = 0;
+
+    for (const point of pointsToProcess) {
+        // Convert normalized float coordinates (-1.0 to 1.0) to uint16_t (0 to 4095)
+        const x_uint16 = Math.round((point.x + 1.0) / 2.0 * 4095);
+        const y_uint16 = Math.round((1.0 - point.y) / 2.0 * 4095);
+
+        console.log(`Point: (${point.x}, ${point.y}) -> DAC: (${x_uint16}, ${y_uint16})`);
+        console.log(`Writing: X=${x_uint16.toString(16)}, Y=${y_uint16.toString(16)} at offset ${pointOffset}`);
+
+        // Map blanking to command: 0x01 = Laser On, 0x00 = Laser Off
+        const command = point.blanking ? 0x00 : 0x01;
+
+        pointDataBuffer.writeUInt16LE(x_uint16, pointOffset);
+        pointOffset += 2;
+        pointDataBuffer.writeUInt16LE(y_uint16, pointOffset);
+        pointOffset += 2;
+
+        // DEBUG: Read back what was written
+        const writtenX = pointDataBuffer.readUInt16LE(pointOffset - 4);
+        const writtenY = pointDataBuffer.readUInt16LE(pointOffset - 2);
+        console.log(`Read back: X=${writtenX.toString(16)}, Y=${writtenY.toString(16)}`);
+
+        pointDataBuffer.writeUInt8(command, pointOffset++);
+        pointDataBuffer.writeUInt8(point.r, pointOffset++);
+        pointDataBuffer.writeUInt8(point.g, pointOffset++);
+        pointDataBuffer.writeUInt8(point.b, pointOffset++);
     }
+
+    // Fill the remaining space with zeros to match TrueWave's 'laser off' behavior
+    while (pointOffset < fixedPointDataSize) {
+        pointDataBuffer.writeUInt8(0x00, pointOffset++);
+    }
+
+    // 3. Combine Application Header and Vector Data into a 4612-byte buffer
+    const message = Buffer.alloc(4612); // Allocate for the full 4612 bytes of application data
+
+    applicationHeader.copy(message, 0);
+    pointDataBuffer.copy(message, applicationHeader.length);
+
+    const fs = require('fs');
+    const path = require('path');
+    const logFilePath = path.join(__dirname, '..', '..', 'packet_log.txt'); // Log file in project root
+
+    // Final Debug Logging
+    console.log('First 100 bytes of message (hex):');
+    console.log(message.slice(0, 100).toString('hex'));
+
+    console.log('Header (hex):');
+    console.log(applicationHeader.toString('hex'));
+
+    console.log('First 3 vectors in pointDataBuffer (hex):');
+    console.log(pointDataBuffer.slice(0, 24).toString('hex'));
+
+    const logEntry = `--- ${new Date().toISOString()} ---\nSending UDP packet to ${ip}:${SERVER_PORT} (size: ${message.length} bytes, pointDataBuffer.length: ${pointDataBuffer.length}):\n${message.toString('hex')}\n\n`;
+    fs.appendFileSync(logFilePath, logEntry);
+    console.log(`Packet logged to ${logFilePath}`); // Keep a console log for confirmation
 
     socket.send(message, SERVER_PORT, ip, (err) => {
         if (err) {
             console.error(`Error sending frame to ${ip}:`, err);
+            const errorLogEntry = `--- ${new Date().toISOString()} ---\nError sending frame to ${ip}: ${err.message}\n\n`;
+            fs.appendFileSync(logFilePath, errorLogEntry);
         }
         socket.close();
     });
 }
 
-module.exports = { getNetworkInterfaces, discoverDacs, sendFrame, stopDiscovery };
+function sendPlayCommand(ip) {
+    const socket = dgram.createSocket('udp4');
+    const message = Buffer.from([0x44, 0x4D, 0x01, 0x12]); // DM0112 for play command
+
+    const fs = require('fs');
+    const path = require('path');
+    const logFilePath = path.join(__dirname, '..', '..', 'packet_log.txt');
+
+    const logEntry = `--- ${new Date().toISOString()} ---\nSending Play Command to ${ip}:${SERVER_PORT} (size: ${message.length} bytes):\n${message.toString('hex')}\n\n`;
+    fs.appendFileSync(logFilePath, logEntry);
+    console.log(`Play Command logged to ${logFilePath}`);
+
+    socket.send(message, SERVER_PORT, ip, (err) => {
+        if (err) {
+            console.error(`Error sending Play Command to ${ip}:`, err);
+            const errorLogEntry = `--- ${new Date().toISOString()} ---\nError sending Play Command to ${ip}: ${err.message}\n\n`;
+            fs.appendFileSync(logFilePath, errorLogEntry);
+        }
+        socket.close();
+    });
+}
+
+module.exports = { getNetworkInterfaces, discoverDacs, sendFrame, stopDiscovery, sendPlayCommand };

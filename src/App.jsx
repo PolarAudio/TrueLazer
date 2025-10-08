@@ -30,8 +30,12 @@ const MasterIntensitySlider = () => (
   </div>
 );
 
-const LaserOnOffButton = () => (
-  <div className="container"><input type="checkbox" /></div>
+const LaserOnOffButton = ({ isWorldOutputActive, onToggleWorldOutput }) => (
+  <div className="container">
+    <label>
+      <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} /> Laser Output
+    </label>
+  </div>
 );
 
 const initialState = {
@@ -59,6 +63,7 @@ const initialState = {
   beamRenderMode: 'points',
   activeClipIndexes: Array(5).fill(null),
   isPlaying: false,
+  isWorldOutputActive: false, // Controls whether frames are sent to DACs
 };
 
 function reducer(state, action) {
@@ -137,6 +142,14 @@ function reducer(state, action) {
       return { ...state, selectedDac: action.payload };
     case 'SET_IS_PLAYING':
       return { ...state, isPlaying: action.payload };
+    case 'SET_WORLD_OUTPUT_ACTIVE':
+      return { ...state, isWorldOutputActive: action.payload };
+    case 'SET_CLIP_DAC':
+      const newClipContentsWithDac = [...state.clipContents];
+      const clipToUpdateDac = { ...newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] };
+      clipToUpdateDac.dac = action.payload.dac;
+      newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] = clipToUpdateDac;
+      return { ...state, clipContents: newClipContentsWithDac };
     default:
       return state;
   }
@@ -167,6 +180,7 @@ function App() {
     beamRenderMode,
     activeClipIndexes,
     isPlaying,
+    isWorldOutputActive, // Add this line
   } = state;
 
   const [liveFrames, setLiveFrames] = React.useState({});
@@ -176,6 +190,7 @@ function App() {
   const ildaParserWorker = useIldaParserWorker();
   const generatorWorker = useGeneratorWorker();
   const ildaPlayerCurrentFrameIndex = useRef(0);
+  const playCommandSentRef = useRef(false);
 
   const activeClipsData = layers.map((_, layerIndex) => {
     const activeColIndex = activeClipIndexes[layerIndex];
@@ -186,6 +201,7 @@ function App() {
                 workerId: clip.workerId,
                 totalFrames: clip.totalFrames,
                 effects: clip.effects || [], // Keep effects
+                dac: clip.dac || null, // Include assigned DAC
             };
         }
     }
@@ -221,6 +237,7 @@ function App() {
         if (!lastFrameFetchTimeRef.current[workerId]) {
           lastFrameFetchTimeRef.current[workerId] = 0;
         }
+        // Always fetch the frame if enough time has passed, regardless of isPlaying
         if (timestamp - lastFrameFetchTimeRef.current[workerId] > drawSpeed) {
           lastFrameFetchTimeRef.current[workerId] = timestamp;
           
@@ -230,20 +247,25 @@ function App() {
               frameIndexesRef.current[workerId] = 0;
             }
             ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: frameIndexesRef.current[workerId] });
-            frameIndexesRef.current[workerId] = (frameIndexesRef.current[workerId] + 1) % clip.totalFrames;
+            
+            // Only advance frame index if isPlaying is true
+            if (isPlaying) {
+              frameIndexesRef.current[workerId] = (frameIndexesRef.current[workerId] + 1) % clip.totalFrames;
+            }
           }
         }
       });
       animationFrameId = requestAnimationFrame(frameFetcherLoop);
     };
 
+    // The frame fetcher loop should always run to keep liveFrames updated
     animationFrameId = requestAnimationFrame(frameFetcherLoop);
 
     return () => {
       ildaParserWorker.removeEventListener('message', handleMessage);
       cancelAnimationFrame(animationFrameId);
     };
-  }, [ildaParserWorker, workerIdsToFetch, drawSpeed, clipContents]);
+  }, [ildaParserWorker, workerIdsToFetch, drawSpeed, clipContents, isPlaying]);
 
   const handleFrameChange = useCallback((frameIndex) => {
     ildaPlayerCurrentFrameIndex.current = frameIndex;
@@ -309,6 +331,11 @@ function App() {
     }
     generatorWorker.postMessage({ type: 'generate-frame', generator, layerIndex, colIndex });
   }, [generatorWorker, showNotification]);
+
+  const handleDropDac = useCallback((layerIndex, colIndex, dac) => {
+    dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac } });
+    showNotification(`DAC ${dac.ip} Channel ${dac.channel} assigned to Clip ${layerIndex + 1}-${colIndex + 1}`);
+  }, [showNotification]);
 
   useEffect(() => {
     if (!ildaParserWorker) return;
@@ -480,6 +507,10 @@ function App() {
   const handleStop = useCallback(() => {
     dispatch({ type: 'SET_IS_PLAYING', payload: false });
     ildaPlayerCurrentFrameIndex.current = 0;
+    // Reset all active clip frame indexes to 0
+    for (const workerId in frameIndexesRef.current) {
+      frameIndexesRef.current[workerId] = 0;
+    }
   }, []);
 
   useEffect(() => {
@@ -506,20 +537,33 @@ function App() {
     const DAC_REFRESH_INTERVAL = 30;
 
     const animate = (currentTime) => {
-      if (!isPlaying) {
+      if (!isWorldOutputActive) {
         cancelAnimationFrame(animationFrameId);
         return;
       }
 
       if (currentTime - lastFrameTime > DAC_REFRESH_INTERVAL) {
-        if (window.electronAPI && activeClipsData.length > 0 && selectedDac) {
-          const ip = selectedDac.ip;
+        if (window.electronAPI && activeClipsData.length > 0 && isWorldOutputActive) {
+          // Send play command once when output becomes active
+          if (!playCommandSentRef.current) {
+            const targetDacIp = selectedDac ? selectedDac.ip : null; // Assuming a single DAC for play command
+            if (targetDacIp) {
+              window.electronAPI.sendPlayCommand(targetDacIp);
+              playCommandSentRef.current = true;
+            }
+          }
+
           activeClipsData.forEach(clip => {
             if (clip && liveFrames[clip.workerId]) {
-              const effects = clip.effects || [];
-              const frame = liveFrames[clip.workerId];
-              const modifiedFrame = applyEffects(frame, effects);
-              window.electronAPI.send('send-frame', { ip, frame: modifiedFrame });
+              const targetDac = clip.dac || selectedDac;
+              if (targetDac) {
+                const ip = targetDac.ip;
+                const channel = targetDac.channel;
+                const effects = clip.effects || [];
+                const frame = liveFrames[clip.workerId];
+                const modifiedFrame = applyEffects(frame, effects);
+                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame });
+              }
             }
           });
         }
@@ -528,16 +572,17 @@ function App() {
       animationFrameId = requestAnimationFrame(animate);
     };
 
-    if (isPlaying) {
+    if (isWorldOutputActive) {
       animationFrameId = requestAnimationFrame(animate);
     } else {
       cancelAnimationFrame(animationFrameId);
+      playCommandSentRef.current = false; // Reset when output is inactive
     }
 
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [activeClipsData, selectedDac, isPlaying, liveFrames]);
+  }, [activeClipsData, selectedDac, liveFrames, isWorldOutputActive]);
 
   const selectedClipEffects =
     selectedLayerIndex !== null && selectedColIndex !== null
@@ -572,7 +617,10 @@ function App() {
           <div className="top-bar-left-area">
             <CompositionControls />
             <MasterIntensitySlider />
-            <LaserOnOffButton />
+            <LaserOnOffButton
+              isWorldOutputActive={isWorldOutputActive}
+              onToggleWorldOutput={() => dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: !isWorldOutputActive })}
+            />
           </div>
           <div className="layer-controls-container">
             {layers.map((layerName, layerIndex) => {
@@ -617,6 +665,7 @@ function App() {
                         onUnsupportedFile={showNotification}
                         onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)}
                         onDropGenerator={handleDropGenerator}
+                        onDropDac={handleDropDac}
                         onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
                         isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                         ildaParserWorker={ildaParserWorker}

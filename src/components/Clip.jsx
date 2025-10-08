@@ -16,7 +16,8 @@ const Clip = ({
   onLabelClick,
   isSelected,
   isActive,
-  ildaParserWorker
+  ildaParserWorker,
+  onDropDac // New prop for handling DAC drops
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [thumbnailFrame, setThumbnailFrame] = useState(null); // New state for thumbnail frame
@@ -147,6 +148,11 @@ const handleFilePathDrop = async (filePath, fileName) => {
         } else if (parsedData.name) {
           if (onDropGenerator) {
             onDropGenerator(layerIndex, colIndex, parsedData);
+            return;
+          }
+        } else if (parsedData.ip && parsedData.channel) { // Check if this is DAC data
+          if (onDropDac) {
+            onDropDac(layerIndex, colIndex, parsedData);
             return;
           }
         }

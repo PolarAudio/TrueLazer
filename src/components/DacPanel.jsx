@@ -30,14 +30,17 @@ const DacPanel = ({ onDacSelected }) => {
       // Fetch network interfaces
       window.electronAPI.getNetworkInterfaces().then(interfaces => {
         setNetworkInterfaces(interfaces);
+        console.log('Fetched network interfaces:', interfaces); // Debug log
         if (interfaces.length > 0) {
           setSelectedNetworkInterface(interfaces[0]); // Select the first one by default
+          console.log('Selected network interface:', interfaces[0]); // Debug log
         }
       });
 
       // Set up DAC discovery listener
       const handleDacsDiscovered = (discoveredDacs) => {
         setDacs(discoveredDacs);
+        console.log('DACs discovered:', discoveredDacs); // Debug log
         resetDiscoveryTimeout(); // Reset timeout if DACs are discovered
       };
 
@@ -51,12 +54,14 @@ const DacPanel = ({ onDacSelected }) => {
 
   useEffect(() => {
     if (isScanning) {
+      console.log('Starting DAC scan...'); // Debug log
       // Start scanning immediately
       startDiscovery();
       resetDiscoveryTimeout(); // Start/reset timeout when scanning begins
       // Set up interval for continuous scanning
       scanIntervalRef.current = setInterval(startDiscovery, 5000); // Scan every 5 seconds
     } else {
+      console.log('Stopping DAC scan...'); // Debug log
       // Stop scanning
       if (scanIntervalRef.current) {
         clearInterval(scanIntervalRef.current);
@@ -93,8 +98,8 @@ const DacPanel = ({ onDacSelected }) => {
     setSelectedNetworkInterface(interfaceFound || null);
   };
 
-  const handleDragStart = (e, dacId) => {
-    e.dataTransfer.setData('application/x-dac', dacId);
+  const handleDragStart = (e, dacJSON) => {
+    e.dataTransfer.setData('application/json', dacJSON);
   };
 
   return (
@@ -115,14 +120,23 @@ const DacPanel = ({ onDacSelected }) => {
       </div>
       <div className="dac-list">
         {dacs.map((dac) => (
-          <div
-            key={dac.ip}
-            className={`dac-item ${selectedDac && selectedDac.ip === dac.ip ? 'selected' : ''}`}
-            draggable
-            onDragStart={(e) => handleDragStart(e, dac.ip)}
-            onClick={() => handleDacClick(dac)}
-          >
-            {dac.ip}
+          <div key={dac.ip} className="dac-group">
+            <div className="dac-ip">{dac.ip}</div>
+            <div className="dac-channels">
+              {dac.channels.map((channel) => (
+                <div
+                  key={`${dac.ip}-${channel}`}
+                  className={`dac-item ${
+                    selectedDac && selectedDac.ip === dac.ip && selectedDac.channel === channel ? 'selected' : ''
+                  }`}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, JSON.stringify({ ...dac, channel }))}
+                  onClick={() => handleDacClick({ ...dac, channel })}
+                >
+                  Channel {channel}
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>

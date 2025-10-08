@@ -179,7 +179,6 @@ function parseIldaFile(arrayBuffer) {
 
 self.onmessage = function(e) {
 
-  console.log('[ilda-parser.worker] Message received');
   const { arrayBuffer, type, fileName, layerIndex, colIndex, workerId, frameIndex } = e.data;
   
   if (type === 'parse-ilda') {
@@ -188,7 +187,6 @@ self.onmessage = function(e) {
       const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       ildaDataStore.set(newWorkerId, parsedData.frames);
 
-      console.log('[ilda-parser.worker] Posting message back to main thread');
       self.postMessage({ 
         success: true, 
         workerId: newWorkerId, 

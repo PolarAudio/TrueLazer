@@ -136,3 +136,4 @@ dist
 .pnp.*
 *.svg
 *.mp3
+packet_log.txt

@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld(
 	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
 	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
 	    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
-	    stopDacDiscovery: () => ipcRenderer.send('stop-dac-discovery'),
-	  }
-	);
+	        stopDacDiscovery: () => ipcRenderer.send('stop-dac-discovery'),
+	        sendPlayCommand: (ip) => ipcRenderer.send('send-play-command', ip),
+	      }
+	    );

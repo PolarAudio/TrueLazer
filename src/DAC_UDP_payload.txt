@@ -1,0 +1,48 @@
+// Create a complete DAC UDP payload (4612 bytes)
+function createDacPayload(points) {
+    const header = createDataHeader(points.length);
+    const pointsBuffer = new Uint8Array(points.length * 8);
+    
+    // Encode all active points
+    points.forEach((point, index) => {
+        const encoded = encodePoint(
+            point.x,
+            point.y,
+            point.laserOn ? DAC_PROTOCOL.CMD_LASER_ON : DAC_PROTOCOL.CMD_LASER_OFF,
+            point.r || 0x00,
+            point.g || 0x00,
+            point.b || 0x00
+        );
+        pointsBuffer.set(encoded, index * 8);
+    });
+    
+    // Calculate remaining space for padding
+    const usedBytes = header.length + pointsBuffer.length;
+    const remainingBytes = DAC_PROTOCOL.UDP_PAYLOAD_SIZE - usedBytes;
+    
+    if (remainingBytes < 0) {
+        throw new Error(`Payload too large: ${usedBytes} > ${DAC_PROTOCOL.UDP_PAYLOAD_SIZE}`);
+    }
+    
+    // Create padding - all safe laser-off points, ending with 4 bytes of zeros
+    const paddingPoints = Math.floor((remainingBytes - 4) / 8); // Reserve 4 bytes for zeros
+    const padding = createSafePadding(paddingPoints);
+    
+    // Combine everything into final payload
+    const payload = new Uint8Array(DAC_PROTOCOL.UDP_PAYLOAD_SIZE);
+    let offset = 0;
+    
+    payload.set(header, offset);
+    offset += header.length;
+    
+    payload.set(pointsBuffer, offset);
+    offset += pointsBuffer.length;
+    
+    payload.set(padding, offset);
+    offset += padding.length;
+    
+    // Final 4 bytes are zeros
+    payload.set(new Uint8Array(4).fill(0), offset);
+    
+    return payload;
+}
