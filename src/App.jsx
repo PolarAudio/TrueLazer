@@ -33,7 +33,7 @@ const MasterIntensitySlider = () => (
 const LaserOnOffButton = ({ isWorldOutputActive, onToggleWorldOutput }) => (
   <div className="container">
     <label>
-      <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} /> Laser Output
+      <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
     </label>
   </div>
 );
@@ -699,8 +699,11 @@ function App() {
             <div className="middle-bar-left-area">
               <BPMControls onPlay={handlePlay} onPause={handlePause} onStop={handleStop} />
             </div>
-            <div className="middle-bar-right-area">
+            <div className="middle-bar-mid-area">
 				<MasterSpeedSlider drawSpeed={drawSpeed} onSpeedChange={(value) => dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'drawSpeed', value } })} />
+            </div>
+			<div className="middle-bar-right-area">
+				<p> Right Section of Middle-Bar</p>
             </div>
           </div>
           <div className="bottom-panel">

@@ -70,6 +70,23 @@ body {
 	border-radius: 5px;
 	align-items: center;
   }
+  .speed-control-button {
+	outline: 1px solid var(--theme-color);
+	cursor: pointer;
+	font-size: 1.3rem;
+	border-radius: 5px;
+	background: #20232a;
+	color: var(--theme-color);
+	border: none;
+	width: 25%;
+  }
+  .speed-control-button:hover {
+	outline: 2px solid var(--theme-color);
+  }
+  .speed-control-button:active {
+	outline: 2px solid var(--theme-color);
+	box-shadow: inset 0 0 5px var(--theme-color);
+  }
   .master-intensity-slider {
 	width: 4rem;
 	position: fixed;
@@ -81,9 +98,7 @@ body {
 	width: 75px;
 	height: 95%;
 	left: 168px;
-	top: 0;
-	align-items: center;
-	display: flex;
+	top: 2px;
   } 
   .top-bar-right-area {
 	height: 3.5%;
@@ -229,24 +244,39 @@ body {
 	width: 100%;
 	display: grid;
 	background-color: #20232a;
-	grid-template-columns: 240px auto;
+	grid-template-columns: 240px auto 300px;
 	position: fixed;
 	height: 3.5%;
 	align-items: flex-start;
   }
   .middle-bar-left-area {
 	display: flex;
+	height: 100%;
+	align-items: center;
+	max-height: 36px;
+  }
+  .middle-bar-mid-area {
+	display: flex;
+	height: 100%;
+	align-items: center;
+	max-height: 36px;
+	padding-left: 2%;
   }
   .middle-bar-right-area {
+	display: flex;
+	height: 100%;
+	align-items: center;
+	max-height: 36px;
   }
   .bpm-controls {
-	position: absolute;
-	width: 25%;
+	display: flex;
+	width: 100%;
+	justify-content: space-around;
   }
   .master-speed-slider {
-	position: absolute;
-	width: 35%;
 	display: flex;
+	align-items: center;
+	height: 100%;
   }
   .bottom-panel {
 	display: flex;

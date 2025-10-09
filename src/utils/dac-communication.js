@@ -194,9 +194,6 @@ function sendFrame(ip, frame) {
         const x_uint16 = Math.round((point.x + 1.0) / 2.0 * 4095);
         const y_uint16 = Math.round((1.0 - point.y) / 2.0 * 4095);
 
-        console.log(`Point: (${point.x}, ${point.y}) -> DAC: (${x_uint16}, ${y_uint16})`);
-        console.log(`Writing: X=${x_uint16.toString(16)}, Y=${y_uint16.toString(16)} at offset ${pointOffset}`);
-
         // Map blanking to command: 0x01 = Laser On, 0x00 = Laser Off
         const command = point.blanking ? 0x00 : 0x01;
 
@@ -208,7 +205,6 @@ function sendFrame(ip, frame) {
         // DEBUG: Read back what was written
         const writtenX = pointDataBuffer.readUInt16LE(pointOffset - 4);
         const writtenY = pointDataBuffer.readUInt16LE(pointOffset - 2);
-        console.log(`Read back: X=${writtenX.toString(16)}, Y=${writtenY.toString(16)}`);
 
         pointDataBuffer.writeUInt8(command, pointOffset++);
         pointDataBuffer.writeUInt8(point.r, pointOffset++);
@@ -231,19 +227,6 @@ function sendFrame(ip, frame) {
     const path = require('path');
     const logFilePath = path.join(__dirname, '..', '..', 'packet_log.txt'); // Log file in project root
 
-    // Final Debug Logging
-    console.log('First 100 bytes of message (hex):');
-    console.log(message.slice(0, 100).toString('hex'));
-
-    console.log('Header (hex):');
-    console.log(applicationHeader.toString('hex'));
-
-    console.log('First 3 vectors in pointDataBuffer (hex):');
-    console.log(pointDataBuffer.slice(0, 24).toString('hex'));
-
-    const logEntry = `--- ${new Date().toISOString()} ---\nSending UDP packet to ${ip}:${SERVER_PORT} (size: ${message.length} bytes, pointDataBuffer.length: ${pointDataBuffer.length}):\n${message.toString('hex')}\n\n`;
-    fs.appendFileSync(logFilePath, logEntry);
-    console.log(`Packet logged to ${logFilePath}`); // Keep a console log for confirmation
 
     socket.send(message, SERVER_PORT, ip, (err) => {
         if (err) {
