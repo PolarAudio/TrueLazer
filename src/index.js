@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery, sendPlayCommand } = require('./utils/dac-communication');
+const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery, sendPlayCommand, stopSending } = require('./utils/dac-communication');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -157,8 +157,8 @@ function createWindow() {
     stopDiscovery();
   });
 
-  ipcMain.on('send-frame', (event, { ip, frame }) => {
-    sendFrame(ip, frame);
+  ipcMain.on('send-frame', (event, { ip, channel, frame, fps, ildaFormat }) => {
+    sendFrame(ip, channel, frame, fps, ildaFormat);
   });
 
   ipcMain.on('send-play-command', (event, ip) => {
@@ -283,6 +283,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    stopSending(); // Close the sending socket
     app.quit();
   }
 });

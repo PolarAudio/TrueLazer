@@ -1,4 +1,4 @@
-import React, { useReducer, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useReducer, useEffect, useCallback, useRef, useMemo, useState } from 'react';
 import CompositionControls from './components/CompositionControls';
 import ColumnHeader from './components/ColumnHeader';
 import LayerControls from './components/LayerControls';
@@ -192,7 +192,7 @@ function App() {
   const ildaPlayerCurrentFrameIndex = useRef(0);
   const playCommandSentRef = useRef(false);
 
-  const activeClipsData = layers.map((_, layerIndex) => {
+  const activeClipsData = useMemo(() => layers.map((_, layerIndex) => {
     const activeColIndex = activeClipIndexes[layerIndex];
     if (activeColIndex !== null) {
         const clip = clipContents[layerIndex][activeColIndex];
@@ -202,11 +202,12 @@ function App() {
                 totalFrames: clip.totalFrames,
                 effects: clip.effects || [], // Keep effects
                 dac: clip.dac || null, // Include assigned DAC
+                ildaFormat: clip.ildaFormat || 0, // Add ildaFormat, default to 0
             };
         }
     }
     return null;
-  }).filter(Boolean);
+  }).filter(Boolean), [layers, activeClipIndexes, clipContents]);
 
   const workerIdsToFetch = useMemo(() => {
     const ids = new Set();
@@ -303,6 +304,7 @@ function App() {
   }, [clipContents]);
 
   const handleActivateClick = useCallback((layerIndex, colIndex) => {
+    console.log('Activated clip:', layerIndex, colIndex);
     dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } });
   }, []);
 
@@ -333,17 +335,74 @@ function App() {
   }, [generatorWorker, showNotification]);
 
   const handleDropDac = useCallback((layerIndex, colIndex, dac) => {
+    console.log('Dropped DAC:', dac, 'on clip:', layerIndex, colIndex);
     dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac } });
+    dispatch({ type: 'SET_SELECTED_DAC', payload: dac }); // Also set as global
     showNotification(`DAC ${dac.ip} Channel ${dac.channel} assigned to Clip ${layerIndex + 1}-${colIndex + 1}`);
   }, [showNotification]);
+
+  useEffect(() => {
+    console.log('DAC useEffect triggered', { activeClipsData, selectedDac, liveFrames, isWorldOutputActive, drawSpeed, clipContents });
+    let animationFrameId;
+    let lastFrameTime = 0;
+    const DAC_REFRESH_INTERVAL = 30;
+
+    const animate = (currentTime) => {
+      if (!isWorldOutputActive) {
+        cancelAnimationFrame(animationFrameId);
+        return;
+      }
+
+      if (currentTime - lastFrameTime > DAC_REFRESH_INTERVAL) {
+        if (window.electronAPI && activeClipsData.length > 0 && isWorldOutputActive) {
+          // Send play command once when output becomes active
+          if (!playCommandSentRef.current) {
+            const targetDacIp = selectedDac ? selectedDac.ip : null; // Assuming a single DAC for play command
+            if (targetDacIp) {
+              window.electronAPI.sendPlayCommand(targetDacIp);
+              playCommandSentRef.current = true;
+            }
+          }
+
+          activeClipsData.forEach(clip => {
+            if (clip && liveFrames[clip.workerId]) {
+              const targetDac = clip.dac || selectedDac;
+              if (targetDac) {
+                const ip = targetDac.ip;
+                const channel = targetDac.channel;
+                const effects = clip.effects || [];
+                const frame = liveFrames[clip.workerId];
+                const modifiedFrame = applyEffects(frame, effects);
+                const ildaFormat = clip.ildaFormat || 0;
+                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame, fps: drawSpeed, ildaFormat });
+              }
+            }
+          });
+        }
+        lastFrameTime = currentTime;
+      }
+      animationFrameId = requestAnimationFrame(animate);
+    };
+
+    if (isWorldOutputActive) {
+      animationFrameId = requestAnimationFrame(animate);
+    } else {
+      cancelAnimationFrame(animationFrameId);
+      playCommandSentRef.current = false; // Reset when output is inactive
+    }
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [activeClipsData, selectedDac, isWorldOutputActive, drawSpeed, clipContents, liveFrames]);
 
   useEffect(() => {
     if (!ildaParserWorker) return;
 
     ildaParserWorker.onmessage = (e) => {
       if (e.data.type === 'parse-ilda' && e.data.success) {
-        const { workerId, totalFrames, fileName, layerIndex, colIndex } = e.data;
-        const newClipContent = { workerId, totalFrames };
+        const { workerId, totalFrames, fileName, layerIndex, colIndex, ildaFormat } = e.data;
+        const newClipContent = { workerId, totalFrames, ildaFormat };
         dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
         dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: fileName } });
       } else if (e.data.type === 'parse-ilda' && !e.data.success) {
@@ -493,6 +552,7 @@ function App() {
   }, [handleClearLayerClips, showNotification]);
 
   const handleDacSelected = useCallback((dac) => {
+    console.log('Selected DAC:', dac);
     dispatch({ type: 'SET_SELECTED_DAC', payload: dac });
   }, []);
 
@@ -562,7 +622,7 @@ function App() {
                 const effects = clip.effects || [];
                 const frame = liveFrames[clip.workerId];
                 const modifiedFrame = applyEffects(frame, effects);
-                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame });
+                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame, fps: drawSpeed });
               }
             }
           });
@@ -582,7 +642,7 @@ function App() {
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [activeClipsData, selectedDac, liveFrames, isWorldOutputActive]);
+  }, [activeClipsData, selectedDac, isWorldOutputActive, drawSpeed, clipContents, liveFrames]);
 
   const selectedClipEffects =
     selectedLayerIndex !== null && selectedColIndex !== null

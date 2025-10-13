@@ -137,3 +137,6 @@ dist
 *.svg
 *.mp3
 packet_log.txt
+gemini.md
+gemini.md
+sdk/deepseek_reverse_engineer.txt

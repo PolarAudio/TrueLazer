@@ -1,140 +1,44 @@
-Laser Show Data Structure Revelation
-
-The data represents vector graphics commands for a laser DAC. Each "point" is a coordinate, and the lines between them are drawn by the laser.
-Understanding the Pattern:
-
-42 points = 42 coordinate pairs
-41 lines = 41 drawing commands between them
-
-Looking at your data, the pattern makes perfect sense now:
-Data Structure Breakdown
-Frame Header (Start of transmission)
-text
-
-12 0c 1f 95 03 00 cc 01 87
-
-    Likely contains: Sync bytes, frame counter, point count, line count
-
-    00 cc = 204 (possibly scaling factor or initial position)
-
-    01 87 = 391 (possibly another scaling/position parameter)
-
-Point Data Structure
-
-Each point appears to be 8 bytes:
-text
-
-dd 00 ff 07 01 00 00 00
-
-    Bytes 1-2: dd 00 = 0x00DD = 221 (X-coordinate)
-
-    Bytes 3-4: ff 07 = 0x07FF = 2047 (Y-coordinate)
-
-    Byte 5: 01 = Command (1 = draw/move to this point)
-
-    Bytes 6-8: 00 00 00 = Color (Black/off during moves)
-
-Line Drawing Evidence
-
-The sequential X-coordinate progression confirms this is a horizontal line:
-text
-
-Starting at X=221 (dd 00)
-Incrementing through: 310 (36 01), 399 (8f 01), 488 (e8 01)...
-Up to X=3873 (21 0f) 
-Then decrementing back down...
-
-Y-coordinate remains constant at 2047 - this is your horizontal line!
-The 42 Points Are Clearly Visible
-
-Let me trace through your data to identify all 42 points:
-
-First set of points (incrementing X):
-
-    dd 00 (221)
-
-    36 01 (310)
-
-    8f 01 (399)
-
-    e8 01 (488)
-
-    41 02 (577)
-
-    9b 02 (667)
-
-    f4 02 (756)
-
-    4d 03 (845)
-
-    a6 03 (934)
-
-    ff 03 (1023)
-
-    58 04 (1112)
-
-    b1 04 (1201)
-
-    0a 05 (1290)
-
-    63 05 (1379)
-
-    bc 05 (1468)
-
-    15 06 (1557)
-
-    6e 06 (1646)
-
-    c7 06 (1735)
-
-    20 07 (1824)
-
-    79 07 (1913)
-
-    d2 07 (2002)
-
-Peak and start decrementing:
-22. 2c 08 (2092)
-23. 85 08 (2181)
-24. de 08 (2270)
-25. 37 09 (2359)
-26. 90 09 (2448)
-27. e9 09 (2537)
-28. 42 0a (2626)
-29. 9b 0a (2715)
-30. f4 0a (2804)
-31. 4d 0b (2893)
-32. a6 0b (2982)
-33. ff 0b (3071)
-34. 58 0c (3160)
-35. b1 0c (3249)
-36. 0a 0d (3338)
-37. 63 0d (3427)
-38. bd 0d (3517)
-39. 16 0e (3606)
-40. 6f 0e (3695)
-41. c8 0e (3784)
-42. 21 0f (3873)
-
-Then it decrements back through the same 41 intermediate points to complete the line.
-Color Command Discovery
-
-Notice the pattern change:
-
-    Most points: 01 00 00 00 = Draw command, color black
-
-    Some points: 00 ff ff ff = Different command, color white
-
-This likely indicates:
-
-    01 = Move to position (laser off)
-
-    00 = Draw to position (laser on)
-
-    With RGB color following
-
 Complete Data Format
-c
+
+Byte 0 03 consistant always 03
+Byte 1 Packet number 00-02
+Byte 2 Frame Number 00-ff
+Byte 3 Dac Channel number 00 or 01  that value we get from wich dac we assigned/dragged to the clip or layer
+Byte 4 maybe point count its always close to the value 250 per animation 
+Byte 5 ilda format 00 01 03 etc.
+Byte 6 from my testing always 00
+Byte 7 Frames Per Second 1e(30) durring testing that number changes when i increase or decrease the fps for the laser
+
+after each send packet byte 1 increase by one till 2 like  0,1,2
+after each 3 send packets we increase byte 3 by 1 increment, like 00,01,02,03,04,05,06,07.... 64,65,66 etc.
+after the 3rd packet sends we reset byte 2 back to 0
+
+only the first of each 3 packets has the 4 byte control section 
+packet 2 and 3 have frame/points data in the 4 bytes 
+Packet 1 Header
+03 00 01 00 00 00 00 1e
+Packet 2 header
+03 01 01 00 8d be d9 8f
+Packet 3 Header
+03 02 01 00 ea 3e 80 00
+Packet 4 Header
+03 00 02 00 00 00 00 1e
+Packet 5 Header
+03 01 02 00 8d be d9 8f
+Paket 6 Header
+03 02 02 00 ea 3e 80 00
+Paket 7
+03 00 03 00 00 00 00 1e
+etc....
+
+*This we have done*
+Point Structure (8 bytes):
+Byte 0-1: X coordinate (little-endian)
+Byte 2-3: Y coordinate (little-endian)
+Byte 4: command byte (we have seen 0x00 for laser on and 0x01 for laser off in the point data)
+Byte 5: R (red)
+Byte 6: G (green)
+Byte 7: B (blue)
 
 struct LaserPoint {
     uint16_t x;        // Little-endian coordinate (0-4095 typical for laser DACs)
@@ -144,39 +48,4 @@ struct LaserPoint {
     uint8_t  green;    // Color intensity  
     uint8_t  blue;     // Color intensity
 };
-
-Why the Fragmentation?
-
-    42 points × 8 bytes = 336 bytes of actual vector data
-
-    But it's padded to fill standard Ethernet frames
-
-    The fragmentation is just network transport - the DAC reassembles it
-
-Summary
-
-You've successfully captured a laser vector drawing of a horizontal white line with exactly 42 points. The data shows:
-
-    Clear coordinate progression from X=221 to X=3873 and back
-
-    Constant Y=2047 creating the horizontal line
-
-    42 distinct points with drawing commands
-
-    Color control for laser on/off and white color
-	
-	
-conclusion data structure for point data and frame header:
-Header (8 bytes):
-Byte 0-1: version or something (we don't change, use from examples)
-Byte 2: unknown (we don't change, use from examples)
-Byte 3: laser on/off state? (But note: in the point structure we have a command byte for each point. So maybe this is a global laser state? We'll see.)
-Byte 4-7: to be determined (we don't change, use from examples)
-
-Point Structure (8 bytes):
-Byte 0-1: X coordinate (little-endian)
-Byte 2-3: Y coordinate (little-endian)
-Byte 4: command byte (we have seen 0x00 for laser on and 0x01 for laser off in the point data)
-Byte 5: R (red)
-Byte 6: G (green)
-Byte 7: B (blue)
+*This we have done*

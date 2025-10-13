@@ -9,11 +9,11 @@ const DacPanel = ({ onDacSelected }) => {
   const scanIntervalRef = useRef(null);
   const discoveryTimeoutRef = useRef(null);
 
-  const startDiscovery = useCallback(() => {
+  const startDiscovery = () => {
     if (window.electronAPI) {
       window.electronAPI.send('discover-dacs', selectedNetworkInterface);
     }
-  }, [selectedNetworkInterface]);
+  };
 
   const resetDiscoveryTimeout = useCallback(() => {
     if (discoveryTimeoutRef.current) {
@@ -55,11 +55,12 @@ const DacPanel = ({ onDacSelected }) => {
   useEffect(() => {
     if (isScanning) {
       console.log('Starting DAC scan...'); // Debug log
+      const scan = () => startDiscovery();
       // Start scanning immediately
-      startDiscovery();
+      scan();
       resetDiscoveryTimeout(); // Start/reset timeout when scanning begins
       // Set up interval for continuous scanning
-      scanIntervalRef.current = setInterval(startDiscovery, 5000); // Scan every 5 seconds
+      scanIntervalRef.current = setInterval(scan, 5000); // Scan every 5 seconds
     } else {
       console.log('Stopping DAC scan...'); // Debug log
       // Stop scanning
@@ -85,7 +86,7 @@ const DacPanel = ({ onDacSelected }) => {
         clearTimeout(discoveryTimeoutRef.current);
       }
     };
-  }, [isScanning, startDiscovery, resetDiscoveryTimeout]);
+  }, [isScanning, selectedNetworkInterface, resetDiscoveryTimeout]);
 
   const handleDacClick = (dac) => {
     setSelectedDac(dac);
@@ -93,9 +94,18 @@ const DacPanel = ({ onDacSelected }) => {
   };
 
   const handleNetworkInterfaceChange = (e) => {
+    const wasScanning = isScanning;
+    if (wasScanning) {
+      setIsScanning(false);
+    }
+
     const selectedName = e.target.value;
     const interfaceFound = networkInterfaces.find(iface => iface.name === selectedName);
     setSelectedNetworkInterface(interfaceFound || null);
+
+    if (wasScanning) {
+      setIsScanning(true);
+    }
   };
 
   const handleDragStart = (e, dacJSON) => {

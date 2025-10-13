@@ -82,7 +82,12 @@ Our ShowBridge protocol follows this pattern:
     Command: 6 bytes = Target IP (169.254.25.104) + Flags (163, 31).
 	
 	Answer from DAC to "Target IP":8099
-    Response: 16 bytes = Vendor ID (22,26) + Type (1) + Channel (1/2) + Device ID (630380) + Value (63) + Checksum (0x2237/0x2238).
+    Response: 16 bytes = Vendor ID (22,26) + Type (1) + Channel (1/2) + Device ID (630380)
+
+	16 1a 01 01 00 20 00 25 00 00 00 00 00 00 00 00    	ip 25.69  ch 1
+	16 1a 01 01 00 26 00 3f 00 00 00 00 00 00 00 00 	ip 25.104 ch 1
+	16 1a 01 02 00 20 00 25 00 00 00 00 00 00 00 00 	ip 25.69  ch 2
+	16 1a 01 02 00 26 00 3f 00 00 00 00 00 00 00 00   	ip 25.104 ch 2
 
 The labels 7 and 8 are extracted from the checksum’s last nibble, matching the device’s channel identifiers.
 

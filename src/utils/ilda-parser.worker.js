@@ -32,6 +32,7 @@ const calculateBounds = (points) => {
 function parseIldaFile(arrayBuffer) {
   const view = new DataView(arrayBuffer);
   const frames = [];
+  let firstFormatCode = null; // Variable to store the format code of the first valid frame
   let currentOffset = 0;
 
   while (currentOffset + 32 <= arrayBuffer.byteLength) { // Ensure at least 32 bytes for a header
@@ -53,6 +54,10 @@ function parseIldaFile(arrayBuffer) {
 
     // Verify format byte
     const formatCode = view.getUint8(frameStartOffset + 7);
+    if (firstFormatCode === null) { // Store the format code of the first frame
+      firstFormatCode = formatCode;
+    }
+
     if (formatCode > 5) {
       console.warn(`Parser: Unknown format code: ${formatCode} at offset ${frameStartOffset}. Skipping 32 bytes.`);
       currentOffset += 32; // Skip this header and try next
@@ -173,7 +178,7 @@ function parseIldaFile(arrayBuffer) {
     }
     currentOffset += frameTotalSize; // Advance offset by the size of the entire frame
   }
-  return { frames, error: frames.length === 0 ? 'No valid frames found' : null };
+  return { frames, error: frames.length === 0 ? 'No valid frames found' : null, firstFormatCode };
 }
 
 
@@ -191,6 +196,7 @@ self.onmessage = function(e) {
         success: true, 
         workerId: newWorkerId, 
         totalFrames: parsedData.frames.length, 
+        ildaFormat: parsedData.firstFormatCode, // Add the format code here
         fileName: fileName, 
         layerIndex, 
         colIndex,
