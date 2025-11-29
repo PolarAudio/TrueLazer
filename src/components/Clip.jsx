@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 import IldaThumbnail from './IldaThumbnail';
-import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
+
 const Clip = ({
   clipName,
   layerIndex,
@@ -16,7 +16,10 @@ const Clip = ({
   isSelected,
   isActive,
   ildaParserWorker,
-  onDropDac // New prop for handling DAC drops
+  onDropDac, // New prop for handling DAC drops
+  thumbnailRenderMode,
+  liveFrame,
+  stillFrame
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [thumbnailFrame, setThumbnailFrame] = useState(null); // New state for thumbnail frame
@@ -27,37 +30,12 @@ const Clip = ({
     : clipName;
 
   useEffect(() => {
-    // Logic for ILDA file thumbnails
-    if (clipContent && clipContent.type === 'ilda' && ildaParserWorker && clipContent.workerId && clipContent.totalFrames > 0) {
-      const fetchThumbnail = () => {
-        ildaParserWorker.postMessage({
-          type: 'get-frame',
-          workerId: clipContent.workerId,
-          frameIndex: thumbnailFrameIndex % clipContent.totalFrames // Ensure index is within bounds
-        });
-      };
-
-      const messageHandler = (e) => {
-        if (e.data.type === 'get-frame' && e.data.workerId === clipContent.workerId) {
-          if (e.data.frameIndex === (thumbnailFrameIndex % clipContent.totalFrames)) {
-            setThumbnailFrame(e.data.frame);
-          }
-        }
-      };
-
-      ildaParserWorker.addEventListener('message', messageHandler);
-      fetchThumbnail();
-
-      return () => {
-        ildaParserWorker.removeEventListener('message', messageHandler);
-      };
-    } else if (clipContent && clipContent.type === 'generator' && clipContent.frames && clipContent.frames.length > 0) {
-      // For generators, the frame is directly available
-      setThumbnailFrame(clipContent.frames[0]);
-    } else {
-      setThumbnailFrame(null); // No content or unsupported type
+    if (thumbnailRenderMode === 'still') {
+      setThumbnailFrame(stillFrame);
+    } else { // 'active' mode
+      setThumbnailFrame(liveFrame);
     }
-  }, [ildaParserWorker, clipContent, thumbnailFrameIndex]);
+  }, [thumbnailRenderMode, liveFrame, stillFrame]);
 
   const handleDragOver = (e) => {
     e.preventDefault();

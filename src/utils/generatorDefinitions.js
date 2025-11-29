@@ -83,6 +83,7 @@ export const generatorDefinitions = [
       x: 0,
       y: 0,
       fontSize: 72,
+      fontUrl: 'https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto-Regular.ttf', // New default param
       r: 255,
       g: 255,
       b: 255,
@@ -93,6 +94,7 @@ export const generatorDefinitions = [
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'fontSize', label: 'Font Size', type: 'range', min: 10, max: 200, step: 1 },
+      { id: 'fontUrl', label: 'Font URL', type: 'text' }, // New param control
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },

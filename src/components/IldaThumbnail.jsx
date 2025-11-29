@@ -4,7 +4,6 @@ const IldaThumbnail = ({ frame }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    console.log('IldaThumbnail: Received frame prop:', frame); // Add this log
     if (!canvasRef.current || !frame || !frame.points || frame.points.length === 0) {
       return;
     }
@@ -30,16 +29,18 @@ const IldaThumbnail = ({ frame }) => {
         continue;
       }
 
-      const x = point.x * scaleX + offsetX;
-      const y = -point.y * scaleY + offsetY; // Invert Y-coordinate
+      const isGenerated = Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1;
+      const x = (isGenerated ? point.x : point.x / 32767.0) * scaleX + offsetX;
+      const y = (isGenerated ? -point.y : -point.y / 32767.0) * scaleY + offsetY; // Invert Y-coordinate
       const color = `rgb(${point.r}, ${point.g}, ${point.b})`;
 
       let prevX, prevY; // Declare here
 
       if (prevPoint && !prevPoint.blanking) {
         // Previous point was visible, so draw a line
-        prevX = prevPoint.x * scaleX + offsetX;
-        prevY = -prevPoint.y * scaleY + offsetY; // Invert Y-coordinate
+        const isPrevGenerated = Math.abs(prevPoint.x) <= 1 && Math.abs(prevPoint.y) <= 1;
+        prevX = (isPrevGenerated ? prevPoint.x : prevPoint.x / 32767.0) * scaleX + offsetX;
+        prevY = (isPrevGenerated ? -prevPoint.y : -prevPoint.y / 32767.0) * scaleY + offsetY; // Invert Y-coordinate
         ctx.beginPath();
         ctx.moveTo(prevX, prevY);
         ctx.lineTo(x, y);

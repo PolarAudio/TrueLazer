@@ -161,6 +161,5 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *	The Output Button will open a new window in the future where we adjust output settings for our projectors. Like Scan Speed, Size, Mirroring, safe-zones and warping.
 *	The Shortcuts button will Open a list of input options : DMX/Artnet, MIDI And OSC if we click on on of them it starts the recording/mapping mode 
 *	The View button will let us choose of predefined layouts and color theme and render mode (High or Low performance mode to switch between 2d and 3d Rendering preview)
-
-*   Implement the sending of ILDA frames to the selected DAC and channel via draging the channel to a clip or layer. if dragging the dac to a clip or layer we apply that output to booth channels.
-*	DAC/Channels will be drag'n'drop to apply onto clips as output filter in the end.
+*	If dragging a dac with 2 channels to a clip or layer we apply that output to booth channels.
+*	Building the application with our icon src/trueLazer.ico

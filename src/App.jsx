@@ -15,6 +15,7 @@ import SettingsPanel from './components/SettingsPanel';
 import GeneratorSettingsPanel from './components/GeneratorSettingsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
+import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
 import { applyEffects } from './utils/effects';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText } from './utils/generators'; // Import generator functions
 
@@ -65,6 +66,7 @@ const initialState = {
   activeClipIndexes: Array(5).fill(null),
   isPlaying: false,
   isWorldOutputActive: false, // Controls whether frames are sent to DACs
+  thumbnailRenderMode: 'still', // 'still' for static thumbnail, 'active' for live rendering
 };
 
 function reducer(state, action) {
@@ -174,45 +176,95 @@ function reducer(state, action) {
       clipToUpdateDac.dac = action.payload.dac;
       newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] = clipToUpdateDac;
       return { ...state, clipContents: newClipContentsWithDac };
+    case 'SET_THUMBNAIL_RENDER_MODE':
+      return { ...state, thumbnailRenderMode: action.payload };
     default:
       return state;
   }
 }
 
 function App() {
+  const ildaParserWorker = useIldaParserWorker();
+  const generatorWorker = useGeneratorWorker();
   const ildaPlayerCurrentFrameIndex = useRef(0);
   const playCommandSentRef = useRef(false);
+  const [liveFrames, setLiveFrames] = useState({});
+  const [stillFrames, setStillFrames] = useState({}); // New state for still frames
+  const lastFrameFetchTimeRef = useRef({});
+  const frameIndexesRef = useRef({});
+
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const {
+    columns,
+    layers,
+    clipContents,
+    clipNames,
+    thumbnailFrameIndexes,
+    layerEffects,
+    selectedLayerIndex,
+    selectedColIndex,
+    notification,
+    dacs,
+    selectedDac,
+    ildaFrames,
+    selectedIldaWorkerId,
+    selectedIldaTotalFrames,
+    showBeamEffect,
+    beamAlpha,
+    fadeAlpha,
+    drawSpeed,
+    previewScanRate,
+    beamRenderMode,
+    activeClipIndexes,
+    isPlaying,
+    isWorldOutputActive,
+    selectedGeneratorId,
+    selectedGeneratorParams,
+    thumbnailRenderMode, // Add this
+  } = state;
 
     const activeClipsData = useMemo(() => layers.map((_, layerIndex) => {
       const activeColIndex = activeClipIndexes[layerIndex];
       if (activeColIndex !== null) {
           const clip = clipContents[layerIndex][activeColIndex];
           if (clip) {
+              let workerId;
+              let currentFrame = null;
+              let stillFrame = null; // New stillFrame variable
+
               if (clip.type === 'ilda' && clip.workerId && clip.totalFrames) {
+                  workerId = clip.workerId;
+                  currentFrame = liveFrames[workerId];
+                  stillFrame = stillFrames[workerId]; // Get still frame for ILDA clips
                   return {
                       type: 'ilda',
-                      workerId: clip.workerId,
+                      workerId,
                       totalFrames: clip.totalFrames,
                       effects: clip.effects || [],
                       dac: clip.dac || null,
                       ildaFormat: clip.ildaFormat || 0,
+                      currentFrame,
+                      stillFrame, // Include stillFrame
                   };
               } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
-                  // For generators, the "frame" is already the generated one
+                  workerId = `generator-${layerIndex}-${activeColIndex}`;
+                  currentFrame = liveFrames[workerId] || clip.frames[0];
+                  stillFrame = clip.frames[0]; // For generators, the first frame is usually the still frame
                   return {
                       type: 'generator',
-                      workerId: `generator-${layerIndex}-${activeColIndex}`, // Create a unique ID for the generator's "worker"
-                      totalFrames: clip.frames.length, // Typically 1 for static generators
+                      workerId,
+                      totalFrames: clip.frames.length,
                       effects: clip.effects || [],
                       dac: clip.dac || null,
-                      ildaFormat: 0, // Generators don't have an ILDA format in this sense
-                      currentFrame: clip.frames[0], // The current (and usually only) frame
+                      ildaFormat: 0,
+                      currentFrame,
+                      stillFrame, // Include stillFrame
                   };
               }
           }
       }
       return null;
-    }).filter(Boolean), [layers, activeClipIndexes, clipContents]);
+    }).filter(Boolean), [layers, activeClipIndexes, clipContents, liveFrames, stillFrames]); // Add stillFrames to dependencies
 
   const workerIdsToFetch = useMemo(() => {
     const ids = new Set();
@@ -311,7 +363,9 @@ function App() {
       if (clipData.type === 'ilda' && clipData.workerId && clipData.totalFrames) {
           dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clipData.workerId, totalFrames: clipData.totalFrames, generatorId: null, generatorParams: {} } });
       } else if (clipData.type === 'generator' && clipData.generatorDefinition && clipData.currentParams) {
-          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: clipData.generatorDefinition.id, generatorParams: clipData.currentParams } });
+          // For generators, we create a unique workerId to fetch its frame from liveFrames
+          const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
+          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, totalFrames: 1, generatorId: clipData.generatorDefinition.id, generatorParams: clipData.currentParams } });
       } else {
           dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: null, generatorParams: {} } });
       }
@@ -321,7 +375,6 @@ function App() {
   }, [clipContents]);
 
   const handleActivateClick = useCallback((layerIndex, colIndex) => {
-    console.log('Activated clip:', layerIndex, colIndex);
     dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } });
   }, []);
 
@@ -349,7 +402,6 @@ function App() {
       return;
     }
     // When a generator is dropped, use its defaultParams
-    console.log('App: handleDropGenerator - Sending defaultParams to worker:', generator.defaultParams); // Added log
     generatorWorker.postMessage({ type: 'generate-frame', generator: { ...generator, params: generator.defaultParams }, layerIndex, colIndex });
   }, [generatorWorker, showNotification]);
 
@@ -367,74 +419,15 @@ function App() {
       dispatch({ type: 'UPDATE_GENERATOR_PARAM', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, paramName: paramId, newValue } });
 
       // Request the generator worker to re-generate the frame with updated parameters
-      console.log('App: handleGeneratorParameterChange - Sending updatedParams to worker:', updatedParams); // Added log
       generatorWorker.postMessage({ type: 'generate-frame', generator: { ...clipData.generatorDefinition, params: updatedParams }, layerIndex: selectedLayerIndex, colIndex: selectedColIndex });
     }
   }, [selectedLayerIndex, selectedColIndex, clipContents, generatorWorker]);
 
   const handleDropDac = useCallback((layerIndex, colIndex, dac) => {
-    console.log('Dropped DAC:', dac, 'on clip:', layerIndex, colIndex);
     dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac } });
     dispatch({ type: 'SET_SELECTED_DAC', payload: dac }); // Also set as global
     showNotification(`DAC ${dac.ip} Channel ${dac.channel} assigned to Clip ${layerIndex + 1}-${colIndex + 1}`);
   }, [showNotification]);
-
-  useEffect(() => {
-    console.log('DAC useEffect triggered', { activeClipsData, selectedDac, liveFrames, isWorldOutputActive, drawSpeed, clipContents });
-    console.log('App: activeClipsData for DAC useEffect:', activeClipsData); // Integrated log
-    console.log('App: liveFrames for DAC useEffect:', liveFrames);       // Integrated log
-    let animationFrameId;
-    let lastFrameTime = 0;
-    const DAC_REFRESH_INTERVAL = 30;
-
-    const animate = (currentTime) => {
-      if (!isWorldOutputActive) {
-        cancelAnimationFrame(animationFrameId);
-        return;
-      }
-
-      if (currentTime - lastFrameTime > DAC_REFRESH_INTERVAL) {
-        if (window.electronAPI && activeClipsData.length > 0 && isWorldOutputActive) {
-          // Send play command once when output becomes active
-          if (!playCommandSentRef.current) {
-            const targetDacIp = selectedDac ? selectedDac.ip : null; // Assuming a single DAC for play command
-            if (targetDacIp) {
-              window.electronAPI.sendPlayCommand(targetDacIp);
-              playCommandSentRef.current = true;
-            }
-          }
-
-          activeClipsData.forEach(clip => {
-            if (clip && liveFrames[clip.workerId]) {
-              const targetDac = clip.dac || selectedDac;
-              if (targetDac) {
-                const ip = targetDac.ip;
-                const channel = targetDac.channel;
-                const effects = clip.effects || [];
-                const frame = liveFrames[clip.workerId];
-                const modifiedFrame = applyEffects(frame, effects);
-                const ildaFormat = clip.ildaFormat || 0;
-                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame, fps: drawSpeed, ildaFormat });
-              }
-            }
-          });
-        }
-        lastFrameTime = currentTime;
-      }
-      animationFrameId = requestAnimationFrame(animate);
-    };
-
-    if (isWorldOutputActive) {
-      animationFrameId = requestAnimationFrame(animate);
-    } else {
-      cancelAnimationFrame(animationFrameId);
-      playCommandSentRef.current = false; // Reset when output is inactive
-    }
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, [activeClipsData, selectedDac, isWorldOutputActive, drawSpeed, clipContents, liveFrames]);
 
   useEffect(() => {
     if (!ildaParserWorker) return;
@@ -442,20 +435,24 @@ function App() {
     ildaParserWorker.onmessage = (e) => {
       if (e.data.type === 'parse-ilda' && e.data.success) {
         const { workerId, totalFrames, fileName, layerIndex, colIndex, ildaFormat } = e.data;
-        // For ILDA files, clipContent remains largely the same
         const newClipContent = { type: 'ilda', workerId, totalFrames, ildaFormat };
         dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
         dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: fileName } });
+        // Immediately request the first frame for the still thumbnail
+        ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: 0, isStillFrame: true });
       } else if (e.data.type === 'parse-ilda' && !e.data.success) {
         console.error("Worker parsing error:", e.data.error);
         showNotification(`Error parsing ${e.data.fileName}: ${e.data.error}`);
+      } else if (e.data.type === 'get-frame' && e.data.success && e.data.isStillFrame) {
+        // Handle response for still frame
+        setStillFrames(prev => ({ ...prev, [e.data.workerId]: e.data.frame }));
       }
     };
 
     return () => {
       ildaParserWorker.onmessage = null;
     };
-  }, [ildaParserWorker, showNotification]);
+  }, [ildaParserWorker, showNotification, setStillFrames]);
 
   useEffect(() => {
     if (!generatorWorker) return;
@@ -463,7 +460,6 @@ function App() {
     generatorWorker.onmessage = (e) => {
       if (e.data.success) {
         const { frame, layerIndex, colIndex, generator, params } = e.data;
-        console.log('App: Received frame from generator worker:', frame); // Log the received frame
         // For generators, clipContent includes the generator definition and its current parameters
         const newClipContent = {
           type: 'generator',
@@ -561,9 +557,15 @@ function App() {
       case 'clear-clip':
         handleClearClip(layerIndex, colIndex);
         break;
+      case 'set-clip-thumbnail-mode-still':
+        dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: 'still' });
+        break;
+      case 'set-clip-thumbnail-mode-active':
+        dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: 'active' });
+        break;
       default:
     }
-  }, [handleUpdateThumbnail, handleClearClip, showNotification]);
+  }, [handleUpdateThumbnail, handleClearClip, showNotification, dispatch]);
 
   const handleRenderSettingsCommand = useCallback(({ setting, value }) => {
     dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } });
@@ -599,9 +601,15 @@ function App() {
       case 'layer-clear-clips':
         handleClearLayerClips(layerIndex);
         break;
+      case 'set-layer-thumbnail-mode-still':
+        dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: 'still' });
+        break;
+      case 'set-layer-thumbnail-mode-active':
+        dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: 'active' });
+        break;
       default:
     }
-  }, [handleClearLayerClips, showNotification]);
+  }, [handleClearLayerClips, showNotification, dispatch]);
 
   const handleDacSelected = useCallback((dac) => {
     console.log('Selected DAC:', dac);
@@ -643,6 +651,30 @@ function App() {
     }
   }, [handleMenuAction, handleClipContextMenuCommand, handleRenderSettingsCommand, handleColumnHeaderClipContextMenuCommand, handleLayerFullContextMenuCommand]);
 
+  // useEffect for thumbnail render mode synchronization
+  useEffect(() => {
+      if (window.electronAPI) {
+          // Listener for main process to renderer to update mode
+          const cleanupUpdate = window.electronAPI.onUpdateThumbnailRenderMode((mode) => {
+              dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: mode });
+          });
+
+          // Listener for main process requesting current mode from renderer
+          const cleanupRequest = window.electronAPI.onRequestRendererThumbnailMode(() => {
+              window.electronAPI.sendRendererThumbnailModeChanged(thumbnailRenderMode);
+          });
+
+          // Send initial mode to main process on startup/mount
+          window.electronAPI.sendRendererThumbnailModeChanged(thumbnailRenderMode);
+
+          return () => {
+              cleanupUpdate();
+              cleanupRequest();
+          };
+      }
+  }, [dispatch, thumbnailRenderMode]);
+  
+
   useEffect(() => {
     let animationFrameId;
     let lastFrameTime = 0;
@@ -667,14 +699,15 @@ function App() {
 
           activeClipsData.forEach(clip => {
             if (clip && liveFrames[clip.workerId]) {
-              const targetDac = clip.dac || selectedDac;
+              const targetDac = clip.dac || selectedDac; // Use clip-specific DAC if available, otherwise global selectedDac
               if (targetDac) {
                 const ip = targetDac.ip;
                 const channel = targetDac.channel;
                 const effects = clip.effects || [];
                 const frame = liveFrames[clip.workerId];
                 const modifiedFrame = applyEffects(frame, effects);
-                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame, fps: drawSpeed });
+                const ildaFormat = clip.ildaFormat || 0;
+                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame, fps: drawSpeed, ildaFormat });
               }
             }
           });
@@ -725,18 +758,42 @@ function App() {
       <ErrorBoundary>
         <NotificationPopup message={notification.message} visible={notification.visible} />
         <div className="main-content">
-          <div className="top-bar-left-area">
-            <CompositionControls />
-            <MasterIntensitySlider />
-            <LaserOnOffButton
-              isWorldOutputActive={isWorldOutputActive}
-              onToggleWorldOutput={() => dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: !isWorldOutputActive })}
-            />
-          </div>
-          <div className="layer-controls-container">
+                      <div className="top-bar-left-area">
+                        <CompositionControls />
+                        <MasterIntensitySlider />
+                        <LaserOnOffButton
+                          isWorldOutputActive={isWorldOutputActive}
+                          onToggleWorldOutput={() => dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: !isWorldOutputActive })}
+                        />
+                        <div className="thumbnail-render-mode-selector">
+                          <label htmlFor="thumbnailRenderMode">Thumbnail Mode:</label>
+                          <select
+                            id="thumbnailRenderMode"
+                            value={thumbnailRenderMode}
+                            onChange={(e) => dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: e.target.value })}
+                          >
+                            <option value="still">Still Frame</option>
+                            <option value="active">Live Render</option>
+                          </select>
+                        </div>
+                      </div>          <div className="layer-controls-container">
             {layers.map((layerName, layerIndex) => {
-              const activeColIndex = activeClipIndexes[layerIndex];
-              const activeClipDataForLayer = activeColIndex !== null ? clipContents[layerIndex][activeColIndex] : null;
+              const activeClipDataForLayer = activeClipsData.find(clip => {
+                const activeColIndex = activeClipIndexes[layerIndex];
+            
+                if (activeColIndex === null) return false;
+            
+                const currentClipContent = clipContents[layerIndex][activeColIndex];
+                if (!currentClipContent) return false;
+            
+                if (currentClipContent.type === 'ilda') {
+                  return clip.workerId === currentClipContent.workerId;
+                } else if (currentClipContent.type === 'generator') {
+                  return clip.workerId === `generator-${layerIndex}-${activeColIndex}`;
+                }
+                return false;
+              }) || null;
+            
               return (
                 <LayerControls
                   key={layerIndex}
@@ -744,12 +801,12 @@ function App() {
                   layerIndex={layerIndex}
                   layerEffects={layerEffects[layerIndex]}
                   activeClipData={activeClipDataForLayer}
+                  thumbnailRenderMode={thumbnailRenderMode} // Add this prop
                   onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
                   onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
                 />
               );
-            })}
-          </div>
+            })}          </div>
           <div className="clip-deck-container">
             <div className="clip-deck">
               <div className="column-headers-container">
@@ -763,6 +820,17 @@ function App() {
                     const clipContentForMemo = clipContents[layerIndex][colIndex];
                     const memoizedClipContent = useMemo(() => clipContentForMemo, [clipContentForMemo]);
 
+                    // Determine workerId for this clip to fetch frames
+                    let clipWorkerId = null;
+                    if (memoizedClipContent && memoizedClipContent.type === 'ilda') {
+                      clipWorkerId = memoizedClipContent.workerId;
+                    } else if (memoizedClipContent && memoizedClipContent.type === 'generator') {
+                      clipWorkerId = `generator-${layerIndex}-${colIndex}`;
+                    }
+
+                    const clipLiveFrame = clipWorkerId ? liveFrames[clipWorkerId] : null;
+                    const clipStillFrame = clipWorkerId ? (memoizedClipContent.type === 'ilda' ? stillFrames[clipWorkerId] : memoizedClipContent.frames[0]) : null;
+
                     return (
                       <Clip
                         key={colIndex}
@@ -771,6 +839,9 @@ function App() {
                         clipName={clipNames[layerIndex][colIndex]}
                         clipContent={memoizedClipContent}
                         thumbnailFrameIndex={thumbnailFrameIndexes[layerIndex][colIndex]}
+                        thumbnailRenderMode={thumbnailRenderMode} // Add this prop
+                        liveFrame={clipLiveFrame} // Add this prop
+                        stillFrame={clipStillFrame} // Add this prop
                         onActivateClick={() => handleActivateClick(layerIndex, colIndex)}
                         isActive={activeClipIndexes[layerIndex] === colIndex}
                         onUnsupportedFile={showNotification}

@@ -56,6 +56,16 @@ contextBridge.exposeInMainWorld(
 	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
 	    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
 	        stopDacDiscovery: () => ipcRenderer.send('stop-dac-discovery'),
-	        sendPlayCommand: (ip) => ipcRenderer.send('send-play-command', ip),
-	      }
-	    );
+	            sendPlayCommand: (ip) => ipcRenderer.send('send-play-command', ip),
+	            // New IPC functions for thumbnail mode synchronization
+	            onUpdateThumbnailRenderMode: (callback) => { // Listener for main process to renderer
+	              ipcRenderer.on('update-thumbnail-render-mode', (event, mode) => callback(mode));
+	              return () => ipcRenderer.removeListener('update-thumbnail-render-mode', callback);
+	            },
+	            sendRendererThumbnailModeChanged: (mode) => ipcRenderer.send('renderer-thumbnail-mode-changed', mode), // Renderer to main for mode changes
+	            onRequestRendererThumbnailMode: (callback) => { // Listener for main process requesting mode from renderer
+	              ipcRenderer.on('request-renderer-thumbnail-mode', callback);
+	              return () => ipcRenderer.removeListener('request-renderer-thumbnail-mode', callback);
+	            },
+	          }
+	        );

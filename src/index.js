@@ -5,24 +5,17 @@ const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery, sendPlayCo
 
 const isDev = process.env.NODE_ENV === 'development';
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1920,
-    height: 1080,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: true,
-      contextIsolation: true,
-    },
-  });
+let mainWindow; // Global variable to store the main window instance
+let currentThumbnailRenderMode = 'still'; // Global variable to store the current thumbnail render mode
 
-  if (isDev) {
-    win.loadURL('http://localhost:5173'); // Vite development server default port
-    win.webContents.openDevTools();
-  } else {
-    win.loadFile(path.join(__dirname, '..\dist', 'index.html'));
+// This function needs to be globally accessible
+function sendThumbnailModeToRenderer(mode) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-thumbnail-render-mode', mode);
   }
+}
 
+function buildApplicationMenu(mode) {
   const menuTemplate = [
     {
       label: 'TrueLazer',
@@ -96,6 +89,10 @@ function createWindow() {
         {
           label: 'Render Mode',
           submenu: [
+            // New thumbnail render mode options
+            { label: 'Thumbnail Still Frame', type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
+            { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
+            { type: 'separator' },
             { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { win.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
             { type: 'separator' },
             {
@@ -142,6 +139,49 @@ function createWindow() {
 
   const menu = Menu.buildFromTemplate(menuTemplate);
   Menu.setApplicationMenu(menu);
+}
+
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1920,
+    height: 1080,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: true,
+      contextIsolation: true,
+    },
+    frame: true, // Set to false to remove the default window frame and title bar
+  });
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173'); // Vite development server default port
+    win.webContents.openDevTools();
+  } else {
+    win.loadFile(path.join(__dirname, '..\dist', 'index.html'));
+  }
+
+  // Initial menu build
+  buildApplicationMenu(currentThumbnailRenderMode);
+
+  // IPC handlers for thumbnail render mode synchronization
+  ipcMain.on('renderer-thumbnail-mode-changed', (event, mode) => {
+      currentThumbnailRenderMode = mode;
+      buildApplicationMenu(currentThumbnailRenderMode);
+  });
+
+  ipcMain.on('update-thumbnail-render-mode', (event, mode) => {
+      // This is received from a menu click in the main process itself
+      // We need to send it to the renderer to update its state
+      sendThumbnailModeToRenderer(mode);
+  });
+
+  // Listener for main process requesting current mode from renderer
+  ipcMain.on('request-renderer-thumbnail-mode', (event) => {
+    event.sender.send('update-thumbnail-render-mode', currentThumbnailRenderMode);
+  });
+
+  // ... existing ipcMain handlers ...
 
   ipcMain.on('discover-dacs', (event, networkInterface) => {
     discoverDacs((dacs) => {
@@ -178,6 +218,34 @@ function createWindow() {
       { label: 'Insert Above', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex) },
       { label: 'Insert Below', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex) },
       { type: 'separator' },
+      {
+        label: 'Set Thumbnail Mode',
+        submenu: [
+            {
+                label: 'Still Frame',
+                type: 'radio',
+                checked: currentThumbnailRenderMode === 'still',
+                click() {
+                    currentThumbnailRenderMode = 'still';
+                    sendThumbnailModeToRenderer('still'); // Send to renderer to update state
+                    win.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-still', layerIndex);
+                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                }
+            },
+            {
+                label: 'Live Render',
+                type: 'radio',
+                checked: currentThumbnailRenderMode === 'active',
+                click() {
+                    currentThumbnailRenderMode = 'active';
+                    sendThumbnailModeToRenderer('active'); // Send to renderer to update state
+                    win.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-active', layerIndex);
+                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                }
+            }
+        ]
+      },
+      { type: 'separator' },
       { label: 'Rename', click: () => win.webContents.send('layer-full-context-command', 'layer-rename', layerIndex) },
       { label: 'Clear Clips', click: () => win.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex) },
     ]);
@@ -195,6 +263,34 @@ function createWindow() {
     console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}`); // Add log
     const clipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => win.webContents.send('clip-context-command', { command: 'update-thumbnail', layerIndex, colIndex }) },
+      { type: 'separator' },
+      {
+        label: 'Set Thumbnail Mode',
+        submenu: [
+            {
+                label: 'Still Frame',
+                type: 'radio',
+                checked: currentThumbnailRenderMode === 'still',
+                click() {
+                    currentThumbnailRenderMode = 'still';
+                    sendThumbnailModeToRenderer('still'); // Send to renderer to update state
+                    win.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-still', layerIndex, colIndex });
+                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                }
+            },
+            {
+                label: 'Live Render',
+                type: 'radio',
+                checked: currentThumbnailRenderMode === 'active',
+                click() {
+                    currentThumbnailRenderMode = 'active';
+                    sendThumbnailModeToRenderer('active'); // Send to renderer to update state
+                    win.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-active', layerIndex, colIndex });
+                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                }
+            }
+        ]
+      },
       { type: 'separator' },
       { label: 'Cut', click: () => win.webContents.send('clip-context-command', { command: 'cut-clip', layerIndex, colIndex }) },
       { label: 'Copy', click: () => win.webContents.send('clip-context-command', { command: 'copy-clip', layerIndex, colIndex }) },

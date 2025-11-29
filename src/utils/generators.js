@@ -1,21 +1,26 @@
 import opentype from 'opentype.js';
 
+const withDefaults = (params, defaults) => ({ ...defaults, ...params });
+
 export async function generateText(params) {
   try {
-    const text = params.text || 'Hello';
-    const offsetX = params.x || 0;
-    const offsetY = params.y || 0;
-    const r = params.r !== undefined ? params.r : 255;
-    const g = params.g !== undefined ? params.g : 255;
-    const b = params.b !== undefined ? params.b : 255;
-    const blanking = params.blanking !== undefined ? params.blanking : false;
+    const { text, x, y, r, g, b, blanking, fontSize, fontUrl } = withDefaults(params, {
+      text: 'Hello',
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      blanking: false,
+      fontSize: 72,
+      fontUrl: 'https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto-Regular.ttf',
+    });
 
-    // TODO: Make font path configurable or load from a predefined set
-    const font = await opentype.load('C:/Windows/Fonts/arial.ttf');
-    const path = font.getPath(text, 0, 0, params.fontSize || 72);
+    const font = await opentype.load(fontUrl);
+    const path = font.getPath(text, 0, 0, fontSize);
     const points = path.commands.map(command => {
       if (command.type !== 'Z') {
-        return { x: command.x / 1000 + offsetX, y: -command.y / 1000 + offsetY, r, g, b, blanking };
+        return { x: command.x / 1000 + x, y: -command.y / 1000 + y, r, g, b, blanking };
       }
       return null;
     }).filter(p => p);
@@ -29,21 +34,25 @@ export async function generateText(params) {
 
 export function generateCircle(params) {
   try {
-    const points = [];
-    const radius = params.radius || 0.5;
-    const numPoints = params.numPoints || 100;
-    const offsetX = params.x || 0;
-    const offsetY = params.y || 0;
-    const r = params.r !== undefined ? params.r : 255;
-    const g = params.g !== undefined ? params.g : 255;
-    const b = params.b !== undefined ? params.b : 255;
-    const blanking = params.blanking !== undefined ? params.blanking : false;
+    const { radius, numPoints, x, y, r, g, b, blanking } = withDefaults(params, {
+      radius: 0.5,
+      numPoints: 100,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      blanking: false,
+    });
 
+    const points = [];
     for (let i = 0; i < numPoints; i++) {
       const angle = (i / numPoints) * 2 * Math.PI;
-      const x = radius * Math.cos(angle) + offsetX;
-      const y = radius * Math.sin(angle) + offsetY;
-      points.push({ x, y, r, g, b, blanking });
+      points.push({
+        x: radius * Math.cos(angle) + x,
+        y: radius * Math.sin(angle) + y,
+        r, g, b, blanking
+      });
     }
     return { points };
   } catch (error) {
@@ -54,21 +63,24 @@ export function generateCircle(params) {
 
 export function generateSquare(params) {
   try {
-    const points = [];
-    const width = params.width || 0.5;
-    const height = params.height || 0.5;
-    const offsetX = params.x || 0;
-    const offsetY = params.y || 0;
-    const r = params.r !== undefined ? params.r : 255;
-    const g = params.g !== undefined ? params.g : 255;
-    const b = params.b !== undefined ? params.b : 255;
-    const blanking = params.blanking !== undefined ? params.blanking : false;
+    const { width, height, x, y, r, g, b, blanking } = withDefaults(params, {
+      width: 0.5,
+      height: 0.5,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      blanking: false,
+    });
 
-    points.push({ x: -width / 2 + offsetX, y: -height / 2 + offsetY, r, g, b, blanking });
-    points.push({ x: width / 2 + offsetX, y: -height / 2 + offsetY, r, g, b, blanking });
-    points.push({ x: width / 2 + offsetX, y: height / 2 + offsetY, r, g, b, blanking });
-    points.push({ x: -width / 2 + offsetX, y: height / 2 + offsetY, r, g, b, blanking });
-    points.push({ x: -width / 2 + offsetX, y: -height / 2 + offsetY, r, g, b, blanking }); // Close the square
+    const points = [
+      { x: -width / 2 + x, y: -height / 2 + y, r, g, b, blanking },
+      { x: width / 2 + x, y: -height / 2 + y, r, g, b, blanking },
+      { x: width / 2 + x, y: height / 2 + y, r, g, b, blanking },
+      { x: -width / 2 + x, y: height / 2 + y, r, g, b, blanking },
+      { x: -width / 2 + x, y: -height / 2 + y, r, g, b, blanking },
+    ];
 
     return { points };
   } catch (error) {
@@ -79,20 +91,21 @@ export function generateSquare(params) {
 
 export function generateLine(params) {
   try {
-    const points = [];
-    const x1 = params.x1 || -0.5;
-    const y1 = params.y1 || 0;
-    const x2 = params.x2 || 0.5;
-    const y2 = params.y2 || 0;
-    const offsetX = params.x || 0;
-    const offsetY = params.y || 0;
-    const r = params.r !== undefined ? params.r : 255;
-    const g = params.g !== undefined ? params.g : 255;
-    const b = params.b !== undefined ? params.b : 255;
-    const blanking = params.blanking !== undefined ? params.blanking : false;
+    const { x1, y1, x2, y2, r, g, b, blanking } = withDefaults(params, {
+      x1: -0.5,
+      y1: 0,
+      x2: 0.5,
+      y2: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      blanking: false,
+    });
 
-    points.push({ x: x1 + offsetX, y: y1 + offsetY, r, g, b, blanking });
-    points.push({ x: x2 + offsetX, y: y2 + offsetY, r, g, b, blanking });
+    const points = [
+      { x: x1, y: y1, r, g, b, blanking },
+      { x: x2, y: y2, r, g, b, blanking },
+    ];
 
     return { points };
   } catch (error) {
@@ -103,25 +116,29 @@ export function generateLine(params) {
 
 export function generateStar(params) {
   try {
-    const points = [];
-    const outerRadius = params.outerRadius || 0.5;
-    const innerRadius = params.innerRadius || 0.2;
-    const numPoints = params.numPoints || 5; // Number of points on the star
-    const offsetX = params.x || 0;
-    const offsetY = params.y || 0;
-    const r = params.r !== undefined ? params.r : 255;
-    const g = params.g !== undefined ? params.g : 255;
-    const b = params.b !== undefined ? params.b : 255;
-    const blanking = params.blanking !== undefined ? params.blanking : false;
+    const { outerRadius, innerRadius, numPoints, x, y, r, g, b, blanking } = withDefaults(params, {
+      outerRadius: 0.5,
+      innerRadius: 0.2,
+      numPoints: 5,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      blanking: false,
+    });
 
+    const points = [];
     for (let i = 0; i < numPoints * 2; i++) {
       const radius = i % 2 === 0 ? outerRadius : innerRadius;
-      const angle = (i / (numPoints * 2)) * 2 * Math.PI - Math.PI / 2; // Start at the top
-      const x = radius * Math.cos(angle) + offsetX;
-      const y = radius * Math.sin(angle) + offsetY;
-      points.push({ x, y, r, g, b, blanking });
+      const angle = (i / (numPoints * 2)) * 2 * Math.PI - Math.PI / 2;
+      points.push({
+        x: radius * Math.cos(angle) + x,
+        y: radius * Math.sin(angle) + y,
+        r, g, b, blanking
+      });
     }
-    points.push({ x: points[0].x, y: points[0].y, r, g, b, blanking }); // Close the star
+    points.push({ ...points[0] });
 
     return { points };
   } catch (error) {

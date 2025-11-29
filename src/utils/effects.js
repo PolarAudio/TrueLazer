@@ -1,10 +1,27 @@
+import { effectDefinitions } from './effectDefinitions';
+
+let globalRotationAngle = 0;
+let lastAnimationFrameTime = 0;
+const rotationUpdateInterval = 16; // Approximately 60 FPS
+
+const withDefaults = (params, defaults) => ({ ...defaults, ...params });
+
 export function applyEffects(frame, effects) {
   let modifiedFrame = { ...frame };
+  const currentTime = performance.now();
+
+  if (currentTime - lastAnimationFrameTime > rotationUpdateInterval) {
+    globalRotationAngle = (globalRotationAngle + 0.01) % (2 * Math.PI); // Update global rotation slowly
+    lastAnimationFrameTime = currentTime;
+  }
 
   for (const effect of effects) {
-    switch (effect.name) {
+    const definition = effectDefinitions.find(def => def.id === effect.id);
+    if (!definition) continue;
+
+    switch (effect.id) {
       case 'rotate':
-        modifiedFrame = applyRotate(modifiedFrame, effect.params);
+        modifiedFrame = applyRotate(modifiedFrame, effect.params, globalRotationAngle);
         break;
       case 'scale':
         modifiedFrame = applyScale(modifiedFrame, effect.params);
@@ -18,7 +35,12 @@ export function applyEffects(frame, effects) {
       case 'wave':
         modifiedFrame = applyWave(modifiedFrame, effect.params);
         break;
-      // Add other effects here
+      case 'blanking':
+        modifiedFrame = applyBlanking(modifiedFrame, effect.params);
+        break;
+      case 'strobe':
+        modifiedFrame = applyStrobe(modifiedFrame, effect.params);
+        break;
       default:
         break;
     }
@@ -27,10 +49,13 @@ export function applyEffects(frame, effects) {
   return modifiedFrame;
 }
 
-function applyRotate(frame, params) {
-  const angle = params.angle || 0;
-  const sin = Math.sin(angle);
-  const cos = Math.cos(angle);
+function applyRotate(frame, params, globalRotationAngle) {
+  const { angle, rotationSpeed } = withDefaults(params, effectDefinitions.find(def => def.id === 'rotate').defaultParams);
+  
+  // Combine static angle with dynamic rotationSpeed based on global animation frame
+  const currentAngle = (angle * Math.PI / 180) + (globalRotationAngle * rotationSpeed);
+  const sin = Math.sin(currentAngle);
+  const cos = Math.cos(currentAngle);
 
   const newPoints = frame.points.map(point => {
     const x = point.x * cos - point.y * sin;
@@ -42,8 +67,7 @@ function applyRotate(frame, params) {
 }
 
 function applyScale(frame, params) {
-  const scaleX = params.scaleX || 1;
-  const scaleY = params.scaleY || 1;
+  const { scaleX, scaleY } = withDefaults(params, effectDefinitions.find(def => def.id === 'scale').defaultParams);
 
   const newPoints = frame.points.map(point => {
     const x = point.x * scaleX;
@@ -55,8 +79,7 @@ function applyScale(frame, params) {
 }
 
 function applyTranslate(frame, params) {
-  const translateX = params.translateX || 0;
-  const translateY = params.translateY || 0;
+  const { translateX, translateY } = withDefaults(params, effectDefinitions.find(def => def.id === 'translate').defaultParams);
 
   const newPoints = frame.points.map(point => {
     const x = point.x + translateX;
@@ -68,9 +91,7 @@ function applyTranslate(frame, params) {
 }
 
 function applyColor(frame, params) {
-  const r = params.r || 255;
-  const g = params.g || 255;
-  const b = params.b || 255;
+  const { r, g, b } = withDefaults(params, effectDefinitions.find(def => def.id === 'color').defaultParams);
 
   const newPoints = frame.points.map(point => {
     return { ...point, r, g, b };
@@ -80,10 +101,7 @@ function applyColor(frame, params) {
 }
 
 function applyWave(frame, params) {
-  const amplitude = params.amplitude || 0.1;
-  const frequency = params.frequency || 10;
-  const speed = params.speed || 1;
-  const direction = params.direction || 'x';
+  const { amplitude, frequency, speed, direction } = withDefaults(params, effectDefinitions.find(def => def.id === 'wave').defaultParams);
 
   const newPoints = frame.points.map(point => {
     let x = point.x;
@@ -96,6 +114,36 @@ function applyWave(frame, params) {
     }
 
     return { ...point, x, y };
+  });
+
+  return { ...frame, points: newPoints };
+}
+
+function applyBlanking(frame, params) {
+  const { blankingInterval } = withDefaults(params, effectDefinitions.find(def => def.id === 'blanking').defaultParams);
+
+  if (blankingInterval <= 0) return frame;
+
+  const newPoints = frame.points.map((point, index) => {
+    const blank = (index % (blankingInterval + 1)) === blankingInterval;
+    return { ...point, blanking: point.blanking || blank };
+  });
+
+  return { ...frame, points: newPoints };
+}
+
+function applyStrobe(frame, params) {
+  const { strobeSpeed, strobeAmount } = withDefaults(params, effectDefinitions.find(def => def.id === 'strobe').defaultParams);
+
+  const now = Date.now();
+  const cycleTime = strobeSpeed; // milliseconds
+  const cyclePosition = (now % cycleTime) / cycleTime; // 0 to 1
+
+  // If cyclePosition is within the strobeAmount, then blank
+  const blank = cyclePosition < strobeAmount;
+
+  const newPoints = frame.points.map(point => {
+    return { ...point, blanking: point.blanking || blank };
   });
 
   return { ...frame, points: newPoints };
