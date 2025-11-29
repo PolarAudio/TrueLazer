@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 
 import IldaThumbnail from './IldaThumbnail';
 import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
-
 const Clip = ({
   clipName,
   layerIndex,
@@ -22,35 +21,42 @@ const Clip = ({
   const [isDragging, setIsDragging] = useState(false);
   const [thumbnailFrame, setThumbnailFrame] = useState(null); // New state for thumbnail frame
 
+  // Determine the display name for the clip
+  const displayName = clipContent && clipContent.type === 'generator' && clipContent.generatorDefinition
+    ? clipContent.generatorDefinition.name
+    : clipName;
+
   useEffect(() => {
-    if (!ildaParserWorker || !clipContent || !clipContent.workerId || clipContent.totalFrames === 0) {
-      setThumbnailFrame(null);
-      return;
-    }
+    // Logic for ILDA file thumbnails
+    if (clipContent && clipContent.type === 'ilda' && ildaParserWorker && clipContent.workerId && clipContent.totalFrames > 0) {
+      const fetchThumbnail = () => {
+        ildaParserWorker.postMessage({
+          type: 'get-frame',
+          workerId: clipContent.workerId,
+          frameIndex: thumbnailFrameIndex % clipContent.totalFrames // Ensure index is within bounds
+        });
+      };
 
-    const fetchThumbnail = () => {
-      ildaParserWorker.postMessage({
-        type: 'get-frame',
-        workerId: clipContent.workerId,
-        frameIndex: thumbnailFrameIndex % clipContent.totalFrames // Ensure index is within bounds
-      });
-    };
-
-    const messageHandler = (e) => {
-      // Ensure we are only processing 'get-frame' messages for *this* clip's workerId
-      if (e.data.type === 'get-frame' && e.data.workerId === clipContent.workerId) {
-        if (e.data.frameIndex === (thumbnailFrameIndex % clipContent.totalFrames)) {
-          setThumbnailFrame(e.data.frame);
+      const messageHandler = (e) => {
+        if (e.data.type === 'get-frame' && e.data.workerId === clipContent.workerId) {
+          if (e.data.frameIndex === (thumbnailFrameIndex % clipContent.totalFrames)) {
+            setThumbnailFrame(e.data.frame);
+          }
         }
-      }
-    };
+      };
 
-    ildaParserWorker.addEventListener('message', messageHandler);
-    fetchThumbnail(); // Initial fetch
+      ildaParserWorker.addEventListener('message', messageHandler);
+      fetchThumbnail();
 
-    return () => {
-      ildaParserWorker.removeEventListener('message', messageHandler);
-    };
+      return () => {
+        ildaParserWorker.removeEventListener('message', messageHandler);
+      };
+    } else if (clipContent && clipContent.type === 'generator' && clipContent.frames && clipContent.frames.length > 0) {
+      // For generators, the frame is directly available
+      setThumbnailFrame(clipContent.frames[0]);
+    } else {
+      setThumbnailFrame(null); // No content or unsupported type
+    }
   }, [ildaParserWorker, clipContent, thumbnailFrameIndex]);
 
   const handleDragOver = (e) => {
@@ -199,7 +205,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
           <p></p>
         )}
       </div>
-      <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{clipName}</span>
+      <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{displayName}</span>
     </div>
   );
 };

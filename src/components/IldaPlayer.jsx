@@ -31,6 +31,7 @@ const IldaPlayer = ({ frame, showBeamEffect, beamAlpha, fadeAlpha, previewScanRa
   useEffect(() => {
     if (!worker) return;
 
+    console.log('IldaPlayer: Sending frame to worker:', frame); // Add this log
     const framesToSend = frame ? [frame] : [];
 
     worker.postMessage({

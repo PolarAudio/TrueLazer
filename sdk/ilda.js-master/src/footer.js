@@ -1,2 +1,0 @@
-exports['ILDA'] = ILDA;
-})(this);

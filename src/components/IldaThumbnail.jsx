@@ -4,6 +4,7 @@ const IldaThumbnail = ({ frame }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
+    console.log('IldaThumbnail: Received frame prop:', frame); // Add this log
     if (!canvasRef.current || !frame || !frame.points || frame.points.length === 0) {
       return;
     }

@@ -1,22 +1,32 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useMemo, useEffect } from 'react';
 
 const GeneratorWorkerContext = createContext(null);
 
 export const GeneratorWorkerProvider = ({ children }) => {
   const generatorWorker = useMemo(() => {
-    // Using a URL for the worker script, compatible with Vite
-    return new Worker(new URL('../utils/generators.worker.js', import.meta.url), { type: 'module' });
+    try {
+      const worker = new Worker(new URL('../utils/generators.worker.js', import.meta.url), { type: 'module' });
+      // console.log('GeneratorWorkerProvider: Worker created successfully:', worker); // Removed debug log
+      worker.onerror = (error) => {
+        console.error('Generator Worker instantiation or internal error:', error);
+      };
+      return worker;
+    } catch (error) {
+      console.error('Failed to create Generator Worker:', error);
+      return null; // Ensure null is returned if creation fails
+    }
   }, []);
 
-  // Optional: Handle worker errors or messages globally if needed
-  // useEffect(() => {
-  //   generatorWorker.onerror = (error) => {
-  //     console.error('Generator Worker error:', error);
-  //   };
-  //   return () => {
-  //     generatorWorker.terminate();
-  //   };
-  // }, [generatorWorker]);
+  useEffect(() => {
+    if (!generatorWorker) return;
+
+    return () => {
+      // console.log('GeneratorWorkerProvider: Terminating worker.'); // Removed debug log
+      generatorWorker.terminate();
+    };
+  }, [generatorWorker]);
+
+  // console.log('GeneratorWorkerProvider: Value passed to context provider:', generatorWorker); // Removed debug log
 
   return (
     <GeneratorWorkerContext.Provider value={generatorWorker}>
