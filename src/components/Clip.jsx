@@ -30,6 +30,7 @@ const Clip = ({
     : clipName;
 
   useEffect(() => {
+    // console.log("Clip.jsx: thumbnailRenderMode:", thumbnailRenderMode, "liveFrame:", liveFrame, "stillFrame:", stillFrame); // Debug log - COMMENTED OUT
     if (thumbnailRenderMode === 'still') {
       setThumbnailFrame(stillFrame);
     } else { // 'active' mode

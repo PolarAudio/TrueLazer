@@ -232,21 +232,35 @@ function App() {
               let currentFrame = null;
               let stillFrame = null; // New stillFrame variable
 
-              if (clip.type === 'ilda' && clip.workerId && clip.totalFrames) {
-                  workerId = clip.workerId;
-                  currentFrame = liveFrames[workerId];
-                  stillFrame = stillFrames[workerId]; // Get still frame for ILDA clips
-                  return {
-                      type: 'ilda',
-                      workerId,
-                      totalFrames: clip.totalFrames,
-                      effects: clip.effects || [],
-                      dac: clip.dac || null,
-                      ildaFormat: clip.ildaFormat || 0,
-                      currentFrame,
-                      stillFrame, // Include stillFrame
-                  };
-              } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
+                              if (clip.type === 'ilda' && clip.workerId && clip.totalFrames) {
+
+                                  workerId = clip.workerId;
+
+                                  currentFrame = liveFrames[workerId];
+
+                                                    stillFrame = stillFrames[workerId]; // Get still frame for ILDA clips
+
+                                                    return {
+
+                                                        type: 'ilda',
+
+                                                        workerId,
+
+                                                        totalFrames: clip.totalFrames,
+
+                                                        effects: clip.effects || [],
+
+                                                        dac: clip.dac || null,
+
+                                                        ildaFormat: clip.ildaFormat || 0,
+
+                                                        currentFrame,
+
+                                                        stillFrame, // Include stillFrame
+
+                                                    };
+
+                                                } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
                   workerId = `generator-${layerIndex}-${activeColIndex}`;
                   currentFrame = liveFrames[workerId] || clip.frames[0];
                   stillFrame = clip.frames[0]; // For generators, the first frame is usually the still frame
@@ -515,8 +529,25 @@ function App() {
   }, []);
 
   const handleUpdateThumbnail = useCallback((layerIndex, colIndex) => {
-    dispatch({ type: 'SET_THUMBNAIL_FRAME_INDEX', payload: { layerIndex, colIndex, index: ildaPlayerCurrentFrameIndex.current } });
-  }, []);
+    const clip = clipContents[layerIndex][colIndex];
+    if (clip && clip.type === 'ilda' && ildaParserWorker && clip.workerId && clip.totalFrames > 0) {
+      // Get the current playing frame index for this specific clip
+      const currentPlayingFrameIndex = frameIndexesRef.current[clip.workerId] || 0; // Default to 0 if not playing
+      const frameIndexToFetch = currentPlayingFrameIndex % clip.totalFrames;
+      
+      ildaParserWorker.postMessage({
+        type: 'get-frame',
+        workerId: clip.workerId,
+        frameIndex: frameIndexToFetch,
+        isStillFrame: true, // Indicate this is for a still frame
+      });
+      showNotification(`Updating thumbnail for Clip ${layerIndex + 1}-${colIndex + 1} to current playing frame ${frameIndexToFetch}`);
+    } else if (clip && clip.type === 'generator') {
+      showNotification("Thumbnail update is not applicable for static generator clips.");
+    } else {
+      showNotification("Cannot update thumbnail: Clip content not found or not an ILDA file.");
+    }
+  }, [clipContents, ildaParserWorker, frameIndexesRef, showNotification]); // Add frameIndexesRef to dependencies
 
   const handleMenuAction = useCallback((action) => {
     if (action.startsWith('set-theme-')) {

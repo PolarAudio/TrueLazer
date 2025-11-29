@@ -184,7 +184,7 @@ function parseIldaFile(arrayBuffer) {
 
 self.onmessage = function(e) {
 
-  const { arrayBuffer, type, fileName, layerIndex, colIndex, workerId, frameIndex } = e.data;
+  const { arrayBuffer, type, fileName, layerIndex, colIndex, workerId, frameIndex, isStillFrame } = e.data;
   
   if (type === 'parse-ilda') {
     try {
@@ -204,14 +204,14 @@ self.onmessage = function(e) {
       });
     } catch (error) {
       console.error('[ilda-parser.worker] Error parsing file:', error);
-      self.postMessage({ success: false, error: error.message });
+      self.postMessage({ success: false, error: error.message, type: 'parse-ilda' });
     }
   } else if (type === 'get-frame') {
     const frames = ildaDataStore.get(workerId);
     if (frames && frames[frameIndex]) {
-      self.postMessage({ success: true, frame: frames[frameIndex], workerId, frameIndex, type: 'get-frame' });
+      self.postMessage({ success: true, frame: frames[frameIndex], workerId, frameIndex, type: 'get-frame', isStillFrame: isStillFrame });
     } else {
-      self.postMessage({ success: false, error: 'Frame not found', workerId, frameIndex });
+      self.postMessage({ success: false, error: 'Frame not found', workerId, frameIndex, type: 'get-frame', isStillFrame: isStillFrame });
     }
   }
 };

@@ -20,7 +20,7 @@ function buildApplicationMenu(mode) {
     {
       label: 'TrueLazer',
       submenu: [
-        { label: 'About', click: () => { win.webContents.send('menu-action', 'about'); } },
+        { label: 'About', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
         { type: 'separator' },
         { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => { app.quit(); } },
       ],
@@ -28,62 +28,62 @@ function buildApplicationMenu(mode) {
     {
       label: 'Settings',
       submenu: [
-        { label: 'General', click: () => { win.webContents.send('menu-action', 'settings-general'); } },
+        { label: 'General', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
       ],
     },
     {
       label: 'Layer',
       submenu: [
-        { label: 'Rename', click: () => { win.webContents.send('menu-action', 'layer-rename'); } },
-        { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'layer-clear-clips'); } },
+        { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'layer-rename'); } },
+        { label: 'Clear Clips', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'layer-clear-clips'); } },
       ],
     },
     {
       label: 'Column',
       submenu: [
-		{ label: 'Duplicate', click: () => { win.webContents.send('menu-action', 'column-duplicate'); } },
-        { label: 'Rename', click: () => { win.webContents.send('menu-action', 'column-rename'); } },
-        { label: 'Clear Clips', click: () => { win.webContents.send('menu-action', 'column-clear-clips'); } },
+		{ label: 'Duplicate', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'column-duplicate'); } },
+        { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'column-rename'); } },
+        { label: 'Clear Clips', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'column-clear-clips'); } },
       ],
     },
     {
       label: 'Clip',
       submenu: [
-        { label: 'Trigger Style', click: () => { win.webContents.send('menu-action', 'clip-trigger-style'); } },
-        { label: 'Thumbnail', click: () => { win.webContents.send('menu-action', 'clip-thumbnail'); } },
-        { label: 'Cut', click: () => { win.webContents.send('menu-action', 'clip-cut'); } },
-        { label: 'Copy', click: () => { win.webContents.send('menu-action', 'clip-copy'); } },
-        { label: 'Paste', click: () => { win.webContents.send('menu-action', 'clip-paste'); } },
-        { label: 'Rename', click: () => { win.webContents.send('menu-action', 'clip-rename'); } },
-        { label: 'Clear', click: () => { win.webContents.send('menu-action', 'clip-clear'); } },
+        { label: 'Trigger Style', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'clip-trigger-style'); } },
+        { label: 'Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'clip-thumbnail'); } },
+        { label: 'Cut', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'clip-cut'); } },
+        { label: 'Copy', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'clip-copy'); } },
+        { label: 'Paste', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'clip-paste'); } },
+        { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'clip-rename'); } },
+        { label: 'Clear', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'clip-clear'); } },
       ],
     },
     {
       label: 'Output',
       submenu: [
-        { label: 'Open Output Settings', click: () => { win.webContents.send('menu-action', 'output-settings'); } },
+        { label: 'Open Output Settings', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'output-settings'); } },
       ],
     },
     {
       label: 'Shortcuts',
       submenu: [
-        { label: 'Open Shortcuts Window', click: () => { win.webContents.send('menu-action', 'shortcuts-window'); } },
+        { label: 'Open Shortcuts Window', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'shortcuts-window'); } },
       ],
     },
     {
       label: 'View',
       submenu: [
-        { label: 'Predefined Layouts', click: () => { win.webContents.send('menu-action', 'view-layouts'); } },
+        { label: 'Predefined Layouts', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'view-layouts'); } },
                 {
           label: 'Color Theme',
           submenu: [
-            { label: 'Orange', type: 'radio', checked: true, click: () => { win.webContents.send('menu-action', 'set-theme-orange'); } },
-            { label: 'Yellow', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-yellow'); } },
-            { label: 'Cyan', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-cyan'); } },
-            { label: 'Light Blue', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-light-blue'); } },
-            { label: 'Blue', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-blue'); } },
-            { label: 'Magenta', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-magenta'); } },
-            { label: 'Red', type: 'radio', click: () => { win.webContents.send('menu-action', 'set-theme-red'); } },
+            { label: 'Orange', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-orange'); } },
+            { label: 'Yellow', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-yellow'); } },
+            { label: 'Cyan', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-cyan'); } },
+            { label: 'Light Blue', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-light-blue'); } },
+            { label: 'Blue', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-blue'); } },
+            { label: 'Magenta', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-magenta'); } },
+            { label: 'Red', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-red'); } },
           ]
         },
         {
@@ -93,42 +93,42 @@ function buildApplicationMenu(mode) {
             { label: 'Thumbnail Still Frame', type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
             { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
             { type: 'separator' },
-            { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { win.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
+            { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
             { type: 'separator' },
             {
               label: 'Effect Mode',
               submenu: [
-                { label: 'Points', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
-                { label: 'Lines', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
-                { label: 'Points & Lines', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
+                { label: 'Points', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
+                { label: 'Lines', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
+                { label: 'Points & Lines', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
               ]
             },
             { type: 'separator' },
             {
               label: 'Preview Scan Rate',
               submenu: [
-                { label: 'Fast', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1 }); } },
-                { label: 'Madium', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.1 }); } },
-                { label: 'Slow', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.3 }); } },
+                { label: 'Fast', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1 }); } },
+                { label: 'Madium', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.1 }); } },
+                { label: 'Slow', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.3 }); } },
               ]
             },
             {
               label: 'Fade Alpha',
               submenu: [
-                { label: '0.0', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.0 }); } },
-                { label: '0.1', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.1 }); } },
-                { label: '0.2', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.2 }); } },
-                { label: '0.5', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.5 }); } },
-                { label: '1.0', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 1.0 }); } },
+                { label: '0.0', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.0 }); } },
+                { label: '0.1', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.1 }); } },
+                { label: '0.2', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.2 }); } },
+                { label: '0.5', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.5 }); } },
+                { label: '1.0', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 1.0 }); } },
               ]
             },
             {
               label: 'Beam Alpha',
               submenu: [
-                { label: '0.1', type: 'radio', checked: true, click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
-                { label: '0.2', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
-                { label: '0.5', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.5 }); } },
-                { label: '1.0', type: 'radio', click: () => { win.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 1.0 }); } },
+                { label: '0.1', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
+                { label: '0.2', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
+                { label: '0.5', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.5 }); } },
+                { label: '1.0', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 1.0 }); } },
               ]
             },
           ]
@@ -161,6 +161,9 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '..\dist', 'index.html'));
   }
 
+  // Assign to global mainWindow
+  mainWindow = win;
+
   // Initial menu build
   buildApplicationMenu(currentThumbnailRenderMode);
 
@@ -185,7 +188,7 @@ function createWindow() {
 
   ipcMain.on('discover-dacs', (event, networkInterface) => {
     discoverDacs((dacs) => {
-      win.webContents.send('dacs-discovered', dacs);
+      if(mainWindow) mainWindow.webContents.send('dacs-discovered', dacs);
     }, networkInterface);
   });
 
@@ -207,16 +210,16 @@ function createWindow() {
 
   ipcMain.on('show-layer-context-menu', (event, index) => {
     const layerContextMenu = Menu.buildFromTemplate([
-      { label: 'Rename Layer', click: () => win.webContents.send('context-menu-action', { type: 'rename-layer', index: index }) },
+      { label: 'Rename Layer', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-layer', index: index }); } },
     ]);
-    layerContextMenu.popup({ window: win });
+    layerContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
     console.log(`Received show-layer-full-context-menu for layer: ${layerIndex}`);
     const layerFullContextMenu = Menu.buildFromTemplate([
-      { label: 'Insert Above', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex) },
-      { label: 'Insert Below', click: () => win.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex) },
+      { label: 'Insert Above', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex); } },
+      { label: 'Insert Below', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex); } },
       { type: 'separator' },
       {
         label: 'Set Thumbnail Mode',
@@ -228,7 +231,7 @@ function createWindow() {
                 click() {
                     currentThumbnailRenderMode = 'still';
                     sendThumbnailModeToRenderer('still'); // Send to renderer to update state
-                    win.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-still', layerIndex);
+                    if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-still', layerIndex);
                     buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
                 }
             },
@@ -239,30 +242,30 @@ function createWindow() {
                 click() {
                     currentThumbnailRenderMode = 'active';
                     sendThumbnailModeToRenderer('active'); // Send to renderer to update state
-                    win.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-active', layerIndex);
+                    if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-active', layerIndex);
                     buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
                 }
             }
         ]
       },
       { type: 'separator' },
-      { label: 'Rename', click: () => win.webContents.send('layer-full-context-command', 'layer-rename', layerIndex) },
-      { label: 'Clear Clips', click: () => win.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex) },
+      { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-rename', layerIndex); } },
+      { label: 'Clear Clips', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex); } },
     ]);
-    layerFullContextMenu.popup({ window: win });
+    layerFullContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-column-context-menu', (event, index) => {
     const columnContextMenu = Menu.buildFromTemplate([
-      { label: 'Rename Column', click: () => win.webContents.send('context-menu-action', { type: 'rename-column', index: index }) },
+      { label: 'Rename Column', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-column', index: index }); } },
     ]);
-    columnContextMenu.popup({ window: win });
+    columnContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex) => {
     console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}`); // Add log
     const clipContextMenu = Menu.buildFromTemplate([
-      { label: 'Update Thumbnail', click: () => win.webContents.send('clip-context-command', { command: 'update-thumbnail', layerIndex, colIndex }) },
+      { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'update-thumbnail', layerIndex, colIndex }); } },
       { type: 'separator' },
       {
         label: 'Set Thumbnail Mode',
@@ -274,7 +277,7 @@ function createWindow() {
                 click() {
                     currentThumbnailRenderMode = 'still';
                     sendThumbnailModeToRenderer('still'); // Send to renderer to update state
-                    win.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-still', layerIndex, colIndex });
+                    if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-still', layerIndex, colIndex });
                     buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
                 }
             },
@@ -285,46 +288,46 @@ function createWindow() {
                 click() {
                     currentThumbnailRenderMode = 'active';
                     sendThumbnailModeToRenderer('active'); // Send to renderer to update state
-                    win.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-active', layerIndex, colIndex });
+                    if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-active', layerIndex, colIndex });
                     buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
                 }
             }
         ]
       },
       { type: 'separator' },
-      { label: 'Cut', click: () => win.webContents.send('clip-context-command', { command: 'cut-clip', layerIndex, colIndex }) },
-      { label: 'Copy', click: () => win.webContents.send('clip-context-command', { command: 'copy-clip', layerIndex, colIndex }) },
-      { label: 'Paste', click: () => win.webContents.send('clip-context-command', { command: 'paste-clip', layerIndex, colIndex }) },
+      { label: 'Cut', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'cut-clip', layerIndex, colIndex }); } },
+      { label: 'Copy', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'copy-clip', layerIndex, colIndex }); } },
+      { label: 'Paste', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'paste-clip', layerIndex, colIndex }); } },
       { type: 'separator' },
-      { label: 'Rename', click: () => win.webContents.send('clip-context-command', { command: 'rename-clip', layerIndex, colIndex }) },
-      { label: 'Clear', click: () => win.webContents.send('clip-context-command', { command: 'clear-clip', layerIndex, colIndex }) },
+      { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'rename-clip', layerIndex, colIndex }); } },
+      { label: 'Clear', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'clear-clip', layerIndex, colIndex }); } },
     ]);
-    clipContextMenu.popup({ window: win });
+    clipContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-column-header-clip-context-menu', (event, colIndex) => {
     console.log(`Received show-column-header-clip-context-menu for column: ${colIndex}`);
     const columnHeaderClipContextMenu = Menu.buildFromTemplate([
-      { label: 'Update Thumbnail', click: () => win.webContents.send('column-header-clip-context-command', { command: 'update-thumbnail', colIndex }) },
+      { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'update-thumbnail', colIndex }); } },
       { type: 'separator' },
-      { label: 'Cut', click: () => win.webContents.send('column-header-clip-context-command', { command: 'cut-clip', colIndex }) },
-      { label: 'Copy', click: () => win.webContents.send('column-header-clip-context-command', { command: 'copy-clip', colIndex }) },
-      { label: 'Paste', click: () => win.webContents.send('column-header-clip-context-command', { command: 'paste-clip', colIndex }) },
+      { label: 'Cut', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'cut-clip', colIndex }); } },
+      { label: 'Copy', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'copy-clip', colIndex }); } },
+      { label: 'Paste', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'paste-clip', colIndex }); } },
       { type: 'separator' },
-      { label: 'Rename', click: () => win.webContents.send('column-header-clip-context-command', { command: 'rename-clip', colIndex }) },
-      { label: 'Clear', click: () => win.webContents.send('column-header-clip-context-command', { command: 'clear-column-clips', colIndex }) },
+      { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'rename-clip', colIndex }); } },
+      { label: 'Clear', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'clear-column-clips', colIndex }); } },
     ]);
-    columnHeaderClipContextMenu.popup({ window: win });
+    columnHeaderClipContextMenu.popup({ window: mainWindow });
   });
 
   // Listen for context menu actions from renderer and send back to renderer
   ipcMain.on('context-menu-action', (event, action) => {
     console.log(`Main process received context menu action: ${JSON.stringify(action)}`);
-    win.webContents.send('context-menu-action-from-main', action);
+    if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', action);
   });
 
   ipcMain.handle('open-file-explorer', async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory'],
     });
     if (canceled) {
