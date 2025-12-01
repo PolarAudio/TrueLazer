@@ -78,7 +78,7 @@ body {
   .speed-control-button {
 	outline: 1px solid var(--theme-color);
 	cursor: pointer;
-	font-size: 1.3rem;
+	font-size: smaller;
 	border-radius: 5px;
 	background: #20232a;
 	color: var(--theme-color);
@@ -113,7 +113,7 @@ body {
   .layer-controls-container {
 	background-color: #20232a;
 	border-right: 1px solid #3a3f47;
-	overflow: hidden;
+	overflow: auto;
 	grid-column-start: 1;
 	grid-column-end: 2;
 	grid-row-start: 2;
@@ -174,7 +174,7 @@ body {
 	display: grid;
   }
   .clip-deck {
-	overflow: hidden; /* Allow horizontal scrolling for columns */
+	overflow: auto; /* Allow horizontal scrolling for columns */
 	background: #20232a;
 	display: grid;
 	grid-template-rows: 5.5% auto;
@@ -232,6 +232,7 @@ body {
 	display: grid;
 	text-align: center;
 	width: 97%;
+	max-height: -webkit-fill-available;
 	aspect-ratio: 1 / 1;
 	position: relative;
 	overflow: hidden;
