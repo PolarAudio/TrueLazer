@@ -116,7 +116,6 @@ const DacPanel = ({ onDacSelected }) => {
     <div className="dac-panel">
       <h3>DACs</h3>
       <div className="network-interface-selector">
-        <label htmlFor="network-interface-select">Network Interface:</label>
         <select id="network-interface-select" onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface ? selectedNetworkInterface.name : ''}>
           {networkInterfaces.map(iface => (
             <option key={iface.name} value={iface.name}>
@@ -124,9 +123,7 @@ const DacPanel = ({ onDacSelected }) => {
             </option>
           ))}
         </select>
-        <label>
-          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} /> Scan
-        </label>
+          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} />
       </div>
       <div className="dac-list">
         {dacs.map((dac) => (

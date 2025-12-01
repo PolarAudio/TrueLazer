@@ -78,7 +78,7 @@ body {
   .speed-control-button {
 	outline: 1px solid var(--theme-color);
 	cursor: pointer;
-	font-size: 1.3rem;
+	font-size: smaller;
 	border-radius: 5px;
 	background: #20232a;
 	color: var(--theme-color);
@@ -113,7 +113,7 @@ body {
   .layer-controls-container {
 	background-color: #20232a;
 	border-right: 1px solid #3a3f47;
-	overflow: hidden;
+	overflow: auto;
 	grid-column-start: 1;
 	grid-column-end: 2;
 	grid-row-start: 2;
@@ -126,8 +126,8 @@ body {
 	padding-bottom: 5px;
 	background-color: #20232a;
 	display: grid;
-	grid-template-columns: 38% 7% 53%; /* X and (B&S) */
-	grid-template-rows: 5rem 1rem; /* Rows for X/BS, Blend/I, Preview/Name */
+	grid-template-columns: 38% 10% auto; /* X and (B&S) */
+	grid-template-rows: auto 20%; /* Rows for X/BS, Blend/I, Preview/Name */
 	align-items: center;
   }
   .grid-layer {
@@ -150,13 +150,12 @@ body {
 	justify-content: flex-start;
 	align-items: center;
 	font-size: 0.7em;
-	position: relative;
 	overflow: hidden;
 	margin-left: 5px;
 	border-radius: 5px;
   }
   .layer-name-label {
-	font-size: 0.8em;
+	font-size: smaller;
 	font-weight: bold;
 	grid-column: span 3;
 	text-align: center;
@@ -174,7 +173,7 @@ body {
 	display: grid;
   }
   .clip-deck {
-	overflow: hidden; /* Allow horizontal scrolling for columns */
+	overflow: auto; /* Allow horizontal scrolling for columns */
 	background: #20232a;
 	display: grid;
 	grid-template-rows: 5.5% auto;
@@ -185,7 +184,6 @@ body {
   }
   .clip {
 	width: 11.8%; /* Fixed width for clips */
-	height: 101px; /* Fixed height for clips */
 	margin-left: 2px;
 	margin-right: 2px;
 	background-color: #3a3f47;
@@ -232,11 +230,17 @@ body {
 	display: grid;
 	text-align: center;
 	width: 97%;
+	max-height: 97%;
 	aspect-ratio: 1 / 1;
 	position: relative;
 	overflow: hidden;
 	margin-top: 2px;
 	margin-bottom: 4px;
+  }
+  @supports (max-height: -webkit-fill-available) {
+  .ilda-player,
+  .world-preview  {
+    max-height: -webkit-fill-available; /* Applied only if -webkit is supported */
   }
   .middle-bar {
 	background-color: #20232a;
@@ -318,6 +322,8 @@ body {
 	margin-right: 2px;
 	margin-left: 2px;
 	border-radius: 5px;
+	display: flex;
+	justify-content: center;
 	align-items: center;
   }
 }
@@ -583,10 +589,11 @@ input[type="checkbox"]:checked:before {
 
 .generator-item {
   background-color: #3a3f47;
-  padding: 8px 15px;
+  margin: 1px 3px;
   border: 1px solid #555;
   cursor: grab;
   border-radius: 4px;
+  padding: 2px;
 }
 
 .effect-list {
@@ -597,10 +604,11 @@ input[type="checkbox"]:checked:before {
 
 .effect-item {
   background-color: #3a3f47;
-  padding: 8px 15px;
+  margin: 1px 3px;
   border: 1px solid #555;
   cursor: grab;
   border-radius: 4px;
+  padding: 2px;
 }
 
 .applied-effects {
