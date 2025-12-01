@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 
+import IldaThumbnail from './IldaThumbnail';
+
 const FileBrowser = () => {
   const [selectedDirectory, setSelectedDirectory] = useState('');
   const [ildFiles, setIldFiles] = useState([]);

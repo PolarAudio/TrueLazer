@@ -789,25 +789,15 @@ function App() {
       <ErrorBoundary>
         <NotificationPopup message={notification.message} visible={notification.visible} />
         <div className="main-content">
-                      <div className="top-bar-left-area">
-                        <CompositionControls />
-                        <MasterIntensitySlider />
-                        <LaserOnOffButton
-                          isWorldOutputActive={isWorldOutputActive}
-                          onToggleWorldOutput={() => dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: !isWorldOutputActive })}
-                        />
-                        <div className="thumbnail-render-mode-selector">
-                          <label htmlFor="thumbnailRenderMode">Thumbnail Mode:</label>
-                          <select
-                            id="thumbnailRenderMode"
-                            value={thumbnailRenderMode}
-                            onChange={(e) => dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: e.target.value })}
-                          >
-                            <option value="still">Still Frame</option>
-                            <option value="active">Live Render</option>
-                          </select>
-                        </div>
-                      </div>          <div className="layer-controls-container">
+            <div className="top-bar-left-area">
+              <CompositionControls />
+              <MasterIntensitySlider />
+              <LaserOnOffButton
+                isWorldOutputActive={isWorldOutputActive}
+                onToggleWorldOutput={() => dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: !isWorldOutputActive })}
+              />
+            </div>          
+		<div className="layer-controls-container">
             {layers.map((layerName, layerIndex) => {
               const activeClipDataForLayer = activeClipsData.find(clip => {
                 const activeColIndex = activeClipIndexes[layerIndex];
@@ -890,7 +880,18 @@ function App() {
             </div>
           </div>
           <div className="side-panel">
-            <IldaPlayer
+            <div className="thumbnail-render-mode-selector">
+                <label htmlFor="thumbnailRenderMode">Thumbnail Mode:</label>
+                <select
+                    id="thumbnailRenderMode"
+                    value={thumbnailRenderMode}
+                    onChange={(e) => dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: e.target.value })}
+                >
+                    <option value="still">Still Frame</option>
+                    <option value="active">Live Render</option>
+                </select>
+            </div>
+			<IldaPlayer
               frame={selectedClipFrame}
               showBeamEffect={showBeamEffect}
               beamAlpha={beamAlpha}
