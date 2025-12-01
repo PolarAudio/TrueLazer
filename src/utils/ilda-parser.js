@@ -87,7 +87,16 @@ export const parseIldaFile = (arrayBuffer) => {
           offset += 3;
         }
 
-        points.push({ x, y, z, r, g, b, blanking, lastPoint });
+        points.push({
+          x: x / 32767.0,
+          y: y / 32767.0,
+          z: z / 32767.0,
+          r,
+          g,
+          b,
+          blanking,
+          lastPoint
+        });
       }
     } catch (e) {
       if (e instanceof RangeError) {

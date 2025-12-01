@@ -29,6 +29,9 @@ body {
   background-color: #282c34;
   color: white;
   overflow: hidden;
+  scrollbar-color: var(--theme-color) #1a1a1a;
+  scrollbar-width: thin;
+  height: 100vh;
 }
 #root {
   display: flex;
@@ -47,13 +50,17 @@ body {
 	height: 3.5%;
   }
   .top-bar-left-area {
-	width: 250px; /* Same width as layer controls */
-	height: 3.5%;
-	position: fixed;
 	background: #20232a;
+	grid-column-start: 1;
+	grid-column-end: 2;
+	grid-row-start: 1;
+	grid-row-end: 2;
+	display: grid;
+	grid-template-columns: 41% 29% 30%;
+	grid-template-rows: 100%;
+	grid-column-gap: 1px;
   }
   .composition-controls {
-	height:95%;
 	display:flex;
 	justify-content: flex-start;
 	align-items: center;
@@ -68,20 +75,31 @@ body {
 	border-radius: 5px;
 	align-items: center;
   }
+  .speed-control-button {
+	outline: 1px solid var(--theme-color);
+	cursor: pointer;
+	font-size: 1.3rem;
+	border-radius: 5px;
+	background: #20232a;
+	color: var(--theme-color);
+	border: none;
+	width: 25%;
+  }
+  .speed-control-button:hover {
+	outline: 2px solid var(--theme-color);
+  }
+  .speed-control-button:active {
+	outline: 2px solid var(--theme-color);
+	box-shadow: inset 0 0 5px var(--theme-color);
+  }
   .master-intensity-slider {
-	width: 4rem;
-	position: fixed;
-	left: 104px;
-	top: 0.7%;
+
   }
   .container {
-	position: absolute;
-	width: 75px;
-	height: 95%;
-	left: 168px;
-	top: 0;
 	align-items: center;
+	position: sticky;
 	display: flex;
+	justify-content: space-between;
   } 
   .top-bar-right-area {
 	height: 3.5%;
@@ -93,20 +111,17 @@ body {
 	left: 250px;
   }
   .layer-controls-container {
-	width: 250px;
-	max-height: 565px;
 	background-color: #20232a;
 	border-right: 1px solid #3a3f47;
-	display: flex;
-	flex-direction: column;
-	position: fixed;
-	top: 3.5%;
-	height: 60%;
 	overflow: hidden;
+	grid-column-start: 1;
+	grid-column-end: 2;
+	grid-row-start: 2;
+	grid-row-end: 3;
+	display: grid;
+	grid-template-rows: auto;
   }
   .layer-controls {
-	width: 100%; /* Fixed width to match left-panel */
-	height: 100%; /* Fixed height to match clip height */
 	padding-top: 8px;
 	padding-bottom: 5px;
 	background-color: #20232a;
@@ -151,18 +166,18 @@ body {
 	margin-top: 3px;
   }
   .clip-deck-container {
-	position: fixed;
-	left: 250px;
-	display: flex;
-	width: calc(100% - 18rem - 250px);
+	grid-column-start: 2;
+	grid-column-end: 3;
+	grid-row-start: 1;
+	grid-row-end: 3;
+	justify-self: stretch;
+	display: grid;
   }
   .clip-deck {
-	display: flex;
-	flex-direction: column;
-	flex-grow: 1;
 	overflow: hidden; /* Allow horizontal scrolling for columns */
 	background: #20232a;
-	height: 60%;
+	display: grid;
+	grid-template-rows: 5.5% auto;
   }
   .layer-row {
 	display: flex;
@@ -182,6 +197,8 @@ body {
 	border-radius: 5px;
 	margin-bottom: 4px;
 	margin-top: 2px;
+	text-align: center;
+	overflow: auto;
   }
   .clip-thumbnail {
 	width: 98%;
@@ -198,12 +215,14 @@ body {
   }
   .side-panel {
 	background-color: #20232a;
-	position: fixed;
-	right: 0;
-	width: 18rem;
-	height: 59%;
-	max-height: 601px;
 	place-items: center;
+	grid-column-start: 3;
+	grid-column-end: 4;
+	grid-row-start: 1;
+	grid-row-end: 3;
+	justify-self: stretch;
+	display: grid;
+	grid-template-rows: auto 47.5% 47.5%;
   }
   .ilda-player,
   .world-preview {
@@ -218,50 +237,63 @@ body {
 	overflow: hidden;
 	margin-top: 2px;
 	margin-bottom: 4px;
-	height: 49%;
   }
   .middle-bar {
-	bottom: 37.7%;
-	width: 100%;
-	display: grid;
 	background-color: #20232a;
-	grid-template-columns: 240px auto;
-	position: fixed;
-	height: 3.5%;
-	align-items: center;
+	grid-column-start: 1;
+	grid-column-end: 4;
+	grid-row-start: 3;
+	grid-row-end: 4;
+	display: grid;
+	grid-template-columns: 250px auto 18rem;
   }
   .middle-bar-left-area {
 	display: flex;
+	height: 100%;
+	align-items: center;
+	max-height: 36px;
+  }
+  .middle-bar-mid-area {
+	display: flex;
+	height: 100%;
+	align-items: center;
+	max-height: 36px;
+	padding-left: 2%;
   }
   .middle-bar-right-area {
 	display: flex;
+	height: 100%;
+	align-items: center;
+	max-height: 36px;
   }
   .bpm-controls {
-	position: absolute;
-	width: 25%;
+	display: flex;
+	width: 100%;
+	justify-content: space-around;
   }
   .master-speed-slider {
-	position: relative;
-	width: 35%;
-	left: 100%;
+	display: flex;
+	align-items: center;
+	height: 100%;
   }
   .bottom-panel {
+	grid-column-start: 1;
+	grid-column-end: 4;
+	grid-row-start: 4;
+	grid-row-end: 5;
+	justify-self: stretch;
 	display: flex;
 	justify-content: space-around;
 	align-items: flex-start;
 	background-color: #20232a;
-	height: 35.7%;
-	position: fixed;
-	bottom: 20px;
-	width: 100%;
   }
   .file-browser,
   .generator-panel,
   .effect-panel,
+  .settings-panel,
   .dac-panel {
 	min-width: 15%;
 	background-color: #1a1a1a;
-	outline: 1px solid var(--theme-color);
 	display: flex;
 	flex-direction: column;
 	border-radius: 10px;
@@ -270,7 +302,11 @@ body {
 	margin-top: 3px;
 	height: 95%;
 	text-align: center;
+	overflow-y: auto;
+	row-gap: 3px;
+	clip-path: inset(0 round 10px);
   }
+  
   .column-headers-container {
 	display: flex;
   }
@@ -307,7 +343,7 @@ h3 {
 }
 
 
-p1 {
+.fileBrowser {
   margin: 0;
   display: block;
   margin-block-start: .2rem;
@@ -318,8 +354,15 @@ p1 {
 }
 
 .app {
+	height: 100vh;
 }
 .main-content {
+	display: grid;
+	grid-template-columns: 250px auto 18rem;
+	grid-template-rows: 3.5% 60% 3.5% 30% auto;
+	grid-column-gap: 1px;
+	grid-row-gap: 1px;
+	height: 100vh;
 }
 .left-panel {
   width: 250px;
@@ -348,8 +391,7 @@ input[type="checkbox"] {
 	appearance: none;
 	cursor: pointer;
 	outline: none;
-	height: 85%;
-	width: 72px;
+	width: 68px;
 	background-color: #000000;
 	-webkit-transition: 0.3s;
 	-o-transition: 0.3s;
@@ -360,12 +402,11 @@ input[type="checkbox"] {
 input[type="checkbox"]:before {
 	font-size: 1.5em;
 	content: "OFF";
-	position: absolute;
+	position: relative;
 	width: 2.75em;
-	height: 85%;
 	background-color: #3a3f47;
 	color: #fff;
-	left: 0.14em;
+	left: 0;
 	-webkit-transition: 0.3s;
 	-o-transition: 0.3s;
 	transition: 0.3s;
@@ -389,7 +430,7 @@ input[type="checkbox"]:checked {
 }
 input[type="checkbox"]:checked:before {
 	content: "ON";
-	left: 1.1em;
+	left: 0.7em;
 	color: var(--theme-color);
 }
 /*end off toggle button*/
@@ -473,6 +514,11 @@ input[type="checkbox"]:checked:before {
 .clip-label {
   font-size: 0.7em;
   cursor: pointer;
+  width: 98%;
+  height: 19%;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: #1a1a1a;
 }
 .preview-area {
   width: 100%;
@@ -590,13 +636,16 @@ input[type="checkbox"]:checked:before {
 }
 
 .clip.selected-clip {
-  
+
 }
 
 .clip.active-clip {
   outline: 1px solid var(--theme-color); /* Red outline for active clip */
 }
-
+.clip-label.selected-clip {
+	outline: 1px solid var(--theme-color);
+}
+	
 
 
 

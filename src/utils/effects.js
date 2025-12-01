@@ -1,69 +1,150 @@
-const applyRotate = (frame, angle, axis) => {
-  const newFrame = JSON.parse(JSON.stringify(frame)); // Deep copy
+import { effectDefinitions } from './effectDefinitions';
 
-  const cosA = Math.cos(angle);
-  const sinA = Math.sin(angle);
+let globalRotationAngle = 0;
+let lastAnimationFrameTime = 0;
+const rotationUpdateInterval = 16; // Approximately 60 FPS
 
-  newFrame.points = newFrame.points.map(p => {
-    const x = p.x;
-    const y = p.y;
-    const z = p.z || 0;
+const withDefaults = (params, defaults) => ({ ...defaults, ...params });
 
-    let newX, newY, newZ;
+export function applyEffects(frame, effects) {
+  let modifiedFrame = { ...frame };
+  const currentTime = performance.now();
 
-    switch (axis) {
-      case 'x':
-        newX = x;
-        newY = y * cosA - z * sinA;
-        newZ = y * sinA + z * cosA;
+  if (currentTime - lastAnimationFrameTime > rotationUpdateInterval) {
+    globalRotationAngle = (globalRotationAngle + 0.01) % (2 * Math.PI); // Update global rotation slowly
+    lastAnimationFrameTime = currentTime;
+  }
+
+  for (const effect of effects) {
+    const definition = effectDefinitions.find(def => def.id === effect.id);
+    if (!definition) continue;
+
+    switch (effect.id) {
+      case 'rotate':
+        modifiedFrame = applyRotate(modifiedFrame, effect.params, globalRotationAngle);
         break;
-      case 'y':
-        newX = x * cosA + z * sinA;
-        newY = y;
-        newZ = -x * sinA + z * cosA;
+      case 'scale':
+        modifiedFrame = applyScale(modifiedFrame, effect.params);
         break;
-      case 'z':
+      case 'translate':
+        modifiedFrame = applyTranslate(modifiedFrame, effect.params);
+        break;
+      case 'color':
+        modifiedFrame = applyColor(modifiedFrame, effect.params);
+        break;
+      case 'wave':
+        modifiedFrame = applyWave(modifiedFrame, effect.params);
+        break;
+      case 'blanking':
+        modifiedFrame = applyBlanking(modifiedFrame, effect.params);
+        break;
+      case 'strobe':
+        modifiedFrame = applyStrobe(modifiedFrame, effect.params);
+        break;
       default:
-        newX = x * cosA - y * sinA;
-        newY = x * sinA + y * cosA;
-        newZ = z;
         break;
     }
+  }
 
-    return { ...p, x: newX, y: newY, z: newZ };
+  return modifiedFrame;
+}
+
+function applyRotate(frame, params, globalRotationAngle) {
+  const { angle, rotationSpeed } = withDefaults(params, effectDefinitions.find(def => def.id === 'rotate').defaultParams);
+  
+  // Combine static angle with dynamic rotationSpeed based on global animation frame
+  const currentAngle = (angle * Math.PI / 180) + (globalRotationAngle * rotationSpeed);
+  const sin = Math.sin(currentAngle);
+  const cos = Math.cos(currentAngle);
+
+  const newPoints = frame.points.map(point => {
+    const x = point.x * cos - point.y * sin;
+    const y = point.x * sin + point.y * cos;
+    return { ...point, x, y };
   });
 
-  return newFrame;
-};
+  return { ...frame, points: newPoints };
+}
 
-const applyScale = (frame, scaleX, scaleY, scaleZ) => {
-  const newFrame = JSON.parse(JSON.stringify(frame)); // Deep copy
+function applyScale(frame, params) {
+  const { scaleX, scaleY } = withDefaults(params, effectDefinitions.find(def => def.id === 'scale').defaultParams);
 
-  newFrame.points = newFrame.points.map(p => {
-    const x = p.x * scaleX;
-    const y = p.y * scaleY;
-    const z = (p.z || 0) * scaleZ;
-    return { ...p, x, y, z };
+  const newPoints = frame.points.map(point => {
+    const x = point.x * scaleX;
+    const y = point.y * scaleY;
+    return { ...point, x, y };
   });
 
-  return newFrame;
-};
+  return { ...frame, points: newPoints };
+}
 
-const applyTransform = (frame, translateX, translateY, translateZ) => {
-  const newFrame = JSON.parse(JSON.stringify(frame)); // Deep copy
+function applyTranslate(frame, params) {
+  const { translateX, translateY } = withDefaults(params, effectDefinitions.find(def => def.id === 'translate').defaultParams);
 
-  newFrame.points = newFrame.points.map(p => {
-    const x = p.x + translateX;
-    const y = p.y + translateY;
-    const z = (p.z || 0) + translateZ;
-    return { ...p, x, y, z };
+  const newPoints = frame.points.map(point => {
+    const x = point.x + translateX;
+    const y = point.y + translateY;
+    return { ...point, x, y };
   });
 
-  return newFrame;
-};
+  return { ...frame, points: newPoints };
+}
 
-export {
-  applyRotate,
-  applyScale,
-  applyTransform,
-};
+function applyColor(frame, params) {
+  const { r, g, b } = withDefaults(params, effectDefinitions.find(def => def.id === 'color').defaultParams);
+
+  const newPoints = frame.points.map(point => {
+    return { ...point, r, g, b };
+  });
+
+  return { ...frame, points: newPoints };
+}
+
+function applyWave(frame, params) {
+  const { amplitude, frequency, speed, direction } = withDefaults(params, effectDefinitions.find(def => def.id === 'wave').defaultParams);
+
+  const newPoints = frame.points.map(point => {
+    let x = point.x;
+    let y = point.y;
+
+    if (direction === 'x') {
+      y += amplitude * Math.sin(point.x * frequency + Date.now() * 0.001 * speed);
+    } else if (direction === 'y') {
+      x += amplitude * Math.sin(point.y * frequency + Date.now() * 0.001 * speed);
+    }
+
+    return { ...point, x, y };
+  });
+
+  return { ...frame, points: newPoints };
+}
+
+function applyBlanking(frame, params) {
+  const { blankingInterval } = withDefaults(params, effectDefinitions.find(def => def.id === 'blanking').defaultParams);
+
+  if (blankingInterval <= 0) return frame;
+
+  const newPoints = frame.points.map((point, index) => {
+    const blank = (index % (blankingInterval + 1)) === blankingInterval;
+    return { ...point, blanking: point.blanking || blank };
+  });
+
+  return { ...frame, points: newPoints };
+}
+
+function applyStrobe(frame, params) {
+  const { strobeSpeed, strobeAmount } = withDefaults(params, effectDefinitions.find(def => def.id === 'strobe').defaultParams);
+
+  const now = Date.now();
+  const cycleTime = strobeSpeed; // milliseconds
+  const cyclePosition = (now % cycleTime) / cycleTime; // 0 to 1
+
+  // If cyclePosition is within the strobeAmount, then blank
+  const blank = cyclePosition < strobeAmount;
+
+  const newPoints = frame.points.map(point => {
+    return { ...point, blanking: point.blanking || blank };
+  });
+
+  return { ...frame, points: newPoints };
+}

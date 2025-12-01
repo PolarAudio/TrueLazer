@@ -1,0 +1,7 @@
+<?xml version="1.0" standalone="yes" >
+<Settints width="819" height="819" />
+<frame maxEclipsPointCount="180" extraPointCount="50" anchor_points_lit="1" anchor_points_blanked="3" max_distance_lit="0.02" max_distance_blank="0.04" useOptimizer="0" level="0" effect="5,100 6,25600 7,25600 8,25600 9,0 10,32768 11,32768 12,100 15,0" >
+
+	<line type="1" x1="409" y1="5" x2="410" y2="814" stroke-name="ËÎÌו" stroke-width="1" stroke-color="16777215" stroke="rgb(255,255,255)" key-color="" effect="5,100 6,25600 7,25600 8,25600 9,0 10,32768 11,32768 12,100 15,0" >
+</line>
+</frame>

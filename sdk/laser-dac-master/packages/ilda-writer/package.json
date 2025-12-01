@@ -1,0 +1,31 @@
+{
+  "name": "@laser-dac/ilda-writer",
+  "version": "0.2.2",
+  "description": "Write JSON points to ILDA (.ild) files",
+  "license": "MIT",
+  "author": "Kees Kluskens <kees@volst.nl>",
+  "repository": "Volst/laser-dac",
+  "keywords": [
+    "laser",
+    "ilda"
+  ],
+  "engines": {
+    "node": ">=8.0"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "watch": "tsc -p tsconfig.build.json --watch",
+    "manual-test": "ts-node test.ts",
+    "prepublishOnly": "npm run -s build"
+  },
+  "devDependencies": {
+    "ts-node": "^10.4.0"
+  }
+}

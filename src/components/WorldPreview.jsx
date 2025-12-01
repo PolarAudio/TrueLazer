@@ -1,7 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed }) => {
+const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`world-preview-${Math.random()}`);
@@ -18,7 +18,7 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed }) => {
         id: canvasId.current,
         canvas: offscreen,
         type: 'world',
-        data: { worldData, showBeamEffect, beamAlpha, drawSpeed }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode }
       }
     }, [offscreen]);
 
@@ -30,14 +30,21 @@ const WorldPreview = ({ worldData, showBeamEffect, beamAlpha, drawSpeed }) => {
 
   useEffect(() => {
     if (!worker) return;
+
+    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects }]) => ({
+      frames: [frame],
+      effects: effects,
+      workerId: workerId,
+    }));
+
     worker.postMessage({
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { worldData, showBeamEffect, beamAlpha, drawSpeed }
+        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode }
       }
     });
-  }, [worker, worldData, showBeamEffect, beamAlpha, drawSpeed]);
+  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode]);
 
   return (
     <div className="world-preview">

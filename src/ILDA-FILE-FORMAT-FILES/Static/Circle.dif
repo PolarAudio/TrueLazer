@@ -1,0 +1,7 @@
+<?xml version="1.0" standalone="yes" >
+<Settints width="4096" height="4096" />
+<frame maxEclipsPointCount="180" extraPointCount="50" anchor_points_lit="1" anchor_points_blanked="3" max_distance_lit="0.02" max_distance_blank="0.04" useOptimizer="0" level="0" effect="5,100 6,25600 7,25600 8,25600 9,0 10,32768 11,32768 12,100 15,0" >
+
+	<ellipse type="3" cx="2045" cy="2045" rx="2045" ry="2045" fill="none" stroke-name="ËÎÌו" stroke-width="1" stroke-color="16777215" stroke="rgb(255,255,255)" key-color="" effect="5,100 6,25600 7,25600 8,25600 9,0 10,32768 11,32768 12,100 15,0" >
+</ellipse>
+</frame>

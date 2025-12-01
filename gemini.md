@@ -82,7 +82,12 @@ Our ShowBridge protocol follows this pattern:
     Command: 6 bytes = Target IP (169.254.25.104) + Flags (163, 31).
 	
 	Answer from DAC to "Target IP":8099
-    Response: 16 bytes = Vendor ID (22,26) + Type (1) + Channel (1/2) + Device ID (630380) + Value (63) + Checksum (0x2237/0x2238).
+    Response: 16 bytes = Vendor ID (22,26) + Type (1) + Channel (1/2) + Device ID (630380)
+
+	16 1a 01 01 00 20 00 25 00 00 00 00 00 00 00 00    	ip 25.69  ch 1
+	16 1a 01 01 00 26 00 3f 00 00 00 00 00 00 00 00 	ip 25.104 ch 1
+	16 1a 01 02 00 20 00 25 00 00 00 00 00 00 00 00 	ip 25.69  ch 2
+	16 1a 01 02 00 26 00 3f 00 00 00 00 00 00 00 00   	ip 25.104 ch 2
 
 The labels 7 and 8 are extracted from the checksum’s last nibble, matching the device’s channel identifiers.
 
@@ -123,7 +128,6 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 		|	
 		|___sdk (Information about devices,software,documents)
 		|	|___dac(In this Folder we have a Example for the Etherdream DAC that we include in the future)
-		|	|___showbridge(Contains a .bin and a .hex file for the showbridge)
 		|
 		|___src (Our Source Folder)
 			|___ILDA-FILE-FORMAT-FILES (In Here we have our default ILD Files)
@@ -132,22 +136,14 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 
 **Connectivity:**
 
-*   The application has to continuously scan for Showbridge DACs on the selected network interface when turned on.
-*   The UI displays a list of discovered DACs and their channels in real-time.
+*   The application has to continuously scan for Showbridge DACs on the selected network interface when turned on with an timer that turn the scan off after 30 seconds
+*   The UI displays a list of discovered DACs and their channels in real-time starting with the first Channel.
 *   The user can select a DAC and channel from the list.
 *   The SDK is initialized on-demand when communication is required (e.g., sending frames, getting show info), preventing crashes on device selection.
 
-**Next Steps:**
-
-*   Develop the Generator system:
-	We want to drag generators to empty clips to create our own ild clips.
-	Therefore we need a Simple Set of Shape Generators to choose from as base layer that we later can modify with effects.
-*   Develop the effects system:
-	The Effects we want also use via drag'n'drop to our clips & layers. 
-	exmp. transform xyz, rotation xyz, wave xyz, color pallete(with multi color selection),blanking etc.
-*   Integrate MIDI, DMX/Artnet, and OSC control within "shortcuts" window.
-
-*	The title bar  will be a custom title-bar containing all the settings bellow:
+**Titlebar**
+	
+*	The title bar  will be containing all the settings bellow:
 *	The TrueLazer Button at the top left Contains Information like About, version number, Github link etc.
 *	The Settings will be a Placeholder until we decide what settings we need to be changeable by a user.
 *	The Layer Button Contains (get active Selected layer) New,Insert Above,Insert Below,Rename,Clear Clips, trigger Style (Aplie to all clips in that layer). same for the right click menu for each layer.
@@ -156,6 +152,9 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *	The Output Button will open a new window in the future where we adjust output settings for our projectors. Like Scan Speed, Size, Mirroring, safe-zones and warping.
 *	The Shortcuts button will Open a list of input options : DMX/Artnet, MIDI And OSC if we click on on of them it starts the recording/mapping mode 
 *	The View button will let us choose of predefined layouts and color theme and render mode (High or Low performance mode to switch between 2d and 3d Rendering preview)
+*	If dragging a dac with 2 channels to a clip or layer we apply that output to booth channels.
 
-*   Implement the sending of ILDA frames to the selected DAC and channel via draging the channel to a clip or layer. if dragging the dac to a clip or layer we apply that output to booth channels.
-*	DAC/Channels will be drag'n'drop to apply onto clips as output filter in the end.
+**Next Steps:**	
+
+*	Building the application with our icon src/trueLazer.ico
+*	integrate NDI streaming

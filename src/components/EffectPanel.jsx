@@ -1,33 +1,24 @@
 import React from 'react';
-
-const effects = [
-  { id: 'rotate', name: 'Rotate' },
-  { id: 'scale', name: 'Scale' },
-  { id: 'transform', name: 'Transform' },
-  { id: 'blanking', name: 'Blanking' },
-  { id: 'color_palette', name: 'Color Palette' },
-];
+import { effectDefinitions } from '../utils/effectDefinitions';
 
 const EffectPanel = () => {
-  const handleDragStart = (e, effectId) => {
-    e.dataTransfer.setData('application/x-effect', effectId);
+  const handleDragStart = (e, effect) => {
+    e.dataTransfer.setData('application/json', JSON.stringify(effect));
   };
 
   return (
     <div className="effect-panel">
       <h3>Effects</h3>
-      <div className="effect-list">
-        {effects.map((effect) => (
-          <div
-            key={effect.id}
-            className="effect-item"
-            draggable
-            onDragStart={(e) => handleDragStart(e, effect.id)}
-          >
-            {effect.name}
-          </div>
-        ))}
-      </div>
+      {effectDefinitions.map(effect => (
+        <div 
+          key={effect.id}
+          draggable 
+          onDragStart={(e) => handleDragStart(e, effect)}
+          className="effect-item"
+        >
+          {effect.name}
+        </div>
+      ))}
     </div>
   );
 };

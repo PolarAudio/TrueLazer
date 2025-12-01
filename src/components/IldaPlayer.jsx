@@ -1,7 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameChange }) => {
+const IldaPlayer = ({ frame, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`ilda-player-${Math.random()}`);
@@ -18,19 +18,11 @@ const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameC
         id: canvasId.current,
         canvas: offscreen,
         type: 'single',
-        data: { ildaFrames, showBeamEffect, beamAlpha, drawSpeed }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode }
       }
     }, [offscreen]);
 
-    const messageHandler = (e) => {
-      if (e.data.type === 'frameChange' && e.data.id === canvasId.current && onFrameChange) {
-        onFrameChange(e.data.frameIndex);
-      }
-    };
-    worker.addEventListener('message', messageHandler);
-
     return () => {
-      worker.removeEventListener('message', messageHandler);
       worker.postMessage({ action: 'deregister', payload: { id: canvasId.current } });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -38,14 +30,17 @@ const IldaPlayer = ({ ildaFrames, showBeamEffect, beamAlpha, drawSpeed, onFrameC
 
   useEffect(() => {
     if (!worker) return;
+
+    const framesToSend = frame ? [frame] : [];
+
     worker.postMessage({
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { ildaFrames, showBeamEffect, beamAlpha, drawSpeed }
+        data: { ildaFrames: framesToSend, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode }
       }
     });
-  }, [worker, ildaFrames, showBeamEffect, beamAlpha, drawSpeed]);
+  }, [worker, frame, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode]);
 
   return (
     <div className="ilda-player">

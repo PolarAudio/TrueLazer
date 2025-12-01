@@ -78,7 +78,7 @@
   
   ☒   ILDA file parsing and rendering concepts are being explored. (need further Performance improvements)
   
-  ☑   Showbridge DAC communication protocol has been analyzed.
+  ☒   Showbridge DAC communication protocol has been analyzed.
   
   ## Next Steps
 
@@ -97,18 +97,18 @@
       
       ☑   Implement dynamic layer and column management (edit/clear/rename).
       
-      ☐   Develop custom title bar with menu options (TrueLazer Info, Settings, Layer, Column, Clip, Output,
+      ☒   Develop custom title bar with menu options (TrueLazer Info, Settings, Layer, Column, Clip, Output,
   Shortcuts, View).
 
   2.  Generative Content System:
-      ☐   Develop a simple set of shape generators (dots, lines, circles, text) as base layers.
+      ☒   Develop a simple set of shape generators (dots, lines, circles, text) as base layers.
       
   3.  Effects System:
 
       ☐   Implement core effects like transform (XYZ), rotation (XYZ), wave (XYZ), and color palette
   manipulation.
 
-      ☐   Design the drag-and-drop mechanism for applying effects to clips and layers.
+      ☑   Design the drag-and-drop mechanism for applying effects to clips and layers.
       
   4.  Control Integration:
      
@@ -116,9 +116,61 @@
       
   5.  DAC Communication:
      
-      ☐   Implement the sending of ILDA frames to the selected Showbridge DAC and channel.
+      ☒   Implement the sending of ILDA frames to the selected Showbridge DAC and channel.
+			(Need more time to fully understand the Truwave -> Showbridge DAC Protocol.)
+			(The Frame Broadcast is implemented and working)
       
-      ☐   Develop drag-and-drop functionality for assigning DAC channels to clips/layers.
+      ☑   Develop drag-and-drop functionality for assigning DAC channels to clips/layers.
+	  
+	  
+	  
+	List of things to change and add:
+	Change:
+	
+		☐ "Global intensity" 	(slider dark to light color fade)
+	
+		☐ "Speed"  			(select speed source (BPM, manual, midi-clock)
+	
+		☐ "Render-preview"	(Icons inside the Preview to switch and access settings)
+	
+	Add:
+	
+		☐ "Clip atributes"	Play Style (Once Repeat)
+							Trigger (Normal Flash Toggle)
+							Transport (Timeline BPM-Sync)
+							Beat Snap (None 8 4 2 1 1/2 1/4 1/8)
+							Audio-Track (For Audio playback with file)
+	
+		☐ "Effects Panel"	Position Effects
+							Translation Effects
+							Color Effects
+							Effect presets
+					
+		☐ "Timeline Mode"
+	
+		☐ "Show Editor view"
+	
+		☐ "Generator Panel"	(NDI-Source, Clock/Countdown/Timer)
+	
+		☐ "Generator Designer" (Pencil, Shapes, Curves, Lines, Color)(Grid, Background-Image, Snapping)
+	
+		☐ "DAC Brand Selector" (multiple selection)
+	
+		☐ "HotKeys-Mapping" (with highlite toggle option)
+	
+		☐ "MIDI-Mapping"	(Pre-made & custom)
+	
+		☐ "DMX/ArtNet Mapping"
+	
+		☐ "Projector Setup" (Info Rendering Color-Balance Safety-Zones, Test-Image) (For each channel/DAC)
+	
+		☐ "Audio Settings" (Input and Output)
+	
+		☐ "General Settings" (Save output state On/Off, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
+	
+		☐ "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
+	
+		☐ "Bug report feature"
 
   ## Contributing to TrueLazer
 

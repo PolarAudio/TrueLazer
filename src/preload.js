@@ -2,10 +2,23 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld(
   'electronAPI', {
+    send: (channel, data, networkInterface) => {
+      if (channel === 'discover-dacs') {
+        ipcRenderer.send(channel, data, networkInterface);
+      } else {
+        ipcRenderer.send(channel, data);
+      }
+    },
+    on: (channel, callback) => {
+      const listener = (event, ...args) => callback(...args);
+      ipcRenderer.on(channel, listener);
+      return () => ipcRenderer.removeListener(channel, listener);
+    },
     onMenuAction: (callback) => {
       ipcRenderer.on('menu-action', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('menu-action', callback);
     },
+    getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     showLayerContextMenu: (index) => ipcRenderer.send('show-layer-context-menu', index),
     showLayerFullContextMenu: (index) => ipcRenderer.send('show-layer-full-context-menu', index),
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
@@ -39,7 +52,20 @@ contextBridge.exposeInMainWorld(
     openFileExplorer: () => ipcRenderer.invoke('open-file-explorer'),
     readIldFiles: (directoryPath) => ipcRenderer.invoke('read-ild-files', directoryPath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
-    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
-    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
-  }
-);
+	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
+	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
+	    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
+	        stopDacDiscovery: () => ipcRenderer.send('stop-dac-discovery'),
+	            sendPlayCommand: (ip) => ipcRenderer.send('send-play-command', ip),
+	            // New IPC functions for thumbnail mode synchronization
+	            onUpdateThumbnailRenderMode: (callback) => { // Listener for main process to renderer
+	              ipcRenderer.on('update-thumbnail-render-mode', (event, mode) => callback(mode));
+	              return () => ipcRenderer.removeListener('update-thumbnail-render-mode', callback);
+	            },
+	            sendRendererThumbnailModeChanged: (mode) => ipcRenderer.send('renderer-thumbnail-mode-changed', mode), // Renderer to main for mode changes
+	            onRequestRendererThumbnailMode: (callback) => { // Listener for main process requesting mode from renderer
+	              ipcRenderer.on('request-renderer-thumbnail-mode', callback);
+	              return () => ipcRenderer.removeListener('request-renderer-thumbnail-mode', callback);
+	            },
+	          }
+	        );

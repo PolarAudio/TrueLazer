@@ -4,7 +4,7 @@ const WorkerContext = createContext(null);
 
 export const useWorker = () => useContext(WorkerContext);
 
-export const SharedWorkerProvider = ({ children }) => {
+export const SharedWorkerProvider = ({ children, onWorkerMessage }) => {
   const workerRef = useRef(null);
 
   if (workerRef.current === null) {
@@ -13,10 +13,16 @@ export const SharedWorkerProvider = ({ children }) => {
 
   useEffect(() => {
     const worker = workerRef.current;
+    if (onWorkerMessage) {
+      worker.onmessage = onWorkerMessage;
+    }
     return () => {
       worker.terminate();
+      if (onWorkerMessage) {
+        worker.onmessage = null; // Clean up the event listener
+      }
     };
-  }, []);
+  }, [onWorkerMessage]);
 
   return (
     <WorkerContext.Provider value={workerRef.current}>
