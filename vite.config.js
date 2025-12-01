@@ -4,8 +4,9 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/',
+  base: './',
+  root: path.resolve(__dirname, 'src'),
   build: {
-    outDir: 'dist',
+    outDir: '../dist',
   },
 });

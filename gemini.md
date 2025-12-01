@@ -141,7 +141,7 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *   The user can select a DAC and channel from the list.
 *   The SDK is initialized on-demand when communication is required (e.g., sending frames, getting show info), preventing crashes on device selection.
 
-**Next Steps:**	
+**Titlebar**
 	
 *	The title bar  will be containing all the settings bellow:
 *	The TrueLazer Button at the top left Contains Information like About, version number, Github link etc.
@@ -153,5 +153,8 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *	The Shortcuts button will Open a list of input options : DMX/Artnet, MIDI And OSC if we click on on of them it starts the recording/mapping mode 
 *	The View button will let us choose of predefined layouts and color theme and render mode (High or Low performance mode to switch between 2d and 3d Rendering preview)
 *	If dragging a dac with 2 channels to a clip or layer we apply that output to booth channels.
+
+**Next Steps:**	
+
 *	Building the application with our icon src/trueLazer.ico
-*	
+*	integrate NDI streaming
