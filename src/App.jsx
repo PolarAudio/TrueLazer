@@ -22,21 +22,19 @@ import { generateCircle, generateSquare, generateLine, generateStar, generateTex
 const MasterSpeedSlider = ({ drawSpeed, onSpeedChange }) => (
   <div className="master-speed-slider">
     <label htmlFor="masterSpeedRange">Playback Speed</label>
-    <input type="range" min="50" max="250" value={drawSpeed} className="slider" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
+    <input type="range" min="50" max="250" value={drawSpeed} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
   </div>
 );
 
 const MasterIntensitySlider = () => (
   <div className="master-intensity-slider">
-    <input type="range" min="0" max="100" defaultValue="50" className="slider" id="masterIntensityRange" />
+    <input type="range" min="0" max="100" defaultValue="50" className="slider_hor" id="masterIntensityRange" />
   </div>
 );
 
 const LaserOnOffButton = ({ isWorldOutputActive, onToggleWorldOutput }) => (
   <div className="container">
-    <label>
-      <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
-    </label>
+    <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
   </div>
 );
 

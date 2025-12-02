@@ -41,7 +41,7 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      <div className="layer-control-row grid-layer">
+      <div className="grid-layer">
         <span className="layer-control-button full-height" onClick={() => onDeactivateLayerClips(index)}>X</span>
         <div className="layer-control-group">
           <span className="layer-control-button half-height">B</span>
@@ -54,7 +54,7 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
         </select>
       </div>
 		<div className="layer-control-row">
-			<input type="range" min="0" max="100" defaultValue="100" className="layer-intensity-slider" />
+			<input type="range" min="0" max="100" defaultValue="100" className="slider_ver" id="layer-intensity-slider"/>
 		</div>
 		<div className="layer-preview-thumbnail">
 			{activeClipData ? (
