@@ -30,9 +30,10 @@ const Clip = ({
     : clipName;
 
   useEffect(() => {
-    // console.log("Clip.jsx: thumbnailRenderMode:", thumbnailRenderMode, "liveFrame:", liveFrame, "stillFrame:", stillFrame); // Debug log - COMMENTED OUT
+
     if (thumbnailRenderMode === 'still') {
       setThumbnailFrame(stillFrame);
+
     } else { // 'active' mode
       setThumbnailFrame(liveFrame);
     }
@@ -55,24 +56,27 @@ const Clip = ({
 
   const handleFileDrop = async (file) => {
     const droppedFileName = file.name;
-
+    console.log('[Clip.jsx] handleFileDrop - Processing file:', droppedFileName); // DEBUG LOG
     if (!ildaParserWorker) {
+      console.log('[Clip.jsx] handleFileDrop - ILDA parser not available.'); // DEBUG LOG
       onUnsupportedFile("ILDA parser not available.");
       return;
     }
 
     // Check if it's an ILD file
-    if (file.name.toLowerCase().endsWith('.ild')) {
+    if (droppedFileName.toLowerCase().endsWith('.ild')) {
+      console.log('[Clip.jsx] handleFileDrop - File is an ILD:', droppedFileName); // DEBUG LOG
       try {
         const arrayBuffer = await file.arrayBuffer();
         console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFileDrop): ${arrayBuffer.byteLength}`);
-        ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, layerIndex, colIndex }, [arrayBuffer]);
+        ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, filePath: file.path, layerIndex, colIndex }, [arrayBuffer]);
+        console.log('[Clip.jsx] handleFileDrop - Posted message to ildaParserWorker.'); // DEBUG LOG
       } catch (error) {
-        console.error('Error reading file:', error);
+        console.error('[Clip.jsx] handleFileDrop - Error reading file:', error);
         onUnsupportedFile(`Error reading file: ${error.message}`);
       }
     } else {
-      console.log('Unsupported file type:', file.name);
+      console.log('[Clip.jsx] handleFileDrop - Unsupported file type:', droppedFileName); // DEBUG LOG
       onUnsupportedFile("Please drop a valid .ild file");
     }
   };
@@ -98,7 +102,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
       // Convert Uint8Array to ArrayBuffer - this is much simpler!
       const arrayBuffer = uint8Array.slice().buffer;
       console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFilePathDrop): ${arrayBuffer.byteLength}`);
-      ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, layerIndex, colIndex }, [arrayBuffer]);
+      ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, filePath, layerIndex, colIndex }, [arrayBuffer]);
     } else {
       onUnsupportedFile("Binary file access not available");
     }
@@ -118,6 +122,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
     if (effectData) {
       try {
         const parsedData = JSON.parse(effectData);
+        console.log('[Clip.jsx] handleDrop - parsedData:', parsedData); // DEBUG LOG
         
         // Check if this is file path data from the file system
         if (parsedData.filePath && parsedData.fileName) {
@@ -127,11 +132,13 @@ const handleFilePathDrop = async (filePath, fileName) => {
 
         if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color') {
           if (onDropEffect) {
+            console.log('[Clip.jsx] Calling onDropEffect'); // DEBUG LOG
             onDropEffect(parsedData);
             return;
           }
         } else if (parsedData.name) {
           if (onDropGenerator) {
+            console.log('[Clip.jsx] Calling onDropGenerator with:', parsedData.name); // DEBUG LOG
             onDropGenerator(layerIndex, colIndex, parsedData);
             return;
           }
@@ -148,6 +155,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
     
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
+      console.log('[Clip.jsx] handleDrop - Files detected:', files); // DEBUG LOG
       handleFileDrop(files[0]);
       return;
     }
@@ -178,7 +186,9 @@ const handleFilePathDrop = async (filePath, fileName) => {
       onContextMenu={handleContextMenu}
     >
       <div className="clip-thumbnail" onClick={onActivateClick}>
-        {thumbnailFrame ? (
+        {clipContent && clipContent.parsing ? (
+          <div className="clip-loading-spinner"></div>
+        ) : thumbnailFrame ? (
           <IldaThumbnail frame={thumbnailFrame} />
         ) : (
           <p></p>

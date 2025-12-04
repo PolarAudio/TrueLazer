@@ -38,9 +38,51 @@ body {
   flex-direction: column;
   height: 100vh;
 }
+@media only screen and (min-height: 691px) {
+  .clip-label {
+	font-size: 0.7em;
+	cursor: pointer;
+	width: 100%;
+	height: 20%;
+	border-radius: 2px;
+	overflow: hidden;
+	background-color: #1a1a1a;
+  }
+  .clip-thumbnail {
+	width: 100%;
+	height: 80%;
+	background-color: #000;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	font-size: 0.8em;
+	position: relative;
+	overflow: clip;
+	border-radius: 5px;
+	margin-bottom: 4px;
+  }
+}
+@media only screen and (max-height: 690px) {
+  .clip-label {
+	display: none;
+  }
+  .clip-thumbnail {
+	width: 100%;
+	height: 100%;
+	background-color: #000;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	font-size: 0.8em;
+	position: relative;
+	overflow: clip;
+	border-radius: 5px;
+	margin-bottom: 4px;
+  }
+}
 
-@media only screen and (min-width: 768px) {
-  /* Styles for tablets and desktops */
   .top-bar {
 	display: grid;
 	align-items: center;
@@ -56,13 +98,13 @@ body {
 	grid-row-start: 1;
 	grid-row-end: 2;
 	display: grid;
-	grid-template-columns: 41% 29% 30%;
+	grid-template-columns: 70% 30%;
 	grid-template-rows: 100%;
 	grid-column-gap: 1px;
   }
   .composition-controls {
 	display:grid;
-	grid-template-columns: 50% 25% 25%;
+	grid-template-columns: 30% 15% 15% 40%;
 	justify-content: center;
 	align-items: center;
 	padding-left: 2px;
@@ -202,43 +244,30 @@ body {
 	display: grid;
   }
   .clip-deck {
-	overflow: auto; /* Allow horizontal scrolling for columns */
+	overflow-x: clip; /* Allow horizontal scrolling for columns */
 	background: #20232a;
+	height: 100%;
 	display: grid;
-	grid-template-rows: 5.5% auto;
+	grid-template-rows: 5.5% repeat(5, 18.9%);
   }
   .layer-row {
-	display: flex;
-	height: 100%; /* Fixed height for each layer row */
+	grid-template-columns: repeat(8, 12.5%);
+	display: grid;
+	justify-items: center;
   }
   .clip {
-	width: 11.8%; /* Fixed width for clips */
-	margin-left: 2px;
-	margin-right: 2px;
+	width: 94%;
 	background-color: #3a3f47;
 	display: flex;
 	flex-direction: column;
-	justify-content: space-between;
+	justify-content: flex-start;
 	align-items: center;
 	padding: 3px;
 	border-radius: 5px;
 	margin-bottom: 4px;
 	margin-top: 2px;
 	text-align: center;
-	overflow: auto;
-  }
-  .clip-thumbnail {
-	width: 98%;
-	height: 80px;
-	background-color: #000;
-	display: flex;
-	flex-direction: column;
-	justify-content: flex-start;
-	align-items: center;
-	font-size: 0.8em;
-	position: relative;
 	overflow: hidden;
-	border-radius: 5px;
   }
   .side-panel {
 	background-color: #20232a;
@@ -342,12 +371,14 @@ body {
   }
   
   .column-headers-container {
-	display: flex;
+	display: grid;
+	grid-template-columns: repeat(8, 12.5%);
+	justify-items: center;
+	align-items: center;
   }
   .column-header {
-	width: 11.8%;
+	width: 97%;
 	text-align: center;
-	padding: 3px;
 	background-color: #3a3f47;
 	margin-right: 2px;
 	margin-left: 2px;
@@ -356,21 +387,7 @@ body {
 	justify-content: center;
 	align-items: center;
   }
-}
 
-
-
-
-
-@media only screen and (min-width: 1500px),
-       only screen and (min-height: 800px) {
-  /* Styles specifically for larger desktops */
-  .column-headers-container {
-	display: flex;
-	padding-bottom: 5px;
-	padding-top: 4px;
-  }
-}
 
 h3 {
   z-index: 2;
@@ -542,14 +559,7 @@ input[type="checkbox"]:checked:before {
 	cursor: pointer;
 	height: 95%;
 }
-/* .layer-intensity-slider { */
-  /* flex-grow: 1; */
-  /* transform: translate(-40%, 0%) rotate(-90deg); */
-  /* width: 5rem; */
-  /* height: 1rem; */
-  /* margin-left: 4px; */
-  /* cursor: pointer; */
-/* } */
+
 .clip-container {
   display: flex;
   flex-grow: 1;
@@ -557,12 +567,13 @@ input[type="checkbox"]:checked:before {
 .clip-label {
   font-size: 0.7em;
   cursor: pointer;
-  width: 98%;
-  height: 19%;
+  width: 100%;
+  height: 20%;
   border-radius: 2px;
   overflow: hidden;
   background-color: #1a1a1a;
 }
+
 .preview-area {
   width: 100%;
   flex-grow: 1;
@@ -751,4 +762,27 @@ input[type="checkbox"]:checked:before {
     background: var(--theme-color);
     cursor: pointer;
 }
+.clip-loading-spinner {
+  border: 4px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top: 4px solid var(--theme-color);
+  width: 25px;
+  height: 25px;
+  -webkit-animation: spin 1s linear infinite; /* Safari */
+  animation: spin 1s linear infinite;
+  position: absolute; /* Center the spinner */
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
 
+/* Safari */
+@-webkit-keyframes spin {
+  0% { -webkit-transform: rotate(0deg); }
+  100% { -webkit-transform: rotate(360deg); }
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

@@ -58,6 +58,12 @@
   TrueLazer is currently in its early development phase. We have established the foundational project
   structure and are actively working on the core UI components and defining the architecture for DAC
   communication and content management.
+
+  ### NDI Integration (On Hold)
+
+  The integration of NDI (Network Device Interface) for both sending and receiving video streams is currently on hold. Our investigation into available Node.js libraries for NDI revealed that the most promising options, such as `grandiose`, are not actively maintained and fail to compile with modern Node.js and C++ build environments. The necessary native addons are incompatible with the current project setup, and our search for viable, up-to-date forks or alternative libraries has been unsuccessful.
+
+  We believe that NDI integration would be a powerful feature for TrueLazer, and we may revisit this in the future if the state of NDI libraries for Node.js improves.
   
   ☐ - Not yet done
   
@@ -197,7 +203,10 @@
       npm start
       `
       This will start the development server, usually accessible at http://localhost:5174.
-
+  4.  Build the executable:
+	  `bash
+      npm run build
+      `
   ### Project Structure Overview
 
   *   src/: Contains all the frontend source code, including React components, contexts, and utilities.

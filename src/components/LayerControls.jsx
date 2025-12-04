@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode }) => {
+const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
 
   // Update internal state when layerEffects prop changes
@@ -54,7 +54,7 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
         </select>
       </div>
 		<div className="layer-control-row">
-			<input type="range" min="0" max="100" defaultValue="100" className="slider_ver" id="layer-intensity-slider"/>
+			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={(e) => onIntensityChange(parseFloat(e.target.value))} />
 		</div>
 		<div className="layer-preview-thumbnail">
 			{activeClipData ? (
