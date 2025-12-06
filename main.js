@@ -1,12 +1,152 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery, sendPlayCommand, stopSending } = require('./utils/dac-communication');
+const url = require('url'); // Import url module
+const Store = require('electron-store').default; // Import electron-store
+const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery, sendPlayCommand, stopSending } = require('./src/utils/dac-communication');
 
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow; // Global variable to store the main window instance
 let currentThumbnailRenderMode = 'still'; // Global variable to store the current thumbnail render mode
+
+// Define the schema for settings
+const schema = {
+  renderSettings: {
+    type: 'object',
+    properties: {
+      showBeamEffect: { type: 'boolean', default: true },
+      beamRenderMode: { type: 'string', default: 'points' },
+      previewScanRate: { type: 'number', default: 1 },
+      fadeAlpha: { type: 'number', default: 0.1 },
+      beamAlpha: { type: 'number', default: 0.1 }
+    },
+    default: {}
+  },
+  theme: { type: 'string', default: 'orange' },
+  loadedClips: { type: 'array', default: [] }, // Reverted to original
+  sliderValue: { type: 'object', default: {} }, // Placeholder for slider values
+  dacAssignment: { type: 'object', default: {} }, // Placeholder for DAC assignments
+  lastOpenedProject: {
+    anyOf: [
+      { type: 'string' },
+      { type: 'null' }
+    ],
+    default: null
+  },
+};
+
+// Temporarily disable electron-store for debugging
+// const store = new Store({ schema });
+// store.clear();
+const store = { // Dummy store
+  store: {},
+  get: (key) => ({}),
+  set: (key, value) => console.log(`Dummy store: Setting ${key} to`, value),
+  clear: () => console.log('Dummy store: Clearing')
+};
+
+// IPC handlers for settings
+ipcMain.handle('get-all-settings', (event) => {
+  return store.store;
+});
+
+ipcMain.handle('set-render-settings', (event, renderSettings) => {
+  store.set('renderSettings', renderSettings);
+});
+
+ipcMain.handle('set-theme', (event, theme) => {
+  store.set('theme', theme);
+});
+
+ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
+  store.set('thumbnailRenderMode', mode);
+});
+
+ipcMain.handle('set-selected-dac', (event, dac) => {
+  store.set('selectedDac', dac);
+});
+
+/* // Commented out to avoid issues with schema
+ipcMain.handle('set-loaded-clips', (event, loadedClips) => {
+  console.log('Received loadedClips:', loadedClips);
+  store.set('loadedClips', loadedClips);
+});
+*/
+
+// Function to get or create the default project path
+async function getDefaultProjectPath() {
+  const documentsPath = app.getPath('documents');
+  const projectPath = path.join(documentsPath, 'TrueLazer', 'Projects');
+
+  try {
+    await fs.promises.mkdir(projectPath, { recursive: true });
+    return projectPath;
+  } catch (error) {
+    console.error('Failed to create default project path:', error);
+    return null;
+  }
+}
+
+// IPC handler to expose the default project path to the renderer
+ipcMain.handle('get-default-project-path', async () => {
+  return await getDefaultProjectPath();
+});
+
+let currentProjectpath = null;
+
+// IPC handlers for project management
+ipcMain.on('new-project', (event) => {
+  currentProjectpath = null;
+  if(mainWindow) mainWindow.webContents.send('new-project');
+});
+
+ipcMain.on('open-project', async (event) => {
+  const defaultPath = await getDefaultProjectPath();
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    defaultPath,
+    filters: [{ name: 'TrueLazer Projects', extensions: ['tlp'] }],
+    properties: ['openFile'],
+  });
+  if (!canceled && filePaths.length > 0) {
+    currentProjectpath = filePaths[0];
+    try {
+      const data = await fs.promises.readFile(currentProjectpath, 'utf-8');
+      if(mainWindow) mainWindow.webContents.send('load-project-data', JSON.parse(data));
+    } catch (error) {
+      console.error('Failed to open project file:', error);
+    }
+  }
+});
+
+ipcMain.on('save-project', async (event, projectData) => {
+  if (currentProjectpath) {
+    try {
+      await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
+    } catch (error) {
+      console.error('Failed to save project file:', error);
+    }
+  } else {
+    // If there's no current path, then we do a "Save As" instead.
+    if(mainWindow) mainWindow.webContents.send('save-project-as');
+  }
+});
+
+ipcMain.on('save-project-as', async (event, projectData) => {
+  const defaultPath = await getDefaultProjectPath();
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    defaultPath,
+    filters: [{ name: 'TrueLazer Projects', extensions: ['tlp'] }],
+  });
+  if (!canceled && filePath) {
+    currentProjectpath = filePath;
+    try {
+      await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
+    } catch (error) {
+      console.error('Failed to save project file:', error);
+    }
+  }
+});
 
 // This function needs to be globally accessible
 function sendThumbnailModeToRenderer(mode) {
@@ -21,6 +161,11 @@ function buildApplicationMenu(mode) {
       label: 'TrueLazer',
       submenu: [
         { label: 'About', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
+        { type: 'separator' },
+        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => { if(mainWindow) mainWindow.webContents.send('new-project'); } },
+        { label: 'Open Project', accelerator: 'CmdOrCtrl+O', click: () => { ipcMain.emit('open-project'); } },
+        { label: 'Save Project', accelerator: 'CmdOrCtrl+S', click: () => { if(mainWindow) mainWindow.webContents.send('save-project'); } },
+        { label: 'Save Project As...', accelerator: 'CmdOrCtrl+Shift+S', click: () => { if(mainWindow) mainWindow.webContents.send('save-project-as'); } },
         { type: 'separator' },
         { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => { app.quit(); } },
       ],
@@ -147,18 +292,26 @@ function createWindow() {
     width: 1920,
     height: 1080,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'src/preload.js'),
       nodeIntegration: true,
       contextIsolation: true,
+      webSecurity: false, // Temporarily disable webSecurity to diagnose local resource loading issue
     },
     frame: true, // Set to false to remove the default window frame and title bar
   });
 
+  // Always open DevTools in the built application to help debug blank screen issues.
+  win.webContents.openDevTools();
+
   if (isDev) {
     win.loadURL('http://localhost:5173'); // Vite development server default port
-    win.webContents.openDevTools();
   } else {
-    win.loadFile(path.join(__dirname, '..\dist', 'index.html'));
+    // Use url.format for robust file loading from ASAR
+    win.loadURL(url.format({
+      pathname: path.join(__dirname, 'dist', 'index.html'),
+      protocol: 'file:',
+      slashes: true
+    }));
   }
 
   // Assign to global mainWindow
@@ -265,7 +418,7 @@ function createWindow() {
   ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex) => {
     console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}`); // Add log
     const clipContextMenu = Menu.buildFromTemplate([
-      { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'update-thumbnail', layerIndex, colIndex }); } },
+      { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
       { type: 'separator' },
       {
         label: 'Set Thumbnail Mode',
@@ -277,7 +430,7 @@ function createWindow() {
                 click() {
                     currentThumbnailRenderMode = 'still';
                     sendThumbnailModeToRenderer('still'); // Send to renderer to update state
-                    if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-still', layerIndex, colIndex });
+                    if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-clip-thumbnail-mode-still', layerIndex, colIndex);
                     buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
                 }
             },
@@ -288,19 +441,19 @@ function createWindow() {
                 click() {
                     currentThumbnailRenderMode = 'active';
                     sendThumbnailModeToRenderer('active'); // Send to renderer to update state
-                    if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'set-clip-thumbnail-mode-active', layerIndex, colIndex });
+                    if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-clip-thumbnail-mode-active', layerIndex, colIndex);
                     buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
                 }
             }
         ]
       },
       { type: 'separator' },
-      { label: 'Cut', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'cut-clip', layerIndex, colIndex }); } },
-      { label: 'Copy', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'copy-clip', layerIndex, colIndex }); } },
-      { label: 'Paste', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'paste-clip', layerIndex, colIndex }); } },
+      { label: 'Cut', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'cut-clip', layerIndex, colIndex); } },
+      { label: 'Copy', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'copy-clip', layerIndex, colIndex); } },
+      { label: 'Paste', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'paste-clip', layerIndex, colIndex); } },
       { type: 'separator' },
-      { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'rename-clip', layerIndex, colIndex }); } },
-      { label: 'Clear', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', { command: 'clear-clip', layerIndex, colIndex }); } },
+      { label: 'Rename', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'rename-clip', layerIndex, colIndex); } },
+      { label: 'Clear', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'clear-clip', layerIndex, colIndex); } },
     ]);
     clipContextMenu.popup({ window: mainWindow });
   });
@@ -367,6 +520,18 @@ function createWindow() {
     console.error('Error reading file:', error);
     throw error;
   }
+  });
+
+  ipcMain.handle('read-file-for-worker', async (event, filePath) => {
+    try {
+      const buffer = await fs.promises.readFile(filePath);
+      // Convert Node.js Buffer to ArrayBuffer for transfer to worker
+      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+      return arrayBuffer;
+    } catch (error) {
+      console.error(`Error reading file for worker: ${filePath}`, error);
+      throw error;
+    }
   });
 }
 

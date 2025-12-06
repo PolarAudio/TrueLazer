@@ -170,14 +170,14 @@ export class WebGLRenderer {
     }
 
     if (this.type === 'world') {
-      this.renderWorld(data.worldData, data.previewScanRate);
+      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity);
     }
     else {
-      this.renderSingle(data.ildaFrames, data.previewScanRate);
+      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity);
     }
   }
 
-  renderSingle(ildaFrames, previewScanRate) {
+  renderSingle(ildaFrames, previewScanRate, intensity) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -187,7 +187,7 @@ export class WebGLRenderer {
     }
 
     const frame = ildaFrames[this.frameIndexes[0] % ildaFrames.length];
-    this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode);
+    this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -195,7 +195,7 @@ export class WebGLRenderer {
     }
   }
 
-  renderWorld(worldData, previewScanRate) {
+  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -204,7 +204,9 @@ export class WebGLRenderer {
       if (clip && clip.frames && clip.frames.length > 0) {
         const frame = clip.frames[this.frameIndexes[index] % clip.frames.length];
         if (frame) { // Add null check for frame
-          this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode);
+            const layerIntensity = layerIntensities[clip.layerIndex] !== undefined ? layerIntensities[clip.layerIndex] : 1;
+            const finalIntensity = layerIntensity * masterIntensity;
+            this.draw(frame.points, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity);
         }
       }
     });
@@ -231,7 +233,7 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(points, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode) {
+  draw(points, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1) {
     const gl = this.gl;
     if (!points || points.length === 0) return;
 
@@ -254,7 +256,7 @@ export class WebGLRenderer {
           continue;
         }
         currentSegmentPositions.push(point.x, point.y);
-        currentSegmentColors.push(point.r / 255, point.g / 255, point.b / 255);
+        currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
       }
       if (currentSegmentPositions.length > 0) {
         this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2);
@@ -269,7 +271,7 @@ export class WebGLRenderer {
         const point = points[i];
         if (!point.blanking) {
           beamPositions.push(0, 0, point.x, point.y);
-          const color = [point.r / 255, point.g / 255, point.b / 255];
+          const color = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
           beamColors.push(...color, ...color);
         }
       }
@@ -287,8 +289,8 @@ export class WebGLRenderer {
         const p2 = points[i];
         if (!p1.blanking && !p2.blanking) {
           trianglePositions.push(0, 0, p1.x, p1.y, p2.x, p2.y);
-          const color1 = [p1.r / 255, p1.g / 255, p1.b / 255];
-          const color2 = [p2.r / 255, p2.g / 255, p2.b / 255];
+          const color1 = [p1.r / 255 * intensity, p1.g / 255 * intensity, p1.b / 255 * intensity];
+          const color2 = [p2.r / 255 * intensity, p2.g / 255 * intensity, p2.b / 255 * intensity];
           const centerColor = [(color1[0] + color2[0]) / 2, (color1[1] + color2[1]) / 2, (color1[2] + color2[2]) / 2];
           triangleColors.push(...centerColor, ...color1, ...color2);
         }

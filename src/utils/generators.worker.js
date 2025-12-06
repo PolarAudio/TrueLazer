@@ -1,40 +1,49 @@
 import { generateCircle, generateSquare, generateLine, generateText, generateStar } from './generators.js';
 
 self.onmessage = async (event) => {
-  const { type, generator, layerIndex, colIndex } = event.data;
-  const params = generator.params;
+  const { type, layerIndex, colIndex, generator } = event.data;
+  // 'generator' here is the full generatorDefinition from App.jsx
 
   try {
-    let frame;
+    let frames;
+    let currentParams = generator.defaultParams; // Use defaultParams for initial generation
+
     switch (type) {
-      case 'generate-frame':
+      case 'generate': // Change this from 'generate-frame'
         try {
-          switch (generator.name) {
+          switch (generator.id) { // Use generator.id for switch
             case 'circle':
-              frame = generateCircle(params);
+              frames = [generateCircle(currentParams)]; // Wrap in array as it's a single frame
               break;
             case 'square':
-              frame = generateSquare(params);
+              frames = [generateSquare(currentParams)];
               break;
             case 'line':
-              frame = generateLine(params);
+              frames = [generateLine(currentParams)];
               break;
             case 'text':
-              frame = await generateText(params);
+              frames = [await generateText(currentParams)];
               break;
             case 'star':
-              frame = generateStar(params);
+              frames = [generateStar(currentParams)];
               break;
             default:
-              frame = { points: [] };
+              frames = [{ points: [] }];
           }
         } catch (generatorError) {
-          console.error(`Error generating frame for ${generator.name}:`, generatorError);
-          frame = { points: [] }; // Ensure a frame is still returned, even on error
+          console.error(`Error generating frames for ${generator.name}:`, generatorError);
+          frames = [{ points: [] }]; // Ensure frames array is still returned, even on error
           self.postMessage({ success: false, error: generatorError.message, layerIndex, colIndex });
-          return; // Stop further processing if generator function errors
+          return;
         }
-        self.postMessage({ success: true, frame, generator, params, layerIndex, colIndex });
+        self.postMessage({
+          success: true,
+          layerIndex,
+          colIndex,
+          frames,
+          generatorDefinition: generator, // Send back the original definition
+          currentParams: currentParams, // Send back the params used for generation
+        });
         break;
       default:
         console.log('Worker: Received unknown message type:', type, 'Event data:', event.data);

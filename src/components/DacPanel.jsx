@@ -62,7 +62,7 @@ const DacPanel = ({ onDacSelected }) => {
       // Set up interval for continuous scanning
       scanIntervalRef.current = setInterval(scan, 5000); // Scan every 5 seconds
     } else {
-      console.log('Stopping DAC scan...'); // Debug log
+      console.log('DAC scan inactive...'); // Debug log
       // Stop scanning
       if (scanIntervalRef.current) {
         clearInterval(scanIntervalRef.current);

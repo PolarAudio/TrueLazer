@@ -156,5 +156,59 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 
 **Next Steps:**	
 
-*	Building the application with our icon src/trueLazer.ico
-*	integrate NDI streaming
+*	Building the application as executable with our icon src/trueLazer.ico
+*	Start to save application settings into temp storage and acces them on restarting the application.
+	(Loaded Clips,Render-settings,theme-color,slider-value,dac-assignment,last-opened-project.)
+*	Create a default folder path to save projects. like c:user/documents/truLazer/projects or C:User/Programm Files/TruLazer/..
+*	
+*	integrate NDI 5&6 by either grandiose or NDI SDK, Syphon, and Spout  streaming
+
+
+	Changes:
+	
+		*i doo that* "Global intensity" 	(slider dark to light color fade) *i doo that*
+	
+*		 "Speed"  			(select speed source (BPM, manual, midi-clock)
+	
+*		 "Render-preview"	(Icons inside the Preview Upper Right Corner to switch and access settings)
+	
+*	Add:
+*		 "Save project"	Developing the save project system for users to save there project.
+			(In Developement)
+		
+*		 "Clip atributes"	Play Style (Once Repeat)
+							Trigger (Normal Flash Toggle)
+							Transport (Timeline BPM-Sync)
+							Beat Snap (None 8 4 2 1 1/2 1/4 1/8)
+							Audio-Track (For Audio playback with file)
+	
+*		 "Effects Panel"	Position Effects
+							Translation Effects
+							Color Effects
+							Effect presets
+					
+*		 "Timeline Mode" *Bigger Feature Developement*
+	
+*		 "Show Editor view" *Bigger Feature Developement*
+	
+*		 "Generator Panel"	(NDI-Source, Clock/Countdown/Timer)
+	
+*		 "Generator Designer" (Pencil, Shapes, Curves, Lines, Color)(Grid, Background-Image, Snapping)
+	
+*		 "DAC Brand Selector" (multiple selection)
+	
+*		 "HotKeys-Mapping" (with highlite toggle option)
+	
+*		 "MIDI-Mapping"	(Pre-made & custom)
+	
+*		 "DMX/ArtNet Mapping"
+	
+*		 "Projector Setup" (Info Rendering Color-Balance Safety-Zones, Test-Image) (For each channel/DAC)
+	
+*		 "Audio Settings" (Input and Output)
+	
+*		 "General Settings" (Save output state On/Off, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
+	
+*		 "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
+	
+*		 "Bug report feature"
