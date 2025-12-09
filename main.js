@@ -249,24 +249,8 @@ function buildApplicationMenu(mode) {
               ]
             },
             { type: 'separator' },
-            {
-              label: 'Preview Scan Rate',
-              submenu: [
-                { label: 'Fast', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1 }); } },
-                { label: 'Madium', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.1 }); } },
-                { label: 'Slow', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.3 }); } },
-              ]
-            },
-            {
-              label: 'Fade Alpha',
-              submenu: [
-                { label: '0.0', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.0 }); } },
-                { label: '0.1', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.1 }); } },
-                { label: '0.2', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.2 }); } },
-                { label: '0.5', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.5 }); } },
-                { label: '1.0', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 1.0 }); } },
-              ]
-            },
+
+
             {
               label: 'Beam Alpha',
               submenu: [

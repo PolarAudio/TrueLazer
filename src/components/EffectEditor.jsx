@@ -18,7 +18,7 @@ const EffectEditor = ({ effect, onParamChange }) => {
   }
 
   const handleParamChange = (paramId, value) => {
-    onParamChange(effect.id, paramId, value);
+    onParamChange(paramId, value);
   };
 
   return (

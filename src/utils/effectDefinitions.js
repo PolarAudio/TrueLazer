@@ -2,6 +2,7 @@ export const effectDefinitions = [
   {
     id: 'rotate',
     name: 'Rotate',
+    type: 'transform',
     description: 'Rotates the shape around its center.',
     defaultParams: {
       angle: 0,
@@ -15,6 +16,7 @@ export const effectDefinitions = [
   {
     id: 'scale',
     name: 'Scale',
+    type: 'transform',
     description: 'Scales the shape.',
     defaultParams: {
       scaleX: 1,
@@ -28,6 +30,7 @@ export const effectDefinitions = [
   {
     id: 'translate',
     name: 'Translate',
+    type: 'transform',
     description: 'Moves the shape.',
     defaultParams: {
       translateX: 0,
@@ -41,6 +44,7 @@ export const effectDefinitions = [
   {
     id: 'color',
     name: 'Color',
+    type: 'color',
     description: 'Changes the color of the shape.',
     defaultParams: {
       r: 255,
@@ -56,6 +60,7 @@ export const effectDefinitions = [
   {
     id: 'wave',
     name: 'Wave',
+    type: 'animation',
     description: 'Applies a wave distortion to the shape.',
     defaultParams: {
       amplitude: 0.1,
@@ -73,6 +78,7 @@ export const effectDefinitions = [
   {
     id: 'blanking',
     name: 'Blanking',
+    type: 'animation',
     description: 'Controls the blanking of the laser output.',
     defaultParams: {
       blankingInterval: 0, // Interval for blanking points (e.g., 0 for no blanking, 1 for every other point)
@@ -84,6 +90,7 @@ export const effectDefinitions = [
   {
     id: 'strobe',
     name: 'Strobe',
+    type: 'animation',
     description: 'Applies a strobe effect to the laser output.',
     defaultParams: {
       strobeSpeed: 100, // Speed of the strobe effect in milliseconds

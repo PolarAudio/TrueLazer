@@ -22,22 +22,13 @@ const Clip = ({
   stillFrame
 }) => {
   const [isDragging, setIsDragging] = useState(false);
-  const [thumbnailFrame, setThumbnailFrame] = useState(null); // New state for thumbnail frame
 
   // Determine the display name for the clip
   const displayName = clipContent && clipContent.type === 'generator' && clipContent.generatorDefinition
     ? clipContent.generatorDefinition.name
     : clipName;
 
-  useEffect(() => {
-
-    if (thumbnailRenderMode === 'still') {
-      setThumbnailFrame(stillFrame);
-
-    } else { // 'active' mode
-      setThumbnailFrame(liveFrame);
-    }
-  }, [thumbnailRenderMode, liveFrame, stillFrame]);
+  const frameForThumbnail = thumbnailRenderMode === 'active' ? liveFrame : stillFrame;
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -134,6 +125,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
           if (onDropEffect) {
             console.log('[Clip.jsx] Calling onDropEffect'); // DEBUG LOG
             onDropEffect(parsedData);
+            onLabelClick(); // Select the clip to show its new settings
             return;
           }
         } else if (parsedData.name) {
@@ -188,8 +180,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
       <div className="clip-thumbnail" onClick={onActivateClick}>
         {clipContent && clipContent.parsing ? (
           <div className="clip-loading-spinner"></div>
-        ) : thumbnailFrame ? (
-          <IldaThumbnail frame={thumbnailFrame} />
+        ) : frameForThumbnail ? (
+          <IldaThumbnail frame={frameForThumbnail} />
         ) : (
           <p></p>
         )}

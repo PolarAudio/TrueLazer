@@ -1,12 +1,13 @@
 import { generateCircle, generateSquare, generateLine, generateText, generateStar } from './generators.js';
 
 self.onmessage = async (event) => {
-  const { type, layerIndex, colIndex, generator } = event.data;
+  const { type, layerIndex, colIndex, generator, params } = event.data;
   // 'generator' here is the full generatorDefinition from App.jsx
 
   try {
     let frames;
-    let currentParams = generator.defaultParams; // Use defaultParams for initial generation
+    // Use incoming params if they exist, otherwise fall back to defaults
+    let currentParams = params || generator.defaultParams;
 
     switch (type) {
       case 'generate': // Change this from 'generate-frame'

@@ -46,7 +46,7 @@ export function generateCircle(params) {
     });
 
     const points = [];
-    for (let i = 0; i < numPoints; i++) {
+    for (let i = 0; i <= numPoints; i++) {
       const angle = (i / numPoints) * 2 * Math.PI;
       points.push({
         x: radius * Math.cos(angle) + x,

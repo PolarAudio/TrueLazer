@@ -153,13 +153,19 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *	The Shortcuts button will Open a list of input options : DMX/Artnet, MIDI And OSC if we click on on of them it starts the recording/mapping mode 
 *	The View button will let us choose of predefined layouts and color theme and render mode (High or Low performance mode to switch between 2d and 3d Rendering preview)
 *	If dragging a dac with 2 channels to a clip or layer we apply that output to booth channels.
-
-**Next Steps:**	
+** Done **
 
 *	Building the application as executable with our icon src/trueLazer.ico
 *	Start to save application settings into temp storage and acces them on restarting the application.
 	(Loaded Clips,Render-settings,theme-color,slider-value,dac-assignment,last-opened-project.)
 *	Create a default folder path to save projects. like c:user/documents/truLazer/projects or C:User/Programm Files/TruLazer/..
+
+*		 "Save project"	Developing the save project system for users to save there project.
+			(In Developement)
+
+**Next Steps:**	
+
+
 *	
 *	integrate NDI 5&6 by either grandiose or NDI SDK, Syphon, and Spout  streaming
 
@@ -168,15 +174,20 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 	
 		*i doo that* "Global intensity" 	(slider dark to light color fade) *i doo that*
 	
-*		 "Speed"  			(select speed source (BPM, manual, midi-clock)
-	
+*		 "Speed"  			(select speed source (BPM, manual, midi-clock) inside of middle-bar -> middle-bar-mid-area -> master-speed-slider
+			The Label Will be replaced by a drop-down menu and the slider will change depending on what is selected to either A Bpm number a slider or something to represent Midi-Clock,
+			
 *		 "Render-preview"	(Icons inside the Preview Upper Right Corner to switch and access settings)
+			2 Icons For Beam-Effect (On/Off) as 2D & 3D, Render Mode (Cycle-Menu) Lines/Points/Booth as 3 Icons Points,Lines & Booth
+			we will use placeholder icons until i created the final versions.
 	
 *	Add:
-*		 "Save project"	Developing the save project system for users to save there project.
-			(In Developement)
-		
-*		 "Clip atributes"	Play Style (Once Repeat)
+*		 "Panel Views Rework" Create a dockable area for Panels (npm i dockview-core). All Panels by default (World,Layer,Clip)_(Generators,Effects)_(File Browser)_(DACs List)
+			Settings will be a part for all 3 Panels - World, Layer and Clip Panel, individualy because each will have there own settings.
+			Layer Settings Panel will show the settings for the selected Layer,
+			Clip will show settings for the "selected" Clip
+
+*		 "Clip atributes"	Play Style (Once, Repeat)  Accesable via Titlebar Menu, Right-Click Menu and Clip Settings Panel
 							Trigger (Normal Flash Toggle)
 							Transport (Timeline BPM-Sync)
 							Beat Snap (None 8 4 2 1 1/2 1/4 1/8)
@@ -186,29 +197,42 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 							Translation Effects
 							Color Effects
 							Effect presets
-					
+
+*		 "Generator Panel"	add (NDI-Source, Clock/Countdown/Timer)
+	
+*		 "Generator Designer" (Pencil, Shapes, Curves, Lines, Color)(Grid, Background-Image, Snapping)
+			The Designer will be opened in a new Window in wich the User is able to create own shapes. 
+	
+*		 "DAC Brand Selector" (multiple selection tick-box)
+			The DAC-Brand Tick-Box lets us select multiple brands or DAC Models to work with,
+			For each Selected DAC Model we adjust the Scan and Communication functions to work with the selected models protocols.
+	
+*		 "HotKeys-Mapping" (with highlite toggle option)
+			This Mapping lets us bind keyboard keys to the UI
+			*once activated we activate a highlite for all mapped buttons*
+	
+*		 "MIDI-Mapping"	(Pre-made & custom)
+			This Mapping lets us bind MIDI Keys to the UI
+			*once activated we activate a highlite for all mapped buttons*
+	
+*		 "DMX/ArtNet Mapping"
+			This Mapping les us bind ArtNet/DMX to the UI
+			*once activated we activate a highlite for all mapped buttons*
+	
+*		 "Projector Setup" (Info, Rendering, Color-Balance, Safety-Zones, Test-Image) (For each channel/DAC)
+			This will be a window under the Titlebar Menu "Output"
+	
+*		 "Audio Settings" (Input and Output)
+			This will be a window under the Titlebar Menu "Settings"
+	
+*		 "General Settings" (Save output state On/Off, Check for Updates, Animate Thumbnail (Always/Hover/Off), Show FPS Screen and DAC, Ilda Scan safety)
+			This will be a window under the Titlebar Menu "Settings"
+
+*		 "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
+			This will be a window under the Titlebar Menu "Settings"
+			
+*		 "Bug report feature"
+				
 *		 "Timeline Mode" *Bigger Feature Developement*
 	
 *		 "Show Editor view" *Bigger Feature Developement*
-	
-*		 "Generator Panel"	(NDI-Source, Clock/Countdown/Timer)
-	
-*		 "Generator Designer" (Pencil, Shapes, Curves, Lines, Color)(Grid, Background-Image, Snapping)
-	
-*		 "DAC Brand Selector" (multiple selection)
-	
-*		 "HotKeys-Mapping" (with highlite toggle option)
-	
-*		 "MIDI-Mapping"	(Pre-made & custom)
-	
-*		 "DMX/ArtNet Mapping"
-	
-*		 "Projector Setup" (Info Rendering Color-Balance Safety-Zones, Test-Image) (For each channel/DAC)
-	
-*		 "Audio Settings" (Input and Output)
-	
-*		 "General Settings" (Save output state On/Off, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
-	
-*		 "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
-	
-*		 "Bug report feature"
