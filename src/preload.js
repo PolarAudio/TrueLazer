@@ -70,10 +70,11 @@ contextBridge.exposeInMainWorld(
 	            // Settings
 	            getAllSettings: () => ipcRenderer.invoke('get-all-settings'),
 	            setRenderSettings: (settings) => ipcRenderer.invoke('set-render-settings', settings),
-	            setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
-	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
-	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
-	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
-              readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
-	          }
-	        );
+	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
+	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
+	            	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+	            	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
+	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
+	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),
+	                                        showFontFileDialog: () => ipcRenderer.invoke('show-font-file-dialog'),
+	                          	          }	        );

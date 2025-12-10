@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-
+import React, { useState, useEffect, useMemo } from 'react';
+import { applyEffects } from '../utils/effects'; // Import the applyEffects function
 import IldaThumbnail from './IldaThumbnail';
 
 const Clip = ({
@@ -30,6 +30,14 @@ const Clip = ({
 
   const frameForThumbnail = thumbnailRenderMode === 'active' ? liveFrame : stillFrame;
 
+  // Apply effects to the frame that will be used for the thumbnail
+  const effectedFrameForThumbnail = useMemo(() => {
+    if (frameForThumbnail && clipContent && clipContent.effects && clipContent.effects.length > 0) {
+      return applyEffects(frameForThumbnail, clipContent.effects);
+    }
+    return frameForThumbnail;
+  }, [frameForThumbnail, clipContent]);
+  
   const handleDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -180,8 +188,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
       <div className="clip-thumbnail" onClick={onActivateClick}>
         {clipContent && clipContent.parsing ? (
           <div className="clip-loading-spinner"></div>
-        ) : frameForThumbnail ? (
-          <IldaThumbnail frame={frameForThumbnail} />
+        ) : effectedFrameForThumbnail ? (
+          <IldaThumbnail frame={effectedFrameForThumbnail} />
         ) : (
           <p></p>
         )}

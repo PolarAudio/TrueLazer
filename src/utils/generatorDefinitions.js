@@ -10,8 +10,7 @@ export const generatorDefinitions = [
       y: 0,
       r: 255,
       g: 255,
-      b: 255,
-      blanking: false, // Default to no blanking
+      b: 255
     },
     paramControls: [
       { id: 'radius', label: 'Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
@@ -21,7 +20,6 @@ export const generatorDefinitions = [
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
-      { id: 'blanking', label: 'Blanking', type: 'checkbox' },
     ],
   },
   {
@@ -29,24 +27,22 @@ export const generatorDefinitions = [
     name: 'Square',
     description: 'Generates a simple square.',
     defaultParams: {
-      width: 0.5,
-      height: 0.5,
+      width: 1,
+      height: 1,
       x: 0,
       y: 0,
       r: 255,
       g: 255,
       b: 255,
-      blanking: false,
     },
     paramControls: [
-      { id: 'width', label: 'Width', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
-      { id: 'height', label: 'Height', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
+      { id: 'width', label: 'Width', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
+      { id: 'height', label: 'Height', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
-      { id: 'blanking', label: 'Blanking', type: 'checkbox' },
     ],
   },
   {
@@ -61,7 +57,6 @@ export const generatorDefinitions = [
       r: 255,
       g: 255,
       b: 255,
-      blanking: false,
     },
     paramControls: [
       { id: 'x1', label: 'X1', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
@@ -71,7 +66,6 @@ export const generatorDefinitions = [
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
-      { id: 'blanking', label: 'Blanking', type: 'checkbox' },
     ],
   },
   {
@@ -79,15 +73,14 @@ export const generatorDefinitions = [
     name: 'Text',
     description: 'Generates text.',
     defaultParams: {
-      text: 'Hello',
+      text: 'TrueLazer',
       x: 0,
       y: 0,
       fontSize: 72,
-      fontUrl: 'https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto-Regular.ttf', // New default param
+      fontUrl: 'C:\\Windows\\Fonts\\arial.ttf', // New default param
       r: 255,
       g: 255,
       b: 255,
-      blanking: false,
     },
     paramControls: [
       { id: 'text', label: 'Text Content', type: 'text' },
@@ -98,7 +91,6 @@ export const generatorDefinitions = [
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
-      { id: 'blanking', label: 'Blanking', type: 'checkbox' },
     ],
   },
   {
@@ -114,7 +106,6 @@ export const generatorDefinitions = [
       r: 255,
       g: 255,
       b: 255,
-      blanking: false,
     },
     paramControls: [
       { id: 'outerRadius', label: 'Outer Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
@@ -125,7 +116,6 @@ export const generatorDefinitions = [
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
-      { id: 'blanking', label: 'Blanking', type: 'checkbox' },
     ],
   },
 ];

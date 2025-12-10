@@ -23,7 +23,7 @@ self.onmessage = async (event) => {
               frames = [generateLine(currentParams)];
               break;
             case 'text':
-              frames = [await generateText(currentParams)];
+              frames = [await generateText(currentParams, event.data.fontBuffer)];
               break;
             case 'star':
               frames = [generateStar(currentParams)];

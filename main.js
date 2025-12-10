@@ -517,6 +517,62 @@ function createWindow() {
       throw error;
     }
   });
+
+  ipcMain.handle('show-font-file-dialog', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      defaultPath: 'C:\\Windows\\Fonts',
+      filters: [
+        { name: 'Font Files', extensions: ['ttf', 'otf'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    });
+    if (canceled || filePaths.length === 0) {
+      return null;
+    }
+    return filePaths[0];
+  });
+
+  ipcMain.handle('fetch-url-as-arraybuffer', async (event, url) => {
+    try {
+      const https = require('https');
+      const buffer = await new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+          // Follow redirects
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            https.get(res.headers.location, (redirectRes) => {
+              if (redirectRes.statusCode < 200 || redirectRes.statusCode >= 300) {
+                return reject(new Error(`Failed to fetch URL: Status Code ${redirectRes.statusCode}`));
+              }
+              const chunks = [];
+              redirectRes.on('data', chunk => chunks.push(chunk));
+              redirectRes.on('end', () => {
+                const nodeBuffer = Buffer.concat(chunks);
+                const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
+                resolve(arrayBuffer);
+              });
+            }).on('error', (err) => reject(err));
+          } else if (res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(`Failed to fetch URL: Status Code ${res.statusCode}`));
+          } else {
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => {
+              const nodeBuffer = Buffer.concat(chunks);
+              const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
+              resolve(arrayBuffer);
+            });
+          }
+        }).on('error', (err) => {
+          reject(err);
+        });
+      });
+      return buffer;
+    } catch (error) {
+      console.error(`Failed to fetch URL ${url}:`, error);
+      throw error;
+    }
+  });
 }
 
 app.whenReady().then(() => {
