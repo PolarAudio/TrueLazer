@@ -142,7 +142,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onDropGenerator(layerIndex, colIndex, parsedData);
             return;
           }
-        } else if (parsedData.ip && parsedData.channel) { // Check if this is DAC data
+        } else if (parsedData.ip && typeof parsedData.channel === 'number') { // Check if this is DAC data
           if (onDropDac) {
             onDropDac(layerIndex, colIndex, parsedData);
             return;

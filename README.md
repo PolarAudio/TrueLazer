@@ -17,7 +17,7 @@
   tailored for ILDA clips. This intuitive interface allows for dynamic organization and mixing of laser
   content in real-time.
   
-  Showbridge DAC Integration:* Our core focus is seamless integration with Showbridge DACs, ensuring
+  ILDA's IDN Integration:* Our core focus is seamless integration with IDN DACs, ensuring
   reliable and high-performance communication with your laser hardware.
   
   Generative ILDA Content:* Beyond playing pre-made ILDA files, TrueLazer will feature a robust generator
@@ -32,12 +32,14 @@
   Audio-Visual Integration:* Sync your laser shows to the beat of the music with advanced audio analysis
   capabilities.
   
-  Comprehensive Control Options:* Designed for professional use, TrueLazer will support MIDI, OSC, and
+  Comprehensive Control Options:* Designed for professional use, TrueLazer will support MIDI, OSC, NDI and
   DMX/Artnet for seamless integration with existing show control systems and external hardware.
   
   JavaScript Core:* Leveraging JavaScript provides maximum versatility, allowing for a broad developer
   community and easy extensibility.
 
+  Familiar 8x5 Deck-Layout for perfect Usability via MIDI-Hardware like Akai APC-40 series.
+  
   ## Why Support TrueLazer?
 
   The laser show community often relies on proprietary software or complex custom solutions. TrueLazer aims to
@@ -66,9 +68,12 @@
 
   ### NDI Integration (On Hold)
 
-  The integration of NDI (Network Device Interface) for both sending and receiving video streams is currently on hold. Our investigation into available Node.js libraries for NDI revealed that the most promising options, such as `grandiose`, are not actively maintained and fail to compile with modern Node.js and C++ build environments. The necessary native addons are incompatible with the current project setup, and our search for viable, up-to-date forks or alternative libraries has been unsuccessful.
+  The integration of NDI (Network Device Interface) for both sending and receiving video streams is currently on hold.
+  Our investigation into available Node.js libraries for NDI revealed that the most promising options, such as `grandiose`, are not actively maintained and fail to compile with modern Node.js and C++ build environments.
+  The necessary native addons are incompatible with the current project setup, and our search for viable, up-to-date forks or alternative libraries has been unsuccessful.
+  As soon time allows we will either Contribute to grandiose for modern node compiling or integrate NDI Directly via there SDK option.
 
-  We believe that NDI integration would be a powerful feature for TrueLazer, and we may revisit this in the future if the state of NDI libraries for Node.js improves.
+  We believe that NDI integration would be a powerful feature for TrueLazer, and we may revisit this in the future.
   
   ☐ - Not yet done
   
@@ -111,24 +116,21 @@
       
   3.  Effects System:
 
-      ☐   Implement core effects like transform (XYZ), rotation (XYZ), wave (XYZ), and color palette
+      ☒   Implement core effects like transform (XYZ), rotation (XYZ), wave (XYZ), and color palette
   manipulation.
 
       ☑   Design the drag-and-drop mechanism for applying effects to clips and layers.
       
   4.  Control Integration:
      
-      ☐   Begin integrating MIDI, DMX/Artnet, and OSC control via a "shortcuts" window.
+      ☒   Begin integrating MIDI, DMX/Artnet, and OSC control via a "shortcuts" window.
       
   5.  DAC Communication:
      
-      ☒   Implement the sending of ILDA frames to the selected Showbridge DAC and channel.
-			(Need more time to fully understand the Truwave -> Showbridge DAC Protocol.)
-			(The Frame Broadcast is implemented and working)
-      
+      ☒	  Implement the ILDA Standard IDN Communication Protocol.
       ☑   Develop drag-and-drop functionality for assigning DAC channels to clips/layers.
 	  
-	  
+	  ☐   Showbridge DAC implementation to openIDN is planned for the future.
 	  
 	List of things to change and add:
 	Change:
@@ -172,7 +174,7 @@
 	
 		☐ "Audio Settings" (Input and Output)
 	
-		☐ "General Settings" (Save output state On/Off, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
+		☐ "General Settings" (Save, Load, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
 	
 		☐ "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
 	
@@ -207,9 +209,11 @@
       `
       npm start
       `
-      This will start the development server, usually accessible at http://localhost:5174.
+      This will start the development server and opens the development version of the application with dev console.
+	  In most Cases this is already fully functional and Support full UI interaction.
+	  
   4.  Build the executable:
-	  `bash
+	  `
       npm run build
       `
   ### Project Structure Overview

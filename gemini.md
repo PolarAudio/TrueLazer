@@ -77,7 +77,7 @@ A list of things we change inside of the UI:
    * Extensive Control Options: It can be controlled with MIDI, OSC, DMX, allowing for
      seamless integration with other show control systems.
 	 
-Our ShowBridge protocol follows this pattern:
+Our *original* ShowBridge protocol follows this pattern (this section describes the native ShowBridge protocol, not the new IDN integration):
 	Broadcast Message to 255.255.255.255:8089 with
     Command: 6 bytes = Target IP (169.254.25.104) + Flags (163, 31).
 	
@@ -128,6 +128,10 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 		|	
 		|___sdk (Information about devices,software,documents)
 		|	|___dac(In this Folder we have a Example for the Etherdream DAC that we include in the future)
+New		|	|___IDN-Laser-Tester-master-speed-slider
+New		|	|___IDN-Stream-Driver_discrete-mode_PUBLIC-main
+New		|	|___OpenIDN-Laser-DAC-Framework-main
+New		|	|___idn-toolbox-master
 		|
 		|___src (Our Source Folder)
 			|___ILDA-FILE-FORMAT-FILES (In Here we have our default ILD Files)
@@ -136,8 +140,8 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 
 **Connectivity:**
 
-*   The application has to continuously scan for Showbridge DACs on the selected network interface when turned on with an timer that turn the scan off after 30 seconds
-*   The UI displays a list of discovered DACs and their channels in real-time starting with the first Channel.
+*   The application will make use of the openIDN framework for dac discovery and frame-sending.
+*   The UI displays a list of discovered DACs from openIDN and their channels/names in real-time starting with the first Channel.
 *   The user can select a DAC and channel from the list.
 *   The SDK is initialized on-demand when communication is required (e.g., sending frames, getting show info), preventing crashes on device selection.
 
@@ -153,6 +157,10 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *	The Shortcuts button will Open a list of input options : DMX/Artnet, MIDI And OSC if we click on on of them it starts the recording/mapping mode 
 *	The View button will let us choose of predefined layouts and color theme and render mode (High or Low performance mode to switch between 2d and 3d Rendering preview)
 *	If dragging a dac with 2 channels to a clip or layer we apply that output to booth channels.
+*   Build an initial framework for DAC communication using the IDN protocol, including discovery and basic frame sending capabilities.
+*   The application can now discover DACs using the IDN protocol.
+*   It is able to send basic frames to discovered IDN DACs.
+
 ** Done **
 
 *	Building the application as executable with our icon src/trueLazer.ico
@@ -163,76 +171,33 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *		 "Save project"	Developing the save project system for users to save there project.
 			(In Developement)
 
-**Next Steps:**	
+**Next Steps:**
 
+*   Implement sending of real-time messages using `idn-communication.js`.
 
-*	
-*	integrate NDI 5&6 by either grandiose or NDI SDK, Syphon, and Spout  streaming
+*   Integrate NDI 5&6 by either grandiose or NDI SDK, Syphon, and Spout  streaming
+	
 
+	
+## IDN Integration Details
+(NEW SECTION)
+	
 
-	Changes:
 	
-		*i doo that* "Global intensity" 	(slider dark to light color fade) *i doo that*
+*   **`idn-communication.js`:** This new utility module handles the low-level IDN protocol communication, including:
 	
-*		 "Speed"  			(select speed source (BPM, manual, midi-clock) inside of middle-bar -> middle-bar-mid-area -> master-speed-slider
-			The Label Will be replaced by a drop-down menu and the slider will change depending on what is selected to either A Bpm number a slider or something to represent Midi-Clock,
-			
-*		 "Render-preview"	(Icons inside the Preview Upper Right Corner to switch and access settings)
-			2 Icons For Beam-Effect (On/Off) as 2D & 3D, Render Mode (Cycle-Menu) Lines/Points/Booth as 3 Icons Points,Lines & Booth
-			we will use placeholder icons until i created the final versions.
+    *   **DAC Discovery:** Sends UDP broadcast scan requests (`IDNCMD_SCAN_REQUEST`) and parses responses (`IDNCMD_SCAN_RESPONSE`) to identify available IDN DACs on the network.
 	
-*	Add:
-*		 "Panel Views Rework" Create a dockable area for Panels (npm i dockview-core). All Panels by default (World,Layer,Clip)_(Generators,Effects)_(File Browser)_(DACs List)
-			Settings will be a part for all 3 Panels - World, Layer and Clip Panel, individualy because each will have there own settings.
-			Layer Settings Panel will show the settings for the selected Layer,
-			Clip will show settings for the "selected" Clip
-
-*		 "Clip atributes"	Play Style (Once, Repeat)  Accesable via Titlebar Menu, Right-Click Menu and Clip Settings Panel
-							Trigger (Normal Flash Toggle)
-							Transport (Timeline BPM-Sync)
-							Beat Snap (None 8 4 2 1 1/2 1/4 1/8)
-							Audio-Track (For Audio playback with file)
+    *   **Frame Sending:** Constructs and sends IDN-compliant real-time channel messages (`IDNCMD_RT_CNLMSG`) containing ILDA frame data (XYRGB points) to specific DACs and channels.
 	
-*		 "Effects Panel"	Position Effects
-							Translation Effects
-							Color Effects
-							Effect presets
-
-*		 "Generator Panel"	add (NDI-Source, Clock/Countdown/Timer)
+    *   **Channel Closing:** Sends `IDNCMD_RT_CNLMSG_CLOSE` to gracefully terminate a channel session.
 	
-*		 "Generator Designer" (Pencil, Shapes, Curves, Lines, Color)(Grid, Background-Image, Snapping)
-			The Designer will be opened in a new Window in wich the User is able to create own shapes. 
+*   **`dac-communication.js`:** This module now acts as an abstraction layer for DAC communication. It utilizes `idn-communication.js` for IDN-specific tasks.
 	
-*		 "DAC Brand Selector" (multiple selection tick-box)
-			The DAC-Brand Tick-Box lets us select multiple brands or DAC Models to work with,
-			For each Selected DAC Model we adjust the Scan and Communication functions to work with the selected models protocols.
+    *   The `discoverDacs` function in `dac-communication.js` now calls `idn-communication.js`'s `discoverDacs` and formats the results for the application.
 	
-*		 "HotKeys-Mapping" (with highlite toggle option)
-			This Mapping lets us bind keyboard keys to the UI
-			*once activated we activate a highlite for all mapped buttons*
+    *   The `sendFrame` function similarly calls `idn-communication.js`'s `sendFrame`.
 	
-*		 "MIDI-Mapping"	(Pre-made & custom)
-			This Mapping lets us bind MIDI Keys to the UI
-			*once activated we activate a highlite for all mapped buttons*
+    *   The `stopSending` function uses `idn-communication.js`'s `sendCloseChannel` to close IDN channels.
 	
-*		 "DMX/ArtNet Mapping"
-			This Mapping les us bind ArtNet/DMX to the UI
-			*once activated we activate a highlite for all mapped buttons*
-	
-*		 "Projector Setup" (Info, Rendering, Color-Balance, Safety-Zones, Test-Image) (For each channel/DAC)
-			This will be a window under the Titlebar Menu "Output"
-	
-*		 "Audio Settings" (Input and Output)
-			This will be a window under the Titlebar Menu "Settings"
-	
-*		 "General Settings" (Save output state On/Off, Check for Updates, Animate Thumbnail (Always/Hover/Off), Show FPS Screen and DAC, Ilda Scan safety)
-			This will be a window under the Titlebar Menu "Settings"
-
-*		 "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
-			This will be a window under the Titlebar Menu "Settings"
-			
-*		 "Bug report feature"
-				
-*		 "Timeline Mode" *Bigger Feature Developement*
-	
-*		 "Show Editor view" *Bigger Feature Developement*
+*   **Testing with `idn-toolbox-master`:** The `idn-toolbox-master` application (specifically `idn-toolbox.exe` for Windows) serves as a valuable tool for testing our IDN implementation. It allows us to simulate IDN devices and verify that our application can discover them and send frames correctly. This helps in understanding the IDN protocol interactions in a real-world scenario.

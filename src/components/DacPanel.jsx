@@ -137,7 +137,7 @@ const DacPanel = ({ onDacSelected }) => {
                     selectedDac && selectedDac.ip === dac.ip && selectedDac.channel === channel ? 'selected' : ''
                   }`}
                   draggable
-                  onDragStart={(e) => handleDragStart(e, JSON.stringify({ ...dac, channel }))}
+                  onDragStart={(e) => handleDragStart(e, JSON.stringify({ ip: dac.ip, channel }))}
                   onClick={() => handleDacClick({ ...dac, channel })}
                 >
                   Channel {channel}
