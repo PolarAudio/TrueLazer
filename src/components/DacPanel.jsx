@@ -1,148 +1,117 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 
-const DacPanel = ({ onDacSelected }) => {
-  const [dacs, setDacs] = useState([]);
+const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered }) => {
+  const [isScanning, setIsScanning] = useState(false);
   const [selectedDac, setSelectedDac] = useState(null);
   const [networkInterfaces, setNetworkInterfaces] = useState([]);
   const [selectedNetworkInterface, setSelectedNetworkInterface] = useState(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const scanIntervalRef = useRef(null);
-  const discoveryTimeoutRef = useRef(null);
 
-  const startDiscovery = () => {
+  useEffect(() => {
+    // Call the exposed API from preload script
     if (window.electronAPI) {
-      window.electronAPI.send('discover-dacs', selectedNetworkInterface);
+      window.electronAPI.getNetworkInterfaces().then(interfaces => {
+        setNetworkInterfaces(interfaces);
+        if (interfaces.length > 0) {
+          setSelectedNetworkInterface(interfaces[0]);
+        }
+      });
     }
-  };
-
-  const resetDiscoveryTimeout = useCallback(() => {
-    if (discoveryTimeoutRef.current) {
-      clearTimeout(discoveryTimeoutRef.current);
-    }
-    discoveryTimeoutRef.current = setTimeout(() => {
-      console.log('60-second discovery timeout reached. Stopping scan.');
-      setIsScanning(false);
-    }, 60000); // 60 seconds
   }, []);
 
   useEffect(() => {
-    if (window.electronAPI) {
-      // Fetch network interfaces
-      window.electronAPI.getNetworkInterfaces().then(interfaces => {
-        setNetworkInterfaces(interfaces);
-        console.log('Fetched network interfaces:', interfaces); // Debug log
-        if (interfaces.length > 0) {
-          setSelectedNetworkInterface(interfaces[0]); // Select the first one by default
-          console.log('Selected network interface:', interfaces[0]); // Debug log
-        }
-      });
-
-      // Set up DAC discovery listener
-      const handleDacsDiscovered = (discoveredDacs) => {
-        setDacs(discoveredDacs);
-        console.log('DACs discovered:', discoveredDacs); // Debug log
-        resetDiscoveryTimeout(); // Reset timeout if DACs are discovered
-      };
-
-      const cleanup = window.electronAPI.on('dacs-discovered', handleDacsDiscovered);
-
-      return () => {
-        cleanup();
-      };
-    }
-  }, [resetDiscoveryTimeout]);
-
-  useEffect(() => {
     if (isScanning) {
-      console.log('Starting DAC scan...'); // Debug log
-      const scan = () => startDiscovery();
-      // Start scanning immediately
-      scan();
-      resetDiscoveryTimeout(); // Start/reset timeout when scanning begins
-      // Set up interval for continuous scanning
-      scanIntervalRef.current = setInterval(scan, 5000); // Scan every 5 seconds
-    } else {
-      console.log('DAC scan inactive...'); // Debug log
-      // Stop scanning
-      if (scanIntervalRef.current) {
-        clearInterval(scanIntervalRef.current);
-        scanIntervalRef.current = null;
-      }
-      if (discoveryTimeoutRef.current) {
-        clearTimeout(discoveryTimeoutRef.current);
-        discoveryTimeoutRef.current = null;
-      }
-      // Optionally, send a message to close the socket in the main process
+      console.log('Starting DAC scan on:', selectedNetworkInterface?.address);
       if (window.electronAPI) {
-        window.electronAPI.send('stop-dac-discovery');
+        window.electronAPI.discoverDacs(2000, selectedNetworkInterface?.address)
+          .then(async (discoveredDacs) => {
+            console.log('DACs discovered:', discoveredDacs);
+            const dacsWithServices = await Promise.all(
+              discoveredDacs.map(async (dac) => {
+                try {
+                  const services = await window.electronAPI.getDacServices(dac.ip, selectedNetworkInterface?.address);
+                  // Filter for valid services (e.g., serviceType for laser graphics)
+                  const laserServices = services.filter(s => s.serviceID !== 0); // Assuming serviceID 0 is not a usable channel
+                  return { ...dac, channels: laserServices };
+                } catch (error) {
+                  console.error(`Error fetching services for DAC ${dac.ip}:`, error);
+                  return { ...dac, channels: [] };
+                }
+              })
+            );
+            if (onDacsDiscovered) {
+              onDacsDiscovered(dacsWithServices);
+            }
+          })
+          .catch(err => {
+            console.error('Error discovering DACs:', err);
+          })
+          .finally(() => {
+            setIsScanning(false);
+          });
+      } else {
+        console.warn('electronAPI is not available. Cannot discover DACs.');
+        setIsScanning(false);
       }
     }
+  }, [isScanning, selectedNetworkInterface, onDacsDiscovered]);
 
-    return () => {
-      if (scanIntervalRef.current) {
-        clearInterval(scanIntervalRef.current);
-      }
-      if (discoveryTimeoutRef.current) {
-        clearTimeout(discoveryTimeoutRef.current);
-      }
-    };
-  }, [isScanning, selectedNetworkInterface, resetDiscoveryTimeout]);
-
-  const handleDacClick = (dac) => {
-    setSelectedDac(dac);
-    onDacSelected(dac);
+  const handleDacClick = (dac, channelId) => {
+    const dacWithChannel = { ...dac, channel: channelId };
+    setSelectedDac(dacWithChannel);
+    if (onDacSelected) {
+      onDacSelected(dacWithChannel);
+    }
   };
 
+  const handleDragStart = (e, dac, channelId) => {
+    const dacWithChannel = { ...dac, channel: channelId };
+    e.dataTransfer.setData('application/json', JSON.stringify(dacWithChannel));
+  };
+  
   const handleNetworkInterfaceChange = (e) => {
-    const wasScanning = isScanning;
-    if (wasScanning) {
-      setIsScanning(false);
-    }
-
-    const selectedName = e.target.value;
-    const interfaceFound = networkInterfaces.find(iface => iface.name === selectedName);
-    setSelectedNetworkInterface(interfaceFound || null);
-
-    if (wasScanning) {
-      setIsScanning(true);
-    }
-  };
-
-  const handleDragStart = (e, dacJSON) => {
-    e.dataTransfer.setData('application/json', dacJSON);
+    const selectedAddress = e.target.value;
+    const iface = networkInterfaces.find(iface => iface.address === selectedAddress);
+    setSelectedNetworkInterface(iface);
   };
 
   return (
     <div className="dac-panel">
       <h3>DACs</h3>
       <div className="network-interface-selector">
-        <select id="network-interface-select" onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface ? selectedNetworkInterface.name : ''}>
+        <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''}>
           {networkInterfaces.map(iface => (
-            <option key={iface.name} value={iface.name}>
+            <option key={iface.address} value={iface.address}>
               {iface.name} ({iface.address})
             </option>
           ))}
         </select>
-          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} />
+        <label>
+          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} disabled={isScanning} />
+          Scan
+        </label>
       </div>
       <div className="dac-list">
         {dacs.map((dac) => (
-          <div key={dac.ip} className="dac-group">
-            <div className="dac-ip">{dac.ip}</div>
+          <div key={dac.unitID || dac.ip}
+            className={`dac-group`}
+          >
+            <div className="dac-ip">{dac.hostName || dac.ip} ({dac.ip})</div>
             <div className="dac-channels">
-              {dac.channels.map((channel) => (
-                <div
-                  key={`${dac.ip}-${channel}`}
-                  className={`dac-item ${
-                    selectedDac && selectedDac.ip === dac.ip && selectedDac.channel === channel ? 'selected' : ''
-                  }`}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, JSON.stringify({ ip: dac.ip, channel }))}
-                  onClick={() => handleDacClick({ ...dac, channel })}
-                >
-                  Channel {channel}
-                </div>
-              ))}
+              {dac.channels && dac.channels.length > 0 ? (
+                dac.channels.map((channel) => (
+                  <div
+                    key={`${dac.unitID}-${channel.serviceID}`}
+                    className={`dac-channel-item ${selectedDac && selectedDac.unitID === dac.unitID && selectedDac.channel === channel.serviceID ? 'selected' : ''}`}
+                    onClick={() => handleDacClick(dac, channel.serviceID)}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, dac, channel.serviceID)}
+                  >
+                    Channel {channel.serviceID} ({channel.name})
+                  </div>
+                ))
+              ) : (
+                <div className="dac-channel-item no-channels">No channels found</div>
+              )}
             </div>
           </div>
         ))}

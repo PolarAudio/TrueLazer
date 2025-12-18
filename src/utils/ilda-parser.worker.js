@@ -30,7 +30,7 @@ const calculateBounds = (points) => {
 };
 
 // Helper function to parse points from a DataView slice
-function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount) { // Removed bounds parameter
+function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount, colorPalette = defaultPalette) {
   const points = [];
   const view = new DataView(pointDataBuffer);
   let pointDataOffset = 0;
@@ -57,21 +57,29 @@ function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount) {
         statusByte = view.getUint8(pointDataOffset + 4);
       }
 
-      const blanking = (statusByte & 64) === 64;
-      const lastPoint = (statusByte & 128) === 128;
+      const blanking = (statusByte & 0x40) !== 0; // Bit 6
+      const lastPoint = (statusByte & 0x80) !== 0; // Bit 7
 
       // Read color data
-      if (formatCode === 0 || formatCode === 1) { // Indexed Color
-        const colorIndex = view.getUint8(pointDataOffset + (formatCode === 0 ? 7 : 5));
-        const color = defaultPalette[colorIndex % defaultPalette.length] || defaultPalette[0];
-        r = color.r;
-        g = color.g;
-        b = color.b;
-      } else if (formatCode === 4 || formatCode === 5) { // True Color formats
-        b = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
-        g = view.getUint8(pointDataOffset + (formatCode === 4 ? 8 : 6));
-        r = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
-      }
+      if (blanking) {
+		  r = 0;
+		  g = 0;
+		  b = 0;
+	  } else {
+      // Read color data
+		if (formatCode === 0 || formatCode === 1) { // Indexed Color
+			const colorIndex = view.getUint8(pointDataOffset + (formatCode === 0 ? 7 : 5));
+			const palette = colorPalette || defaultPalette;
+			const color = palette[colorIndex % palette.length] || defaultPalette[0];
+			r = color.r;
+			g = color.g;
+			b = color.b;
+		} else if (formatCode === 4 || formatCode === 5) { // True Color formats
+			b = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
+			g = view.getUint8(pointDataOffset + (formatCode === 4 ? 8 : 6));
+			r = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
+		}
+	  }
 
       points.push({ 
         x, y, z, 
@@ -98,6 +106,7 @@ function parseIldaFile(arrayBuffer) {
   const framesMetadata = []; // Will store metadata about frames, not parsed points
   let firstFormatCode = null;
   let currentOffset = 0;
+  let colorPalette = null;
 
   while (currentOffset + 32 <= arrayBuffer.byteLength) {
     const frameStartOffset = currentOffset;
@@ -126,22 +135,36 @@ function parseIldaFile(arrayBuffer) {
       continue;
     }
 
+    const frameName = String.fromCharCode(...new Uint8Array(arrayBuffer, frameStartOffset + 8, 8)).trim();
+    const companyName = String.fromCharCode(...new Uint8Array(arrayBuffer, frameStartOffset + 16, 8)).trim();
     let pointCount = view.getUint16(frameStartOffset + 24, false);
     const frameNumber = view.getUint16(frameStartOffset + 26, false);
     const totalFrames = view.getUint16(frameStartOffset + 28, false);
-    const projectorNumber = view.getUint8(frameStartOffset + 30);
+    const scannerHead = view.getUint8(frameStartOffset + 30);
 
     let recordSize;
     switch (formatCode) {
       case 0: recordSize = 8; break;
       case 1: recordSize = 6; break;
-      case 2: recordSize = 3; break;
+      case 2: recordSize = 4; break;
       case 4: recordSize = 10; break;
       case 5: recordSize = 8; break;
       default:
         console.warn(`Parser: Unsupported format ${formatCode}, skipping 32 bytes.`);
         currentOffset += 32;
         continue;
+    }
+
+    if (formatCode === 2) {
+      colorPalette = [];
+	  const paletteStart = currentOffset + 32;
+      for (let i = 0; i < pointCount; i++) {
+        const r = view.getUint8(paletteStart + i * 4); 		//Byte 0: Red
+        const g = view.getUint8(paletteStart + i * 4 + 1);	//Byte 1: Green
+        const b = view.getUint8(paletteStart + i * 4 + 2);	//Byte 2: Blue
+		//Byte 3 is reserved, skip it
+        colorPalette.push({ r, g, b });
+      }
     }
 
     let pointsDataSize = pointCount * recordSize;
@@ -170,9 +193,11 @@ function parseIldaFile(arrayBuffer) {
     }
 
     framesMetadata.push({ 
+        frameName,
+        companyName,
         frameNumber, 
         totalFrames, 
-        projectorNumber,
+        scannerHead,
         formatCode,
         recordSize,
         pointCount,
@@ -185,7 +210,7 @@ function parseIldaFile(arrayBuffer) {
     currentOffset += frameTotalSize;
   }
   console.log(`[ilda-parser.worker.js] parseIldaFile - Finished parsing. Found ${framesMetadata.length} frames.`);
-  return { frames: framesMetadata, error: framesMetadata.length === 0 ? 'No valid frames found' : null, firstFormatCode, ildaFileBuffer: arrayBuffer };
+  return { frames: framesMetadata, error: framesMetadata.length === 0 ? 'No valid frames found' : null, firstFormatCode, ildaFileBuffer: arrayBuffer, colorPalette };
 }
 
 
@@ -203,9 +228,8 @@ self.onmessage = function(e) {
     try {
       console.log('[ilda-parser.worker.js] Calling parseIldaFile for:', fileName); // DEBUG LOG
       const parsedData = parseIldaFile(arrayBuffer); // This now returns framesMetadata and ildaFileBuffer
-      console.log('[ilda-parser.worker.js] parseIldaFile returned:', parsedData); // DEBUG LOG
       const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames}); // Store full buffer and metadata
+      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames, colorPalette: parsedData.colorPalette}); // Store full buffer and metadata
       console.log('[ilda-parser.worker.js] Posting success message for parse-ilda.'); // DEBUG LOG
       self.postMessage({ 
         success: true, 
@@ -251,7 +275,7 @@ self.onmessage = function(e) {
       console.log(`[ilda-parser.worker.js] Calling parseIldaFile for: ${requestContext.fileName} (from file-content-response)`);
       const parsedData = parseIldaFile(arrayBuffer); // This now returns framesMetadata and ildaFileBuffer
       const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames}); // Store full buffer and metadata
+      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames, colorPalette: parsedData.colorPalette}); // Store full buffer and metadata
       self.postMessage({ 
         success: true, 
         workerId: newWorkerId, 
@@ -273,7 +297,7 @@ self.onmessage = function(e) {
       return;
     }
 
-    const { ildaFileBuffer, framesMetadata } = ildaData;
+    const { ildaFileBuffer, framesMetadata, colorPalette } = ildaData;
     if (frameIndex >= framesMetadata.length || frameIndex < 0) {
       self.postMessage({ success: false, error: `Frame index ${frameIndex} out of bounds`, type: 'get-frame', workerId });
       return;
@@ -281,7 +305,7 @@ self.onmessage = function(e) {
 
     const frameMeta = framesMetadata[frameIndex];
     const pointDataBuffer = ildaFileBuffer.slice(frameMeta.pointDataOffset, frameMeta.pointDataOffset + frameMeta.pointDataSize);
-    const points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount);
+    const points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, colorPalette);
 
     const frame = {
         points: points,

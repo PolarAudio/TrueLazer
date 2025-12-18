@@ -1,14 +1,11 @@
-const { contextBridge, ipcRenderer } = require('electron');
+import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld(
   'electronAPI', {
-    send: (channel, data, networkInterface) => {
-      if (channel === 'discover-dacs') {
-        ipcRenderer.send(channel, data, networkInterface);
-      } else {
-        ipcRenderer.send(channel, data);
-      }
-    },
+    discoverDacs: (timeout, networkInterfaceIp) => ipcRenderer.invoke('discover-dacs', timeout, networkInterfaceIp),
+    getDacServices: (ip, localIp) => ipcRenderer.invoke('get-dac-services', ip, localIp),
+    sendFrame: (ip, channel, frame, fps) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps),
+    getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     on: (channel, callback) => {
       const listener = (event, ...args) => callback(...args);
       ipcRenderer.on(channel, listener);
@@ -18,7 +15,6 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('menu-action', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('menu-action', callback);
     },
-    getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     showLayerContextMenu: (index) => ipcRenderer.send('show-layer-context-menu', index),
     showLayerFullContextMenu: (index) => ipcRenderer.send('show-layer-full-context-menu', index),
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
@@ -55,8 +51,6 @@ contextBridge.exposeInMainWorld(
 	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
 	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
 	    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
-	        stopDacDiscovery: () => ipcRenderer.send('stop-dac-discovery'),
-	            sendPlayCommand: (ip) => ipcRenderer.send('send-play-command', ip),
 	            // New IPC functions for thumbnail mode synchronization
 	            onUpdateThumbnailRenderMode: (callback) => { // Listener for main process to renderer
 	              ipcRenderer.on('update-thumbnail-render-mode', (event, mode) => callback(mode));

@@ -218,6 +218,7 @@ function reducer(state, action) {
     case 'SET_CLIPBOARD':
       return { ...state, clipClipboard: action.payload };
     case 'SET_CLIP_DAC': {
+      console.log('App.jsx Reducer: SET_CLIP_DAC payload.dac:', action.payload.dac);
       const newClipContentsWithDac = [...state.clipContents];
       // Ensure the layer array exists and create a new copy of it
       if (!newClipContentsWithDac[action.payload.layerIndex]) {
@@ -293,8 +294,8 @@ function reducer(state, action) {
 function App() {
   const ildaParserWorker = useIldaParserWorker();
   const generatorWorker = useGeneratorWorker();
+  const initializedChannels = useRef(new Set());
   const ildaPlayerCurrentFrameIndex = useRef(0);
-  const playCommandSentRef = useRef(false);
   const [liveFrames, setLiveFrames] = useState({});
   const liveFramesRef = useRef();
   liveFramesRef.current = liveFrames;
@@ -403,6 +404,9 @@ function App() {
 
     const handleMessage = (e) => {
       if (e.data.type === 'get-frame' && e.data.success) {
+        if (e.data.frame && e.data.frame.points && e.data.frame.points.length > 0) {
+            console.log('App.jsx: Raw parsed ILDA frame points (first 5):', e.data.frame.points.slice(0, 5));
+        }
         if (e.data.isStillFrame) {
           const { workerId, frame, layerIndex, colIndex } = e.data;
           // Update stillFrame and set parsing status to false in a single SET_CLIP_CONTENT dispatch
@@ -455,25 +459,19 @@ function App() {
 
       if (currentTime - lastFrameTime > DAC_REFRESH_INTERVAL) {
         if (window.electronAPI && activeClipsData.length > 0 && isWorldOutputActive) {
-          // Send play command once when output becomes active
-          if (!playCommandSentRef.current) {
-            const targetDacIp = selectedDac ? selectedDac.ip : null; // Assuming a single DAC for play command
-            if (targetDacIp) {
-              window.electronAPI.sendPlayCommand(targetDacIp);
-              playCommandSentRef.current = true;
-            }
-          }
-
           activeClipsData.forEach(clip => {
             if (clip && liveFramesRef.current[clip.workerId]) {
-              const targetDac = clip.dac || selectedDac; // Use clip-specific DAC if available, otherwise global selectedDac
+              const targetDac = clip.dac || selectedDac;
               if (targetDac) {
                 const ip = targetDac.ip;
-                const channel = targetDac.channel;
+                // Use serviceID from the channel object
+                const channel = targetDac.channel || (targetDac.channels && targetDac.channels.length > 0 ? targetDac.channels[0].serviceID : 0);
+                
+                if (channel === 0) return; // Don't send to channel 0 if it's not a valid service
+
                 const effects = clip.effects || [];
                 const frame = liveFramesRef.current[clip.workerId];
 
-                // Apply layer and master intensity
                 const layerIntensity = state.layerIntensities[clip.layerIndex];
                 const finalIntensity = layerIntensity * state.masterIntensity;
 
@@ -488,8 +486,7 @@ function App() {
                 };
 
                 const modifiedFrame = applyEffects(intensityAdjustedFrame, effects);
-                const ildaFormat = clip.ildaFormat || 0;
-                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame, fps: drawSpeed, ildaFormat });
+                window.electronAPI.sendFrame(ip, channel, modifiedFrame, drawSpeed);
               }
             }
           });
@@ -535,7 +532,6 @@ function App() {
       dacRefreshAnimationFrameId = requestAnimationFrame(animate);
     } else {
       cancelAnimationFrame(dacRefreshAnimationFrameId);
-      playCommandSentRef.current = false; // Reset when output is inactive
     }
 
 
@@ -544,7 +540,7 @@ function App() {
       cancelAnimationFrame(animationFrameId);
       cancelAnimationFrame(dacRefreshAnimationFrameId); // Clean up DAC animation frame
     };
-  }, [ildaParserWorker, workerIdsToFetch, drawSpeed, clipContents, isPlaying, activeClipsData, isWorldOutputActive, selectedDac, playCommandSentRef, state.clipContents]);
+  }, [ildaParserWorker, workerIdsToFetch, drawSpeed, clipContents, isPlaying, activeClipsData, isWorldOutputActive, selectedDac, state.clipContents]);
 
     // Listen for context menu commands for clips
     useEffect(() => {
@@ -897,6 +893,7 @@ function App() {
   };
 
   const handleDropDac = (layerIndex, colIndex, dacData) => {
+    console.trace('App.jsx: handleDropDac received dacData:', dacData);
       dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
   };
 
@@ -1104,7 +1101,10 @@ function App() {
                         onUnsupportedFile={showNotification}
                         onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)}
                         onDropGenerator={handleDropGenerator}
-                        onDropDac={(dacData) => handleDropDac(layerIndex, colIndex, dacData)}
+                        onDropDac={(passedLayerIndex, passedColIndex, dacDataFromClip) => {
+                            console.log('App.jsx: Lambda dacData from Clip:', dacDataFromClip);
+                            handleDropDac(passedLayerIndex, passedColIndex, dacDataFromClip);
+                        }}
                         onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
                         isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                         ildaParserWorker={ildaParserWorker}
@@ -1164,7 +1164,7 @@ function App() {
             <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />
             <GeneratorPanel />
             <EffectPanel />
-            <DacPanel onDacSelected={handleDacSelected} />
+            <DacPanel dacs={dacs} onDacSelected={handleDacSelected} onDacsDiscovered={(dacs) => dispatch({ type: 'SET_DACS', payload: dacs })} />
 			<SettingsPanel 
               effects={selectedClipEffects}
               onParameterChange={handleEffectParameterChange}

@@ -142,3 +142,8 @@ release
 IDN-Stream-Driver_discrete-mode_PUBLIC-main
 idn-toolbox-master
 OpenIDN-Laser-DAC-Framework-main
+/sdk/dac
+/sdk/IDN-Stream-Driver
+/sdk/LFI_Player_V1.3.2
+/sdk/LFI_Player_V1.3.2_Source
+/sdk/OpenIDN-Laser-DAC-Framework

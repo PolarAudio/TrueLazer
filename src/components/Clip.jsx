@@ -121,7 +121,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
     if (effectData) {
       try {
         const parsedData = JSON.parse(effectData);
-        console.log('[Clip.jsx] handleDrop - parsedData:', parsedData); // DEBUG LOG
+        console.log('[Clip.jsx] handleDrop - parsedData:', parsedData); // Existing log
+        console.log('Clip.jsx: parsedData *before* calling onDropDac:', parsedData); // New log
         
         // Check if this is file path data from the file system
         if (parsedData.filePath && parsedData.fileName) {
