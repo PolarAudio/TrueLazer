@@ -404,6 +404,14 @@ body {
 	justify-content: center;
 	align-items: center;
   }
+  .column-header.trigger-button:hover {
+    background-color: #4a4f57;
+    outline: 1px solid var(--theme-color);
+  }
+  .column-header.trigger-button:active {
+    background-color: var(--theme-color-transparent);
+    box-shadow: inset 0 0 5px var(--theme-color);
+  }
 
 
 h3 {
@@ -841,6 +849,335 @@ input[type="checkbox"]:checked:before {
 }
 
 @keyframes spin {
+
   0% { transform: rotate(0deg); }
+
   100% { transform: rotate(360deg); }
+
 }
+
+
+
+/* Assigned DACs Styles */
+
+.assigned-dacs-settings {
+
+  margin-bottom: 1rem;
+
+  border-bottom: 1px solid #3a3f47;
+
+  padding-bottom: 1rem;
+
+}
+
+
+
+.assigned-dacs-list {
+
+  list-style: none;
+
+  padding: 0;
+
+  margin: 0;
+
+  text-align: left;
+
+}
+
+
+
+.assigned-dac-item {
+
+  display: flex;
+
+  justify-content: space-between;
+
+  align-items: center;
+
+  background-color: #3a3f47;
+
+  padding: 5px 10px;
+
+  border-radius: 4px;
+
+  margin-bottom: 5px;
+
+  font-size: 0.85em;
+
+}
+
+
+
+.remove-dac-btn {
+
+  background: none;
+
+  border: none;
+
+  color: #ff4d4d;
+
+  font-size: 1.2em;
+
+  cursor: pointer;
+
+  padding: 0 5px;
+
+  line-height: 1;
+
+}
+
+
+
+.remove-dac-btn:hover {
+
+
+
+  color: #ff0000;
+
+
+
+  text-shadow: 0 0 5px rgba(255, 0, 0, 0.5);
+
+
+
+}
+
+
+
+
+
+
+
+/* Audio Settings Styles */
+
+
+
+.audio-settings-section {
+
+
+
+    margin-bottom: 1rem;
+
+
+
+    border-bottom: 1px solid #3a3f47;
+
+
+
+    padding-bottom: 1rem;
+
+
+
+    padding-left: 10px;
+
+
+
+    padding-right: 10px;
+
+
+
+}
+
+
+
+
+
+
+
+.assigned-audio-info {
+
+
+
+    background-color: #3a3f47;
+
+
+
+    padding: 10px;
+
+
+
+    border-radius: 5px;
+
+
+
+    display: flex;
+
+
+
+    flex-direction: column;
+
+
+
+    gap: 8px;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-file-name {
+
+
+
+    font-size: 0.9em;
+
+
+
+    font-weight: bold;
+
+
+
+    overflow: hidden;
+
+
+
+    text-overflow: ellipsis;
+
+
+
+    white-space: nowrap;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-progress-container {
+
+
+
+    width: 100%;
+
+
+
+    height: 8px;
+
+
+
+    background-color: #1a1a1a;
+
+
+
+    border-radius: 4px;
+
+
+
+    overflow: hidden;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-progress-bar {
+
+
+
+    height: 100%;
+
+
+
+    background-color: var(--theme-color);
+
+
+
+    transition: width 0.1s linear;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-time-info {
+
+
+
+    font-size: 0.8em;
+
+
+
+    color: #ccc;
+
+
+
+}
+
+
+
+
+
+
+
+.assign-audio-btn, .remove-audio-btn {
+
+
+
+    background-color: var(--theme-color-transparent);
+
+
+
+    color: white;
+
+
+
+    border: 1px solid var(--theme-color);
+
+
+
+    padding: 5px 10px;
+
+
+
+    border-radius: 4px;
+
+
+
+    cursor: pointer;
+
+
+
+    font-size: 0.85em;
+
+
+
+}
+
+
+
+
+
+
+
+.assign-audio-btn:hover, .remove-audio-btn:hover {
+
+
+
+    background-color: var(--theme-color);
+
+
+
+}
+
+
+
+

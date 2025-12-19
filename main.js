@@ -15,6 +15,8 @@ const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow; // Global variable to store the main window instance
 let currentThumbnailRenderMode = 'still'; // Global variable to store the current thumbnail render mode
+let audioDevices = []; // Global variable to store audio devices
+let currentAudioDeviceId = 'default';
 
 // Define the schema for settings
 const schema = {
@@ -180,6 +182,20 @@ function buildApplicationMenu(mode) {
       label: 'Settings',
       submenu: [
         { label: 'General', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
+        {
+          label: 'Audio Output',
+          submenu: audioDevices.length > 0 
+            ? audioDevices.map(device => ({
+                label: device.label || `Device ${device.deviceId.slice(0, 5)}`,
+                type: 'radio',
+                checked: currentAudioDeviceId === device.deviceId,
+                click: () => {
+                  currentAudioDeviceId = device.deviceId;
+                  if(mainWindow) mainWindow.webContents.send('update-audio-device-id', device.deviceId);
+                }
+              }))
+            : [{ label: 'No devices found', enabled: false }]
+        }
       ],
     },
     {
@@ -285,7 +301,7 @@ function createWindow() {
       preload: path.join(__dirname, 'src', 'preload.js'),
       nodeIntegration: true,
       contextIsolation: true,
-      webSecurity: false, // Temporarily disable webSecurity to diagnose local resource loading issue
+      webSecurity: false, // Ensure this is false to allow file:// protocol for media
     },
     frame: true, // Set to false to remove the default window frame and title bar
   });
@@ -457,6 +473,11 @@ function createWindow() {
     columnHeaderClipContextMenu.popup({ window: mainWindow });
   });
 
+  ipcMain.on('set-audio-devices', (event, devices) => {
+    audioDevices = devices;
+    buildApplicationMenu(currentThumbnailRenderMode);
+  });
+
   // Listen for context menu actions from renderer and send back to renderer
   ipcMain.on('context-menu-action', (event, action) => {
     console.log(`Main process received context menu action: ${JSON.stringify(action)}`);
@@ -523,6 +544,20 @@ function createWindow() {
       defaultPath: 'C:\\Windows\\Fonts',
       filters: [
         { name: 'Font Files', extensions: ['ttf', 'otf'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    });
+    if (canceled || filePaths.length === 0) {
+      return null;
+    }
+    return filePaths[0];
+  });
+
+  ipcMain.handle('show-audio-file-dialog', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      filters: [
+        { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a'] },
         { name: 'All Files', extensions: ['*'] }
       ],
       properties: ['openFile']

@@ -6,10 +6,26 @@ const MasterIntensitySlider = ({ masterIntensity, onMasterIntensityChange }) => 
     </div>
 );
 
-const CompositionControls = ({ masterIntensity, onMasterIntensityChange }) => (
+const AudioDeviceSelector = ({ devices, selectedId, onChange }) => (
+    <div className="audio-device-selector">
+        <select value={selectedId} onChange={(e) => onChange(e.target.value)} title="Audio Output Device">
+            {devices.map(device => (
+                <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Device ${device.deviceId.slice(0, 5)}`}
+                </option>
+            ))}
+        </select>
+    </div>
+);
+
+const CompositionControls = ({ 
+    masterIntensity, 
+    onMasterIntensityChange, 
+    onClearAllActive
+}) => (
   <div className="composition-controls">
 	<span className="layer-control-button">Comp</span>
-    <span className="layer-control-button">X</span>
+    <span className="layer-control-button" onClick={onClearAllActive} style={{ cursor: 'pointer' }}>X</span>
     <span className="layer-control-button">B</span>
     <MasterIntensitySlider masterIntensity={masterIntensity} onMasterIntensityChange={onMasterIntensityChange} />
   </div>

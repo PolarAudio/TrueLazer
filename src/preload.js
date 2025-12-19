@@ -70,5 +70,12 @@ contextBridge.exposeInMainWorld(
 	            	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
 	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
 	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),
+	                                        showAudioFileDialog: () => ipcRenderer.invoke('show-audio-file-dialog'),
 	                                        showFontFileDialog: () => ipcRenderer.invoke('show-font-file-dialog'),
+	                                        setAudioDevices: (devices) => ipcRenderer.send('set-audio-devices', devices),
+	                                        onUpdateAudioDeviceId: (callback) => {
+	                                          const subscription = (event, deviceId) => callback(deviceId);
+	                                          ipcRenderer.on('update-audio-device-id', subscription);
+	                                          return () => ipcRenderer.removeListener('update-audio-device-id', subscription);
+	                                        },
 	                          	          }	        );

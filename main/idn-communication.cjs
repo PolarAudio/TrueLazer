@@ -15,7 +15,7 @@ const IDNVAL_SMOD_LPGRF_DISCRETE = 0x02;
 
 const socket = dgram.createSocket('udp4');
 let generalSequence = 0;
-const sequenceMap = new Map();
+let rtSequence = 0;
 
 socket.on('error', (err) => {
   console.error('IDN socket error:', err);
@@ -118,14 +118,11 @@ function sendFrame(ip, channel, frame, fps) {
     const packet = Buffer.alloc(totalSize);
     let offset = 0;
     
-    const channelKey = `${ip}:${channel}`;
-    let currentSequence = sequenceMap.get(channelKey) || 0;
-    currentSequence++;
-    sequenceMap.set(channelKey, currentSequence);
+    rtSequence = (rtSequence + 1) & 0xFFFF;
 
     packet.writeUInt8(IDNCMD_RT_CNLMSG, offset++);
     packet.writeUInt8(0, offset++);
-    packet.writeUInt16BE(currentSequence, offset);
+    packet.writeUInt16BE(rtSequence, offset);
     offset += 2;
 
     packet.writeUInt16LE(channelMessageHeaderSize + channelConfigSize + frameChunkHeaderSize + frameDataSize, offset);
