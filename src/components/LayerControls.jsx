@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange }) => {
+const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
 
   // Update internal state when layerEffects prop changes
@@ -58,7 +58,7 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
 		</div>
 		<div className="layer-preview-thumbnail">
 			{activeClipData ? (
-				<IldaThumbnail frame={thumbnailRenderMode === 'still' ? activeClipData.stillFrame : activeClipData.currentFrame} /> // Render thumbnail of active clip based on mode
+				<IldaThumbnail frame={thumbnailRenderMode === 'still' ? activeClipData.stillFrame : liveFrame} /> // Render thumbnail of active clip based on mode
 			) : (
          // Existing applied effects or placeholder
 			appliedEffects.length > 0 && (

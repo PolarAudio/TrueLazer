@@ -34,7 +34,7 @@
   "keywords": [],
   "author": "MAXQON",
   "license": "GNU GPL",
-  "type": "commonjs",
+  "type": "module",
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.2",
     "concurrently": "^9.2.1",

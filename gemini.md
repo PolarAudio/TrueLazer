@@ -77,7 +77,7 @@ A list of things we change inside of the UI:
    * Extensive Control Options: It can be controlled with MIDI, OSC, DMX, allowing for
      seamless integration with other show control systems.
 	 
-Our ShowBridge protocol follows this pattern:
+Our *original* ShowBridge protocol follows this pattern (this section describes the native ShowBridge protocol, not the new IDN integration):
 	Broadcast Message to 255.255.255.255:8089 with
     Command: 6 bytes = Target IP (169.254.25.104) + Flags (163, 31).
 	
@@ -128,6 +128,10 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 		|	
 		|___sdk (Information about devices,software,documents)
 		|	|___dac(In this Folder we have a Example for the Etherdream DAC that we include in the future)
+New		|	|___IDN-Laser-Tester-master-speed-slider
+New		|	|___IDN-Stream-Driver_discrete-mode_PUBLIC-main
+New		|	|___OpenIDN-Laser-DAC-Framework-main
+New		|	|___idn-toolbox-master
 		|
 		|___src (Our Source Folder)
 			|___ILDA-FILE-FORMAT-FILES (In Here we have our default ILD Files)
@@ -136,8 +140,8 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 
 **Connectivity:**
 
-*   The application has to continuously scan for Showbridge DACs on the selected network interface when turned on with an timer that turn the scan off after 30 seconds
-*   The UI displays a list of discovered DACs and their channels in real-time starting with the first Channel.
+*   The application will make use of the openIDN framework for dac discovery and frame-sending.
+*   The UI displays a list of discovered DACs from openIDN and their channels/names in real-time starting with the first Channel.
 *   The user can select a DAC and channel from the list.
 *   The SDK is initialized on-demand when communication is required (e.g., sending frames, getting show info), preventing crashes on device selection.
 
@@ -153,62 +157,47 @@ next byte 7 is our format byte where we expect 0,1,2,4,5 as valid formats.
 *	The Shortcuts button will Open a list of input options : DMX/Artnet, MIDI And OSC if we click on on of them it starts the recording/mapping mode 
 *	The View button will let us choose of predefined layouts and color theme and render mode (High or Low performance mode to switch between 2d and 3d Rendering preview)
 *	If dragging a dac with 2 channels to a clip or layer we apply that output to booth channels.
+*   Build an initial framework for DAC communication using the IDN protocol, including discovery and basic frame sending capabilities.
+*   The application can now discover DACs using the IDN protocol.
+*   It is able to send basic frames to discovered IDN DACs.
 
-**Next Steps:**	
+** Done **
 
 *	Building the application as executable with our icon src/trueLazer.ico
 *	Start to save application settings into temp storage and acces them on restarting the application.
 	(Loaded Clips,Render-settings,theme-color,slider-value,dac-assignment,last-opened-project.)
 *	Create a default folder path to save projects. like c:user/documents/truLazer/projects or C:User/Programm Files/TruLazer/..
-*	
-*	integrate NDI 5&6 by either grandiose or NDI SDK, Syphon, and Spout  streaming
 
-
-	Changes:
-	
-		*i doo that* "Global intensity" 	(slider dark to light color fade) *i doo that*
-	
-*		 "Speed"  			(select speed source (BPM, manual, midi-clock)
-	
-*		 "Render-preview"	(Icons inside the Preview Upper Right Corner to switch and access settings)
-	
-*	Add:
 *		 "Save project"	Developing the save project system for users to save there project.
 			(In Developement)
-		
-*		 "Clip atributes"	Play Style (Once Repeat)
-							Trigger (Normal Flash Toggle)
-							Transport (Timeline BPM-Sync)
-							Beat Snap (None 8 4 2 1 1/2 1/4 1/8)
-							Audio-Track (For Audio playback with file)
+
+**Next Steps:**
+
+*   Implement sending of real-time messages using `idn-communication.js`.
+
+*   Integrate NDI 5&6 by either grandiose or NDI SDK, Syphon, and Spout  streaming
 	
-*		 "Effects Panel"	Position Effects
-							Translation Effects
-							Color Effects
-							Effect presets
-					
-*		 "Timeline Mode" *Bigger Feature Developement*
+
 	
-*		 "Show Editor view" *Bigger Feature Developement*
+## IDN Integration Details
+(NEW SECTION)
 	
-*		 "Generator Panel"	(NDI-Source, Clock/Countdown/Timer)
+
 	
-*		 "Generator Designer" (Pencil, Shapes, Curves, Lines, Color)(Grid, Background-Image, Snapping)
+*   **`idn-communication.js`:** This new utility module handles the low-level IDN protocol communication, including:
 	
-*		 "DAC Brand Selector" (multiple selection)
+    *   **DAC Discovery:** Sends UDP broadcast scan requests (`IDNCMD_SCAN_REQUEST`) and parses responses (`IDNCMD_SCAN_RESPONSE`) to identify available IDN DACs on the network.
 	
-*		 "HotKeys-Mapping" (with highlite toggle option)
+    *   **Frame Sending:** Constructs and sends IDN-compliant real-time channel messages (`IDNCMD_RT_CNLMSG`) containing ILDA frame data (XYRGB points) to specific DACs and channels.
 	
-*		 "MIDI-Mapping"	(Pre-made & custom)
+    *   **Channel Closing:** Sends `IDNCMD_RT_CNLMSG_CLOSE` to gracefully terminate a channel session.
 	
-*		 "DMX/ArtNet Mapping"
+*   **`dac-communication.js`:** This module now acts as an abstraction layer for DAC communication. It utilizes `idn-communication.js` for IDN-specific tasks.
 	
-*		 "Projector Setup" (Info Rendering Color-Balance Safety-Zones, Test-Image) (For each channel/DAC)
+    *   The `discoverDacs` function in `dac-communication.js` now calls `idn-communication.js`'s `discoverDacs` and formats the results for the application.
 	
-*		 "Audio Settings" (Input and Output)
+    *   The `sendFrame` function similarly calls `idn-communication.js`'s `sendFrame`.
 	
-*		 "General Settings" (Save output state On/Off, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
+    *   The `stopSending` function uses `idn-communication.js`'s `sendCloseChannel` to close IDN channels.
 	
-*		 "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
-	
-*		 "Bug report feature"
+*   **Testing with `idn-toolbox-master`:** The `idn-toolbox-master` application (specifically `idn-toolbox.exe` for Windows) serves as a valuable tool for testing our IDN implementation. It allows us to simulate IDN devices and verify that our application can discover them and send frames correctly. This helps in understanding the IDN protocol interactions in a real-world scenario.

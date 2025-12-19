@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-
+import React, { useState, useEffect, useMemo } from 'react';
+import { applyEffects } from '../utils/effects'; // Import the applyEffects function
 import IldaThumbnail from './IldaThumbnail';
 
 const Clip = ({
@@ -22,23 +22,22 @@ const Clip = ({
   stillFrame
 }) => {
   const [isDragging, setIsDragging] = useState(false);
-  const [thumbnailFrame, setThumbnailFrame] = useState(null); // New state for thumbnail frame
 
   // Determine the display name for the clip
   const displayName = clipContent && clipContent.type === 'generator' && clipContent.generatorDefinition
     ? clipContent.generatorDefinition.name
     : clipName;
 
-  useEffect(() => {
+  const frameForThumbnail = thumbnailRenderMode === 'active' ? liveFrame : stillFrame;
 
-    if (thumbnailRenderMode === 'still') {
-      setThumbnailFrame(stillFrame);
-
-    } else { // 'active' mode
-      setThumbnailFrame(liveFrame);
+  // Apply effects to the frame that will be used for the thumbnail
+  const effectedFrameForThumbnail = useMemo(() => {
+    if (frameForThumbnail && clipContent && clipContent.effects && clipContent.effects.length > 0) {
+      return applyEffects(frameForThumbnail, clipContent.effects);
     }
-  }, [thumbnailRenderMode, liveFrame, stillFrame]);
-
+    return frameForThumbnail;
+  }, [frameForThumbnail, clipContent]);
+  
   const handleDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -122,7 +121,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
     if (effectData) {
       try {
         const parsedData = JSON.parse(effectData);
-        console.log('[Clip.jsx] handleDrop - parsedData:', parsedData); // DEBUG LOG
+        console.log('[Clip.jsx] handleDrop - parsedData:', parsedData); // Existing log
+        console.log('Clip.jsx: parsedData *before* calling onDropDac:', parsedData); // New log
         
         // Check if this is file path data from the file system
         if (parsedData.filePath && parsedData.fileName) {
@@ -134,6 +134,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
           if (onDropEffect) {
             console.log('[Clip.jsx] Calling onDropEffect'); // DEBUG LOG
             onDropEffect(parsedData);
+            onLabelClick(); // Select the clip to show its new settings
             return;
           }
         } else if (parsedData.name) {
@@ -142,7 +143,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onDropGenerator(layerIndex, colIndex, parsedData);
             return;
           }
-        } else if (parsedData.ip && parsedData.channel) { // Check if this is DAC data
+        } else if (parsedData.ip && typeof parsedData.channel === 'number') { // Check if this is DAC data
           if (onDropDac) {
             onDropDac(layerIndex, colIndex, parsedData);
             return;
@@ -188,8 +189,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
       <div className="clip-thumbnail" onClick={onActivateClick}>
         {clipContent && clipContent.parsing ? (
           <div className="clip-loading-spinner"></div>
-        ) : thumbnailFrame ? (
-          <IldaThumbnail frame={thumbnailFrame} />
+        ) : effectedFrameForThumbnail ? (
+          <IldaThumbnail frame={effectedFrameForThumbnail} />
         ) : (
           <p></p>
         )}

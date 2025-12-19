@@ -36,9 +36,9 @@ self.onmessage = (e) => {
         const { id, data } = payload;
         const state = renderers.get(id);
         if (state) {
-            state.renderer.reset();
+            state.renderer.reset(); // Restore original behavior
             state.data = data;
-            // The continuous loop will pick up the new data
+            // The continuous loop will pick up the new data.
         }
     } else if (action === 'clear') {
         const { id } = payload;

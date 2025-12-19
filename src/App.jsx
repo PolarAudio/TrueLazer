@@ -22,7 +22,7 @@ import { generateCircle, generateSquare, generateLine, generateStar, generateTex
 const MasterSpeedSlider = ({ drawSpeed, onSpeedChange }) => (
   <div className="master-speed-slider">
     <label htmlFor="masterSpeedRange">Playback Speed</label>
-    <input type="range" min="50" max="250" value={drawSpeed} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
+    <input type="range" min="30" max="250" value={drawSpeed} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
   </div>
 );
 
@@ -62,6 +62,8 @@ const getInitialState = (initialSettings) => ({
   isWorldOutputActive: false, // Controls whether frames are sent to DACs
   thumbnailRenderMode: initialSettings?.thumbnailRenderMode ?? 'still', // 'still' for static thumbnail, 'active' for live rendering
   theme: initialSettings?.theme ?? 'orange', // Add theme to state
+  projectLoadTimestamp: null, // Add this to track project loads
+  clipClipboard: null, // For copy/paste
 });
 
 function reducer(state, action) {
@@ -113,9 +115,16 @@ function reducer(state, action) {
 
         // Get the existing clip, create a new copy of it, and then modify its effects
         const existingClip = newClipContentsWithEffect[action.payload.layerIndex][action.payload.colIndex] || {};
+        
+        // Create a new effect "instance" with its own params object
+        const newEffectInstance = {
+          ...action.payload.effect,
+          params: { ...action.payload.effect.defaultParams }
+        };
+
         const updatedClip = {
             ...existingClip,
-            effects: [...(existingClip.effects || []), action.payload.effect],
+            effects: [...(existingClip.effects || []), newEffectInstance],
         };
         newClipContentsWithEffect[action.payload.layerIndex][action.payload.colIndex] = updatedClip;
         return { ...state, clipContents: newClipContentsWithEffect };
@@ -206,7 +215,10 @@ function reducer(state, action) {
       return { ...state, isPlaying: action.payload };
     case 'SET_WORLD_OUTPUT_ACTIVE':
       return { ...state, isWorldOutputActive: action.payload };
+    case 'SET_CLIPBOARD':
+      return { ...state, clipClipboard: action.payload };
     case 'SET_CLIP_DAC': {
+      console.log('App.jsx Reducer: SET_CLIP_DAC payload.dac:', action.payload.dac);
       const newClipContentsWithDac = [...state.clipContents];
       // Ensure the layer array exists and create a new copy of it
       if (!newClipContentsWithDac[action.payload.layerIndex]) {
@@ -257,6 +269,7 @@ function reducer(state, action) {
         loadedState.selectedIldaTotalFrames = 0;
         loadedState.selectedGeneratorId = null;
         loadedState.selectedGeneratorParams = {};
+        loadedState.projectLoadTimestamp = Date.now(); // Add timestamp
         return loadedState;
     case 'LOAD_SETTINGS':
         return {
@@ -281,9 +294,11 @@ function reducer(state, action) {
 function App() {
   const ildaParserWorker = useIldaParserWorker();
   const generatorWorker = useGeneratorWorker();
+  const initializedChannels = useRef(new Set());
   const ildaPlayerCurrentFrameIndex = useRef(0);
-  const playCommandSentRef = useRef(false);
   const [liveFrames, setLiveFrames] = useState({});
+  const liveFramesRef = useRef();
+  liveFramesRef.current = liveFrames;
   const lastFrameFetchTimeRef = useRef({});
   const frameIndexesRef = useRef({});
 
@@ -336,42 +351,25 @@ function App() {
           const clip = clipContents[layerIndex][activeColIndex];
           if (clip) {
               let workerId;
-              let currentFrame = null;
-              let stillFrame = null; // New stillFrame variable
+              let stillFrame = null; 
 
-                              if (clip.type === 'ilda' && clip.workerId && clip.totalFrames) {
+              if (clip.type === 'ilda' && clip.workerId && clip.totalFrames) {
+                  workerId = clip.workerId;
+                  stillFrame = clip.stillFrame; 
 
-                                  workerId = clip.workerId;
-
-                                  currentFrame = liveFrames[workerId];
-
-                                                    stillFrame = clip.stillFrame; // Get still frame from clip object
-
-                                                    return {
-
-                                                        type: 'ilda',
-
-                                                        workerId,
-
-                                                        totalFrames: clip.totalFrames,
-
-                                                        effects: clip.effects || [],
-
-                                                        dac: clip.dac || null,
-
-                                                        ildaFormat: clip.ildaFormat || 0,
-
-                                                        currentFrame,
-
-                                                        stillFrame, // Include stillFrame
-                                                        layerIndex,
-
-                                                    };
-
-                                                } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
+                  return {
+                      type: 'ilda',
+                      workerId,
+                      totalFrames: clip.totalFrames,
+                      effects: clip.effects || [],
+                      dac: clip.dac || null,
+                      ildaFormat: clip.ildaFormat || 0,
+                      stillFrame,
+                      layerIndex,
+                  };
+              } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
                   workerId = `generator-${layerIndex}-${activeColIndex}`;
-                  currentFrame = liveFrames[workerId] || clip.frames[0];
-                  stillFrame = clip.frames[0]; // For generators, the first frame is usually the still frame
+                  stillFrame = clip.frames[0];
                   return {
                       type: 'generator',
                       workerId,
@@ -379,14 +377,14 @@ function App() {
                       effects: clip.effects || [],
                       dac: clip.dac || null,
                       ildaFormat: 0,
-                      currentFrame,
-                      stillFrame, // Include stillFrame
+                      stillFrame, 
+                      layerIndex,
                   };
               }
           }
       }
       return null;
-    }).filter(Boolean), [layers, activeClipIndexes, clipContents, liveFrames]); // Removed stillFrames from dependencies
+    }).filter(Boolean), [layers, activeClipIndexes, clipContents]);
 
   const workerIdsToFetch = useMemo(() => {
     const ids = new Set();
@@ -406,6 +404,9 @@ function App() {
 
     const handleMessage = (e) => {
       if (e.data.type === 'get-frame' && e.data.success) {
+        if (e.data.frame && e.data.frame.points && e.data.frame.points.length > 0) {
+            console.log('App.jsx: Raw parsed ILDA frame points (first 5):', e.data.frame.points.slice(0, 5));
+        }
         if (e.data.isStillFrame) {
           const { workerId, frame, layerIndex, colIndex } = e.data;
           // Update stillFrame and set parsing status to false in a single SET_CLIP_CONTENT dispatch
@@ -415,15 +416,18 @@ function App() {
         }
       } else if (e.data.type === 'parse-ilda' && e.data.success) {
         const { workerId, totalFrames, ildaFormat, fileName, filePath, layerIndex, colIndex } = e.data;
-        // Initialize new clip content with parsing: true
+        
+        // Get existing clip to preserve effects
+        const existingClip = state.clipContents[layerIndex][colIndex] || {};
+
         const newClipContent = {
+          ...existingClip,
           type: 'ilda',
           workerId,
           totalFrames,
           ildaFormat,
           fileName,
           filePath,
-          effects: [], // Initialize with no effects
           stillFrame: null, // Initialize stillFrame to null
           parsing: true, // Set parsing status to true
         };
@@ -455,25 +459,19 @@ function App() {
 
       if (currentTime - lastFrameTime > DAC_REFRESH_INTERVAL) {
         if (window.electronAPI && activeClipsData.length > 0 && isWorldOutputActive) {
-          // Send play command once when output becomes active
-          if (!playCommandSentRef.current) {
-            const targetDacIp = selectedDac ? selectedDac.ip : null; // Assuming a single DAC for play command
-            if (targetDacIp) {
-              window.electronAPI.sendPlayCommand(targetDacIp);
-              playCommandSentRef.current = true;
-            }
-          }
-
           activeClipsData.forEach(clip => {
-            if (clip && liveFrames[clip.workerId]) {
-              const targetDac = clip.dac || selectedDac; // Use clip-specific DAC if available, otherwise global selectedDac
+            if (clip && liveFramesRef.current[clip.workerId]) {
+              const targetDac = clip.dac || selectedDac;
               if (targetDac) {
                 const ip = targetDac.ip;
-                const channel = targetDac.channel;
-                const effects = clip.effects || [];
-                const frame = liveFrames[clip.workerId];
+                // Use serviceID from the channel object
+                const channel = targetDac.channel || (targetDac.channels && targetDac.channels.length > 0 ? targetDac.channels[0].serviceID : 0);
+                
+                if (channel === 0) return; // Don't send to channel 0 if it's not a valid service
 
-                // Apply layer and master intensity
+                const effects = clip.effects || [];
+                const frame = liveFramesRef.current[clip.workerId];
+
                 const layerIntensity = state.layerIntensities[clip.layerIndex];
                 const finalIntensity = layerIntensity * state.masterIntensity;
 
@@ -488,8 +486,7 @@ function App() {
                 };
 
                 const modifiedFrame = applyEffects(intensityAdjustedFrame, effects);
-                const ildaFormat = clip.ildaFormat || 0;
-                window.electronAPI.send('send-frame', { ip, channel, frame: modifiedFrame, fps: drawSpeed, ildaFormat });
+                window.electronAPI.sendFrame(ip, channel, modifiedFrame, drawSpeed);
               }
             }
           });
@@ -523,11 +520,7 @@ function App() {
       });
 
       // Handle Generator clips (frames are directly available)
-      activeClipsData.filter(clip => clip.type === 'generator').forEach(clip => {
-        if (clip && clip.currentFrame) {
-          setLiveFrames(prev => ({ ...prev, [clip.workerId]: clip.currentFrame }));
-        }
-      });
+
 
       animationFrameId = requestAnimationFrame(frameFetcherLoop);
     };
@@ -539,7 +532,6 @@ function App() {
       dacRefreshAnimationFrameId = requestAnimationFrame(animate);
     } else {
       cancelAnimationFrame(dacRefreshAnimationFrameId);
-      playCommandSentRef.current = false; // Reset when output is inactive
     }
 
 
@@ -548,7 +540,7 @@ function App() {
       cancelAnimationFrame(animationFrameId);
       cancelAnimationFrame(dacRefreshAnimationFrameId); // Clean up DAC animation frame
     };
-  }, [ildaParserWorker, workerIdsToFetch, drawSpeed, clipContents, isPlaying, activeClipsData, isWorldOutputActive, selectedDac, playCommandSentRef, liveFrames]);
+  }, [ildaParserWorker, workerIdsToFetch, drawSpeed, clipContents, isPlaying, activeClipsData, isWorldOutputActive, selectedDac, state.clipContents]);
 
     // Listen for context menu commands for clips
     useEffect(() => {
@@ -557,54 +549,137 @@ function App() {
                 console.log(`Clip context menu command received: ${command} for ${layerIndex}-${colIndex}`);
                 if (command === 'update-thumbnail') {
                     const clipToUpdate = clipContents[layerIndex][colIndex];
-                    if (clipToUpdate && clipToUpdate.type === 'ilda') {
-                        const workerId = clipToUpdate.workerId;
-                        const currentFrame = frameIndexesRef.current[workerId] || 0;
-                        dispatch({ type: 'UPDATE_THUMBNAIL', payload: { layerIndex, colIndex, frameIndex: currentFrame } });
-                        if (ildaParserWorker) {
-                            ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: currentFrame, isStillFrame: true });
+                    if (clipToUpdate) {
+                        if (clipToUpdate.type === 'ilda' && clipToUpdate.workerId && ildaParserWorker) {
+                            const currentFrame = frameIndexesRef.current[clipToUpdate.workerId] || 0;
+                            console.log(`[App.jsx] Requesting new ILDA thumbnail for ${layerIndex}-${colIndex} at frame ${currentFrame}`);
+                            ildaParserWorker.postMessage({
+                                type: 'get-frame',
+                                workerId: clipToUpdate.workerId,
+                                frameIndex: currentFrame,
+                                isStillFrame: true,
+                                layerIndex,
+                                colIndex,
+                            });
+                        } else if (clipToUpdate.type === 'generator' && clipToUpdate.generatorDefinition && generatorWorker) {
+                            console.log(`[App.jsx] Re-running generator for thumbnail update: ${layerIndex}-${colIndex}`);
+                            regenerateGeneratorClip(layerIndex, colIndex, clipToUpdate.generatorDefinition, clipToUpdate.currentParams);
                         }
+                    }
+                } else if (command === 'clear-clip') {
+                    dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex, colIndex } });
+                } else if (command === 'rename-clip') {
+                    const oldName = clipNames[layerIndex][colIndex];
+                    const newName = prompt("Enter new clip name:", oldName);
+                    if (newName) {
+                        dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: newName } });
+                    }
+                } else if (command === 'copy-clip') {
+                    const clipToCopy = {
+                        content: clipContents[layerIndex][colIndex],
+                        name: clipNames[layerIndex][colIndex],
+                    };
+                    dispatch({ type: 'SET_CLIPBOARD', payload: clipToCopy });
+                    showNotification('Clip copied.');
+                } else if (command === 'cut-clip') {
+                    const clipToCut = {
+                        content: clipContents[layerIndex][colIndex],
+                        name: clipNames[layerIndex][colIndex],
+                    };
+                    dispatch({ type: 'SET_CLIPBOARD', payload: clipToCut });
+                    dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex, colIndex } });
+                    showNotification('Clip cut.');
+                } else if (command === 'paste-clip') {
+                    if (state.clipClipboard) {
+                        const { content, name } = state.clipClipboard;
+                        // To properly "load" the pasted clip, we need to treat it like a new clip.
+                        // For ILDA, invalidate the workerId. For generators, just set the content.
+                        let contentToPaste = { ...content };
+                        if (contentToPaste.type === 'ilda') {
+                            contentToPaste.workerId = null; // This will trigger re-parsing via the project-load useEffect
+                        }
+
+                        dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: contentToPaste }});
+                        dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name }});
+                        showNotification('Clip pasted.');
+                        
+                        // Manually trigger regeneration after paste
+                        // Need a slight delay for state to update before we read it in the regeneration functions
+                        setTimeout(() => {
+                            const newClip = contentToPaste;
+                            if (newClip.type === 'generator' && newClip.generatorDefinition) {
+                                regenerateGeneratorClip(layerIndex, colIndex, newClip.generatorDefinition, newClip.currentParams);
+                            }
+                            // The ILDA re-parsing is handled by a useEffect that watches for clips with no workerId
+                        }, 100);
+
+                    } else {
+                        showNotification('Clipboard is empty.');
                     }
                 } else if (command === 'set-clip-thumbnail-mode-still') {
                     // This command could be handled here if specific clip modes were supported
-                    // For now, it's a global setting.
                 } else if (command === 'set-clip-thumbnail-mode-active') {
                     // This command could be handled here if specific clip modes were supported
                 }
             });
             return () => unsubscribe();
         }
-    }, [clipContents, ildaParserWorker]);
+    }, [clipContents, ildaParserWorker, state.clipClipboard]);
 
-  // Re-parse ILDA files on project load
+  const prevThumbnailFrameIndexesRef = useRef(thumbnailFrameIndexes);
   useEffect(() => {
-    if (!ildaParserWorker) return;
+    // Find which thumbnails have changed and fetch new still frames
+    for (let i = 0; i < layers.length; i++) {
+      for (let j = 0; j < columns.length; j++) {
+        const currentIndex = thumbnailFrameIndexes[i][j];
+        const prevIndex = prevThumbnailFrameIndexesRef.current[i][j];
+
+        if (currentIndex !== prevIndex) {
+          const clip = clipContents[i][j];
+          if (clip && clip.type === 'ilda' && clip.workerId) {
+            console.log(`[App.jsx] Fetching new still frame for ${i}-${j} at index ${currentIndex}`);
+            ildaParserWorker.postMessage({
+              type: 'get-frame',
+              workerId: clip.workerId,
+              frameIndex: currentIndex,
+              isStillFrame: true,
+              layerIndex: i,
+              colIndex: j,
+            });
+          }
+        }
+      }
+    }
+    // Update the ref for the next render
+    prevThumbnailFrameIndexesRef.current = thumbnailFrameIndexes;
+  }, [thumbnailFrameIndexes, clipContents, layers.length, columns.length, ildaParserWorker]);
+
+  // Re-parse ILDA files and re-generate generator frames on project load
+  useEffect(() => {
+    if (!state.projectLoadTimestamp || !ildaParserWorker || !generatorWorker) return;
+
+    console.log("Project loaded, regenerating content...");
 
     clipContents.forEach((layer, layerIndex) => {
       layer.forEach((clip, colIndex) => {
-        if (clip && clip.type === 'ilda' && clip.filePath && !clip.workerId) {
-          console.log(`Reparsing ILDA file for clip ${layerIndex}-${colIndex}: ${clip.filePath}`);
-          
-          const reparse = async () => {
-            try {
-              ildaParserWorker.postMessage({
-                type: 'load-and-parse-ilda',
-                fileName: clip.fileName,
-                filePath: clip.filePath,
-                layerIndex,
-                colIndex,
-              });
-            } catch (error) {
-              console.error(`Failed to re-parse ILDA file: ${clip.filePath}`, error);
-              showNotification(`Failed to load clip: ${clip.fileName}`);
-            }
-          };
-
-          reparse();
+        if (clip) {
+          if (clip.type === 'ilda' && clip.filePath && !clip.workerId) {
+            console.log(`Reparsing ILDA file for clip ${layerIndex}-${colIndex}: ${clip.filePath}`);
+            ildaParserWorker.postMessage({
+              type: 'load-and-parse-ilda',
+              fileName: clip.fileName,
+              filePath: clip.filePath,
+              layerIndex,
+              colIndex,
+            });
+          } else if (clip.type === 'generator' && clip.generatorDefinition) {
+            console.log(`Regenerating generator clip ${layerIndex}-${colIndex} on project load`);
+            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams);
+          }
         }
       });
     });
-  }, [clipContents, ildaParserWorker]);
+  }, [state.projectLoadTimestamp, ildaParserWorker, generatorWorker]);
 
   // Listen for project management commands
   useEffect(() => {
@@ -629,6 +704,34 @@ function App() {
       if (unlistenLoad) unlistenLoad();
     };
   }, [state]);
+
+  // Listen for menu actions for theme and render settings
+  useEffect(() => {
+    let unlistenMenu, unlistenRenderSettings;
+
+    if (window.electronAPI) {
+      // Listener for general menu actions like theme changes
+      unlistenMenu = window.electronAPI.onMenuAction((action) => {
+        console.log("Menu action received:", action);
+        if (action.startsWith('set-theme-')) {
+          const themeColor = action.split('set-theme-')[1];
+          dispatch({ type: 'SET_THEME', payload: themeColor });
+        }
+      });
+
+      // Listener for specific render settings commands
+      unlistenRenderSettings = window.electronAPI.onRenderSettingsCommand((command) => {
+        console.log("Render settings command received:", command);
+        dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: command.setting, value: command.value } });
+      });
+    }
+
+    // Cleanup
+    return () => {
+      if (unlistenMenu) unlistenMenu();
+      if (unlistenRenderSettings) unlistenRenderSettings();
+    };
+  }, []); // Empty dependency array so it only runs once on mount
 
   // Handles requests from ildaParserWorker to read files from the main process
   useEffect(() => {
@@ -671,8 +774,12 @@ function App() {
   }, [selectedLayerIndex, selectedColIndex, clipContents]);
 
   const handleEffectParameterChange = useCallback((layerIndex, colIndex, effectIndex, paramName, newValue) => {
+    console.log('[App.jsx] handleEffectParameterChange:', { layerIndex, colIndex, effectIndex, paramName, newValue });
     dispatch({ type: 'UPDATE_EFFECT_PARAMETER', payload: { layerIndex, colIndex, effectIndex, paramName, newValue } });
   }, []);
+
+
+  // Re-run generator when parameters of the selected clip change - REMOVED TO PREVENT LOOP
 
   useEffect(() => {
     if (!generatorWorker) return;
@@ -680,11 +787,15 @@ function App() {
     const handleMessage = (e) => {
         if (e.data.success) {
             const { layerIndex, colIndex, frames, generatorDefinition, currentParams } = e.data;
+            
+            // Get the existing clip to preserve its effects and other properties
+            const existingClip = state.clipContents[layerIndex][colIndex] || {};
+
             const newClipContent = {
+                ...existingClip, // Preserve existing properties like effects
                 type: 'generator',
                 generatorDefinition,
                 frames,
-                effects: [],
                 currentParams,
             };
             dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
@@ -702,22 +813,78 @@ function App() {
     return () => {
         generatorWorker.removeEventListener('message', handleMessage);
     };
-  }, [generatorWorker]);
+  }, [generatorWorker, state.clipContents]); // Add state.clipContents to dependency array to get the latest version
 
   const handleDropGenerator = (layerIndex, colIndex, generatorDefinition) => {
     console.log('[App.jsx] handleDropGenerator - Received generatorDefinition:', generatorDefinition); // DEBUG LOG
     if (generatorWorker) {
-        console.log('[App.jsx] handleDropGenerator - Posting message to generatorWorker'); // DEBUG LOG
-        generatorWorker.postMessage({
-            type: 'generate',
-            layerIndex,
-            colIndex,
-            generator: generatorDefinition,
-        });
+        console.log('[App.jsx] handleDropGenerator - Using new regenerateGeneratorClip function'); // DEBUG LOG
+        regenerateGeneratorClip(layerIndex, colIndex, generatorDefinition, generatorDefinition.defaultParams);
+    }
+  };
+
+  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params) => {
+    // Create a complete params object to ensure stability
+    const completeParams = { ...generatorDefinition.defaultParams, ...params };
+
+    let fontBuffer = null;
+    if (generatorDefinition.id === 'text') {
+      const defaultFontUrl = 'C:\\Windows\\Fonts\\arial.ttf';
+      let fontUrl = completeParams.fontUrl;
+
+      // Migration for old projects with dead URLs
+      const deadUrls = [
+        'https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto-Regular.ttf',
+        'https://raw.githubusercontent.com/googlefonts/roboto-2/main/src/hinted/Roboto-Regular.ttf'
+      ];
+      if (deadUrls.includes(fontUrl)) {
+        fontUrl = defaultFontUrl;
+      }
+
+      try {
+        if (fontUrl.startsWith('http')) {
+          if (window.electronAPI && window.electronAPI.fetchUrlAsArrayBuffer) {
+            fontBuffer = await window.electronAPI.fetchUrlAsArrayBuffer(fontUrl);
+          } else {
+            throw new Error('URL fetching API is not available.');
+          }
+        } else {
+          if (window.electronAPI && window.electronAPI.readFileForWorker) {
+            fontBuffer = await window.electronAPI.readFileForWorker(fontUrl);
+          } else {
+            throw new Error('File reading API is not available.');
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to load font for text generator at ${layerIndex}-${colIndex}:`, error);
+        showNotification(`Font error: ${error.message}`);
+        return; 
+      }
+    }
+
+    const message = {
+      type: 'generate',
+      layerIndex,
+      colIndex,
+      generator: generatorDefinition,
+      params: completeParams, // Pass the complete params
+      fontBuffer,
+    };
+
+    if (fontBuffer) {
+      generatorWorker.postMessage(message, [fontBuffer]);
+    } else {
+      generatorWorker.postMessage(message);
     }
   };
 
   const handleActivateClick = (layerIndex, colIndex) => {
+    const clip = clipContents[layerIndex][colIndex];
+    if (clip && clip.type === 'generator' && clip.frames) {
+      const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
+      // Ensure the frame is in liveFrames so WorldPreview can render it.
+      setLiveFrames(prev => ({ ...prev, [generatorWorkerId]: clip.frames[0] }));
+    }
     dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } });
   };
 
@@ -726,20 +893,22 @@ function App() {
   };
 
   const handleDropDac = (layerIndex, colIndex, dacData) => {
+    console.trace('App.jsx: handleDropDac received dacData:', dacData);
       dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
   };
 
   const handleClipPreview = (layerIndex, colIndex) => {
       dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
       const clip = clipContents[layerIndex][colIndex];
-      if (clip) {
-          if (clip.type === 'ilda') {
-              dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames } });
-          } else if (clip.type === 'generator') {
-              const generatorWorkerId = `generator-${layerIndex}-${colIndex}`; // Generate a workerId
-              dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
-              console.log(`[App.jsx] handleClipPreview - Dispatched SET_SELECTED_ILDA_DATA for generator. workerId: ${generatorWorkerId}`); // DEBUG LOG
-          }
+      if (clip && clip.type === 'ilda') {
+          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames, generatorId: null, generatorParams: {} } });
+      } else if (clip && clip.type === 'generator') {
+          const generatorWorkerId = `generator-${layerIndex}-${colIndex}`; // Generate a workerId
+          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
+          console.log(`[App.jsx] handleClipPreview - Dispatched SET_SELECTED_ILDA_DATA for generator. workerId: ${generatorWorkerId}`); // DEBUG LOG
+      } else {
+        // Clip is empty, clear the selection data
+        dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: null, generatorParams: {} } });
       }
   };
 
@@ -778,15 +947,26 @@ function App() {
 
   const handleGeneratorParameterChange = (paramName, newValue) => {
     if (selectedLayerIndex !== null && selectedColIndex !== null) {
-        dispatch({
-            type: 'UPDATE_GENERATOR_PARAM',
-            payload: {
-                layerIndex: selectedLayerIndex,
-                colIndex: selectedColIndex,
-                paramName,
-                newValue,
-            },
-        });
+      // Get the current clip and its definition
+      const clip = clipContents[selectedLayerIndex][selectedColIndex];
+      if (!clip || !clip.generatorDefinition) return;
+
+      // Create the next version of the parameters object
+      const nextParams = { ...clip.currentParams, [paramName]: newValue };
+
+      // Dispatch the state update
+      dispatch({
+          type: 'UPDATE_GENERATOR_PARAM',
+          payload: {
+              layerIndex: selectedLayerIndex,
+              colIndex: selectedColIndex,
+              paramName,
+              newValue,
+          },
+      });
+
+      // Immediately trigger regeneration with the new parameters
+      regenerateGeneratorClip(selectedLayerIndex, selectedColIndex, clip.generatorDefinition, nextParams);
     }
   };
   
@@ -856,14 +1036,17 @@ function App() {
                 }
                 return false;
               }) || null;
+
+              const liveFrameForLayer = activeClipDataForLayer ? liveFrames[activeClipDataForLayer.workerId] : null;
             
               return (
                 <LayerControls
                   key={layerIndex}
                   layerName={layerName}
-                  layerIndex={layerIndex}
+                  index={layerIndex}
                   layerEffects={layerEffects[layerIndex]}
                   activeClipData={activeClipDataForLayer}
+                  liveFrame={liveFrameForLayer}
                   thumbnailRenderMode={thumbnailRenderMode} // Add this prop
                   intensity={state.layerIntensities[layerIndex]}
                   onIntensityChange={(value) => dispatch({ type: 'SET_LAYER_INTENSITY', payload: { layerIndex, intensity: value } })}
@@ -918,7 +1101,10 @@ function App() {
                         onUnsupportedFile={showNotification}
                         onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)}
                         onDropGenerator={handleDropGenerator}
-                        onDropDac={(dacData) => handleDropDac(layerIndex, colIndex, dacData)}
+                        onDropDac={(passedLayerIndex, passedColIndex, dacDataFromClip) => {
+                            console.log('App.jsx: Lambda dacData from Clip:', dacDataFromClip);
+                            handleDropDac(passedLayerIndex, passedColIndex, dacDataFromClip);
+                        }}
                         onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
                         isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                         ildaParserWorker={ildaParserWorker}
@@ -943,6 +1129,7 @@ function App() {
             </div>
 			<IldaPlayer
               frame={selectedClipFrame}
+              effects={selectedClipEffects}
               showBeamEffect={showBeamEffect}
               beamAlpha={beamAlpha}
               fadeAlpha={fadeAlpha}
@@ -977,10 +1164,12 @@ function App() {
             <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />
             <GeneratorPanel />
             <EffectPanel />
-            <DacPanel onDacSelected={handleDacSelected} />
+            <DacPanel dacs={dacs} onDacSelected={handleDacSelected} onDacsDiscovered={(dacs) => dispatch({ type: 'SET_DACS', payload: dacs })} />
 			<SettingsPanel 
               effects={selectedClipEffects}
-              onParameterChange={(effectIndex, paramName, value) => handleEffectParameterChange(selectedLayerIndex, selectedColIndex, effectIndex, paramName, value)}
+              onParameterChange={handleEffectParameterChange}
+              selectedLayerIndex={selectedLayerIndex}
+              selectedColIndex={selectedColIndex}
               selectedGeneratorId={selectedGeneratorId}
               selectedGeneratorParams={selectedGeneratorParams}
               onGeneratorParameterChange={handleGeneratorParameterChange}

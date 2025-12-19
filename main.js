@@ -1,9 +1,15 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const url = require('url'); // Import url module
-const Store = require('electron-store').default; // Import electron-store
-const { discoverDacs, sendFrame, getNetworkInterfaces, stopDiscovery, sendPlayCommand, stopSending } = require('./src/utils/dac-communication');
+import { app, BrowserWindow, Menu, ipcMain, dialog } from 'electron';
+import url, { fileURLToPath } from 'url';
+import path, { dirname } from 'path';
+import fs from 'fs';
+import Store from 'electron-store'; // No .default needed for ESM
+import https from 'https';
+import * as dacCommunication from './main/dac-communication.cjs';
+const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices } = dacCommunication;
+
+// ES module equivalent of __dirname and __filename
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -249,24 +255,8 @@ function buildApplicationMenu(mode) {
               ]
             },
             { type: 'separator' },
-            {
-              label: 'Preview Scan Rate',
-              submenu: [
-                { label: 'Fast', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1 }); } },
-                { label: 'Madium', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.1 }); } },
-                { label: 'Slow', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'previewScanRate', value: 1.3 }); } },
-              ]
-            },
-            {
-              label: 'Fade Alpha',
-              submenu: [
-                { label: '0.0', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.0 }); } },
-                { label: '0.1', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.1 }); } },
-                { label: '0.2', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.2 }); } },
-                { label: '0.5', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 0.5 }); } },
-                { label: '1.0', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'fadeAlpha', value: 1.0 }); } },
-              ]
-            },
+
+
             {
               label: 'Beam Alpha',
               submenu: [
@@ -292,7 +282,7 @@ function createWindow() {
     width: 1920,
     height: 1080,
     webPreferences: {
-      preload: path.join(__dirname, 'src/preload.js'),
+      preload: path.join(__dirname, 'src', 'preload.js'),
       nodeIntegration: true,
       contextIsolation: true,
       webSecurity: false, // Temporarily disable webSecurity to diagnose local resource loading issue
@@ -339,26 +329,20 @@ function createWindow() {
 
   // ... existing ipcMain handlers ...
 
-  ipcMain.on('discover-dacs', (event, networkInterface) => {
-    discoverDacs((dacs) => {
-      if(mainWindow) mainWindow.webContents.send('dacs-discovered', dacs);
-    }, networkInterface);
+  ipcMain.handle('discover-dacs', async (event, timeout, networkInterfaceIp) => {
+    return await discoverDacs(timeout, networkInterfaceIp);
   });
 
-  ipcMain.handle('get-network-interfaces', () => {
+  ipcMain.handle('get-dac-services', async (event, ip, localIp) => {
+    return await getDacServices(ip, localIp);
+  });
+
+  ipcMain.handle('send-frame', async (event, ip, channel, frame, fps) => {
+    sendFrame(ip, channel, frame, fps);
+  });
+
+  ipcMain.handle('get-network-interfaces', async () => {
     return getNetworkInterfaces();
-  });
-
-  ipcMain.on('stop-dac-discovery', () => {
-    stopDiscovery();
-  });
-
-  ipcMain.on('send-frame', (event, { ip, channel, frame, fps, ildaFormat }) => {
-    sendFrame(ip, channel, frame, fps, ildaFormat);
-  });
-
-  ipcMain.on('send-play-command', (event, ip) => {
-    sendPlayCommand(ip);
   });
 
   ipcMain.on('show-layer-context-menu', (event, index) => {
@@ -533,6 +517,61 @@ function createWindow() {
       throw error;
     }
   });
+
+  ipcMain.handle('show-font-file-dialog', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      defaultPath: 'C:\\Windows\\Fonts',
+      filters: [
+        { name: 'Font Files', extensions: ['ttf', 'otf'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    });
+    if (canceled || filePaths.length === 0) {
+      return null;
+    }
+    return filePaths[0];
+  });
+
+  ipcMain.handle('fetch-url-as-arraybuffer', async (event, url) => {
+    try {
+      const buffer = await new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+          // Follow redirects
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            https.get(res.headers.location, (redirectRes) => {
+              if (redirectRes.statusCode < 200 || redirectRes.statusCode >= 300) {
+                return reject(new Error(`Failed to fetch URL: Status Code ${redirectRes.statusCode}`));
+              }
+              const chunks = [];
+              redirectRes.on('data', chunk => chunks.push(chunk));
+              redirectRes.on('end', () => {
+                const nodeBuffer = Buffer.concat(chunks);
+                const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
+                resolve(arrayBuffer);
+              });
+            }).on('error', (err) => reject(err));
+          } else if (res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(`Failed to fetch URL: Status Code ${res.statusCode}`));
+          } else {
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => {
+              const nodeBuffer = Buffer.concat(chunks);
+              const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
+              resolve(arrayBuffer);
+            });
+          }
+        }).on('error', (err) => {
+          reject(err);
+        });
+      });
+      return buffer;
+    } catch (error) {
+      console.error(`Failed to fetch URL ${url}:`, error);
+      throw error;
+    }
+  });
 }
 
 app.whenReady().then(() => {
@@ -547,7 +586,6 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    stopSending(); // Close the sending socket
     app.quit();
   }
 });

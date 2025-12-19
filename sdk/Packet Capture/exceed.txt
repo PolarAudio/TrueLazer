@@ -1,7 +1,0 @@
-No.     Time               Source                Destination           Protocol Length Info
-  88976 11:19:53,323819    169.254.25.69         169.254.25.104        ICMP     70     Time-to-live exceeded (Fragment reassembly time exceeded)
-
-Frame 88976: 70 bytes on wire (560 bits), 70 bytes captured (560 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
-Ethernet II, Src: 02:00:00:20:00:25 (02:00:00:20:00:25), Dst: TP-Link_09:48:5c (5c:62:8b:09:48:5c)
-Internet Protocol Version 4, Src: 169.254.25.69, Dst: 169.254.25.104
-Internet Control Message Protocol

@@ -1,48 +1,45 @@
 import React from 'react';
 import EffectEditor from './EffectEditor';
-import GeneratorSettingsPanel from './GeneratorSettingsPanel'; // Import the new component
+import GeneratorSettingsPanel from './GeneratorSettingsPanel';
 
 const SettingsPanel = ({
   effects,
   onParameterChange,
-  selectedLayerIndex, // Still needed for effect parameter changes
-  selectedColIndex,   // Still needed for effect parameter changes
+  selectedLayerIndex,
+  selectedColIndex,
   selectedGeneratorId,
   selectedGeneratorParams,
   onGeneratorParameterChange,
 }) => {
-  if (selectedGeneratorId) {
-    return (
-      <div className="settings-panel">
-        <h3>Settings</h3>
+  const hasEffects = effects && effects.length > 0;
+  const hasGenerator = !!selectedGeneratorId;
+
+  return (
+    <div className="settings-panel">
+      <h3>Settings</h3>
+      
+      {hasGenerator && (
         <GeneratorSettingsPanel
           selectedGeneratorId={selectedGeneratorId}
           selectedGeneratorParams={selectedGeneratorParams}
           onParameterChange={onGeneratorParameterChange}
         />
-      </div>
-    );
-  }
+      )}
 
-  if (!effects || effects.length === 0) {
-    return (
-      <div className="settings-panel">
-        <h3>Settings</h3>
-        <p>No settings to display for the selected clip.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="settings-panel">
-      <h3>Settings</h3>
-      {effects.map((effect, effectIndex) => (
+      {hasEffects && effects.map((effect, effectIndex) => (
         <EffectEditor
-          key={effectIndex}
+          key={effect.id + effectIndex} // More robust key
           effect={effect}
-          onParamChange={(effectId, paramName, value) => onParameterChange(selectedLayerIndex, selectedColIndex, effectIndex, paramName, value)}
+          // Correctly pass parameters to the handler from App.jsx
+          onParamChange={(paramId, paramValue) => 
+            onParameterChange(selectedLayerIndex, selectedColIndex, effectIndex, paramId, paramValue)
+          }
         />
       ))}
+
+      {!hasGenerator && !hasEffects && (
+        <p>No settings to display for the selected clip.</p>
+      )}
     </div>
   );
 };
