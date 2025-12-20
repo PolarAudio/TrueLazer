@@ -43,7 +43,10 @@ const getInitialState = (initialSettings) => ({
   thumbnailFrameIndexes: Array(5).fill(null).map(() => Array(8).fill(0)),
   layerEffects: Array(5).fill([]),
   layerIntensities: Array(5).fill(1), // Add this
+  layerBlackouts: Array(5).fill(false), // Add layer blackouts
+  layerSolos: Array(5).fill(false), // Add layer solos
   masterIntensity: 1, // Add this
+  globalBlackout: false, // Add global blackout
   selectedLayerIndex: null,
   selectedColIndex: null,
   notification: { message: '', visible: false },
@@ -173,8 +176,25 @@ function reducer(state, action) {
         newLayerIntensities[action.payload.layerIndex] = action.payload.intensity;
         return { ...state, layerIntensities: newLayerIntensities };
     }
+    case 'TOGGLE_LAYER_BLACKOUT': {
+        const newLayerBlackouts = [...state.layerBlackouts];
+        newLayerBlackouts[action.payload.layerIndex] = !newLayerBlackouts[action.payload.layerIndex];
+        return { ...state, layerBlackouts: newLayerBlackouts };
+    }
+    case 'TOGGLE_LAYER_SOLO': {
+        const newLayerSolos = [...state.layerSolos];
+        const wasSolo = newLayerSolos[action.payload.layerIndex];
+        newLayerSolos.fill(false); // Exclusive solo: clear others
+        if (!wasSolo) {
+            newLayerSolos[action.payload.layerIndex] = true;
+        }
+        return { ...state, layerSolos: newLayerSolos };
+    }
     case 'SET_MASTER_INTENSITY': {
         return { ...state, masterIntensity: action.payload };
+    }
+    case 'TOGGLE_GLOBAL_BLACKOUT': {
+        return { ...state, globalBlackout: !state.globalBlackout };
     }
     case 'SET_RENDER_SETTING':
         return { ...state, [action.payload.setting]: action.payload.value };
@@ -380,7 +400,10 @@ function App() {
     thumbnailFrameIndexes,
     layerEffects,
     layerIntensities,
+    layerBlackouts, // Add this
+    layerSolos, // Add this
     masterIntensity,
+    globalBlackout, // Add this
     selectedLayerIndex,
     selectedColIndex,
     notification,
@@ -403,6 +426,21 @@ function App() {
     thumbnailRenderMode, // Add this
     theme,
   } = state;
+
+  // Refs for real-time access in animation loop
+  const layerIntensitiesRef = useRef(layerIntensities);
+  const masterIntensityRef = useRef(masterIntensity);
+  const layerBlackoutsRef = useRef(layerBlackouts);
+  const layerSolosRef = useRef(layerSolos);
+  const globalBlackoutRef = useRef(globalBlackout);
+
+  useEffect(() => {
+    layerIntensitiesRef.current = layerIntensities;
+    masterIntensityRef.current = masterIntensity;
+    layerBlackoutsRef.current = layerBlackouts;
+    layerSolosRef.current = layerSolos;
+    globalBlackoutRef.current = globalBlackout;
+  }, [layerIntensities, masterIntensity, layerBlackouts, layerSolos, globalBlackout]);
 
   const handlePlaybackFpsChange = useCallback((value) => {
     dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'playbackFps', value } });
@@ -544,8 +582,33 @@ function App() {
               const effects = clip.effects || [];
               const frame = liveFramesRef.current[clip.workerId];
 
-              const layerIntensity = state.layerIntensities[clip.layerIndex];
-              const finalIntensity = layerIntensity * state.masterIntensity;
+              // Calculate Effective Intensity using Refs
+              const layerIntensity = layerIntensitiesRef.current[clip.layerIndex];
+              const isGlobalBlackout = globalBlackoutRef.current;
+              const isLayerBlackout = layerBlackoutsRef.current[clip.layerIndex];
+              const isLayerSolo = layerSolosRef.current[clip.layerIndex];
+              const isAnySolo = layerSolosRef.current.some(s => s);
+
+              let effectiveIntensity = layerIntensity;
+
+              if (isGlobalBlackout) {
+                  effectiveIntensity = 0;
+              } else if (isAnySolo) {
+                  if (!isLayerSolo) {
+                      effectiveIntensity = 0;
+                  } else {
+                    // If self is solo, but self is blackout? Blackout takes precedence usually
+                    if (isLayerBlackout) {
+                        effectiveIntensity = 0;
+                    }
+                  }
+              } else {
+                  if (isLayerBlackout) {
+                      effectiveIntensity = 0;
+                  }
+              }
+
+              const finalIntensity = effectiveIntensity * masterIntensityRef.current;
 
               const intensityAdjustedFrame = {
                 ...frame,
@@ -926,7 +989,7 @@ function App() {
 
             // **NEW**: Also update liveFrames for this generated clip's workerId
             const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
-            setLiveFrames(prev => ({ ...prev, [generatorWorkerId]: frames[0] })); // Assuming frames[0] is the primary frame
+            liveFramesRef.current[generatorWorkerId] = frames[0]; // Assuming frames[0] is the primary frame
         } else {
             showNotification(`Error generating frames: ${e.data.error}`);
         }
@@ -1171,6 +1234,22 @@ function App() {
         });
         return frames;
       }, [activeClipsData, frameTick]);
+
+  const effectiveLayerIntensities = useMemo(() => {
+      const isAnySolo = layerSolos.some(s => s);
+      return layerIntensities.map((intensity, index) => {
+          if (globalBlackout) return 0;
+          if (isAnySolo) {
+              if (!layerSolos[index]) return 0;
+              // If self is solo, but self is blackout? Blackout takes precedence usually
+              if (layerBlackouts[index]) return 0;
+          } else {
+              if (layerBlackouts[index]) return 0;
+          }
+          return intensity;
+      });
+  }, [layerIntensities, layerBlackouts, layerSolos, globalBlackout]);
+
   return (
     <div className="app">
       <ErrorBoundary>
@@ -1181,6 +1260,8 @@ function App() {
                 masterIntensity={state.masterIntensity} 
                 onMasterIntensityChange={(value) => dispatch({ type: 'SET_MASTER_INTENSITY', payload: value })} 
                 onClearAllActive={handleClearAllActive}
+                isGlobalBlackout={globalBlackout}
+                onToggleGlobalBlackout={() => dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' })}
               />
               <LaserOnOffButton
                 isWorldOutputActive={isWorldOutputActive}
@@ -1220,6 +1301,10 @@ function App() {
                   onIntensityChange={(value) => dispatch({ type: 'SET_LAYER_INTENSITY', payload: { layerIndex, intensity: value } })}
                   onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
                   onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
+                  isBlackout={layerBlackouts[layerIndex]}
+                  isSolo={layerSolos[layerIndex]}
+                  onToggleBlackout={() => dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex } })}
+                  onToggleSolo={() => dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex } })}
                 />
               );
             })}          </div>
@@ -1318,7 +1403,7 @@ function App() {
               fadeAlpha={fadeAlpha}
               previewScanRate={previewScanRate}
               beamRenderMode={beamRenderMode}
-              layerIntensities={layerIntensities}
+              layerIntensities={effectiveLayerIntensities}
               masterIntensity={masterIntensity}
             />
             

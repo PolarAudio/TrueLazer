@@ -208,8 +208,12 @@ export class WebGLRenderer {
         if (frame) {
             const layerIntensity = layerIntensities[clip.layerIndex] !== undefined ? layerIntensities[clip.layerIndex] : 1;
             const finalIntensity = layerIntensity * masterIntensity;
-            // The draw function now expects the full frame object and the effects array
-            this.draw(frame, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity);
+            
+            // Skip rendering if intensity is effectively zero
+            if (finalIntensity > 0.001) {
+                // The draw function now expects the full frame object and the effects array
+                this.draw(frame, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity);
+            }
         }
       }
     });

@@ -21,12 +21,20 @@ const AudioDeviceSelector = ({ devices, selectedId, onChange }) => (
 const CompositionControls = ({ 
     masterIntensity, 
     onMasterIntensityChange, 
-    onClearAllActive
+    onClearAllActive,
+    isGlobalBlackout,
+    onToggleGlobalBlackout
 }) => (
   <div className="composition-controls">
 	<span className="layer-control-button">Comp</span>
     <span className="layer-control-button" onClick={onClearAllActive} style={{ cursor: 'pointer' }}>X</span>
-    <span className="layer-control-button">B</span>
+    <span 
+        className="layer-control-button" 
+        onClick={onToggleGlobalBlackout} 
+        style={{ cursor: 'pointer', backgroundColor: isGlobalBlackout ? 'red' : '' }}
+    >
+        B
+    </span>
     <MasterIntensitySlider masterIntensity={masterIntensity} onMasterIntensityChange={onMasterIntensityChange} />
   </div>
 );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame }) => {
+const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
 
   // Update internal state when layerEffects prop changes
@@ -44,8 +44,20 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
       <div className="grid-layer">
         <span className="layer-control-button full-height" onClick={() => onDeactivateLayerClips(index)}>X</span>
         <div className="layer-control-group">
-          <span className="layer-control-button half-height">B</span>
-          <span className="layer-control-button half-height">S</span>
+          <span 
+            className="layer-control-button half-height" 
+            onClick={onToggleBlackout}
+            style={{ backgroundColor: isBlackout ? 'red' : '' }}
+          >
+            B
+          </span>
+          <span 
+            className="layer-control-button half-height" 
+            onClick={onToggleSolo}
+            style={{ backgroundColor: isSolo ? 'var(--theme-color)' : '', color: isSolo ? 'black' : '' }}
+          >
+            S
+          </span>
         </div>
 		<select className="layer-blend-dropdown">
           <option>Normal</option>
