@@ -13,23 +13,32 @@ import WorldPreview from './components/WorldPreview';
 import BPMControls from './components/BPMControls';
 import SettingsPanel from './components/SettingsPanel';
 import GeneratorSettingsPanel from './components/GeneratorSettingsPanel';
+import ShortcutsWindow from './components/ShortcutsWindow';
+import RenameModal from './components/RenameModal';
+import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
 import { useAudioOutput } from './hooks/useAudioOutput'; // Add this
+import { MidiProvider, useMidi } from './contexts/MidiContext'; // Add this
+import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import { applyEffects } from './utils/effects';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText } from './utils/generators'; // Import generator functions
 
 const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => (
   <div className="master-speed-slider">
     <label htmlFor="masterSpeedRange">Playback Speed ({playbackFps} FPS)</label>
-    <input type="range" min="1" max="120" value={playbackFps} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
+    <Mappable id="master_speed">
+        <input type="range" min="1" max="120" value={playbackFps} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
+    </Mappable>
   </div>
 ));
 
 const LaserOnOffButton = React.memo(({ isWorldOutputActive, onToggleWorldOutput }) => (
   <div className="container">
-    <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
+    <Mappable id="laser_output">
+        <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
+    </Mappable>
   </div>
 ));
 
@@ -74,8 +83,18 @@ function reducer(state, action) {
   switch (action.type) {
     case 'SET_COLUMNS':
       return { ...state, columns: action.payload };
+    case 'SET_COLUMN_NAME': {
+        const newColumns = [...state.columns];
+        newColumns[action.payload.index] = action.payload.name;
+        return { ...state, columns: newColumns };
+    }
     case 'SET_LAYERS':
       return { ...state, layers: action.payload };
+    case 'SET_LAYER_NAME': {
+        const newLayers = [...state.layers];
+        newLayers[action.payload.index] = action.payload.name;
+        return { ...state, layers: newLayers };
+    }
     case 'SET_CLIP_CONTENT': {
       const newClipContents = [...state.clipContents];
       // Ensure the layer array exists
@@ -312,6 +331,14 @@ function reducer(state, action) {
 
     case 'SET_THUMBNAIL_RENDER_MODE':
       return { ...state, thumbnailRenderMode: action.payload };
+    case 'SET_CLIP_TRIGGER_STYLE': {
+        const { layerIndex, colIndex, style } = action.payload;
+        const newClipContents = [...state.clipContents];
+        newClipContents[layerIndex] = [...newClipContents[layerIndex]];
+        const existingClip = newClipContents[layerIndex][colIndex] || {};
+        newClipContents[layerIndex][colIndex] = { ...existingClip, triggerStyle: style };
+        return { ...state, clipContents: newClipContents };
+    }
     case 'SET_THEME':
         return { ...state, theme: action.payload };
     case 'UPDATE_THUMBNAIL': {
@@ -363,6 +390,33 @@ function reducer(state, action) {
   }
 }
 
+const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerSolos }) => {
+  const { sendFeedback } = useMidi();
+  
+  useEffect(() => {
+    sendFeedback('transport_play', isPlaying);
+    sendFeedback('transport_stop', !isPlaying);
+  }, [isPlaying, sendFeedback]);
+
+  useEffect(() => {
+    sendFeedback('comp_blackout', globalBlackout);
+  }, [globalBlackout, sendFeedback]);
+
+  useEffect(() => {
+    layerBlackouts.forEach((active, index) => {
+      sendFeedback(`layer_${index}_blackout`, active);
+    });
+  }, [layerBlackouts, sendFeedback]);
+
+  useEffect(() => {
+    layerSolos.forEach((active, index) => {
+      sendFeedback(`layer_${index}_solo`, active);
+    });
+  }, [layerSolos, sendFeedback]);
+
+  return null;
+};
+
 function App() {
   const ildaParserWorker = useIldaParserWorker();
   const generatorWorker = useGeneratorWorker();
@@ -390,6 +444,10 @@ function App() {
 
   const [initialSettings, setInitialSettings] = useState(null);
   const [initialSettingsLoaded, setInitialSettingsLoaded] = useState(false);
+  const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
+  const [enabledShortcuts, setEnabledShortcuts] = useState({ midi: false, artnet: false, osc: false, keyboard: false });
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => {} });
 
   const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
   const {
@@ -730,17 +788,18 @@ function App() {
     };
   }, [ildaParserWorker, workerIdsToFetch, playbackFps, clipContents, isPlaying, activeClipsData, isWorldOutputActive, selectedDac, state.clipContents, selectedIldaWorkerId, selectedIldaTotalFrames, getAudioInfo]);
 
-    // Listen for context menu commands for clips
+    // Listen for context menu commands
     useEffect(() => {
-        if (window.electronAPI && window.electronAPI.onClipContextMenuCommand) {
-            const unsubscribe = window.electronAPI.onClipContextMenuCommand((command, layerIndex, colIndex) => {
+        let unsubClip, unsubLayer, unsubCtx;
+
+        if (window.electronAPI) {
+            unsubClip = window.electronAPI.onClipContextMenuCommand((command, layerIndex, colIndex) => {
                 console.log(`Clip context menu command received: ${command} for ${layerIndex}-${colIndex}`);
                 if (command === 'update-thumbnail') {
                     const clipToUpdate = clipContents[layerIndex][colIndex];
                     if (clipToUpdate) {
                         if (clipToUpdate.type === 'ilda' && clipToUpdate.workerId && ildaParserWorker) {
                             const currentFrame = frameIndexesRef.current[clipToUpdate.workerId] || 0;
-                            console.log(`[App.jsx] Requesting new ILDA thumbnail for ${layerIndex}-${colIndex} at frame ${currentFrame}`);
                             ildaParserWorker.postMessage({
                                 type: 'get-frame',
                                 workerId: clipToUpdate.workerId,
@@ -750,7 +809,6 @@ function App() {
                                 colIndex,
                             });
                         } else if (clipToUpdate.type === 'generator' && clipToUpdate.generatorDefinition && generatorWorker) {
-                            console.log(`[App.jsx] Re-running generator for thumbnail update: ${layerIndex}-${colIndex}`);
                             regenerateGeneratorClip(layerIndex, colIndex, clipToUpdate.generatorDefinition, clipToUpdate.currentParams);
                         }
                     }
@@ -758,10 +816,12 @@ function App() {
                     dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex, colIndex } });
                 } else if (command === 'rename-clip') {
                     const oldName = clipNames[layerIndex][colIndex];
-                    const newName = prompt("Enter new clip name:", oldName);
-                    if (newName) {
-                        dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: newName } });
-                    }
+                    setRenameModalConfig({
+                        title: 'Rename Clip',
+                        initialValue: oldName,
+                        onSave: (newName) => dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: newName } })
+                    });
+                    setShowRenameModal(true);
                 } else if (command === 'copy-clip') {
                     const clipToCopy = {
                         content: clipContents[layerIndex][colIndex],
@@ -780,39 +840,77 @@ function App() {
                 } else if (command === 'paste-clip') {
                     if (state.clipClipboard) {
                         const { content, name } = state.clipClipboard;
-                        // To properly "load" the pasted clip, we need to treat it like a new clip.
-                        // For ILDA, invalidate the workerId. For generators, just set the content.
                         let contentToPaste = { ...content };
                         if (contentToPaste.type === 'ilda') {
-                            contentToPaste.workerId = null; // This will trigger re-parsing via the project-load useEffect
+                            contentToPaste.workerId = null;
                         }
 
                         dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: contentToPaste }});
                         dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name }});
                         showNotification('Clip pasted.');
                         
-                        // Manually trigger regeneration after paste
-                        // Need a slight delay for state to update before we read it in the regeneration functions
                         setTimeout(() => {
                             const newClip = contentToPaste;
                             if (newClip.type === 'generator' && newClip.generatorDefinition) {
                                 regenerateGeneratorClip(layerIndex, colIndex, newClip.generatorDefinition, newClip.currentParams);
                             }
-                            // The ILDA re-parsing is handled by a useEffect that watches for clips with no workerId
                         }, 100);
 
                     } else {
                         showNotification('Clipboard is empty.');
                     }
-                } else if (command === 'set-clip-thumbnail-mode-still') {
-                    // This command could be handled here if specific clip modes were supported
-                } else if (command === 'set-clip-thumbnail-mode-active') {
-                    // This command could be handled here if specific clip modes were supported
+                } else if (command === 'set-trigger-style-normal') {
+                    dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'normal' } });
+                } else if (command === 'set-trigger-style-toggle') {
+                    dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'toggle' } });
+                } else if (command === 'set-trigger-style-flash') {
+                    dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'flash' } });
                 }
             });
-            return () => unsubscribe();
+
+            unsubLayer = window.electronAPI.onLayerFullContextMenuCommand((command, layerIndex) => {
+                console.log(`Layer context menu command received: ${command} for ${layerIndex}`);
+                if (command === 'layer-rename') {
+                    const oldName = layers[layerIndex];
+                    setRenameModalConfig({
+                        title: 'Rename Layer',
+                        initialValue: oldName,
+                        onSave: (newName) => dispatch({ type: 'SET_LAYER_NAME', payload: { index: layerIndex, name: newName } })
+                    });
+                    setShowRenameModal(true);
+                } else if (command === 'layer-clear-clips') {
+                    dispatch({ type: 'DEACTIVATE_LAYER_CLIPS', payload: { layerIndex } });
+                }
+            });
+
+            unsubCtx = window.electronAPI.onContextMenuActionFromMain((action) => {
+                console.log(`General context menu action received:`, action);
+                if (action.type === 'rename-column') {
+                    const oldName = columns[action.index];
+                    setRenameModalConfig({
+                        title: 'Rename Column',
+                        initialValue: oldName,
+                        onSave: (newName) => dispatch({ type: 'SET_COLUMN_NAME', payload: { index: action.index, name: newName } })
+                    });
+                    setShowRenameModal(true);
+                } else if (action.type === 'rename-layer') { // Support for simpler layer menu if used
+                    const oldName = layers[action.index];
+                    setRenameModalConfig({
+                        title: 'Rename Layer',
+                        initialValue: oldName,
+                        onSave: (newName) => dispatch({ type: 'SET_LAYER_NAME', payload: { index: action.index, name: newName } })
+                    });
+                    setShowRenameModal(true);
+                }
+            });
         }
-    }, [clipContents, ildaParserWorker, state.clipClipboard]);
+
+        return () => {
+            if (unsubClip) unsubClip();
+            if (unsubLayer) unsubLayer();
+            if (unsubCtx) unsubCtx();
+        };
+    }, [clipContents, clipNames, layers, columns, ildaParserWorker, generatorWorker, state.clipClipboard]);
 
   const prevThumbnailFrameIndexesRef = useRef(thumbnailFrameIndexes);
   useEffect(() => {
@@ -904,6 +1002,16 @@ function App() {
         if (action.startsWith('set-theme-')) {
           const themeColor = action.split('set-theme-')[1];
           dispatch({ type: 'SET_THEME', payload: themeColor });
+        } else if (action === 'shortcuts-window' || (action.startsWith('open-') && action.endsWith('-settings'))) {
+            setShowShortcutsWindow(true);
+        } else if (action.startsWith('toggle-')) {
+            // action format: toggle-midi-true
+            const parts = action.split('-');
+            if (parts.length === 3) {
+                const protocol = parts[1]; // midi, artnet, osc, keyboard
+                const isEnabled = parts[2] === 'true';
+                setEnabledShortcuts(prev => ({ ...prev, [protocol]: isEnabled }));
+            }
         }
       });
 
@@ -1065,8 +1173,34 @@ function App() {
     }
   };
 
-  const handleActivateClick = (layerIndex, colIndex) => {
+  const handleActivateClick = (layerIndex, colIndex, isPress = true) => {
     const clip = clipContents[layerIndex][colIndex];
+    if (!clip) return;
+
+    const style = clip.triggerStyle || 'normal';
+    const currentActiveCol = activeClipIndexes[layerIndex];
+
+    if (style === 'normal') {
+        if (!isPress) return;
+        // Proceed to activate
+    } else if (style === 'toggle') {
+        if (!isPress) return;
+        if (currentActiveCol === colIndex) {
+            handleDeactivateLayerClips(layerIndex);
+            return;
+        }
+        // Proceed to activate
+    } else if (style === 'flash') {
+        if (isPress) {
+            // Proceed to activate
+        } else {
+            if (currentActiveCol === colIndex) {
+                handleDeactivateLayerClips(layerIndex);
+            }
+            return;
+        }
+    }
+
     if (clip && clip.type === 'generator' && clip.frames) {
       const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
       // Ensure the frame is in liveFrames so WorldPreview can render it.
@@ -1118,8 +1252,8 @@ function App() {
   };
 
   const handleShowLayerFullContextMenu = (layerIndex) => {
-    if (window.electronAPI && window.electronAPI.showLayerContextMenu) {
-        window.electronAPI.showLayerContextMenu(layerIndex);
+    if (window.electronAPI && window.electronAPI.showLayerFullContextMenu) {
+        window.electronAPI.showLayerFullContextMenu(layerIndex);
     }
   };
 
@@ -1134,6 +1268,8 @@ function App() {
       const clip = clipContents[layerIndex][colIndex];
       if (clip && (clip.type === 'ilda' || clip.type === 'generator')) {
         handleActivateClick(layerIndex, colIndex);
+      } else {
+        handleDeactivateLayerClips(layerIndex);
       }
     });
   };
@@ -1250,10 +1386,94 @@ function App() {
       });
   }, [layerIntensities, layerBlackouts, layerSolos, globalBlackout]);
 
+  const handleMidiCommand = useCallback((id, value) => {
+    // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
+    // ALLOW value 0 if it's a clip trigger (to support Flash mode release)
+    if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_')) return;
+
+    switch (id) {
+      case 'transport_play':
+        if (value > 0) handlePlay();
+        break;
+      case 'transport_pause':
+        if (value > 0) handlePause();
+        break;
+      case 'transport_stop':
+        if (value > 0) handleStop();
+        break;
+      case 'comp_blackout':
+        if (value > 0) dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
+        break;
+      case 'comp_clear':
+        if (value > 0) handleClearAllActive();
+        break;
+      case 'master_intensity':
+        dispatch({ type: 'SET_MASTER_INTENSITY', payload: value / 127 });
+        break;
+      case 'master_speed':
+        // Map 0-127 to 1-120 FPS
+        const newFps = Math.max(1, Math.round((value / 127) * 120));
+        handlePlaybackFpsChange(newFps);
+        break;
+      case 'laser_output':
+        if (value > 0) dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: !isWorldOutputActive });
+        break;
+      default:
+        // Handle dynamic IDs (e.g. layer_1_blackout)
+        if (id.startsWith('layer_')) {
+             const parts = id.split('_');
+             const layerIndex = parseInt(parts[1]);
+             const action = parts[2]; // 'blackout', 'solo', 'intensity', 'clear'
+             
+             if (action === 'blackout' && value > 0) {
+                 dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex } });
+             } else if (action === 'solo' && value > 0) {
+                 dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex } });
+             } else if (action === 'intensity') {
+                 dispatch({ type: 'SET_LAYER_INTENSITY', payload: { layerIndex, intensity: value / 127 } });
+             } else if (action === 'clear' && value > 0) {
+                 handleDeactivateLayerClips(layerIndex);
+             }
+        } else if (id.startsWith('clip_')) {
+            const parts = id.split('_');
+            const layerIndex = parseInt(parts[1]);
+            const colIndex = parseInt(parts[2]);
+            const isPreview = parts[3] === 'preview';
+            
+            if (isPreview) {
+                if (value > 0) handleClipPreview(layerIndex, colIndex);
+            } else {
+                handleActivateClick(layerIndex, colIndex, value > 0);
+            }
+        } else if (id.startsWith('column_')) {
+            const parts = id.split('_');
+            const colIndex = parseInt(parts[1]);
+            if (value > 0) {
+                handleColumnTrigger(colIndex);
+            }
+        }
+    }
+  }, [handlePlay, handlePause, handleStop, isWorldOutputActive, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange]);
+
   return (
+    <MidiProvider onMidiCommand={handleMidiCommand}>
+    <MidiFeedbackHandler 
+        isPlaying={isPlaying} 
+        globalBlackout={globalBlackout} 
+        layerBlackouts={layerBlackouts} 
+        layerSolos={layerSolos} 
+    />
+    <MidiMappingOverlay />
     <div className="app">
       <ErrorBoundary>
         <NotificationPopup message={notification.message} visible={notification.visible} />
+        <RenameModal 
+            show={showRenameModal} 
+            title={renameModalConfig.title} 
+            initialValue={renameModalConfig.initialValue} 
+            onSave={renameModalConfig.onSave} 
+            onClose={() => setShowShortcutsWindow(false) || setShowRenameModal(false)} 
+        />
         <div className="main-content">
             <div className="top-bar-left-area">
               <CompositionControls 
@@ -1355,7 +1575,7 @@ function App() {
                         thumbnailRenderMode={thumbnailRenderMode} // Add this prop
                         liveFrame={clipLiveFrame} // Add this prop
                         stillFrame={clipStillFrame} // Add this prop
-                        onActivateClick={() => handleActivateClick(layerIndex, colIndex)}
+                        onActivateClick={(isPress) => handleActivateClick(layerIndex, colIndex, isPress)}
                         isActive={activeClipIndexes[layerIndex] === colIndex}
                         onUnsupportedFile={showNotification}
                         onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)}
@@ -1444,10 +1664,12 @@ function App() {
               selectedGeneratorId={selectedGeneratorId}
               selectedGeneratorParams={selectedGeneratorParams}
               onGeneratorParameterChange={handleGeneratorParameterChange}
+              enabledShortcuts={enabledShortcuts}
             />          </div>
         </div>
       </ErrorBoundary>
     </div>
+    </MidiProvider>
   );
 }
       

@@ -5,7 +5,7 @@ import fs from 'fs';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
 import * as dacCommunication from './main/dac-communication.cjs';
-const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices } = dacCommunication;
+const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll } = dacCommunication;
 
 // ES module equivalent of __dirname and __filename
 const __filename = fileURLToPath(import.meta.url);
@@ -17,6 +17,12 @@ let mainWindow; // Global variable to store the main window instance
 let currentThumbnailRenderMode = 'still'; // Global variable to store the current thumbnail render mode
 let audioDevices = []; // Global variable to store audio devices
 let currentAudioDeviceId = 'default';
+let shortcutsState = {
+  midi: false,
+  artnet: false,
+  osc: false,
+  keyboard: false
+};
 
 // Define the schema for settings
 const schema = {
@@ -54,6 +60,131 @@ const store = { // Dummy store
   clear: () => console.log('Dummy store: Clearing')
 };
 
+// Global variables for ArtNet and OSC
+let artnetInstance = null;
+let artnetSender = null; // We might need multiple senders for multiple universes
+let oscUdpPort = null;
+
+// IPC handlers for ArtNet
+ipcMain.handle('initialize-artnet', async () => {
+  try {
+    if (!artnetInstance) {
+      const dmxlib = await import('dmxnet');
+      // dmxnet default export is the class itself or has a default property?
+      // CommonJS module 'dmxnet' default export: class dmxnet
+      const DMXnet = dmxlib.default || dmxlib.dmxnet || dmxlib; 
+      artnetInstance = new DMXnet({
+        log: { level: 'info' } // optional
+      });
+      // Initialize a default sender for Universe 0
+      artnetSender = artnetInstance.newSender({
+        ip: "255.255.255.255", 
+        subnet: 0,
+        universe: 0,
+        net: 0
+      });
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to initialize ArtNet:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-artnet-universes', () => {
+  // Return a static list or discovered ones if dmxnet supports it.
+  // For now, return the default universe 0.
+  return [{ id: 'universe-0', name: 'Universe 0 (Broadcast)' }];
+});
+
+ipcMain.on('send-artnet-data', (event, universe, channel, value) => {
+  if (artnetSender) {
+    // dmxnet sender.prepChannel(channel, value) then sender.transmit()
+    // OR sender.fillChannels(min, max, value)
+    // We need to set a single channel.
+    // sender.transmit() sends the whole frame.
+    // We need to maintain the frame state? dmxnet sender maintains it.
+    
+    // Note: channel in dmxnet might be 0-indexed or 1-indexed. Usually 0-511.
+    // ShortcutsWindow sends 0-511.
+    
+    // artnetSender.prepChannel(channel, value); 
+    // artnetSender.transmit();
+    // But prepChannel isn't documented in simple examples usually? 
+    // Usually it's: sender.setChannel(channel, value);
+    // Let's assume standard behavior or check docs if available.
+    // Assuming `setChannel(channel, value)` works.
+    
+    // Using a safer approach if method unknown: transmit() takes array?
+    // Looking at dmxnet source/docs (simulated):
+    // sender.prepChannel(channel, value) exists.
+    
+    try {
+        artnetSender.prepChannel(channel, value);
+        artnetSender.transmit();
+    } catch (e) {
+        console.error("ArtNet Send Error:", e);
+    }
+  }
+});
+
+ipcMain.on('close-artnet', () => {
+  if (artnetInstance) {
+    // artnetInstance.close(); // Not always available
+    artnetInstance = null;
+    artnetSender = null;
+  }
+});
+
+// IPC handlers for OSC
+ipcMain.handle('initialize-osc', async (event, config) => {
+  try {
+    const osc = (await import('osc')).default;
+    
+    if (oscUdpPort) {
+      oscUdpPort.close();
+    }
+
+    oscUdpPort = new osc.UDPPort({
+      localAddress: "0.0.0.0",
+      localPort: config.localPort || 57121,
+      remoteAddress: config.remoteAddress || "127.0.0.1",
+      remotePort: config.remotePort || 57120,
+      metadata: true
+    });
+
+    oscUdpPort.on("message", (oscMessage) => {
+      if(mainWindow) mainWindow.webContents.send('osc-message-received', { oscMessage });
+    });
+
+    oscUdpPort.on("error", (error) => {
+      console.error("OSC Error:", error);
+    });
+
+    oscUdpPort.open();
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to initialize OSC:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.on('send-osc-message', (event, address, args) => {
+  if (oscUdpPort) {
+    oscUdpPort.send({
+      address: address,
+      args: args // args should be array of { type, value } or inferred
+    });
+  }
+});
+
+ipcMain.on('close-osc', () => {
+  if (oscUdpPort) {
+    oscUdpPort.close();
+    oscUdpPort = null;
+  }
+});
+
 // IPC handlers for settings
 ipcMain.handle('get-all-settings', (event) => {
   return store.store;
@@ -73,6 +204,15 @@ ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
 
 ipcMain.handle('set-selected-dac', (event, dac) => {
   store.set('selectedDac', dac);
+});
+
+ipcMain.handle('get-midi-mappings', () => {
+  return store.get('midiMappings') || {};
+});
+
+ipcMain.handle('save-midi-mappings', (event, mappings) => {
+  store.set('midiMappings', mappings);
+  return { success: true };
 });
 
 /* // Commented out to avoid issues with schema
@@ -234,7 +374,69 @@ function buildApplicationMenu(mode) {
     {
       label: 'Shortcuts',
       submenu: [
-        { label: 'Open Shortcuts Window', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'shortcuts-window'); } },
+        {
+          label: 'MIDI',
+          type: 'checkbox',
+          checked: shortcutsState.midi,
+          click: () => {
+            shortcutsState.midi = !shortcutsState.midi;
+            if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-midi-${shortcutsState.midi}`);
+            buildApplicationMenu(currentThumbnailRenderMode);
+          }
+        },
+        {
+          label: 'MIDI Settings...',
+          visible: shortcutsState.midi,
+          click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'open-midi-settings'); }
+        },
+        { type: 'separator' },
+        {
+          label: 'ArtNet',
+          type: 'checkbox',
+          checked: shortcutsState.artnet,
+          click: () => {
+            shortcutsState.artnet = !shortcutsState.artnet;
+            if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-artnet-${shortcutsState.artnet}`);
+            buildApplicationMenu(currentThumbnailRenderMode);
+          }
+        },
+        {
+          label: 'ArtNet Settings...',
+          visible: shortcutsState.artnet,
+          click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'open-artnet-settings'); }
+        },
+        { type: 'separator' },
+        {
+          label: 'OSC',
+          type: 'checkbox',
+          checked: shortcutsState.osc,
+          click: () => {
+            shortcutsState.osc = !shortcutsState.osc;
+            if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-osc-${shortcutsState.osc}`);
+            buildApplicationMenu(currentThumbnailRenderMode);
+          }
+        },
+        {
+          label: 'OSC Settings...',
+          visible: shortcutsState.osc,
+          click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'open-osc-settings'); }
+        },
+        { type: 'separator' },
+        {
+          label: 'Keyboard',
+          type: 'checkbox',
+          checked: shortcutsState.keyboard,
+          click: () => {
+            shortcutsState.keyboard = !shortcutsState.keyboard;
+            if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-keyboard-${shortcutsState.keyboard}`);
+            buildApplicationMenu(currentThumbnailRenderMode);
+          }
+        },
+        {
+          label: 'Keyboard Settings...',
+          visible: shortcutsState.keyboard,
+          click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'open-keyboard-settings'); }
+        },
       ],
     },
     {
@@ -322,6 +524,11 @@ function createWindow() {
 
   // Assign to global mainWindow
   mainWindow = win;
+
+  win.on('closed', () => {
+    mainWindow = null;
+    dacCommunication.closeAll();
+  });
 
   // Initial menu build
   buildApplicationMenu(currentThumbnailRenderMode);
@@ -415,10 +622,34 @@ function createWindow() {
     columnContextMenu.popup({ window: mainWindow });
   });
 
-  ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex) => {
-    console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}`); // Add log
+  ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex, currentTriggerStyle = 'normal') => {
+    console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}, style: ${currentTriggerStyle}`); 
     const clipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
+      { type: 'separator' },
+      {
+        label: 'Trigger Style',
+        submenu: [
+          { 
+            label: 'Normal', 
+            type: 'radio', 
+            checked: currentTriggerStyle === 'normal',
+            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } 
+          },
+          { 
+            label: 'Toggle', 
+            type: 'radio', 
+            checked: currentTriggerStyle === 'toggle',
+            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } 
+          },
+          { 
+            label: 'Flash', 
+            type: 'radio', 
+            checked: currentTriggerStyle === 'flash',
+            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); } 
+          },
+        ]
+      },
       { type: 'separator' },
       {
         label: 'Set Thumbnail Mode',

@@ -1,4 +1,5 @@
 import React from 'react';
+import Mappable from './Mappable';
 
 const ColumnHeader = ({ name, index, onTrigger, onShowColumnHeaderContextMenu }) => {
   const handleContextMenu = (e) => {
@@ -16,14 +17,16 @@ const ColumnHeader = ({ name, index, onTrigger, onShowColumnHeaderContextMenu })
   };
 
   return (
-    <div 
-      className="column-header trigger-button" 
-      onClick={handleClick}
-      onContextMenu={handleContextMenu}
-      style={{ cursor: 'pointer' }}
-    >
-      {name}
-    </div>
+    <Mappable id={`column_${index}`}>
+        <div 
+        className="column-header trigger-button" 
+        onClick={handleClick}
+        onContextMenu={handleContextMenu}
+        style={{ cursor: 'pointer' }}
+        >
+        {name}
+        </div>
+    </Mappable>
   );
 };
 

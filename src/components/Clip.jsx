@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { applyEffects } from '../utils/effects'; // Import the applyEffects function
 import IldaThumbnail from './IldaThumbnail';
+import Mappable from './Mappable';
 
 const Clip = ({
   clipName,
@@ -163,7 +164,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
   const handleContextMenu = (e) => {
     e.preventDefault();
     if (window.electronAPI && window.electronAPI.showClipContextMenu) {
-      window.electronAPI.showClipContextMenu(layerIndex, colIndex);
+      window.electronAPI.showClipContextMenu(layerIndex, colIndex, clipContent?.triggerStyle || 'normal');
     }
   };
 
@@ -176,16 +177,25 @@ const handleFilePathDrop = async (filePath, fileName) => {
       onDrop={handleDrop}
       onContextMenu={handleContextMenu}
     >
-      <div className="clip-thumbnail" onClick={onActivateClick}>
-        {clipContent && clipContent.parsing ? (
-          <div className="clip-loading-spinner"></div>
-        ) : effectedFrameForThumbnail ? (
-          <IldaThumbnail frame={effectedFrameForThumbnail} />
-        ) : (
-          <p></p>
-        )}
-      </div>
-      <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{displayName}</span>
+      <Mappable id={`clip_${layerIndex}_${colIndex}`}>
+        <div 
+            className="clip-thumbnail" 
+            onMouseDown={() => onActivateClick(true)}
+            onMouseUp={() => onActivateClick(false)}
+            onMouseLeave={() => onActivateClick(false)}
+        >
+            {clipContent && clipContent.parsing ? (
+            <div className="clip-loading-spinner"></div>
+            ) : effectedFrameForThumbnail ? (
+            <IldaThumbnail frame={effectedFrameForThumbnail} />
+            ) : (
+            <p></p>
+            )}
+        </div>
+      </Mappable>
+      <Mappable id={`clip_${layerIndex}_${colIndex}_preview`}>
+        <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{displayName}</span>
+      </Mappable>
     </div>
   );
 };

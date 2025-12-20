@@ -1,8 +1,11 @@
 import React from 'react';
+import Mappable from './Mappable';
 
 const MasterIntensitySlider = ({ masterIntensity, onMasterIntensityChange }) => (
     <div className="master-intensity-slider">
-        <input type="range" min="0" max="1" step="0.01" value={masterIntensity} className="slider_hor" id="masterIntensityRange" onChange={(e) => onMasterIntensityChange(parseFloat(e.target.value))} />
+        <Mappable id="master_intensity">
+            <input type="range" min="0" max="1" step="0.01" value={masterIntensity} className="slider_hor" id="masterIntensityRange" onChange={(e) => onMasterIntensityChange(parseFloat(e.target.value))} />
+        </Mappable>
     </div>
 );
 
@@ -27,14 +30,18 @@ const CompositionControls = ({
 }) => (
   <div className="composition-controls">
 	<span className="layer-control-button">Comp</span>
-    <span className="layer-control-button" onClick={onClearAllActive} style={{ cursor: 'pointer' }}>X</span>
-    <span 
-        className="layer-control-button" 
-        onClick={onToggleGlobalBlackout} 
-        style={{ cursor: 'pointer', backgroundColor: isGlobalBlackout ? 'red' : '' }}
-    >
-        B
-    </span>
+    <Mappable id="comp_clear">
+        <span className="layer-control-button" onClick={onClearAllActive} style={{ cursor: 'pointer' }}>X</span>
+    </Mappable>
+    <Mappable id="comp_blackout" style={{ width: '100%', display: 'flex' }}>
+        <span 
+            className="layer-control-button" 
+            onClick={onToggleGlobalBlackout} 
+            style={{ cursor: 'pointer', backgroundColor: isGlobalBlackout ? 'red' : '' }}
+        >
+            B
+        </span>
+    </Mappable>
     <MasterIntensitySlider masterIntensity={masterIntensity} onMasterIntensityChange={onMasterIntensityChange} />
   </div>
 );
