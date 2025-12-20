@@ -13,16 +13,38 @@ const IDNCMD_RT_CNLMSG = 0x40;
 const IDNVAL_CNKTYPE_LPGRF_FRAME = 0x02;
 const IDNVAL_SMOD_LPGRF_DISCRETE = 0x02;
 
-const socket = dgram.createSocket('udp4');
+let dataSocket = null;
 let generalSequence = 0;
-const sequenceMap = new Map();
+let rtSequence = 0;
+let isScanning = false;
 
-socket.on('error', (err) => {
-  console.error('IDN socket error:', err);
-  socket.close();
-});
+function getSocket() {
+    if (dataSocket) return dataSocket;
+    
+    dataSocket = dgram.createSocket('udp4');
+    dataSocket.on('error', (err) => {
+        console.error('IDN data socket error:', err);
+        closeAll();
+    });
+    return dataSocket;
+}
+
+function closeAll() {
+    if (dataSocket) {
+        try {
+            dataSocket.close();
+        } catch (e) {}
+        dataSocket = null;
+    }
+}
 
 function discoverDacs(timeout = 2000, networkInterfaceIp) {
+  if (isScanning) {
+      console.log('IDN Scan already in progress, skipping...');
+      return Promise.resolve([]);
+  }
+  isScanning = true;
+
   return new Promise((resolve, reject) => {
     const discoveredDacs = new Map();
     const discoverySocket = dgram.createSocket('udp4');
@@ -30,6 +52,7 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
     discoverySocket.on('error', (err) => {
       console.error('IDN discovery socket error:', err);
       discoverySocket.close();
+      isScanning = false;
       reject(err);
     });
 
@@ -42,7 +65,7 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
         }
     });
     
-    const bindOptions = { port: IDN_HELLO_UDP_PORT };
+    const bindOptions = { port: 0 };
     if (networkInterfaceIp) {
       bindOptions.address = networkInterfaceIp;
     }
@@ -57,6 +80,7 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
             if (err) {
                 console.error('IDN discovery send error:', err);
                 discoverySocket.close();
+                isScanning = false;
                 reject(err);
             }
         });
@@ -64,6 +88,7 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
 
     setTimeout(() => {
       discoverySocket.close();
+      isScanning = false;
       resolve(Array.from(discoveredDacs.values()));
     }, timeout);
   });
@@ -118,14 +143,11 @@ function sendFrame(ip, channel, frame, fps) {
     const packet = Buffer.alloc(totalSize);
     let offset = 0;
     
-    const channelKey = `${ip}:${channel}`;
-    let currentSequence = sequenceMap.get(channelKey) || 0;
-    currentSequence++;
-    sequenceMap.set(channelKey, currentSequence);
+    rtSequence = (rtSequence + 1) & 0xFFFF;
 
     packet.writeUInt8(IDNCMD_RT_CNLMSG, offset++);
     packet.writeUInt8(0, offset++);
-    packet.writeUInt16BE(currentSequence, offset);
+    packet.writeUInt16BE(rtSequence, offset);
     offset += 2;
 
     packet.writeUInt16LE(channelMessageHeaderSize + channelConfigSize + frameChunkHeaderSize + frameDataSize, offset);
@@ -172,6 +194,7 @@ function sendFrame(ip, channel, frame, fps) {
         packet.writeUInt8(point.i !== undefined ? point.i : 255, offset++);
     }
 
+    const socket = getSocket();
     socket.send(packet, 0, packet.length, IDN_HELLO_UDP_PORT, ip, (err) => {
         if (err) {
             console.error(`IDN sendFrame error to ${ip}:`, err);
@@ -199,7 +222,7 @@ function getDacServices(ip, localIp, timeout = 1000) {
       }
     });
 
-    const bindOptions = {};
+    const bindOptions = { port: 0 };
     if (localIp) {
       bindOptions.address = localIp;
     }
@@ -271,4 +294,5 @@ module.exports = {
     discoverDacs,
     sendFrame,
     getDacServices,
+    closeAll
 };

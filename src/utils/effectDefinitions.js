@@ -101,4 +101,18 @@ export const effectDefinitions = [
       { id: 'strobeAmount', label: 'Strobe Amount (0-1)', type: 'range', min: 0, max: 1, step: 0.01 },
     ],
   },
+  {
+    id: 'mirror',
+    name: 'Mirror',
+    type: 'transform',
+    description: 'Mirrors the shape along the X or Y axis.',
+    defaultParams: {
+      mirrorX: false,
+      mirrorY: false,
+    },
+    paramControls: [
+      { id: 'mirrorX', label: 'Mirror X', type: 'checkbox' },
+      { id: 'mirrorY', label: 'Mirror Y', type: 'checkbox' },
+    ],
+  },
 ];

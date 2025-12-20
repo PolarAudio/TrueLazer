@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld(
     getDacServices: (ip, localIp) => ipcRenderer.invoke('get-dac-services', ip, localIp),
     sendFrame: (ip, channel, frame, fps) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps),
     getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
+    send: (channel, data) => ipcRenderer.send(channel, data),
     on: (channel, callback) => {
       const listener = (event, ...args) => callback(...args);
       ipcRenderer.on(channel, listener);
@@ -66,9 +67,32 @@ contextBridge.exposeInMainWorld(
 	            setRenderSettings: (settings) => ipcRenderer.invoke('set-render-settings', settings),
 	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
-	            	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+                getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
+                saveMidiMappings: (mappings) => ipcRenderer.invoke('save-midi-mappings', mappings),
 	            	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
 	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
 	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),
+	                                        showAudioFileDialog: () => ipcRenderer.invoke('show-audio-file-dialog'),
 	                                        showFontFileDialog: () => ipcRenderer.invoke('show-font-file-dialog'),
+	                                        setAudioDevices: (devices) => ipcRenderer.send('set-audio-devices', devices),
+	                                        onUpdateAudioDeviceId: (callback) => {
+	                                          const subscription = (event, deviceId) => callback(deviceId);
+	                                          ipcRenderer.on('update-audio-device-id', subscription);
+	                                          return () => ipcRenderer.removeListener('update-audio-device-id', subscription);
+	                                        },
+                                            // ArtNet
+                                            initializeArtnet: () => ipcRenderer.invoke('initialize-artnet'),
+                                            getArtnetUniverses: () => ipcRenderer.invoke('get-artnet-universes'),
+                                            sendArtnetData: (universe, channel, value) => ipcRenderer.send('send-artnet-data', universe, channel, value),
+                                            closeArtnet: () => ipcRenderer.send('close-artnet'),
+                                            // OSC
+                                            initializeOsc: (config) => ipcRenderer.invoke('initialize-osc', config),
+                                            sendOscMessage: (address, args) => ipcRenderer.send('send-osc-message', address, args),
+                                            closeOsc: () => ipcRenderer.send('close-osc'),
+                                            onOscMessageReceived: (callback) => {
+                                                const listener = (event, message) => callback(message);
+                                                ipcRenderer.on('osc-message-received', listener);
+                                                return () => ipcRenderer.removeListener('osc-message-received', listener);
+                                            },
 	                          	          }	        );

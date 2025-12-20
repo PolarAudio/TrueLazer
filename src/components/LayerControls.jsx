@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
+import Mappable from './Mappable';
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame }) => {
+const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
 
   // Update internal state when layerEffects prop changes
@@ -42,10 +43,28 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
       onDrop={handleDrop}
     >
       <div className="grid-layer">
-        <span className="layer-control-button full-height" onClick={() => onDeactivateLayerClips(index)}>X</span>
+        <Mappable id={`layer_${index}_clear`}>
+            <span className="layer-control-button full-height" onClick={() => onDeactivateLayerClips(index)}>X</span>
+        </Mappable>
         <div className="layer-control-group">
-          <span className="layer-control-button half-height">B</span>
-          <span className="layer-control-button half-height">S</span>
+          <Mappable id={`layer_${index}_blackout`}>
+            <span 
+                className="layer-control-button half-height" 
+                onClick={onToggleBlackout}
+                style={{ backgroundColor: isBlackout ? 'red' : '' }}
+            >
+                B
+            </span>
+          </Mappable>
+          <Mappable id={`layer_${index}_solo`}>
+            <span 
+                className="layer-control-button half-height" 
+                onClick={onToggleSolo}
+                style={{ backgroundColor: isSolo ? 'var(--theme-color)' : '', color: isSolo ? 'black' : '' }}
+            >
+                S
+            </span>
+          </Mappable>
         </div>
 		<select className="layer-blend-dropdown">
           <option>Normal</option>
@@ -54,7 +73,9 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
         </select>
       </div>
 		<div className="layer-control-row">
+          <Mappable id={`layer_${index}_intensity`}>
 			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={(e) => onIntensityChange(parseFloat(e.target.value))} />
+          </Mappable>
 		</div>
 		<div className="layer-preview-thumbnail">
 			{activeClipData ? (

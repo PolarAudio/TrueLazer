@@ -1,4 +1,9 @@
-const { discoverDacs: discoverIdnDacs, sendFrame: sendIdnFrame, getDacServices: getIdnDacServices } = require('./idn-communication.cjs');
+const { 
+    discoverDacs: discoverIdnDacs, 
+    sendFrame: sendIdnFrame, 
+    getDacServices: getIdnDacServices,
+    closeAll: closeIdnAll
+} = require('./idn-communication.cjs');
 const os = require('os');
 
 /**
@@ -55,11 +60,16 @@ function getDacServices(ip, localIp, timeout = 1000) {
     return getIdnDacServices(ip, localIp, timeout);
 }
 
+function closeAll() {
+    return closeIdnAll();
+}
+
 module.exports = {
     getNetworkInterfaces,
     discoverDacs,
     sendFrame,
     getDacServices,
+    closeAll
 };
 
 

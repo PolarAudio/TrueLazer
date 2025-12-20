@@ -41,6 +41,9 @@ export function applyEffects(frame, effects) {
       case 'strobe':
         modifiedFrame = applyStrobe(modifiedFrame, effect.params);
         break;
+      case 'mirror':
+        modifiedFrame = applyMirror(modifiedFrame, effect.params);
+        break;
       default:
         break;
     }
@@ -144,6 +147,20 @@ function applyStrobe(frame, params) {
 
   const newPoints = frame.points.map(point => {
     return { ...point, blanking: point.blanking || blank };
+  });
+
+  return { ...frame, points: newPoints };
+}
+
+function applyMirror(frame, params) {
+  const { mirrorX, mirrorY } = withDefaults(params, effectDefinitions.find(def => def.id === 'mirror').defaultParams);
+
+  if (!mirrorX && !mirrorY) return frame;
+
+  const newPoints = frame.points.map(point => {
+    const x = mirrorX ? -point.x : point.x;
+    const y = mirrorY ? -point.y : point.y;
+    return { ...point, x, y };
   });
 
   return { ...frame, points: newPoints };

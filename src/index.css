@@ -404,6 +404,14 @@ body {
 	justify-content: center;
 	align-items: center;
   }
+  .column-header.trigger-button:hover {
+    background-color: #4a4f57;
+    outline: 1px solid var(--theme-color);
+  }
+  .column-header.trigger-button:active {
+    background-color: var(--theme-color-transparent);
+    box-shadow: inset 0 0 5px var(--theme-color);
+  }
 
 
 h3 {
@@ -841,6 +849,445 @@ input[type="checkbox"]:checked:before {
 }
 
 @keyframes spin {
+
   0% { transform: rotate(0deg); }
+
   100% { transform: rotate(360deg); }
+
+}
+
+
+
+/* Assigned DACs Styles */
+
+.assigned-dacs-settings {
+
+  margin-bottom: 1rem;
+
+  border-bottom: 1px solid #3a3f47;
+
+  padding-bottom: 1rem;
+
+}
+
+
+
+.assigned-dacs-list {
+
+  list-style: none;
+
+  padding: 0;
+
+  margin: 0;
+
+  text-align: left;
+
+}
+
+
+
+.assigned-dac-item {
+
+  display: flex;
+
+  justify-content: space-between;
+
+  align-items: center;
+
+  background-color: #3a3f47;
+
+  padding: 5px 10px;
+
+  border-radius: 4px;
+
+  margin-bottom: 5px;
+
+  font-size: 0.85em;
+
+}
+
+
+
+.remove-dac-btn {
+
+  background: none;
+
+  border: none;
+
+  color: #ff4d4d;
+
+  font-size: 1.2em;
+
+  cursor: pointer;
+
+  padding: 0 5px;
+
+  line-height: 1;
+
+}
+
+
+
+.remove-dac-btn:hover {
+
+
+
+  color: #ff0000;
+
+
+
+  text-shadow: 0 0 5px rgba(255, 0, 0, 0.5);
+
+
+
+}
+
+
+
+
+
+
+
+/* Audio Settings Styles */
+
+
+
+.audio-settings-section {
+
+
+
+    margin-bottom: 1rem;
+
+
+
+    border-bottom: 1px solid #3a3f47;
+
+
+
+    padding-bottom: 1rem;
+
+
+
+    padding-left: 10px;
+
+
+
+    padding-right: 10px;
+
+
+
+}
+
+
+
+
+
+
+
+.assigned-audio-info {
+
+
+
+    background-color: #3a3f47;
+
+
+
+    padding: 10px;
+
+
+
+    border-radius: 5px;
+
+
+
+    display: flex;
+
+
+
+    flex-direction: column;
+
+
+
+    gap: 8px;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-file-name {
+
+
+
+    font-size: 0.9em;
+
+
+
+    font-weight: bold;
+
+
+
+    overflow: hidden;
+
+
+
+    text-overflow: ellipsis;
+
+
+
+    white-space: nowrap;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-progress-container {
+
+
+
+    width: 100%;
+
+
+
+    height: 8px;
+
+
+
+    background-color: #1a1a1a;
+
+
+
+    border-radius: 4px;
+
+
+
+    overflow: hidden;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-progress-bar {
+
+
+
+    height: 100%;
+
+
+
+    background-color: var(--theme-color);
+
+
+
+    transition: width 0.1s linear;
+
+
+
+}
+
+
+
+
+
+
+
+.audio-time-info {
+
+
+
+    font-size: 0.8em;
+
+
+
+    color: #ccc;
+
+
+
+}
+
+
+
+
+
+
+
+.assign-audio-btn, .remove-audio-btn {
+
+
+
+    background-color: var(--theme-color-transparent);
+
+
+
+    color: white;
+
+
+
+    border: 1px solid var(--theme-color);
+
+
+
+    padding: 5px 10px;
+
+
+
+    border-radius: 4px;
+
+
+
+    cursor: pointer;
+
+
+
+    font-size: 0.85em;
+
+
+
+}
+
+
+
+
+
+
+
+.assign-audio-btn:hover, .remove-audio-btn:hover {
+
+
+
+    background-color: var(--theme-color);
+
+
+
+}
+
+/* Mappable Components Styles */
+.mappable-target {
+  cursor: crosshair !important;
+  outline: 1px dashed rgba(255, 255, 255, 0.5) !important;
+  outline-offset: -1px;
+}
+
+.midi-mapping-label-box {
+  background-color: rgba(0, 0, 0, 0.4);
+  transition: background-color 0.2s;
+}
+
+.midi-mapping-label-box.learning {
+  background-color: var(--theme-color-transparent);
+  outline: 2px solid var(--theme-color);
+}
+
+.mapping-label {
+  background-color: black;
+  color: var(--theme-color);
+  font-weight: bold;
+  font-size: 0.8em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--theme-color);
+  pointer-events: none;
+  box-shadow: 0 0 10px rgba(0,0,0,0.8);
+}
+
+.midi-mapping-label-box.learning .mapping-label {
+    color: black;
+    background-color: var(--theme-color);
+}
+
+
+.mappable-learning {
+  outline: 2px solid var(--theme-color);
+  background-color: rgba(255, 94, 0, 0.2);
+  z-index: 1000;
+}
+
+.mappable-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none; /* Let clicks pass through to the wrapper's onClick */
+  z-index: 999;
+  border-radius: inherit;
+}
+
+.mappable-label {
+  color: var(--theme-color);
+  font-weight: bold;
+  font-size: 0.8em;
+  background-color: black;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--theme-color);
+}
+
+.mappable-label-empty {
+  color: white;
+  font-size: 1.2em;
+  font-weight: bold;
+  opacity: 0.5;
+}
+
+/* Shortcuts Modal Styles */
+.shortcuts-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: transparent; /* Allow seeing the app clearly for mapping */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  pointer-events: none; /* Allow clicking through to the app */
+}
+
+.shortcuts-modal-content {
+  background-color: #20232a;
+  padding: 20px;
+  border-radius: 10px;
+  border: 1px solid var(--theme-color);
+  width: 80%;
+  max-width: 600px;
+  max-height: 80%;
+  overflow-y: auto;
+  color: white;
+  box-shadow: 0 0 20px rgba(0,0,0,0.5);
+  pointer-events: auto; /* Re-enable clicking on the modal content itself */
+}
+
+.shortcuts-section {
+  margin-bottom: 20px;
+  border-bottom: 1px solid #3a3f47;
+  padding-bottom: 10px;
+}
+
+.shortcuts-section h3 {
+    color: var(--theme-color);
+    border-bottom: 1px solid #3a3f47;
+    padding-bottom: 5px;
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { applyEffects } from '../utils/effects'; // Import the applyEffects function
 import IldaThumbnail from './IldaThumbnail';
+import Mappable from './Mappable';
 
 const Clip = ({
   clipName,
@@ -55,27 +56,22 @@ const Clip = ({
 
   const handleFileDrop = async (file) => {
     const droppedFileName = file.name;
-    console.log('[Clip.jsx] handleFileDrop - Processing file:', droppedFileName); // DEBUG LOG
     if (!ildaParserWorker) {
-      console.log('[Clip.jsx] handleFileDrop - ILDA parser not available.'); // DEBUG LOG
       onUnsupportedFile("ILDA parser not available.");
       return;
     }
 
     // Check if it's an ILD file
     if (droppedFileName.toLowerCase().endsWith('.ild')) {
-      console.log('[Clip.jsx] handleFileDrop - File is an ILD:', droppedFileName); // DEBUG LOG
       try {
         const arrayBuffer = await file.arrayBuffer();
         console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFileDrop): ${arrayBuffer.byteLength}`);
         ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, filePath: file.path, layerIndex, colIndex }, [arrayBuffer]);
-        console.log('[Clip.jsx] handleFileDrop - Posted message to ildaParserWorker.'); // DEBUG LOG
       } catch (error) {
         console.error('[Clip.jsx] handleFileDrop - Error reading file:', error);
         onUnsupportedFile(`Error reading file: ${error.message}`);
       }
     } else {
-      console.log('[Clip.jsx] handleFileDrop - Unsupported file type:', droppedFileName); // DEBUG LOG
       onUnsupportedFile("Please drop a valid .ild file");
     }
   };
@@ -121,8 +117,6 @@ const handleFilePathDrop = async (filePath, fileName) => {
     if (effectData) {
       try {
         const parsedData = JSON.parse(effectData);
-        console.log('[Clip.jsx] handleDrop - parsedData:', parsedData); // Existing log
-        console.log('Clip.jsx: parsedData *before* calling onDropDac:', parsedData); // New log
         
         // Check if this is file path data from the file system
         if (parsedData.filePath && parsedData.fileName) {
@@ -132,14 +126,12 @@ const handleFilePathDrop = async (filePath, fileName) => {
 
         if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color') {
           if (onDropEffect) {
-            console.log('[Clip.jsx] Calling onDropEffect'); // DEBUG LOG
             onDropEffect(parsedData);
             onLabelClick(); // Select the clip to show its new settings
             return;
           }
         } else if (parsedData.name) {
           if (onDropGenerator) {
-            console.log('[Clip.jsx] Calling onDropGenerator with:', parsedData.name); // DEBUG LOG
             onDropGenerator(layerIndex, colIndex, parsedData);
             return;
           }
@@ -156,7 +148,6 @@ const handleFilePathDrop = async (filePath, fileName) => {
     
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
-      console.log('[Clip.jsx] handleDrop - Files detected:', files); // DEBUG LOG
       handleFileDrop(files[0]);
       return;
     }
@@ -173,7 +164,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
   const handleContextMenu = (e) => {
     e.preventDefault();
     if (window.electronAPI && window.electronAPI.showClipContextMenu) {
-      window.electronAPI.showClipContextMenu(layerIndex, colIndex);
+      window.electronAPI.showClipContextMenu(layerIndex, colIndex, clipContent?.triggerStyle || 'normal');
     }
   };
 
@@ -186,16 +177,25 @@ const handleFilePathDrop = async (filePath, fileName) => {
       onDrop={handleDrop}
       onContextMenu={handleContextMenu}
     >
-      <div className="clip-thumbnail" onClick={onActivateClick}>
-        {clipContent && clipContent.parsing ? (
-          <div className="clip-loading-spinner"></div>
-        ) : effectedFrameForThumbnail ? (
-          <IldaThumbnail frame={effectedFrameForThumbnail} />
-        ) : (
-          <p></p>
-        )}
-      </div>
-      <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{displayName}</span>
+      <Mappable id={`clip_${layerIndex}_${colIndex}`}>
+        <div 
+            className="clip-thumbnail" 
+            onMouseDown={() => onActivateClick(true)}
+            onMouseUp={() => onActivateClick(false)}
+            onMouseLeave={() => onActivateClick(false)}
+        >
+            {clipContent && clipContent.parsing ? (
+            <div className="clip-loading-spinner"></div>
+            ) : effectedFrameForThumbnail ? (
+            <IldaThumbnail frame={effectedFrameForThumbnail} />
+            ) : (
+            <p></p>
+            )}
+        </div>
+      </Mappable>
+      <Mappable id={`clip_${layerIndex}_${colIndex}_preview`}>
+        <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{displayName}</span>
+      </Mappable>
     </div>
   );
 };

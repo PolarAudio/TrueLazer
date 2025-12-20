@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput } from '../utils/midi';
+import { useMidi } from '../contexts/MidiContext';
 import { initializeArtnet, getArtnetUniverses, sendArtnetData, closeArtnet } from '../utils/artnet';
 import { initializeOsc, sendOscMessage, addOscMessageListener, closeOsc } from '../utils/osc';
 
-const ShortcutsWindow = ({ show, onClose }) => {
-  const [midiInitialized, setMidiInitialized] = useState(false);
-  const [midiInputs, setMidiInputs] = useState([]);
-  const [selectedMidiInputId, setSelectedMidiInputId] = useState('');
-  const [midiLearnMode, setMidiLearnMode] = useState(false);
-  const [lastMidiEvent, setLastMidiEvent] = useState(null);
+const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
+  const { 
+    midiInitialized, 
+    midiInputs, 
+    selectedMidiInputId, 
+    setSelectedMidiInputId, 
+    isMapping, 
+    startMapping, 
+    stopMapping,
+    learningId // Optional: could show what is currently being learned
+  } = useMidi();
 
   const [artnetInitialized, setArtnetInitialized] = useState(false);
   const [artnetUniverses, setArtnetUniverses] = useState([]);
@@ -27,22 +32,10 @@ const ShortcutsWindow = ({ show, onClose }) => {
   useEffect(() => {
     if (!show) return;
 
-    const initMidi = async () => {
-      try {
-        await initializeMidi();
-        setMidiInitialized(true);
-        const inputs = getMidiInputs();
-        setMidiInputs(inputs);
-        if (inputs.length > 0) {
-          setSelectedMidiInputId(inputs[0].id);
-        }
-      } catch (err) {
-        console.error("Failed to initialize MIDI:", err);
-        setMidiInitialized(false);
-      }
-    };
+    // MIDI Init is handled by Context now
 
     const initArtnet = async () => {
+      if (!enabledShortcuts.artnet) return;
       try {
         const result = await window.electronAPI.initializeArtnet();
         if (result.success) {
@@ -63,6 +56,7 @@ const ShortcutsWindow = ({ show, onClose }) => {
     };
 
     const initOsc = async () => {
+      if (!enabledShortcuts.osc) return () => {};
       try {
         const result = await window.electronAPI.initializeOsc({
           localPort: oscLocalPort,
@@ -89,44 +83,33 @@ const ShortcutsWindow = ({ show, onClose }) => {
     };
 
     let cleanupOscListener = () => {};
-    initMidi();
     initArtnet();
-    initOsc().then(cleanup => { cleanupOscListener = cleanup; });
+    initOsc().then(cleanup => { 
+        if (typeof cleanup === 'function') {
+            cleanupOscListener = cleanup; 
+        }
+    });
 
     return () => {
-      if (selectedMidiInputId) {
-        stopListeningToMidiInput(selectedMidiInputId);
-      }
+      // Only close if we opened them, but it's safe to call close always
       window.electronAPI.closeArtnet();
       window.electronAPI.closeOsc(); // Use IPC to close OSC
-      cleanupOscListener(); // Clean up OSC message listener
+      if (typeof cleanupOscListener === 'function') {
+          cleanupOscListener(); // Clean up OSC message listener
+      }
     };
-  }, [show, selectedMidiInputId, oscLocalPort, oscRemoteAddress, oscRemotePort]);
-
-  useEffect(() => {
-    let cleanupListener = () => {};
-    if (midiLearnMode && selectedMidiInputId) {
-      cleanupListener = listenToMidiInput(selectedMidiInputId, (event) => {
-        setLastMidiEvent(event);
-        console.log("MIDI Event in Learn Mode:", event);
-      });
-    } else if (selectedMidiInputId) {
-      stopListeningToMidiInput(selectedMidiInputId);
-    }
-    return cleanupListener;
-  }, [midiLearnMode, selectedMidiInputId]);
+  }, [show, oscLocalPort, oscRemoteAddress, oscRemotePort, enabledShortcuts]);
 
   const handleMidiInputChange = (e) => {
-    const newId = e.target.value;
-    if (selectedMidiInputId) {
-      stopListeningToMidiInput(selectedMidiInputId);
-    }
-    setSelectedMidiInputId(newId);
-    setLastMidiEvent(null);
+    setSelectedMidiInputId(e.target.value);
   };
 
   const toggleMidiLearnMode = () => {
-    setMidiLearnMode(prev => !prev);
+    if (isMapping) {
+        stopMapping();
+    } else {
+        startMapping();
+    }
   };
 
   const handleArtnetUniverseChange = (e) => {
@@ -170,6 +153,7 @@ const ShortcutsWindow = ({ show, onClose }) => {
       <div className="shortcuts-modal-content">
         <h2>Shortcuts Settings</h2>
 
+        {enabledShortcuts.midi && (
         <div className="shortcuts-section">
           <h3>MIDI</h3>
           {!midiInitialized && <p>Initializing MIDI...</p>}
@@ -182,19 +166,21 @@ const ShortcutsWindow = ({ show, onClose }) => {
                   <option key={input.id} value={input.id}>{input.name}</option>
                 ))}
               </select>
-              <button onClick={toggleMidiLearnMode}>
-                {midiLearnMode ? 'Stop MIDI Learn' : 'Start MIDI Learn'}
+              <button onClick={toggleMidiLearnMode} style={{ marginLeft: '10px', backgroundColor: isMapping ? 'var(--theme-color)' : '' }}>
+                {isMapping ? 'Stop Mapping' : 'Start Mapping'}
               </button>
-              {midiLearnMode && lastMidiEvent && (
-                <p>Last MIDI Event: {lastMidiEvent.type} - {lastMidiEvent.note || lastMidiEvent.controller} (Value: {lastMidiEvent.value})</p>
+              {isMapping && (
+                 <p style={{color: 'var(--theme-color)'}}>Mapping Mode Active: Click a button to assign.</p>
               )}
-              {midiLearnMode && !lastMidiEvent && (
-                <p>Waiting for MIDI input...</p>
+              {learningId && (
+                  <p style={{color: 'yellow'}}>Waiting for MIDI input for selected control...</p>
               )}
             </div>
           )}
         </div>
+        )}
 
+        {enabledShortcuts.artnet && (
         <div className="shortcuts-section">
           <h3>DMX/Artnet</h3>
           {!artnetInitialized && <p>Initializing Art-Net...</p>}
@@ -219,7 +205,9 @@ const ShortcutsWindow = ({ show, onClose }) => {
             </div>
           )}
         </div>
+        )}
 
+        {enabledShortcuts.osc && (
         <div className="shortcuts-section">
           <h3>OSC</h3>
           {!oscInitialized && <p>Initializing OSC...</p>}
@@ -259,6 +247,11 @@ const ShortcutsWindow = ({ show, onClose }) => {
             </div>
           )}
         </div>
+        )}
+
+        {(!enabledShortcuts.midi && !enabledShortcuts.artnet && !enabledShortcuts.osc && !enabledShortcuts.keyboard) && (
+            <p>No shortcut protocols are enabled. Enable them in the Shortcuts menu.</p>
+        )}
 
         <button onClick={onClose}>Close</button>
       </div>
