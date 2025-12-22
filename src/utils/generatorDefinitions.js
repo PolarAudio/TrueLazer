@@ -29,6 +29,7 @@ export const generatorDefinitions = [
     defaultParams: {
       width: 1,
       height: 1,
+      pointDensity: 25, // Points per side
       x: 0,
       y: 0,
       r: 255,
@@ -38,6 +39,7 @@ export const generatorDefinitions = [
     paramControls: [
       { id: 'width', label: 'Width', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
       { id: 'height', label: 'Height', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 100, step: 1 },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -54,6 +56,7 @@ export const generatorDefinitions = [
       y1: 0,
       x2: 0.5,
       y2: 0,
+      pointDensity: 50,
       r: 255,
       g: 255,
       b: 255,
@@ -63,6 +66,7 @@ export const generatorDefinitions = [
       { id: 'y1', label: 'Y1', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'x2', label: 'X2', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y2', label: 'Y2', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 2, max: 200, step: 1 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
@@ -77,6 +81,7 @@ export const generatorDefinitions = [
       x: 0,
       y: 0,
       fontSize: 72,
+      numPoints: 200, // Target number of points
       fontUrl: 'C:\\Windows\\Fonts\\arial.ttf', // New default param
       r: 255,
       g: 255,
@@ -87,6 +92,7 @@ export const generatorDefinitions = [
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'fontSize', label: 'Font Size', type: 'range', min: 10, max: 200, step: 1 },
+      { id: 'numPoints', label: 'Target Points', type: 'range', min: 10, max: 1000, step: 1 },
       { id: 'fontUrl', label: 'Font URL', type: 'text' }, // New param control
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
@@ -100,7 +106,8 @@ export const generatorDefinitions = [
     defaultParams: {
       outerRadius: 0.5,
       innerRadius: 0.2,
-      numPoints: 5, // Number of points on the star
+      numSpikes: 5, // Number of spikes on the star
+      pointDensity: 10, // Points per segment
       x: 0,
       y: 0,
       r: 255,
@@ -110,7 +117,8 @@ export const generatorDefinitions = [
     paramControls: [
       { id: 'outerRadius', label: 'Outer Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
       { id: 'innerRadius', label: 'Inner Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
-      { id: 'numPoints', label: 'Number of Points', type: 'range', min: 3, max: 20, step: 1 },
+      { id: 'numSpikes', label: 'Number of Spikes', type: 'range', min: 3, max: 20, step: 1 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 50, step: 1 },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },

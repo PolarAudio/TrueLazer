@@ -104,8 +104,8 @@ export const sendNote = (inputId, note, velocity, channel) => {
         if (input) {
             const output = WebMidi.outputs.find(o => o.name === input.name);
             if (output) {
-                // velocity 0-127 mapped to attack
-                output.sendNoteOn(note, { rawAttack: true, attack: velocity, channels: channel });
+                // velocity 0-127 mapped to attack 0-1
+                output.sendNoteOn(note, { attack: velocity / 127, channels: channel });
             }
         }
     }

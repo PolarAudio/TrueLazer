@@ -6,14 +6,42 @@ const rotationUpdateInterval = 16; // Approximately 60 FPS
 
 const withDefaults = (params, defaults) => ({ ...defaults, ...params });
 
+/**
+ * Optimized applyEffects that minimizes object creation and GC.
+ * Assumes frame.points is a Float32Array where each point is 8 floats:
+ * [x, y, z, r, g, b, blanking (0/1), lastPoint (0/1)]
+ */
 export function applyEffects(frame, effects) {
-  let modifiedFrame = { ...frame };
   const currentTime = performance.now();
-
   if (currentTime - lastAnimationFrameTime > rotationUpdateInterval) {
-    globalRotationAngle = (globalRotationAngle + 0.01) % (2 * Math.PI); // Update global rotation slowly
+    globalRotationAngle = (globalRotationAngle + 0.01) % (2 * Math.PI);
     lastAnimationFrameTime = currentTime;
   }
+
+  if (!effects || effects.length === 0) return frame;
+
+  // If points are still in object array format, convert them once (compatibility layer)
+  let pointsData;
+  if (Array.isArray(frame.points)) {
+      pointsData = new Float32Array(frame.points.length * 8);
+      for (let i = 0; i < frame.points.length; i++) {
+          const p = frame.points[i];
+          const offset = i * 8;
+          pointsData[offset] = p.x;
+          pointsData[offset + 1] = p.y;
+          pointsData[offset + 2] = p.z || 0;
+          pointsData[offset + 3] = p.r;
+          pointsData[offset + 4] = p.g;
+          pointsData[offset + 5] = p.b;
+          pointsData[offset + 6] = p.blanking ? 1 : 0;
+          pointsData[offset + 7] = p.lastPoint ? 1 : 0;
+      }
+  } else {
+      // It's already a TypedArray, but we MUST copy it if we are going to modify it
+      pointsData = new Float32Array(frame.points);
+  }
+
+  const numPoints = pointsData.length / 8;
 
   for (const effect of effects) {
     const definition = effectDefinitions.find(def => def.id === effect.id);
@@ -21,147 +49,121 @@ export function applyEffects(frame, effects) {
 
     switch (effect.id) {
       case 'rotate':
-        modifiedFrame = applyRotate(modifiedFrame, effect.params, globalRotationAngle);
+        applyRotate(pointsData, numPoints, effect.params, globalRotationAngle);
         break;
       case 'scale':
-        modifiedFrame = applyScale(modifiedFrame, effect.params);
+        applyScale(pointsData, numPoints, effect.params);
         break;
       case 'translate':
-        modifiedFrame = applyTranslate(modifiedFrame, effect.params);
+        applyTranslate(pointsData, numPoints, effect.params);
         break;
       case 'color':
-        modifiedFrame = applyColor(modifiedFrame, effect.params);
+        applyColor(pointsData, numPoints, effect.params);
         break;
       case 'wave':
-        modifiedFrame = applyWave(modifiedFrame, effect.params);
+        applyWave(pointsData, numPoints, effect.params);
         break;
       case 'blanking':
-        modifiedFrame = applyBlanking(modifiedFrame, effect.params);
+        applyBlanking(pointsData, numPoints, effect.params);
         break;
       case 'strobe':
-        modifiedFrame = applyStrobe(modifiedFrame, effect.params);
+        applyStrobe(pointsData, numPoints, effect.params);
         break;
       case 'mirror':
-        modifiedFrame = applyMirror(modifiedFrame, effect.params);
+        applyMirror(pointsData, numPoints, effect.params);
         break;
       default:
         break;
     }
   }
 
-  return modifiedFrame;
+  return { ...frame, points: pointsData, isTypedArray: true };
 }
 
-function applyRotate(frame, params, globalRotationAngle) {
+function applyRotate(points, numPoints, params, globalRotationAngle) {
   const { angle, rotationSpeed } = withDefaults(params, effectDefinitions.find(def => def.id === 'rotate').defaultParams);
-  
-  // Combine static angle with dynamic rotationSpeed based on global animation frame
   const currentAngle = (angle * Math.PI / 180) + (globalRotationAngle * rotationSpeed);
   const sin = Math.sin(currentAngle);
   const cos = Math.cos(currentAngle);
 
-  const newPoints = frame.points.map(point => {
-    const x = point.x * cos - point.y * sin;
-    const y = point.x * sin + point.y * cos;
-    return { ...point, x, y };
-  });
-
-  return { ...frame, points: newPoints };
+  for (let i = 0; i < numPoints; i++) {
+    const offset = i * 8;
+    const x = points[offset];
+    const y = points[offset + 1];
+    points[offset] = x * cos - y * sin;
+    points[offset + 1] = x * sin + y * cos;
+  }
 }
 
-function applyScale(frame, params) {
+function applyScale(points, numPoints, params) {
   const { scaleX, scaleY } = withDefaults(params, effectDefinitions.find(def => def.id === 'scale').defaultParams);
-
-  const newPoints = frame.points.map(point => {
-    const x = point.x * scaleX;
-    const y = point.y * scaleY;
-    return { ...point, x, y };
-  });
-
-  return { ...frame, points: newPoints };
+  for (let i = 0; i < numPoints; i++) {
+    const offset = i * 8;
+    points[offset] *= scaleX;
+    points[offset + 1] *= scaleY;
+  }
 }
 
-function applyTranslate(frame, params) {
+function applyTranslate(points, numPoints, params) {
   const { translateX, translateY } = withDefaults(params, effectDefinitions.find(def => def.id === 'translate').defaultParams);
-
-  const newPoints = frame.points.map(point => {
-    const x = point.x + translateX;
-    const y = point.y + translateY;
-    return { ...point, x, y };
-  });
-
-  return { ...frame, points: newPoints };
+  for (let i = 0; i < numPoints; i++) {
+    const offset = i * 8;
+    points[offset] += translateX;
+    points[offset + 1] += translateY;
+  }
 }
 
-function applyColor(frame, params) {
+function applyColor(points, numPoints, params) {
   const { r, g, b } = withDefaults(params, effectDefinitions.find(def => def.id === 'color').defaultParams);
-
-  const newPoints = frame.points.map(point => {
-    return { ...point, r, g, b };
-  });
-
-  return { ...frame, points: newPoints };
+  for (let i = 0; i < numPoints; i++) {
+    const offset = i * 8;
+    points[offset + 3] = r;
+    points[offset + 4] = g;
+    points[offset + 5] = b;
+  }
 }
 
-function applyWave(frame, params) {
+function applyWave(points, numPoints, params) {
   const { amplitude, frequency, speed, direction } = withDefaults(params, effectDefinitions.find(def => def.id === 'wave').defaultParams);
+  const timeShift = Date.now() * 0.001 * speed;
 
-  const newPoints = frame.points.map(point => {
-    let x = point.x;
-    let y = point.y;
-
+  for (let i = 0; i < numPoints; i++) {
+    const offset = i * 8;
     if (direction === 'x') {
-      y += amplitude * Math.sin(point.x * frequency + Date.now() * 0.001 * speed);
+      points[offset + 1] += amplitude * Math.sin(points[offset] * frequency + timeShift);
     } else if (direction === 'y') {
-      x += amplitude * Math.sin(point.y * frequency + Date.now() * 0.001 * speed);
+      points[offset] += amplitude * Math.sin(points[offset + 1] * frequency + timeShift);
     }
-
-    return { ...point, x, y };
-  });
-
-  return { ...frame, points: newPoints };
+  }
 }
 
-function applyBlanking(frame, params) {
+function applyBlanking(points, numPoints, params) {
   const { blankingInterval } = withDefaults(params, effectDefinitions.find(def => def.id === 'blanking').defaultParams);
+  if (blankingInterval <= 0) return;
 
-  if (blankingInterval <= 0) return frame;
-
-  const newPoints = frame.points.map((point, index) => {
-    const blank = (index % (blankingInterval + 1)) === blankingInterval;
-    return { ...point, blanking: point.blanking || blank };
-  });
-
-  return { ...frame, points: newPoints };
+  for (let i = 0; i < numPoints; i++) {
+    if ((i % (blankingInterval + 1)) === blankingInterval) {
+        points[i * 8 + 6] = 1; // Set blanking bit
+    }
+  }
 }
 
-function applyStrobe(frame, params) {
+function applyStrobe(points, numPoints, params) {
   const { strobeSpeed, strobeAmount } = withDefaults(params, effectDefinitions.find(def => def.id === 'strobe').defaultParams);
-
   const now = Date.now();
-  const cycleTime = strobeSpeed; // milliseconds
-  const cyclePosition = (now % cycleTime) / cycleTime; // 0 to 1
-
-  // If cyclePosition is within the strobeAmount, then blank
-  const blank = cyclePosition < strobeAmount;
-
-  const newPoints = frame.points.map(point => {
-    return { ...point, blanking: point.blanking || blank };
-  });
-
-  return { ...frame, points: newPoints };
+  const cyclePosition = (now % strobeSpeed) / strobeSpeed;
+  if (cyclePosition < strobeAmount) {
+    for (let i = 0; i < numPoints; i++) {
+        points[i * 8 + 6] = 1;
+    }
+  }
 }
 
-function applyMirror(frame, params) {
+function applyMirror(points, numPoints, params) {
   const { mirrorX, mirrorY } = withDefaults(params, effectDefinitions.find(def => def.id === 'mirror').defaultParams);
-
-  if (!mirrorX && !mirrorY) return frame;
-
-  const newPoints = frame.points.map(point => {
-    const x = mirrorX ? -point.x : point.x;
-    const y = mirrorY ? -point.y : point.y;
-    return { ...point, x, y };
-  });
-
-  return { ...frame, points: newPoints };
+  for (let i = 0; i < numPoints; i++) {
+    const offset = i * 8;
+    if (mirrorX) points[offset] = -points[offset];
+    if (mirrorY) points[offset + 1] = -points[offset + 1];
+  }
 }

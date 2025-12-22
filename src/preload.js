@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld(
     showLayerContextMenu: (index) => ipcRenderer.send('show-layer-context-menu', index),
     showLayerFullContextMenu: (index) => ipcRenderer.send('show-layer-full-context-menu', index),
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
-    showClipContextMenu: (layerIndex, colIndex) => ipcRenderer.send('show-clip-context-menu', layerIndex, colIndex),
+    showClipContextMenu: (...args) => ipcRenderer.send('show-clip-context-menu', ...args),
     showColumnHeaderClipContextMenu: (colIndex) => ipcRenderer.send('show-column-header-clip-context-menu', colIndex),
     sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action),
     onContextMenuActionFromMain: (callback) => {
@@ -86,6 +86,23 @@ contextBridge.exposeInMainWorld(
                                             getArtnetUniverses: () => ipcRenderer.invoke('get-artnet-universes'),
                                             sendArtnetData: (universe, channel, value) => ipcRenderer.send('send-artnet-data', universe, channel, value),
                                             closeArtnet: () => ipcRenderer.send('close-artnet'),
+                                            listenArtnetUniverse: (universe) => ipcRenderer.send('artnet-listen-universe', universe),
+                                            onArtnetDataReceived: (callback) => {
+                                                const listener = (event, { universe, data }) => {
+                                                    // data is array of 512.
+                                                    data.forEach((val, idx) => {
+                                                        if (val > 0) { // Simple filter for non-zero to detect signal
+                                                            callback({ universe, channel: idx, value: val });
+                                                        }
+                                                    });
+                                                };
+                                                ipcRenderer.on('artnet-data-received', listener);
+                                                return () => ipcRenderer.removeListener('artnet-data-received', listener);
+                                            },
+                                            getArtnetMappings: () => ipcRenderer.invoke('get-artnet-mappings'),
+                                            saveArtnetMappings: (mappings) => ipcRenderer.invoke('save-artnet-mappings', mappings),
+                                            exportMappings: (mappings, type) => ipcRenderer.invoke('export-mappings', mappings, type),
+                                            importMappings: (type) => ipcRenderer.invoke('import-mappings', type),
                                             // OSC
                                             initializeOsc: (config) => ipcRenderer.invoke('initialize-osc', config),
                                             sendOscMessage: (address, args) => ipcRenderer.send('send-osc-message', address, args),

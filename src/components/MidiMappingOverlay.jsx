@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { useMidi } from '../contexts/MidiContext';
+import { useArtnet } from '../contexts/ArtnetContext';
 
 const MidiMappingOverlay = () => {
-  const { isMapping, mappings, learningId } = useMidi();
+  const { isMapping: isMidiMapping, mappings: midiMappings, learningId: midiLearningId } = useMidi();
+  const { isMapping: isArtnetMapping, mappings: artnetMappings, learningId: artnetLearningId } = useArtnet() || {};
+
+  const isMapping = isMidiMapping || isArtnetMapping;
   const [overlays, setOverlays] = useState([]);
 
   const updateOverlayPositions = useCallback(() => {
@@ -45,13 +49,24 @@ const MidiMappingOverlay = () => {
   return ReactDOM.createPortal(
     <div className="midi-mapping-global-overlay-container">
       {overlays.map(overlay => {
-        const mapping = mappings[overlay.id];
-        const isLearning = learningId === overlay.id;
+        const midiMapping = midiMappings[overlay.id];
+        const artnetMapping = artnetMappings ? artnetMappings[overlay.id] : null;
+        
+        const isLearning = (isMidiMapping && midiLearningId === overlay.id) || 
+                           (isArtnetMapping && artnetLearningId === overlay.id);
+
+        // Show MIDI labels if MIDI mapping mode is active, otherwise show Art-Net labels if Art-Net mapping mode is active
+        let mappingLabel = null;
+        if (isMidiMapping) {
+            mappingLabel = midiMapping ? midiMapping.label : null;
+        } else if (isArtnetMapping) {
+            mappingLabel = artnetMapping ? artnetMapping.label : null;
+        }
 
         return (
           <div
             key={overlay.id}
-            className={`midi-mapping-label-box ${isLearning ? 'learning' : ''} ${mapping ? 'mapped' : ''}`}
+            className={`midi-mapping-label-box ${isLearning ? 'learning' : ''} ${mappingLabel ? 'mapped' : ''} ${isArtnetMapping ? 'artnet-mapping' : ''}`}
             style={{
               position: 'fixed',
               top: overlay.rect.top,
@@ -66,7 +81,7 @@ const MidiMappingOverlay = () => {
             }}
           >
             <div className="mapping-label">
-              {mapping ? mapping.label : '+'}
+              {mappingLabel ? mappingLabel : '+'}
             </div>
           </div>
         );

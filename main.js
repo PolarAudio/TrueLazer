@@ -7,6 +7,9 @@ import https from 'https';
 import * as dacCommunication from './main/dac-communication.cjs';
 const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll } = dacCommunication;
 
+// Suppress Autofill.enable and Autofill.setAddresses errors in console
+app.commandLine.appendSwitch('disable-autofill');
+
 // ES module equivalent of __dirname and __filename
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -17,12 +20,6 @@ let mainWindow; // Global variable to store the main window instance
 let currentThumbnailRenderMode = 'still'; // Global variable to store the current thumbnail render mode
 let audioDevices = []; // Global variable to store audio devices
 let currentAudioDeviceId = 'default';
-let shortcutsState = {
-  midi: false,
-  artnet: false,
-  osc: false,
-  keyboard: false
-};
 
 // Define the schema for settings
 const schema = {
@@ -38,6 +35,32 @@ const schema = {
     default: {}
   },
   theme: { type: 'string', default: 'orange' },
+  thumbnailRenderMode: { type: 'string', default: 'still' },
+  midiMappings: { type: 'object', default: {} },
+  artnetMappings: { type: 'object', default: {} },
+  selectedMidiInputId: { type: 'string', default: '' },
+  shortcutsState: {
+    type: 'object',
+    properties: {
+      midi: { type: 'boolean' },
+      artnet: { type: 'boolean' },
+      osc: { type: 'boolean' },
+      keyboard: { type: 'boolean' }
+    },
+    default: {
+      midi: false,
+      artnet: false,
+      osc: false,
+      keyboard: false
+    }
+  },
+  selectedDac: {
+    anyOf: [
+      { type: 'object' },
+      { type: 'null' }
+    ],
+    default: null
+  },
   loadedClips: { type: 'array', default: [] }, // Reverted to original
   sliderValue: { type: 'object', default: {} }, // Placeholder for slider values
   dacAssignment: { type: 'object', default: {} }, // Placeholder for DAC assignments
@@ -50,31 +73,47 @@ const schema = {
   },
 };
 
-// Temporarily disable electron-store for debugging
-// const store = new Store({ schema });
-// store.clear();
-const store = { // Dummy store
-  store: {},
-  get: (key) => ({}),
-  set: (key, value) => console.log(`Dummy store: Setting ${key} to`, value),
-  clear: () => console.log('Dummy store: Clearing')
-};
+// Initialize electron-store
+const store = new Store({ schema });
+// store.clear(); // Uncomment to clear store on startup for debugging
+
+let shortcutsState = store.get('shortcutsState');
 
 // Global variables for ArtNet and OSC
 let artnetInstance = null;
 let artnetSender = null; // We might need multiple senders for multiple universes
+let artnetReceivers = new Map(); // Map universe number to receiver instance
 let oscUdpPort = null;
+
+const getOrCreateReceiver = (universe) => {
+    if (artnetReceivers.has(universe)) return artnetReceivers.get(universe);
+    
+    const receiver = artnetInstance.newReceiver({
+        subnet: 0,
+        universe: universe,
+        net: 0
+    });
+
+    receiver.on('data', (data) => {
+        if (mainWindow) {
+            mainWindow.webContents.send('artnet-data-received', { universe, data });
+        }
+    });
+
+    artnetReceivers.set(universe, receiver);
+    return receiver;
+};
 
 // IPC handlers for ArtNet
 ipcMain.handle('initialize-artnet', async () => {
   try {
     if (!artnetInstance) {
       const dmxlib = await import('dmxnet');
-      // dmxnet default export is the class itself or has a default property?
-      // CommonJS module 'dmxnet' default export: class dmxnet
-      const DMXnet = dmxlib.default || dmxlib.dmxnet || dmxlib; 
+      // dmxnet exports an object with a 'dmxnet' property which is the actual class
+      const DMXnet = dmxlib.dmxnet || (dmxlib.default && dmxlib.default.dmxnet) || dmxlib.default || dmxlib; 
+      
       artnetInstance = new DMXnet({
-        log: { level: 'info' } // optional
+        log: { level: 'error' } 
       });
       // Initialize a default sender for Universe 0
       artnetSender = artnetInstance.newSender({
@@ -83,6 +122,9 @@ ipcMain.handle('initialize-artnet', async () => {
         universe: 0,
         net: 0
       });
+
+      // Initialize a receiver for Universe 0 by default
+      getOrCreateReceiver(0);
     }
     return { success: true };
   } catch (error) {
@@ -91,10 +133,69 @@ ipcMain.handle('initialize-artnet', async () => {
   }
 });
 
+ipcMain.on('artnet-listen-universe', (event, universe) => {
+    if (artnetInstance) {
+        getOrCreateReceiver(universe);
+    }
+});
+
+ipcMain.handle('get-artnet-mappings', () => {
+  return store.get('artnetMappings') || {};
+});
+
+ipcMain.handle('save-artnet-mappings', (event, mappings) => {
+  store.set('artnetMappings', mappings);
+  return { success: true };
+});
+
+ipcMain.handle('export-mappings', async (event, mappings, type) => {
+  const defaultPath = path.join(app.getPath('documents'), `TrueLazer_${type}_Mappings.json`);
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    defaultPath,
+    filters: [{ name: 'JSON Files', extensions: ['json'] }],
+    title: `Export ${type.toUpperCase()} Mappings`
+  });
+
+  if (!canceled && filePath) {
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(mappings, null, 2));
+      return { success: true };
+    } catch (error) {
+      console.error(`Failed to export ${type} mappings:`, error);
+      return { success: false, error: error.message };
+    }
+  }
+  return { success: false, canceled: true };
+});
+
+ipcMain.handle('import-mappings', async (event, type) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    filters: [{ name: 'JSON Files', extensions: ['json'] }],
+    properties: ['openFile'],
+    title: `Import ${type.toUpperCase()} Mappings`
+  });
+
+  if (!canceled && filePaths.length > 0) {
+    try {
+      const data = await fs.promises.readFile(filePaths[0], 'utf-8');
+      const mappings = JSON.parse(data);
+      return { success: true, mappings };
+    } catch (error) {
+      console.error(`Failed to import ${type} mappings:`, error);
+      return { success: false, error: error.message };
+    }
+  }
+  return { success: false, canceled: true };
+});
+
+// Commented out to avoid issues with schema
+
 ipcMain.handle('get-artnet-universes', () => {
-  // Return a static list or discovered ones if dmxnet supports it.
-  // For now, return the default universe 0.
-  return [{ id: 'universe-0', name: 'Universe 0 (Broadcast)' }];
+  // Return a list of 16 universes
+  return Array.from({ length: 16 }, (_, i) => ({
+    id: `universe-${i}`,
+    name: `Universe ${i}${i === 0 ? ' (Default)' : ''}`
+  }));
 });
 
 ipcMain.on('send-artnet-data', (event, universe, channel, value) => {
@@ -215,12 +316,20 @@ ipcMain.handle('save-midi-mappings', (event, mappings) => {
   return { success: true };
 });
 
-/* // Commented out to avoid issues with schema
+ipcMain.handle('save-selected-midi-input', (event, inputId) => {
+  store.set('selectedMidiInputId', inputId);
+  return { success: true };
+});
+
+ipcMain.handle('get-selected-midi-input', () => {
+  return store.get('selectedMidiInputId') || '';
+});
+
+// Commented out to avoid issues with schema
 ipcMain.handle('set-loaded-clips', (event, loadedClips) => {
   console.log('Received loadedClips:', loadedClips);
   store.set('loadedClips', loadedClips);
 });
-*/
 
 // Function to get or create the default project path
 async function getDefaultProjectPath() {
@@ -380,6 +489,7 @@ function buildApplicationMenu(mode) {
           checked: shortcutsState.midi,
           click: () => {
             shortcutsState.midi = !shortcutsState.midi;
+            store.set('shortcutsState', shortcutsState);
             if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-midi-${shortcutsState.midi}`);
             buildApplicationMenu(currentThumbnailRenderMode);
           }
@@ -396,6 +506,7 @@ function buildApplicationMenu(mode) {
           checked: shortcutsState.artnet,
           click: () => {
             shortcutsState.artnet = !shortcutsState.artnet;
+            store.set('shortcutsState', shortcutsState);
             if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-artnet-${shortcutsState.artnet}`);
             buildApplicationMenu(currentThumbnailRenderMode);
           }
@@ -412,6 +523,7 @@ function buildApplicationMenu(mode) {
           checked: shortcutsState.osc,
           click: () => {
             shortcutsState.osc = !shortcutsState.osc;
+            store.set('shortcutsState', shortcutsState);
             if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-osc-${shortcutsState.osc}`);
             buildApplicationMenu(currentThumbnailRenderMode);
           }
@@ -428,6 +540,7 @@ function buildApplicationMenu(mode) {
           checked: shortcutsState.keyboard,
           click: () => {
             shortcutsState.keyboard = !shortcutsState.keyboard;
+            store.set('shortcutsState', shortcutsState);
             if(mainWindow) mainWindow.webContents.send('menu-action', `toggle-keyboard-${shortcutsState.keyboard}`);
             buildApplicationMenu(currentThumbnailRenderMode);
           }

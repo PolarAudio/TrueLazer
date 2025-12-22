@@ -200,4 +200,4 @@ const handleFilePathDrop = async (filePath, fileName) => {
   );
 };
 
-export default Clip;
+export default React.memo(Clip);

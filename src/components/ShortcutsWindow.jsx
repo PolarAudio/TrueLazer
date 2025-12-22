@@ -114,6 +114,10 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
 
   const handleArtnetUniverseChange = (e) => {
     setSelectedArtnetUniverseId(e.target.value);
+    const universeNumber = parseInt(e.target.value.replace('universe-', ''));
+    if (window.electronAPI && window.electronAPI.listenArtnetUniverse) {
+        window.electronAPI.listenArtnetUniverse(universeNumber);
+    }
   };
 
   const handleArtnetChannelChange = (e) => {

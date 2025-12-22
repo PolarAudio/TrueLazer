@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import EffectEditor from './EffectEditor';
 import GeneratorSettingsPanel from './GeneratorSettingsPanel';
 import { useMidi } from '../contexts/MidiContext';
+import { useArtnet } from '../contexts/ArtnetContext';
 
 const SettingsPanel = ({
   effects,
@@ -30,10 +31,23 @@ const SettingsPanel = ({
     learningId,
     lastMidiEvent,
     setMappings,
-    saveMappings
+    saveMappings,
+    exportMappings: exportMidiMappings,
+    importMappings: importMidiMappings
   } = useMidi();
 
-  const [artnetInitialized, setArtnetInitialized] = useState(false);
+  const { 
+    artnetInitialized,
+    isMapping: isArtnetMapping,
+    startMapping: startArtnetMapping,
+    stopMapping: stopArtnetMapping,
+    setMappings: setArtnetMappings,
+    saveMappings: saveArtnetMappings,
+    exportMappings: exportArtnetMappings,
+    importMappings: importArtnetMappings,
+    lastDmxEvent
+  } = useArtnet() || {};
+
   const [artnetUniverses, setArtnetUniverses] = useState([]);
   const [selectedArtnetUniverseId, setSelectedArtnetUniverseId] = useState('');
   const [artnetChannel, setArtnetChannel] = useState(0);
@@ -48,20 +62,16 @@ const SettingsPanel = ({
   const [lastOscMessage, setLastOscMessage] = useState(null);
 
   useEffect(() => {
-    const initArtnet = async () => {
+    const fetchArtnetUniverses = async () => {
       if (!enabledShortcuts.artnet) return;
       try {
-        const result = await window.electronAPI.initializeArtnet();
-        if (result.success) {
-          setArtnetInitialized(true);
-          const universes = await window.electronAPI.getArtnetUniverses();
-          setArtnetUniverses(universes);
-          if (universes.length > 0) {
-            setSelectedArtnetUniverseId(universes[0].id);
-          }
+        const universes = await window.electronAPI.getArtnetUniverses();
+        setArtnetUniverses(universes);
+        if (universes.length > 0) {
+          setSelectedArtnetUniverseId(universes[0].id);
         }
       } catch (err) {
-        console.error("Failed to initialize Art-Net:", err);
+        console.error("Failed to fetch Art-Net universes:", err);
       }
     };
 
@@ -86,7 +96,7 @@ const SettingsPanel = ({
     };
 
     let cleanupOscListener = () => {};
-    initArtnet();
+    fetchArtnetUniverses();
     initOsc().then(cleanup => { 
         if (typeof cleanup === 'function') cleanupOscListener = cleanup; 
     });
@@ -98,6 +108,7 @@ const SettingsPanel = ({
 
   const handleMidiInputChange = (e) => setSelectedMidiInputId(e.target.value);
   const toggleMidiLearnMode = () => isMapping ? stopMapping() : startMapping();
+  const toggleArtnetLearnMode = () => isArtnetMapping ? stopArtnetMapping() : startArtnetMapping();
 
   const hasEffects = effects && effects.length > 0;
   const hasGenerator = !!selectedGeneratorId;
@@ -135,7 +146,9 @@ const SettingsPanel = ({
                     >
                         {isMapping ? 'Stop Mapping' : 'Start Mapping'}
                     </button>
-                    <button className="save-mapping-btn" onClick={saveMappings}>Save as Default</button>
+                    <button className="save-mapping-btn" onClick={saveMappings} title="Save to internal storage">Save Default</button>
+                    <button className="save-mapping-btn" onClick={exportMidiMappings}>Save as...</button>
+                    <button className="load-mapping-btn" onClick={importMidiMappings}>Load</button>
                     <button className="clear-mapping-btn" onClick={() => setMappings({})}>Clear All</button>
                   </div>
                   {lastMidiEvent && (
@@ -151,10 +164,42 @@ const SettingsPanel = ({
           {enabledShortcuts.artnet && (
             <div className="settings-section">
               <h4>ArtNet Shortcuts</h4>
-              <select value={selectedArtnetUniverseId} onChange={(e) => setSelectedArtnetUniverseId(e.target.value)}>
-                {artnetUniverses.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
-              {/* ArtNet mapping controls will go here */}
+              {!artnetInitialized ? (
+                <p>Initializing Art-Net...</p>
+              ) : (
+                <div className="artnet-config">
+                  <select 
+                    value={selectedArtnetUniverseId} 
+                    onChange={(e) => {
+                        setSelectedArtnetUniverseId(e.target.value);
+                        const universeNumber = parseInt(e.target.value.replace('universe-', ''));
+                        if (window.electronAPI && window.electronAPI.listenArtnetUniverse) {
+                            window.electronAPI.listenArtnetUniverse(universeNumber);
+                        }
+                    }}
+                  >
+                    {artnetUniverses.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                  <div className="button-row">
+                    <button 
+                        className={`mapping-btn ${isArtnetMapping ? 'active' : ''}`} 
+                        onClick={toggleArtnetLearnMode}
+                        style={{ backgroundColor: isArtnetMapping ? 'var(--theme-color)' : '' }}
+                    >
+                        {isArtnetMapping ? 'Stop Mapping' : 'Start Mapping'}
+                    </button>
+                    <button className="save-mapping-btn" onClick={saveArtnetMappings} title="Save to internal storage">Save Default</button>
+                    <button className="save-mapping-btn" onClick={exportArtnetMappings}>Save as...</button>
+                    <button className="load-mapping-btn" onClick={importArtnetMappings}>Load</button>
+                    <button className="clear-mapping-btn" onClick={() => setArtnetMappings({})}>Clear All</button>
+                  </div>
+                  {lastDmxEvent && (
+                      <div className="last-midi-status">
+                          Last Signal: Universe {lastDmxEvent.universe} CH {lastDmxEvent.channel + 1} (Val: {lastDmxEvent.value})
+                      </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

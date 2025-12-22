@@ -1,14 +1,19 @@
 import React from 'react';
 import { useMidi } from '../contexts/MidiContext';
+import { useArtnet } from '../contexts/ArtnetContext';
 
 const Mappable = ({ id, children }) => {
-  const { isMapping, setLearningId } = useMidi();
+  const { isMapping: isMidiMapping, setLearningId: setMidiLearningId } = useMidi();
+  const { isMapping: isArtnetMapping, setLearningId: setArtnetLearningId } = useArtnet() || {};
+
+  const isMapping = isMidiMapping || isArtnetMapping;
 
   const handleClickCapture = (e) => {
     if (isMapping) {
       e.preventDefault();
       e.stopPropagation();
-      setLearningId(id); // Set this element as the one waiting for MIDI input
+      if (isMidiMapping) setMidiLearningId(id);
+      if (isArtnetMapping) setArtnetLearningId(id);
     }
   };
 

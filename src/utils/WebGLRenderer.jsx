@@ -6,7 +6,8 @@ export class WebGLRenderer {
     this.type = type; // 'single' or 'world'
     this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     this.animationFrameId = null;
-    this.frameIndexes = Array(5).fill(0); // Initialize with 5 zeros for 5 layers
+    this.frameIndexes = Array(10).fill(0); // Increased size and will handle dynamically
+    this.pointIndexes = Array(10).fill(0); // Per-layer point indexes
     this.showBeamEffect = false; // Default value
     this.beamAlpha = 0.5; // Default value
     this.fadeAlpha = 0.13; // Default value
@@ -16,7 +17,6 @@ export class WebGLRenderer {
     this.colorBuffer = null;
     this.alphaBuffer = null;
 
-    this.currentPointIndex = 0; // Tracks how many points have been drawn for the current frame
     this.lastPointDrawTime = 0; // Tracks the last time points were drawn
 
     if (!this.gl) {
@@ -122,8 +122,8 @@ export class WebGLRenderer {
   }
 
   reset() {
-    this.currentPointIndex = 0;
     this.frameIndexes.fill(0);
+    this.pointIndexes.fill(0);
     this.clearCanvas();
   }
 
@@ -182,14 +182,16 @@ export class WebGLRenderer {
   renderSingle(ildaFrames, previewScanRate, intensity, effects) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    
+    // Instead of full clear, draw a semi-transparent black quad for fade effect
+    this.drawFadeQuad();
 
     if (!ildaFrames || ildaFrames.length === 0) {
       return;
     }
 
     const frame = ildaFrames[this.frameIndexes[0] % ildaFrames.length];
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity);
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -200,32 +202,61 @@ export class WebGLRenderer {
   renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    
+    // Instead of full clear, draw a semi-transparent black quad for fade effect
+    this.drawFadeQuad();
 
-    worldData.forEach((clip, index) => {
+    worldData.forEach((clip) => {
       if (clip && clip.frames && clip.frames.length > 0) {
         const frame = clip.frames[0]; // Get the first and only frame
         if (frame) {
-            const layerIntensity = layerIntensities[clip.layerIndex] !== undefined ? layerIntensities[clip.layerIndex] : 1;
+            const layerIndex = clip.layerIndex || 0;
+            // Ensure arrays are large enough
+            if (layerIndex >= this.frameIndexes.length) {
+                const newSize = layerIndex + 5;
+                while(this.frameIndexes.length < newSize) {
+                    this.frameIndexes.push(0);
+                    this.pointIndexes.push(0);
+                }
+            }
+
+            const layerIntensity = layerIntensities[layerIndex] !== undefined ? layerIntensities[layerIndex] : 1;
             const finalIntensity = layerIntensity * masterIntensity;
             
             // Skip rendering if intensity is effectively zero
             if (finalIntensity > 0.001) {
-                // The draw function now expects the full frame object and the effects array
-                this.draw(frame, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity);
+                // Pass layerIndex to draw
+                this.draw(frame, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex);
             }
         }
       }
     });
 
-    worldData.forEach((clip, index) => {
-      if (clip && clip.frames) { // Changed from clip.frame
-        this.frameIndexes[index]++;
-        if (this.frameIndexes[index] >= clip.frames.length) {
-          this.frameIndexes[index] = 0;
+    worldData.forEach((clip) => {
+      if (clip && clip.frames) {
+        const layerIndex = clip.layerIndex || 0;
+        this.frameIndexes[layerIndex]++;
+        if (this.frameIndexes[layerIndex] >= clip.frames.length) {
+          this.frameIndexes[layerIndex] = 0;
         }
       }
     });
+  }
+
+  drawFadeQuad() {
+    const gl = this.gl;
+    if (!this.fadeProgram) return;
+
+    gl.useProgram(this.fadeProgram);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadPositionBuffer);
+    gl.enableVertexAttribArray(this.fadePositionAttributeLocation);
+    gl.vertexAttribPointer(this.fadePositionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+    // Set fade color (black with alpha based on fadeAlpha)
+    gl.uniform4f(this.fadeColorUniformLocation, 0, 0, 0, this.fadeAlpha);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
   setBeamEffect(enabled) {
@@ -240,25 +271,55 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0) {
     const gl = this.gl;
-    if (!frame || !frame.points || frame.points.length === 0) return;
+    if (!frame || !frame.points) return;
 
     // Apply effects before drawing
     const modifiedFrame = applyEffects(frame, effects || []);
     const points = modifiedFrame.points;
-    if (!points || points.length === 0) return;
+    const isTyped = modifiedFrame.isTypedArray;
+    const numPoints = isTyped ? (points.length / 8) : points.length;
+    
+    if (numPoints === 0) return;
 
-    const pointsToDraw = Math.max(1, Math.floor(points.length / previewScanRate));
-    const startIndex = this.currentPointIndex;
-    const endIndex = Math.min(startIndex + pointsToDraw, points.length);
+    const pointsToDraw = Math.max(1, Math.floor(numPoints / previewScanRate));
+    let startIndex = this.pointIndexes[layerIndex] || 0;
+    if (startIndex >= numPoints) startIndex = 0;
+
+    // Helper to get point data
+    const getPointData = (idx) => {
+        const i = (startIndex + idx) % numPoints;
+        if (isTyped) {
+            const offset = i * 8;
+            return {
+                x: points[offset],
+                y: points[offset + 1],
+                r: points[offset + 3],
+                g: points[offset + 4],
+                b: points[offset + 5],
+                blanking: points[offset + 6] === 1
+            };
+        } else {
+            const p = points[i];
+            return {
+                x: p.x,
+                y: p.y,
+                r: p.r,
+                g: p.g,
+                b: p.b,
+                blanking: p.blanking
+            };
+        }
+    };
 
     // --- Helper function to draw normal frame segments ---
     const drawNormalFrame = () => {
       let currentSegmentPositions = [];
       let currentSegmentColors = [];
-      for (let i = startIndex; i < endIndex; i++) {
-        const point = points[i];
+      
+      for (let i = 0; i < pointsToDraw; i++) {
+        const point = getPointData(i);
         if (point.blanking) {
           if (currentSegmentPositions.length > 0) {
             this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2);
@@ -279,8 +340,8 @@ export class WebGLRenderer {
     const drawPointsEffect = () => {
       const beamPositions = [];
       const beamColors = [];
-      for (let i = startIndex; i < endIndex; i++) {
-        const point = points[i];
+      for (let i = 0; i < pointsToDraw; i++) {
+        const point = getPointData(i);
         if (!point.blanking) {
           beamPositions.push(0, 0, point.x, point.y);
           const color = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
@@ -296,16 +357,18 @@ export class WebGLRenderer {
     const drawLinesEffect = () => {
       const trianglePositions = [];
       const triangleColors = [];
-      for (let i = startIndex + 1; i < endIndex; i++) {
-        const p1 = points[i - 1];
-        const p2 = points[i];
-        if (!p1.blanking && !p2.blanking) {
-          trianglePositions.push(0, 0, p1.x, p1.y, p2.x, p2.y);
-          const color1 = [p1.r / 255 * intensity, p1.g / 255 * intensity, p1.b / 255 * intensity];
-          const color2 = [p2.r / 255 * intensity, p2.g / 255 * intensity, p2.b / 255 * intensity];
+      let prevPoint = getPointData(0);
+
+      for (let i = 1; i < pointsToDraw; i++) {
+        const point = getPointData(i);
+        if (!prevPoint.blanking && !point.blanking) {
+          trianglePositions.push(0, 0, prevPoint.x, prevPoint.y, point.x, point.y);
+          const color1 = [prevPoint.r / 255 * intensity, prevPoint.g / 255 * intensity, prevPoint.b / 255 * intensity];
+          const color2 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
           const centerColor = [(color1[0] + color2[0]) / 2, (color1[1] + color2[1]) / 2, (color1[2] + color2[2]) / 2];
           triangleColors.push(...centerColor, ...color1, ...color2);
         }
+        prevPoint = point;
       }
       if (trianglePositions.length > 0) {
         this._drawTriangles(new Float32Array(trianglePositions), new Float32Array(triangleColors), beamAlpha, trianglePositions.length / 2);
@@ -326,7 +389,7 @@ export class WebGLRenderer {
       }
     }
 
-    this.currentPointIndex = (this.currentPointIndex + pointsToDraw) % points.length;
+    this.pointIndexes[layerIndex] = (startIndex + pointsToDraw) % numPoints;
   }
 
   _drawSegment(positions, colors, alpha, numPoints) {
