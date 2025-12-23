@@ -5,6 +5,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered }) => {
   const [selectedDac, setSelectedDac] = useState(null);
   const [networkInterfaces, setNetworkInterfaces] = useState([]);
   const [selectedNetworkInterface, setSelectedNetworkInterface] = useState(null);
+  const scanInProgressRef = React.useRef(false);
 
   useEffect(() => {
     // Call the exposed API from preload script
@@ -19,7 +20,8 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered }) => {
   }, []);
 
   useEffect(() => {
-    if (isScanning) {
+    if (isScanning && !scanInProgressRef.current) {
+      scanInProgressRef.current = true;
       console.log('Starting DAC scan on:', selectedNetworkInterface?.address);
       if (window.electronAPI) {
         window.electronAPI.discoverDacs(2000, selectedNetworkInterface?.address)
@@ -47,10 +49,12 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered }) => {
           })
           .finally(() => {
             setIsScanning(false);
+            scanInProgressRef.current = false;
           });
       } else {
         console.warn('electronAPI is not available. Cannot discover DACs.');
         setIsScanning(false);
+        scanInProgressRef.current = false;
       }
     }
   }, [isScanning, selectedNetworkInterface, onDacsDiscovered]);

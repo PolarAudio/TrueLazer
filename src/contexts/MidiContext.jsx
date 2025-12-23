@@ -18,6 +18,12 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   const [isShiftDown, setIsShiftDown] = useState(false);
   const isShiftDownRef = useRef(false);
 
+  // Keep latest reference of onMidiCommand to avoid stale closures in event listener
+  const onMidiCommandRef = useRef(onMidiCommand);
+  useEffect(() => {
+    onMidiCommandRef.current = onMidiCommand;
+  }, [onMidiCommand]);
+
   // Initialize MIDI and Load Mappings
   useEffect(() => {
     const init = async () => {
@@ -26,7 +32,15 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         setMidiInitialized(true);
         const inputs = getMidiInputs();
         setMidiInputs(inputs);
-        if (inputs.length > 0) {
+        
+        if (window.electronAPI && window.electronAPI.getSelectedMidiInput) {
+            const savedInputId = await window.electronAPI.getSelectedMidiInput();
+            if (savedInputId && inputs.some(i => i.id === savedInputId)) {
+                setSelectedMidiInputId(savedInputId);
+            } else if (inputs.length > 0) {
+                if (!selectedMidiInputId) setSelectedMidiInputId(inputs[0].id);
+            }
+        } else if (inputs.length > 0) {
            if (!selectedMidiInputId) setSelectedMidiInputId(inputs[0].id);
         }
 
@@ -52,6 +66,22 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       }
   };
 
+  const exportMappings = async () => {
+      if (window.electronAPI && window.electronAPI.exportMappings) {
+          await window.electronAPI.exportMappings(mappings, 'midi');
+      }
+  };
+
+  const importMappings = async () => {
+      if (window.electronAPI && window.electronAPI.importMappings) {
+          const result = await window.electronAPI.importMappings('midi');
+          if (result.success && result.mappings) {
+              setMappings(result.mappings);
+              console.log("MIDI mappings imported.");
+          }
+      }
+  };
+
   // APC40 Handshake / Initialization
   const initializeApc40 = (inputId) => {
     const input = midiInputs.find(i => i.id === inputId);
@@ -66,19 +96,30 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   };
 
   useEffect(() => {
+    if (selectedMidiInputId && window.electronAPI && window.electronAPI.saveSelectedMidiInput) {
+        window.electronAPI.saveSelectedMidiInput(selectedMidiInputId);
+    }
     if (selectedMidiInputId && midiInitialized) {
         initializeApc40(selectedMidiInputId);
     }
   }, [selectedMidiInputId, midiInitialized, midiInputs]);
 
-  const sendFeedback = useCallback((controlId, isActive) => {
+  const sendFeedback = useCallback((controlId, value, overrideChannel = null) => {
     if (!selectedMidiInputId || !midiInitialized) return;
     const mapping = mappings[controlId];
     if (mapping && mapping.type === 'note') {
         // APC40 LEDs respond to Note On with velocity for color/state.
-        // Mode 1: 0=Off, 1=On. Velocity can be used for brightness/color on some buttons.
-        // Using 127 for maximum visibility.
-        sendNote(selectedMidiInputId, mapping.address, isActive ? 127 : 0, mapping.channel);
+        // If value is a number, use it directly (0-127).
+        // If boolean, map true->127 (On), false->0 (Off).
+        let velocity = 0;
+        if (typeof value === 'number') {
+            velocity = value;
+        } else {
+            velocity = value ? 127 : 0;
+        }
+        
+        const channel = overrideChannel !== null ? overrideChannel : mapping.channel;
+        sendNote(selectedMidiInputId, mapping.address, velocity, channel);
     }
   }, [selectedMidiInputId, midiInitialized, mappings]);
 
@@ -87,12 +128,20 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     let cleanup = () => {};
     if (selectedMidiInputId) {
       cleanup = listenToMidiInput(selectedMidiInputId, (event) => {
-        setLastMidiEvent(event);
+        if (isMappingRef.current) {
+            setLastMidiEvent(event);
+        }
         handleIncomingMidi(event);
       });
     }
     return cleanup;
   }, [selectedMidiInputId, isMapping, learningId, mappings]); // Re-bind listener if key state changes
+
+  // Keep a ref of isMapping for the listener
+  const isMappingRef = useRef(isMapping);
+  useEffect(() => {
+      isMappingRef.current = isMapping;
+  }, [isMapping]);
 
   const handleIncomingMidi = (event) => {
     // Check for Shift Key (APC40: CH1 Note D7)
@@ -146,8 +195,10 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       const shiftMatch = mapping.type === 'cc' || (!!mapping.requiresShift === isShiftDownRef.current);
 
       if ((isNoteMatch || isCcMatch) && shiftMatch) {
-        if (onMidiCommand) {
-          onMidiCommand(controlId, event.value || event.velocity);
+        if (onMidiCommandRef.current) {
+          // Explicitly handle 0 values for CC
+          const val = (event.type === 'controlchange') ? (event.value ?? 0) : (event.velocity ?? 0);
+          onMidiCommandRef.current(controlId, val, 127, event.type);
         }
       }
     });
@@ -172,6 +223,8 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     mappings,
     setMappings,
     saveMappings,
+    exportMappings,
+    importMappings,
     initializeApc40,
     sendFeedback,
     lastMidiEvent,

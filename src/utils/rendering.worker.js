@@ -10,7 +10,6 @@ function animateRenderer(id, lastFrameTime = 0) {
     // The animation loop should run as fast as possible, point drawing speed is simulated in WebGLRenderer
     // if (currentTime - lastFrameTime > state.data.drawSpeed) {
         state.renderer.render(state.data);
-        self.postMessage({ action: 'frame-data-ready', payload: state.data }); // Post the rendered frame data
         lastFrameTime = currentTime;
     // }
 
@@ -36,7 +35,6 @@ self.onmessage = (e) => {
         const { id, data } = payload;
         const state = renderers.get(id);
         if (state) {
-            state.renderer.reset(); // Restore original behavior
             state.data = data;
             // The continuous loop will pick up the new data.
         }

@@ -127,8 +127,21 @@ function parseScanResponse(msg, rinfo) {
 }
 
 function sendFrame(ip, channel, frame, fps) {
-    const pointSize = 8;
-    const numPoints = frame.points.length;
+    if (!frame || !frame.points) return;
+
+    let points = frame.points;
+    let isTyped = frame.isTypedArray;
+
+    // Handle Buffer/Uint8Array arriving via IPC by converting to Float32Array
+    if (isTyped && !(points instanceof Float32Array)) {
+        if (Buffer.isBuffer(points) || points instanceof Uint8Array) {
+            points = new Float32Array(points.buffer, points.byteOffset, points.byteLength / Float32Array.BYTES_PER_ELEMENT);
+        }
+    }
+
+    const numPoints = isTyped ? (points.length / 8) : points.length;
+    
+    const pointSize = 8; // IDN point size in this implementation
     const frameDataSize = numPoints * pointSize;
 
     const dictionary = Buffer.from('4200401042104010527e521451cc5c10', 'hex');
@@ -169,14 +182,42 @@ function sendFrame(ip, channel, frame, fps) {
     offset += dictionary.length;
     
     // Frame Sample Chunk Header
-    const duration = 32080; // From packet capture
-    packet.writeUInt32BE(duration, offset); // Includes flags (0x00) and duration
+    // Calculate duration in microseconds based on FPS
+    const duration = Math.round(1000000 / (fps || 60));
+    packet.writeUInt32BE(duration & 0x00FFFFFF, offset); // Flags (0x00) in the first byte, duration in the remaining 3
     offset += 4;
 
-    for (const point of frame.points) {
+    for (let i = 0; i < numPoints; i++) {
+        let x, y, r, g, b, blanking;
+        
+        if (isTyped) {
+            const pOffset = i * 8;
+            x = points[pOffset];
+            y = points[pOffset + 1];
+            r = points[pOffset + 3];
+            g = points[pOffset + 4];
+            b = points[pOffset + 5];
+            blanking = points[pOffset + 6] > 0.5;
+        } else {
+            const point = points[i];
+            x = point.x;
+            y = point.y;
+            r = point.r;
+            g = point.g;
+            b = point.b;
+            blanking = point.blanking;
+        }
+
+        // If blanked, force colors to 0 for maximum compatibility
+        if (blanking) {
+            r = 0;
+            g = 0;
+            b = 0;
+        }
+
         // 1. Scale from normalized [-1, 1] to ILDA range
-        let scaledX = point.x * 32767;
-        let scaledY = point.y * 32767;
+        let scaledX = x * 32767;
+        let scaledY = y * 32767;
 
         // 2. Clamp to the valid signed 16-bit range
         const finalX = Math.max(-32767, Math.min(32767, Math.round(scaledX)));
@@ -188,10 +229,10 @@ function sendFrame(ip, channel, frame, fps) {
         packet.writeInt16BE(finalY, offset);
         offset += 2;
         
-        packet.writeUInt8(point.r, offset++);
-        packet.writeUInt8(point.g, offset++);
-        packet.writeUInt8(point.b, offset++);
-        packet.writeUInt8(point.i !== undefined ? point.i : 255, offset++);
+        packet.writeUInt8(r, offset++);
+        packet.writeUInt8(g, offset++);
+        packet.writeUInt8(b, offset++);
+        packet.writeUInt8(blanking ? 0 : 255, offset++);
     }
 
     const socket = getSocket();

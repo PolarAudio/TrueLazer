@@ -1,7 +1,8 @@
 import React from 'react';
 import { generatorDefinitions } from '../utils/generatorDefinitions';
+import SyncControls from './SyncControls';
 
-const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange }) => {
+const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync }) => {
   if (!selectedGeneratorId) {
     return <div className="generator-settings-panel">No generator selected.</div>;
   }
@@ -40,63 +41,90 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
   };
 
   return (
-    <div className="generator-settings-panel">
-      <h4>{generatorDefinition.name} Settings</h4>
-      {generatorDefinition.paramControls.map(control => (
-        <div key={control.id} className="generator-param-control">
-          <label htmlFor={control.id}>{control.label}:</label>
-
-          {/* Special case for fontUrl */}
-          {control.id === 'fontUrl' ? (
-            <div>
-              <select onChange={handleFontChange} value={selectedGeneratorParams[control.id] || 'C:\\Windows\\Fonts\\arial.ttf'}>
-                <option value="C:\\Windows\\Fonts\\arial.ttf">Arial</option>
-                <option value="C:\\Windows\\Fonts\\cour.ttf">Courier New</option>
-                <option value="C:\\Windows\\Fonts\\times.ttf">Times New Roman</option>
-                <option value="browse">Browse for font...</option>
-              </select>
-              <p className="font-path-display">{selectedGeneratorParams[control.id]}</p>
-            </div>
-          ) : control.type === 'range' ? (
-            <>
-              <input
-                type="range"
-                id={control.id}
-                min={control.min}
-                max={control.max}
-                step={control.step}
-                value={selectedGeneratorParams[control.id] || ''}
-                onChange={(e) => handleInputChange(control.id, e.target.value)}
+    <div className="generator-settings-panel settings-card">
+      <div className="settings-card-header">
+        <h4>{generatorDefinition.name} Settings</h4>
+      </div>
+      <div className="settings-card-content">
+        {generatorDefinition.paramControls.map(control => (
+          <div key={control.id} className="param-editor">
+            <div className="param-label-row" style={{ display: 'flex', alignItems: 'center' }}>
+              <label htmlFor={control.id}>{control.label}</label>
+              <SyncControls 
+                  paramId={`${selectedGeneratorId}.${control.id}`}
+                  currentSyncMode={syncSettings[`${selectedGeneratorId}.${control.id}`]}
+                  onSetSyncMode={onSetParamSync}
               />
-              <span>{selectedGeneratorParams[control.id]}</span>
-            </>
-          ) : control.type === 'number' ? (
-            <input
-              type="number"
-              id={control.id}
-              min={control.min}
-              max={control.max}
-              step={control.step}
-              value={selectedGeneratorParams[control.id] || ''}
-              onChange={(e) => handleInputChange(control.id, e.target.value)}
-            />
-          ) : control.type === 'text' ? (
-            <input
-              type="text"
-              id={control.id}
-              value={selectedGeneratorParams[control.id] || ''}
-              onChange={(e) => handleInputChange(control.id, e.target.value)}
-            />
-          ) : control.type === 'checkbox' ? (
-            <input
-              type="checkbox"
-              id={control.id}
-              checked={selectedGeneratorParams[control.id] || false}
-              onChange={(e) => handleInputChange(control.id, e.target.checked)}
-            />
-          ) : null}
-        </div>
-      ))}
+            </div>
+            <div className="control-row">
+              {/* Special case for fontUrl */}
+              {control.id === 'fontUrl' ? (
+                <div className="font-selector-container">
+                  <select 
+                    className="param-select"
+                    onChange={handleFontChange} 
+                    value={selectedGeneratorParams[control.id] || 'src/fonts/arial.ttf'}
+                  >
+                    <option value="src/fonts/arial.ttf">Arial</option>
+                    <option value="src/fonts/impact.ttf">Impact</option>
+                    <option value="src/fonts/Geometr415 Blk BT Black.ttf">Geometric 415</option>
+                    <option value="src/fonts/STENCIL.TTF">Stencil</option>
+                    <option value="browse">Browse...</option>
+                  </select>
+                  <span className="font-path-tiny">{selectedGeneratorParams[control.id]?.split(/[\\/]/).pop()}</span>
+                </div>
+              ) : control.type === 'range' ? (
+                <>
+                  <input
+                    type="range"
+                    id={control.id}
+                    min={control.min}
+                    max={control.max}
+                    step={control.step}
+                    value={selectedGeneratorParams[control.id] || ''}
+                    onChange={(e) => handleInputChange(control.id, e.target.value)}
+                    className="param-slider"
+                  />
+                  <input
+                    type="number"
+                    value={selectedGeneratorParams[control.id] || 0}
+                    onChange={(e) => handleInputChange(control.id, e.target.value)}
+                    className="param-number-input"
+                    step={control.step}
+                  />
+                </>
+              ) : control.type === 'number' ? (
+                <input
+                  type="number"
+                  id={control.id}
+                  min={control.min}
+                  max={control.max}
+                  step={control.step}
+                  value={selectedGeneratorParams[control.id] || ''}
+                  onChange={(e) => handleInputChange(control.id, e.target.value)}
+                  className="param-number-input"
+                />
+              ) : control.type === 'text' ? (
+                <input
+                  type="text"
+                  id={control.id}
+                  value={selectedGeneratorParams[control.id] || ''}
+                  onChange={(e) => handleInputChange(control.id, e.target.value)}
+                  className="param-text-input"
+                />
+              ) : control.type === 'checkbox' ? (
+                <input
+                  type="checkbox"
+                  id={control.id}
+                  checked={selectedGeneratorParams[control.id] || false}
+                  onChange={(e) => handleInputChange(control.id, e.target.checked)}
+                  className="param-checkbox"
+                />
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
