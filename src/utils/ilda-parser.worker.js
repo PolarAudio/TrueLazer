@@ -304,8 +304,16 @@ self.onmessage = function(e) {
     }
 
     const frameMeta = framesMetadata[frameIndex];
-    const pointDataBuffer = ildaFileBuffer.slice(frameMeta.pointDataOffset, frameMeta.pointDataOffset + frameMeta.pointDataSize);
-    const points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, colorPalette);
+    
+    // Check if points are already cached in metadata
+    let points = frameMeta.cachedPoints;
+    
+    if (!points) {
+      const pointDataBuffer = ildaFileBuffer.slice(frameMeta.pointDataOffset, frameMeta.pointDataOffset + frameMeta.pointDataSize);
+      points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, colorPalette);
+      // Cache the parsed points back into the metadata for this frame
+      frameMeta.cachedPoints = points;
+    }
 
     const frame = {
         points: points,

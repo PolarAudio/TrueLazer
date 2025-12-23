@@ -100,8 +100,14 @@ export const useAudioOutput = () => {
     }, []);
 
     const setPlaybackRate = useCallback((rate) => {
+        // HTMLMediaElement usually supports rates between 0.0625 and 16.0
+        const clampedRate = Math.max(0.0625, Math.min(rate, 16.0));
         Object.values(audioRefs.current).forEach(audio => {
-            audio.playbackRate = rate;
+            try {
+                audio.playbackRate = clampedRate;
+            } catch (e) {
+                console.warn('Failed to set playbackRate:', e);
+            }
         });
     }, []);
 

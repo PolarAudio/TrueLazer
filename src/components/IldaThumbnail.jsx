@@ -21,9 +21,29 @@ const IldaThumbnail = ({ frame }) => {
     const offsetX = width / 2;
     const offsetY = height / 2;
 
-    for (let i = 0; i < frame.points.length; i++) {
-      const point = frame.points[i];
-      const prevPoint = i > 0 ? frame.points[i - 1] : null;
+    const points = frame.points;
+    const isTyped = points instanceof Float32Array || frame.isTypedArray;
+    const numPoints = isTyped ? (points.length / 8) : points.length;
+
+    const getPointData = (idx) => {
+        if (isTyped) {
+            const offset = idx * 8;
+            return {
+                x: points[offset],
+                y: points[offset + 1],
+                r: points[offset + 3],
+                g: points[offset + 4],
+                b: points[offset + 5],
+                blanking: points[offset + 6] === 1
+            };
+        } else {
+            return points[idx];
+        }
+    };
+
+    for (let i = 0; i < numPoints; i++) {
+      const point = getPointData(i);
+      const prevPoint = i > 0 ? getPointData(i - 1) : null;
 
       if (point.blanking) {
         continue;

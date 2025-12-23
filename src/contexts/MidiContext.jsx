@@ -104,7 +104,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     }
   }, [selectedMidiInputId, midiInitialized, midiInputs]);
 
-  const sendFeedback = useCallback((controlId, value) => {
+  const sendFeedback = useCallback((controlId, value, overrideChannel = null) => {
     if (!selectedMidiInputId || !midiInitialized) return;
     const mapping = mappings[controlId];
     if (mapping && mapping.type === 'note') {
@@ -117,7 +117,9 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         } else {
             velocity = value ? 127 : 0;
         }
-        sendNote(selectedMidiInputId, mapping.address, velocity, mapping.channel);
+        
+        const channel = overrideChannel !== null ? overrideChannel : mapping.channel;
+        sendNote(selectedMidiInputId, mapping.address, velocity, channel);
     }
   }, [selectedMidiInputId, midiInitialized, mappings]);
 
@@ -196,7 +198,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         if (onMidiCommandRef.current) {
           // Explicitly handle 0 values for CC
           const val = (event.type === 'controlchange') ? (event.value ?? 0) : (event.velocity ?? 0);
-          onMidiCommandRef.current(controlId, val);
+          onMidiCommandRef.current(controlId, val, 127, event.type);
         }
       }
     });

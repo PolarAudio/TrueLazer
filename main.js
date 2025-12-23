@@ -566,6 +566,8 @@ function buildApplicationMenu(mode) {
             { label: 'Blue', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-blue'); } },
             { label: 'Magenta', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-magenta'); } },
             { label: 'Red', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-red'); } },
+			{ label: 'Green', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-green'); } },
+			{ label: 'White', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-white'); } },
           ]
         },
         {
@@ -885,12 +887,13 @@ function createWindow() {
 
   ipcMain.handle('show-font-file-dialog', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      defaultPath: 'C:\\Windows\\Fonts',
+      title: 'Select Font',
+      defaultPath: path.join(__dirname, 'src', 'fonts'),
       filters: [
-        { name: 'Font Files', extensions: ['ttf', 'otf'] },
+        { name: 'Font Files', extensions: ['ttf', 'otf', 'ttc'] },
         { name: 'All Files', extensions: ['*'] }
       ],
-      properties: ['openFile']
+      properties: ['openFile', 'noResolveAliases']
     });
     if (canceled || filePaths.length === 0) {
       return null;

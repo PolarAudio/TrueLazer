@@ -82,7 +82,7 @@ export const generatorDefinitions = [
       y: 0,
       fontSize: 72,
       numPoints: 200, // Target number of points
-      fontUrl: 'C:\\Windows\\Fonts\\arial.ttf', // New default param
+      fontUrl: 'src/fonts/arial.ttf', // Default to internal Arial font
       r: 255,
       g: 255,
       b: 255,

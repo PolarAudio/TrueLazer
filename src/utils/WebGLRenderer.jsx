@@ -1,4 +1,5 @@
 import { applyEffects } from './effects.js';
+import { effectDefinitions } from './effectDefinitions';
 
 export class WebGLRenderer {
   constructor(canvas, type) {
@@ -175,11 +176,11 @@ export class WebGLRenderer {
       this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity);
     }
     else {
-      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects);
+      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings);
     }
   }
 
-  renderSingle(ildaFrames, previewScanRate, intensity, effects) {
+  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -190,8 +191,12 @@ export class WebGLRenderer {
       return;
     }
 
-    const frame = ildaFrames[this.frameIndexes[0] % ildaFrames.length];
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0);
+    const frameIndex = this.frameIndexes[0] % ildaFrames.length;
+    const frame = ildaFrames[frameIndex];
+    const progress = frameIndex / ildaFrames.length;
+    const time = performance.now();
+
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -206,11 +211,14 @@ export class WebGLRenderer {
     // Instead of full clear, draw a semi-transparent black quad for fade effect
     this.drawFadeQuad();
 
+    const time = performance.now();
+
     worldData.forEach((clip) => {
       if (clip && clip.frames && clip.frames.length > 0) {
         const frame = clip.frames[0]; // Get the first and only frame
         if (frame) {
             const layerIndex = clip.layerIndex || 0;
+            const syncSettings = clip.syncSettings || {};
             // Ensure arrays are large enough
             if (layerIndex >= this.frameIndexes.length) {
                 const newSize = layerIndex + 5;
@@ -225,8 +233,9 @@ export class WebGLRenderer {
             
             // Skip rendering if intensity is effectively zero
             if (finalIntensity > 0.001) {
-                // Pass layerIndex to draw
-                this.draw(frame, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex);
+                const progress = (this.frameIndexes[layerIndex] % clip.frames.length) / clip.frames.length;
+                // Pass layerIndex, progress and time to draw
+                this.draw(frame, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings);
             }
         }
       }
@@ -271,12 +280,34 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}) {
     const gl = this.gl;
     if (!frame || !frame.points) return;
 
+    // Apply sync overrides to effects for the preview
+    const syncedEffects = (effects || []).map(eff => {
+        const newParams = { ...eff.params };
+        const definition = effectDefinitions.find(d => d.id === eff.id);
+        if (definition) {
+            definition.paramControls.forEach(ctrl => {
+                const syncKey = `${eff.id}.${ctrl.id}`;
+                const syncMode = syncSettings[syncKey];
+                if (syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
+                    let syncProgress = 0;
+                    if (syncMode === 'fps') {
+                        syncProgress = (time * 0.001) % 1.0;
+                    } else if (syncMode === 'timeline' || syncMode === 'bpm') {
+                        syncProgress = progress;
+                    }
+                    newParams[ctrl.id] = ctrl.min + (ctrl.max - ctrl.min) * syncProgress;
+                }
+            });
+        }
+        return { ...eff, params: newParams };
+    });
+
     // Apply effects before drawing
-    const modifiedFrame = applyEffects(frame, effects || []);
+    const modifiedFrame = applyEffects(frame, syncedEffects, { progress, time });
     const points = modifiedFrame.points;
     const isTyped = modifiedFrame.isTypedArray;
     const numPoints = isTyped ? (points.length / 8) : points.length;

@@ -2,6 +2,8 @@ import opentype from 'opentype.js';
 
 const withDefaults = (params, defaults) => ({ ...defaults, ...params });
 
+const fontCache = new WeakMap();
+
 export async function generateText(params, fontBuffer) {
   try {
     if (!fontBuffer) {
@@ -18,7 +20,11 @@ export async function generateText(params, fontBuffer) {
       numPoints: 200
     });
 
-    const font = opentype.parse(fontBuffer);
+    let font = fontCache.get(fontBuffer);
+    if (!font) {
+        font = opentype.parse(fontBuffer);
+        fontCache.set(fontBuffer, font);
+    }
     const path = font.getPath(text, 0, 0, fontSize);
     const commands = path.commands;
 
@@ -44,10 +50,45 @@ export async function generateText(params, fontBuffer) {
     const pointsPerUnit = numPoints / (totalLength || 1);
     const sampledPoints = [];
     prevX = 0; prevY = 0;
+    let startX = 0, startY = 0;
+
+    // We use a constant divisor (e.g., 200) to normalize the opentype coordinates 
+    // to the [-1, 1] laser range. Since fontSize is already used in font.getPath,
+    // this constant ensures the slider works as expected.
+    const normalizeScale = 200;
 
     commands.forEach(cmd => {
         if (cmd.type === 'M') {
-            sampledPoints.push({ x: (cmd.x - midX) / 1000 + x, y: -(cmd.y - midY) / 1000 + y, r, g, b });
+            // Add a blanked point at the previous position to turn off the laser
+            if (sampledPoints.length > 0) {
+                const last = sampledPoints[sampledPoints.length - 1];
+                sampledPoints.push({
+                    ...last,
+                    r: 0, g: 0, b: 0,
+                    blanking: true
+                });
+            }
+
+            startX = cmd.x; startY = cmd.y;
+            // Add a blanked point at the NEW position to allow the scanner to settle
+            const targetX = (cmd.x - midX) / normalizeScale + x;
+            const targetY = -(cmd.y - midY) / normalizeScale + y;
+            
+            sampledPoints.push({ 
+                x: targetX, 
+                y: targetY, 
+                r: 0, g: 0, b: 0, 
+                blanking: true 
+            });
+            
+            // Add a COLORED point at the same position to start the path
+            sampledPoints.push({ 
+                x: targetX, 
+                y: targetY, 
+                r, g, b, 
+                blanking: false 
+            });
+            
             prevX = cmd.x; prevY = cmd.y;
         } else if (cmd.type === 'L') {
             const dx = cmd.x - prevX;
@@ -57,8 +98,8 @@ export async function generateText(params, fontBuffer) {
             for (let i = 1; i <= steps; i++) {
                 const t = i / steps;
                 sampledPoints.push({ 
-                    x: (prevX + dx * t - midX) / 1000 + x, 
-                    y: -(prevY + dy * t - midY) / 1000 + y, 
+                    x: (prevX + dx * t - midX) / normalizeScale + x, 
+                    y: -(prevY + dy * t - midY) / normalizeScale + y, 
                     r, g, b 
                 });
             }
@@ -73,7 +114,7 @@ export async function generateText(params, fontBuffer) {
                 // Quadratic Bezier: (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
                 const cx = Math.pow(1-t, 2) * prevX + 2 * (1-t) * t * cmd.x1 + Math.pow(t, 2) * cmd.x;
                 const cy = Math.pow(1-t, 2) * prevY + 2 * (1-t) * t * cmd.y1 + Math.pow(t, 2) * cmd.y;
-                sampledPoints.push({ x: (cx - midX) / 1000 + x, y: -(cy - midY) / 1000 + y, r, g, b });
+                sampledPoints.push({ x: (cx - midX) / normalizeScale + x, y: -(cy - midY) / normalizeScale + y, r, g, b });
             }
             prevX = cmd.x; prevY = cmd.y;
         } else if (cmd.type === 'C') {
@@ -86,11 +127,29 @@ export async function generateText(params, fontBuffer) {
                 // Cubic Bezier: (1-t)^3*P0 + 3(1-t)^2*t*P1 + 3(1-t)t^2*P2 + t^3*P3
                 const cx = Math.pow(1-t, 3) * prevX + 3 * Math.pow(1-t, 2) * t * cmd.x1 + 3 * (1-t) * Math.pow(t, 2) * cmd.x2 + Math.pow(t, 3) * cmd.x;
                 const cy = Math.pow(1-t, 3) * prevY + 3 * Math.pow(1-t, 2) * t * cmd.y1 + 3 * (1-t) * Math.pow(t, 2) * cmd.y2 + Math.pow(t, 3) * cmd.y;
-                sampledPoints.push({ x: (cx - midX) / 1000 + x, y: -(cy - midY) / 1000 + y, r, g, b });
+                sampledPoints.push({ x: (cx - midX) / normalizeScale + x, y: -(cy - midY) / normalizeScale + y, r, g, b });
             }
             prevX = cmd.x; prevY = cmd.y;
+        } else if (cmd.type === 'Z') {
+            // Close path: return to startX, startY
+            sampledPoints.push({ 
+                x: (startX - midX) / normalizeScale + x, 
+                y: -(startY - midY) / normalizeScale + y, 
+                r, g, b 
+            });
+            prevX = startX; prevY = startY;
         }
     });
+
+    // Add a final blanked point at the last position to ensure clean blanking after the text
+    if (sampledPoints.length > 0) {
+        const lastPoint = sampledPoints[sampledPoints.length - 1];
+        sampledPoints.push({
+            ...lastPoint,
+            r: 0, g: 0, b: 0,
+            blanking: true
+        });
+    }
 
     return { points: sampledPoints };
   } catch (error) {
@@ -120,6 +179,13 @@ export function generateCircle(params) {
         r, g, b
       });
     }
+    
+    // Add final blanked point
+    if (points.length > 0) {
+        const last = points[points.length - 1];
+        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
+    }
+
     return { points };
   } catch (error) {
     console.error('Error in generateCircle:', error);
@@ -164,6 +230,12 @@ export function generateSquare(params) {
     // Add the final corner to close the loop
     points.push({ ...corners[corners.length - 1], r, g, b });
 
+    // Add final blanked point
+    if (points.length > 0) {
+        const last = points[points.length - 1];
+        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
+    }
+
     return { points };
   } catch (error) {
     console.error('Error in generateSquare:', error);
@@ -192,6 +264,12 @@ export function generateLine(params) {
         y: y1 + (y2 - y1) * t,
         r, g, b
       });
+    }
+
+    // Add final blanked point
+    if (points.length > 0) {
+        const last = points[points.length - 1];
+        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
     }
 
     return { points };
@@ -240,6 +318,12 @@ export function generateStar(params) {
       }
     }
     points.push({ ...vertices[vertices.length - 1], r, g, b });
+
+    // Add final blanked point
+    if (points.length > 0) {
+        const last = points[points.length - 1];
+        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
+    }
 
     return { points };
   } catch (error) {
