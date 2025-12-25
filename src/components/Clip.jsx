@@ -25,9 +25,7 @@ const Clip = ({
   const [isDragging, setIsDragging] = useState(false);
 
   // Determine the display name for the clip
-  const displayName = clipContent && clipContent.type === 'generator' && clipContent.generatorDefinition
-    ? clipContent.generatorDefinition.name
-    : clipName;
+  const displayName = clipName;
 
   const frameForThumbnail = thumbnailRenderMode === 'active' ? liveFrame : stillFrame;
 

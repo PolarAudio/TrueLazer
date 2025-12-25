@@ -3,7 +3,8 @@ import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
 
 const SettingsPanel = ({
-  enabledShortcuts = {}
+  enabledShortcuts = {},
+  onOpenOutputSettings
 }) => {
   const { 
     midiInitialized, 
@@ -101,7 +102,8 @@ const SettingsPanel = ({
           <h4>Channel/DAC Settings</h4>
         </div>
         <div className="settings-card-content">
-          <p className="info-text">Output routing and safety zones configuration placeholder.</p>
+          <p className="info-text">Output routing and safety zones configuration.</p>
+          <button className="small-btn" style={{width:'100%', marginTop:'5px'}} onClick={onOpenOutputSettings}>Open Output Settings</button>
         </div>
       </div>
 
@@ -214,4 +216,3 @@ const SettingsPanel = ({
 };
 
 export default SettingsPanel;
-

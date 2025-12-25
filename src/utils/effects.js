@@ -41,7 +41,7 @@ export function applyEffects(frame, effects, context = {}) {
 
     switch (effect.id) {
       case 'rotate':
-        applyRotate(pointsData, numPoints, effect.params, progress);
+        applyRotate(pointsData, numPoints, effect.params, progress, time);
         break;
       case 'scale':
         applyScale(pointsData, numPoints, effect.params);
@@ -72,9 +72,14 @@ export function applyEffects(frame, effects, context = {}) {
   return { ...frame, points: pointsData, isTypedArray: true };
 }
 
-function applyRotate(points, numPoints, params, progress) {
+function applyRotate(points, numPoints, params, progress, time) {
   const { angle, rotationSpeed } = withDefaults(params, effectDefinitions.find(def => def.id === 'rotate').defaultParams);
-  const currentAngle = (angle * Math.PI / 180) + (progress * 2 * Math.PI * rotationSpeed);
+  
+  // Use time for continuous rotation. 
+  // rotationSpeed of 1 corresponds to approx 1 radian per second (~57 deg/sec)
+  const continuousRotation = (time * 0.001) * rotationSpeed;
+  const currentAngle = (angle * Math.PI / 180) + continuousRotation;
+  
   const sin = Math.sin(currentAngle);
   const cos = Math.cos(currentAngle);
 

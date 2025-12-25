@@ -62,6 +62,8 @@ const schema = {
     default: null
   },
   loadedClips: { type: 'array', default: [] }, // Reverted to original
+  clipNames: { type: 'array', default: [] },
+  dacOutputSettings: { type: 'object', default: {} },
   sliderValue: { type: 'object', default: {} }, // Placeholder for slider values
   dacAssignment: { type: 'object', default: {} }, // Placeholder for DAC assignments
   lastOpenedProject: {
