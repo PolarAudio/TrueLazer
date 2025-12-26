@@ -234,3 +234,16 @@
   detail.
 
   We appreciate your help in making TrueLazer the ultimate open-source laser show software!
+
+  ## Troubleshooting
+
+  ### Windows Build Issues (winCodeSign / Symbolic Links)
+  If you encounter an error during `npm run build` related to `winCodeSign` and symbolic links (e.g., `Cannot create symbolic link` or `Zugriff verweigert`), this is a common issue with `electron-builder` on some Windows systems where extracting macOS-specific files fails.
+
+  **Solution:**
+  1. Navigate to `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign` (e.g., `C:\Users\YourUser\AppData\Local\electron-builder\Cache\winCodeSign`).
+  2. Delete the specific version folder causing the error (or the whole `winCodeSign` folder).
+  3. Manually download the `winCodeSign` tool (the URL is usually visible in the error log, e.g., `https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-2.6.0/winCodeSign-2.6.0.7z`).
+  4. Extract the downloaded archive into `.../Cache/winCodeSign/winCodeSign-2.6.0` (ensure the folder name matches the version).
+  5. **Crucial:** When extracting, if you use a tool like 7-Zip, ensure you are **NOT** extracting the `darwin` folder (macOS files), or ensure your user has permissions to create symbolic links (requires Developer Mode in Windows).
+  6. Retry `npm run build`.

@@ -7,6 +7,9 @@ import https from 'https';
 import * as dacCommunication from './main/dac-communication.cjs';
 const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll } = dacCommunication;
 
+// Fix for "Unable to move the cache: Zugriff verweigert (0x5)"
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+app.commandLine.appendSwitch('disable-http-cache');
 // Suppress Autofill.enable and Autofill.setAddresses errors in console
 app.commandLine.appendSwitch('disable-autofill');
 
