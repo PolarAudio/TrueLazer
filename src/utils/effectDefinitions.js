@@ -6,11 +6,13 @@ export const effectDefinitions = [
     description: 'Rotates the shape around its center.',
     defaultParams: {
       angle: 0,
-      rotationSpeed: 0, // Added rotation speed
+      speed: 0,
+      direction: 'CW', // 'CW' or 'CCW'
     },
     paramControls: [
       { id: 'angle', label: 'Angle', type: 'range', min: 0, max: 360, step: 1 },
-      { id: 'rotationSpeed', label: 'Rotation Speed', type: 'range', min: -10, max: 10, step: 0.1 },
+      { id: 'speed', label: 'Speed', type: 'range', min: 0, max: 10, step: 0.1 },
+      { id: 'direction', label: 'Direction', type: 'select', options: ['CW', 'CCW'] },
     ],
   },
   {
@@ -85,6 +87,72 @@ export const effectDefinitions = [
     ],
   },
   {
+    id: 'warp',
+    name: 'Warp',
+    type: 'animation',
+    description: 'Symmetrical chaotic wave distortion.',
+    defaultParams: {
+      amount: 0.1,
+      chaos: 0.5,
+      speed: 1,
+    },
+    paramControls: [
+      { id: 'amount', label: 'Amount', type: 'range', min: 0, max: 1.0, step: 0.01 },
+      { id: 'chaos', label: 'Chaos', type: 'range', min: 0, max: 1.0, step: 0.01 },
+      { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 10, step: 0.1 },
+    ],
+  },
+  {
+    id: 'distortion',
+    name: 'Distortion',
+    type: 'transform',
+    description: 'Distorts the point data.',
+    defaultParams: {
+      amount: 0.1,
+      scale: 10,
+      speed: 0.5,
+    },
+    paramControls: [
+      { id: 'amount', label: 'Amount', type: 'range', min: 0, max: 1.0, step: 0.01 },
+      { id: 'scale', label: 'Scale', type: 'range', min: 1, max: 50, step: 1 },
+      { id: 'speed', label: 'Speed', type: 'range', min: 0, max: 5, step: 0.1 },
+    ],
+  },
+  {
+    id: 'move',
+    name: 'Move (Bounce)',
+    type: 'transform',
+    description: 'Moves points and bounces them off the borders.',
+    defaultParams: {
+      speedX: 0.1,
+      speedY: 0.1,
+    },
+    paramControls: [
+      { id: 'speedX', label: 'Speed X', type: 'range', min: 0, max: 2.0, step: 0.01 },
+      { id: 'speedY', label: 'Speed Y', type: 'range', min: 0, max: 2.0, step: 0.01 },
+    ],
+  },
+  {
+    id: 'delay',
+    name: 'Delay / Chase',
+    type: 'effect',
+    description: 'Creates a trailing chaser effect.',
+    defaultParams: {
+      delayAmount: 5, // Frames delay
+      decay: 0.8,
+      mode: 'linear', // 'linear' or 'symmetric'
+      target: 'intensity', // 'intensity', 'color', 'effect' (I C E)
+      direction: 'out', // 'out' (center->out/L->R), 'in' (out->center/R->L)
+    },
+    paramControls: [
+      { id: 'delayAmount', label: 'Delay', type: 'range', min: 1, max: 60, step: 1 },
+      { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
+      { id: 'mode', label: 'Mode', type: 'select', options: ['linear', 'symmetric'] },
+      { id: 'target', label: 'Target', type: 'select', options: ['intensity', 'color', 'effect'] }, // I, C, E representation
+      { id: 'direction', label: 'Direction', type: 'select', options: ['out', 'in'] },
+    ],
+  },
+  {
     id: 'blanking',
     name: 'Blanking',
     type: 'animation',
@@ -114,14 +182,12 @@ export const effectDefinitions = [
     id: 'mirror',
     name: 'Mirror',
     type: 'transform',
-    description: 'Mirrors the shape along the X or Y axis.',
+    description: 'Mirrors the shape from the center.',
     defaultParams: {
-      mirrorX: false,
-      mirrorY: false,
+      mode: 'none', // 'none', 'x+', 'x-', 'y+', 'y-'
     },
     paramControls: [
-      { id: 'mirrorX', label: 'Mirror X', type: 'checkbox' },
-      { id: 'mirrorY', label: 'Mirror Y', type: 'checkbox' },
+      { id: 'mode', label: 'Mirror Mode', type: 'select', options: ['none', 'x+', 'x-', 'y+', 'y-'] },
     ],
   },
 ];

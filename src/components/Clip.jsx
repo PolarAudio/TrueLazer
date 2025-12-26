@@ -122,7 +122,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
           return; // Important: return after handling file path
         }
 
-        if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color') {
+        if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color' || parsedData.type === 'effect') {
           if (onDropEffect) {
             onDropEffect(parsedData);
             onLabelClick(); // Select the clip to show its new settings

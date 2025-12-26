@@ -8,6 +8,7 @@ import GeneratorPanel from './components/GeneratorPanel';
 import EffectPanel from './components/EffectPanel';
 import DacPanel from './components/DacPanel';
 import ClipSettingsPanel from './components/ClipSettingsPanel';
+import LayerSettingsPanel from './components/LayerSettingsPanel'; // Add this
 import NotificationPopup from './components/NotificationPopup';
 import IldaPlayer from './components/IldaPlayer';
 import WorldPreview from './components/WorldPreview';
@@ -26,10 +27,13 @@ import { useAudioOutput } from './hooks/useAudioOutput'; // Add this
 import { MidiProvider, useMidi } from './contexts/MidiContext'; // Add this
 import { ArtnetProvider, useArtnet } from './contexts/ArtnetContext'; // Add this
 import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
+import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
 import { applyEffects } from './utils/effects';
 import { effectDefinitions } from './utils/effectDefinitions';
 import { sendNote } from './utils/midi';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText } from './utils/generators'; // Import generator functions
+
+const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => (
   <div className="master-speed-slider">
@@ -70,6 +74,7 @@ const getInitialState = (initialSettings) => ({
   thumbnailFrameIndexes: Array(5).fill(null).map(() => Array(8).fill(0)),
   layerEffects: Array(5).fill([]),
   layerIntensities: Array(5).fill(1), // Add this
+  layerAutopilots: Array(5).fill('off'), // Add layer autopilots
   layerBlackouts: Array(5).fill(false), // Add layer blackouts
   layerSolos: Array(5).fill(false), // Add layer solos
   masterIntensity: 1, // Add this
@@ -98,6 +103,10 @@ const getInitialState = (initialSettings) => ({
   projectLoadTimestamp: null, // Add this to track project loads
   clipClipboard: null, // For copy/paste
   dacOutputSettings: initialSettings?.dacOutputSettings ?? {}, // Add dacOutputSettings to state
+  quickAssigns: {
+      knobs: Array(8).fill(null).map(() => ({ value: 0, label: null, link: null })),
+      buttons: Array(8).fill(null).map(() => ({ value: false, label: null, link: null }))
+  },
 });
 
 function reducer(state, action) {
@@ -155,7 +164,12 @@ function reducer(state, action) {
     }
     case 'ADD_LAYER_EFFECT': {
         const newLayerEffects = [...state.layerEffects];
-        newLayerEffects[action.payload.layerIndex].push(action.payload.effect);
+        const newEffectInstance = {
+            ...action.payload.effect,
+            instanceId: generateId(),
+            params: { ...action.payload.effect.defaultParams }
+        };
+        newLayerEffects[action.payload.layerIndex].push(newEffectInstance);
         return { ...state, layerEffects: newLayerEffects };
     }
     case 'ADD_CLIP_EFFECT': {
@@ -173,6 +187,7 @@ function reducer(state, action) {
         // Create a new effect "instance" with its own params object
         const newEffectInstance = {
           ...action.payload.effect,
+          instanceId: generateId(),
           params: { ...action.payload.effect.defaultParams }
         };
 
@@ -226,6 +241,11 @@ function reducer(state, action) {
         const newLayerIntensities = [...state.layerIntensities];
         newLayerIntensities[action.payload.layerIndex] = action.payload.intensity;
         return { ...state, layerIntensities: newLayerIntensities };
+    }
+    case 'SET_LAYER_AUTOPILOT': {
+        const newLayerAutopilots = [...state.layerAutopilots];
+        newLayerAutopilots[action.payload.layerIndex] = action.payload.mode;
+        return { ...state, layerAutopilots: newLayerAutopilots };
     }
     case 'TOGGLE_LAYER_BLACKOUT': {
         const newLayerBlackouts = [...state.layerBlackouts];
@@ -502,8 +522,104 @@ function reducer(state, action) {
             // sliderValue, dacAssignment (other than selectedDac), lastOpenedProject will be handled as full objects
             // These will likely require more complex merging or direct assignment based on their structure
         };
-    default:
-      return state;
+    case 'ASSIGN_QUICK_CONTROL': {
+        const { type, index, link } = action.payload; // type: 'knob' or 'button'
+        const newAssigns = { ...state.quickAssigns };
+        newAssigns[type === 'knob' ? 'knobs' : 'buttons'][index] = {
+            ...newAssigns[type === 'knob' ? 'knobs' : 'buttons'][index],
+            label: link.paramName,
+            link: link
+        };
+        return { ...state, quickAssigns: newAssigns };
+    }
+        case 'UPDATE_QUICK_CONTROL': {
+            const { type, index, value } = action.payload;
+            const newAssigns = { ...state.quickAssigns };
+            const collection = type === 'knob' ? 'knobs' : 'buttons';
+            newAssigns[collection][index] = {
+                ...newAssigns[collection][index],
+                value: value
+            };
+            
+            let newState = { ...state, quickAssigns: newAssigns };
+    
+            // Update linked parameter if exists
+            const control = newAssigns[collection][index];
+            if (control.link) {
+                const { layerIndex, colIndex, effectIndex, paramName, targetType } = control.link;
+                
+                const updatedClipContents = [...newState.clipContents];
+                // Check if layer exists
+                if (updatedClipContents[layerIndex]) {
+                     updatedClipContents[layerIndex] = [...updatedClipContents[layerIndex]];
+                     const clip = updatedClipContents[layerIndex][colIndex];
+                     
+                     if (clip) {
+                        if (targetType === 'effect' && clip.effects && clip.effects[effectIndex]) {
+                             const newEffects = [...clip.effects];
+                             const effect = { ...newEffects[effectIndex] };
+                             effect.params = { ...effect.params, [paramName]: value };
+                             newEffects[effectIndex] = effect;
+                             updatedClipContents[layerIndex][colIndex] = { ...clip, effects: newEffects };
+                        } else if (targetType === 'generator') {
+                             updatedClipContents[layerIndex][colIndex] = {
+                                 ...clip,
+                                 currentParams: { ...clip.currentParams, [paramName]: value }
+                             };
+                        }
+                     }
+                     newState.clipContents = updatedClipContents;
+                }
+            }
+            return newState;
+        }
+        case 'TOGGLE_QUICK_BUTTON': {
+            const { index } = action.payload;
+            const currentVal = state.quickAssigns.buttons[index].value;
+            const newValue = !currentVal;
+            
+            // Reuse logic by calling reducer recursively? No, that's bad practice/hard here.
+            // We just duplicate the logic for now, or cleaner: create the action payload and fall through?
+            // Switch statements don't easily allow fallthrough with changed payload variables.
+            // We'll just copy the logic, it's safer.
+            
+            const newAssigns = { ...state.quickAssigns };
+            newAssigns.buttons[index] = {
+                ...newAssigns.buttons[index],
+                value: newValue
+            };
+            
+            let newState = { ...state, quickAssigns: newAssigns };
+    
+            const control = newAssigns.buttons[index];
+            if (control.link) {
+                const { layerIndex, colIndex, effectIndex, paramName, targetType } = control.link;
+                
+                const updatedClipContents = [...newState.clipContents];
+                if (updatedClipContents[layerIndex]) {
+                     updatedClipContents[layerIndex] = [...updatedClipContents[layerIndex]];
+                     const clip = updatedClipContents[layerIndex][colIndex];
+                     
+                     if (clip) {
+                        if (targetType === 'effect' && clip.effects && clip.effects[effectIndex]) {
+                             const newEffects = [...clip.effects];
+                             const effect = { ...newEffects[effectIndex] };
+                             effect.params = { ...effect.params, [paramName]: newValue };
+                             newEffects[effectIndex] = effect;
+                             updatedClipContents[layerIndex][colIndex] = { ...clip, effects: newEffects };
+                        } else if (targetType === 'generator') {
+                             updatedClipContents[layerIndex][colIndex] = {
+                                 ...clip,
+                                 currentParams: { ...clip.currentParams, [paramName]: newValue }
+                             };
+                        }
+                     }
+                     newState.clipContents = updatedClipContents;
+                }
+            }
+            return newState;
+        }
+        default:      return state;
   }
 }
 
@@ -519,7 +635,7 @@ const THEME_COLORS = {
     'white': { full: 3, dim: 1 }, // White/Gray
 };
 
-const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, theme, bpm }) => {
+const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, theme, bpm, quickAssigns }) => {
   const { sendFeedback, mappings, selectedMidiInputId, midiInitialized } = useMidi();
 
   // Metronome BPM Blink
@@ -611,6 +727,15 @@ const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerS
       });
   }, [clipContents, activeClipIndexes, theme, mappings, sendFeedback]);
 
+  // Quick Assigns Feedback
+  useEffect(() => {
+      if (!quickAssigns) return;
+      const colors = THEME_COLORS[theme] || THEME_COLORS['orange'];
+      quickAssigns.buttons.forEach((btn, index) => {
+          sendFeedback(`quick_btn_${index}`, btn.value ? colors.full : 0);
+      });
+  }, [quickAssigns, theme, sendFeedback]);
+
   return null;
 };
 
@@ -634,6 +759,7 @@ function App() {
   const ildaPlayerCurrentFrameIndex = useRef(0);
 
   const liveFramesRef = useRef({});
+  const effectStatesRef = useRef(new Map()); // Add effectStatesRef
   const progressRef = useRef({}); // New ref for fine-grained progress
   const [frameTick, setFrameTick] = useState(0);
 
@@ -647,6 +773,7 @@ function App() {
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showOutputSettingsWindow, setShowOutputSettingsWindow] = useState(false);
   const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => {} });
+  const [activeBottomTab, setActiveBottomTab] = useState('files');
 
   const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
   const {
@@ -657,6 +784,7 @@ function App() {
     thumbnailFrameIndexes,
     layerEffects,
     layerIntensities,
+    layerAutopilots, // Add layer autopilots
     layerBlackouts, // Add this
     layerSolos, // Add this
     masterIntensity,
@@ -730,6 +858,7 @@ function App() {
 
   // Refs for real-time access in animation loop
   const layerIntensitiesRef = useRef(layerIntensities);
+  const layerAutopilotsRef = useRef(layerAutopilots); // Add ref
   const masterIntensityRef = useRef(masterIntensity);
   const layerBlackoutsRef = useRef(layerBlackouts);
   const layerSolosRef = useRef(layerSolos);
@@ -742,9 +871,11 @@ function App() {
   const clipNamesRef = useRef(clipNames);
   const selectedIldaWorkerIdRef = useRef(selectedIldaWorkerId);
   const selectedIldaTotalFramesRef = useRef(selectedIldaTotalFrames);
+  const previousProgressRef = useRef({}); // Add previousProgressRef
 
   useEffect(() => {
     layerIntensitiesRef.current = layerIntensities;
+    layerAutopilotsRef.current = layerAutopilots; // Update ref
     masterIntensityRef.current = masterIntensity;
     layerBlackoutsRef.current = layerBlackouts;
     layerSolosRef.current = layerSolos;
@@ -1168,23 +1299,52 @@ function App() {
                   if (definition) {
                       definition.paramControls.forEach(ctrl => {
                           const syncKey = `${eff.id}.${ctrl.id}`;
-                          const syncMode = syncSettings[syncKey];
-                          if (syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
+                          const rawSettings = syncSettings[syncKey];
+                          
+                          // Handle both legacy (string) and new (object) formats
+                          const settings = typeof rawSettings === 'string' 
+                              ? { syncMode: rawSettings, range: [ctrl.min, ctrl.max], direction: 'forward', style: 'loop' }
+                              : rawSettings;
+
+                          if (settings && settings.syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
                               let progress = 0;
-                              if (syncMode === 'fps') {
-                                  progress = (currentTime * 0.001 * (playbackFps / 60)) % 1.0;
-                              } else if (syncMode === 'timeline' || syncMode === 'bpm') {
+                              
+                              // 1. Calculate Base Progress
+                              if (settings.syncMode === 'fps') {
+                                  // Default roughly 1Hz cycle
+                                  progress = (currentTime * 0.001) % 1.0;
+                              } else if (settings.syncMode === 'timeline' || settings.syncMode === 'bpm') {
+                                  // Use clip progress (bpm logic handled in frame fetcher, both map to 0-1)
                                   progress = clipProgress;
                               }
-                              // Sweep from min to max over the progress
-                              newParams[ctrl.id] = ctrl.min + (ctrl.max - ctrl.min) * progress;
+
+                              // 2. Apply Direction
+                              if (settings.direction === 'backward') {
+                                  progress = 1.0 - progress;
+                              } else if (settings.direction === 'pause') {
+                                  progress = 0; // Or hold last frame? For now 0 or middle
+                              }
+
+                              // 3. Apply Style (Loop is default 0-1)
+                              if (settings.style === 'bounce') {
+                                  // 0 -> 1 -> 0
+                                  progress = progress < 0.5 ? progress * 2 : 2 - (progress * 2);
+                              } else if (settings.style === 'once') {
+                                  progress = Math.min(progress, 1);
+                              }
+
+                              // 4. Map to Range
+                              const min = settings.range ? settings.range[0] : ctrl.min;
+                              const max = settings.range ? settings.range[1] : ctrl.max;
+                              
+                              newParams[ctrl.id] = min + (max - min) * progress;
                           }
                       });
                   }
                   return { ...eff, params: newParams };
               });
 
-              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime });
+              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime, effectStates: effectStatesRef.current });
 
               dacList.forEach(targetDac => {
                 const ip = targetDac.ip;
@@ -1248,11 +1408,29 @@ function App() {
           dacGroups.forEach(group => {
             let mergedFrame = mergeFrames(group.frames);
             
-            // Apply Output Processing (Safety Zones, Transform)
             const id = `${group.ip}:${group.channel}`;
             const settings = dacOutputSettingsRef.current[id];
             
             if (mergedFrame && settings) {
+                // Apply Dimmer
+                if (settings.dimmer !== undefined && settings.dimmer < 1) {
+                     const dim = settings.dimmer;
+                     const pts = mergedFrame.points;
+                     const isT = mergedFrame.isTypedArray;
+                     const n = isT ? (pts.length / 8) : pts.length;
+                     for(let i=0; i<n; i++) {
+                         if (isT) {
+                             pts[i*8+3] *= dim;
+                             pts[i*8+4] *= dim;
+                             pts[i*8+5] *= dim;
+                         } else {
+                             pts[i].r *= dim;
+                             pts[i].g *= dim;
+                             pts[i].b *= dim;
+                         }
+                     }
+                }
+
                 mergedFrame = applyOutputProcessing(mergedFrame, settings);
             }
 
@@ -1319,8 +1497,57 @@ function App() {
           if (isNaN(targetIndex)) targetIndex = 0;
           if (isNaN(currentProgress)) currentProgress = 0;
 
+          const prevProgress = previousProgressRef.current[workerId] || 0;
+          // Check for loop/completion
+          // Only trigger if playing and progress wrapped around (e.g. 0.9 -> 0.1)
+          // We use a threshold to avoid jitter, e.g., prev was > 0.9 and current < 0.1
+          const didLoop = (prevProgress > 0.9 && currentProgress < 0.1);
+
+          previousProgressRef.current[workerId] = currentProgress;
           progressRef.current[workerId] = currentProgress;
           if (totalFrames > 0) targetIndex = targetIndex % totalFrames;
+
+          // Autopilot Trigger
+          if (didLoop && isPlaying) {
+             const mode = layerAutopilotsRef.current[layerIndex];
+             if (mode && mode !== 'off') {
+                 // Trigger next clip
+                 const currentLayerClips = clipContentsRef.current[layerIndex];
+                 const currentCol = activeClipIndexesRef.current[layerIndex];
+                 let nextCol = -1;
+
+                 if (mode === 'forward') {
+                     // Find next column with content
+                     for (let i = 1; i < currentLayerClips.length; i++) {
+                         const idx = (currentCol + i) % currentLayerClips.length;
+                         const clip = currentLayerClips[idx];
+                         if (clip && (clip.type === 'ilda' || clip.type === 'generator')) {
+                             nextCol = idx;
+                             break;
+                         }
+                     }
+                 } else if (mode === 'random') {
+                     // Find all valid columns
+                     const validCols = currentLayerClips.map((c, i) => (c && (c.type === 'ilda' || c.type === 'generator')) ? i : -1).filter(i => i !== -1);
+                     if (validCols.length > 0) {
+                         const randIdx = Math.floor(Math.random() * validCols.length);
+                         nextCol = validCols[randIdx];
+                         // Avoid repeating same clip if possible
+                         if (nextCol === currentCol && validCols.length > 1) {
+                             nextCol = validCols[(randIdx + 1) % validCols.length];
+                         }
+                     }
+                 }
+
+                 if (nextCol !== -1 && nextCol !== currentCol) {
+                     // We need to call handleActivateClick, but we are in a loop.
+                     // Use setTimeout to break out of the loop and safe update state.
+                     setTimeout(() => {
+                         handleActivateClick(layerIndex, nextCol);
+                     }, 0);
+                 }
+             }
+          }
 
           if (frameIndexesRef.current[workerId] !== targetIndex || !liveFramesRef.current[workerId]) {
               frameIndexesRef.current[workerId] = targetIndex;
@@ -2038,7 +2265,7 @@ function App() {
   const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon') => {
     // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
     // ALLOW value 0 if it's a clip trigger (to support Flash mode release)
-    if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_') && id !== 'bpm_value' && id !== 'bpm_fine_up' && id !== 'bpm_fine_down') return;
+    if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_') && id !== 'bpm_value' && id !== 'bpm_fine_up' && id !== 'bpm_fine_down' && !id.startsWith('quick_') && !id.startsWith('dimmer_')) return;
 
     const normalizedValue = value / maxValue;
 
@@ -2127,9 +2354,71 @@ function App() {
             if (value > 0) {
                 handleColumnTrigger(colIndex);
             }
+        } else if (id.startsWith('quick_knob_')) {
+            const index = parseInt(id.split('_')[2]);
+            dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'knob', index, value: normalizedValue } });
+        } else if (id.startsWith('quick_btn_')) {
+            const index = parseInt(id.split('_')[2]);
+            if (value > 0) { // Toggle on press
+                dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index } });
+            }
+        } else if (id.startsWith('dimmer_')) {
+            // Reconstruct the key: dimmer_192_168_1_50:1 -> 192.168.1.50:1
+            const cleanId = id.replace('dimmer_', '').replace(/_/g, '.');
+            const currentSettings = dacOutputSettings[cleanId] || {};
+            dispatch({ 
+                type: 'SET_DAC_OUTPUT_SETTINGS', 
+                payload: { 
+                    id: cleanId, 
+                    settings: { ...currentSettings, dimmer: normalizedValue } 
+                } 
+            });
+        } else {
+            // Check if it matches an effect parameter (e.g. rotate_angle)
+            // This applies to the CURRENTLY SELECTED CLIP
+            const parts = id.split('_');
+            if (parts.length >= 2) {
+                // Try to map to effect param
+                // Format could be "rotate_angle" or "color_r"
+                // We iterate selected clip effects to find a match
+                if (selectedLayerIndex !== null && selectedColIndex !== null) {
+                    const clip = clipContents[selectedLayerIndex][selectedColIndex];
+                    if (clip && clip.effects) {
+                        const effId = parts[0];
+                        const paramId = parts.slice(1).join('_'); // Handle params with underscores
+                        
+                        const effectIndex = clip.effects.findIndex(e => e.id === effId);
+                        if (effectIndex !== -1) {
+                            const def = effectDefinitions.find(d => d.id === effId);
+                            const ctrl = def?.paramControls.find(c => c.id === paramId);
+                            
+                            if (ctrl) {
+                                // Map normalized MIDI (0-1) to param range
+                                let newValue = normalizedValue;
+                                if (ctrl.type === 'range' || ctrl.type === 'number') {
+                                    newValue = ctrl.min + (ctrl.max - ctrl.min) * normalizedValue;
+                                } else if (ctrl.type === 'checkbox') {
+                                    newValue = normalizedValue > 0.5;
+                                }
+                                
+                                dispatch({ 
+                                    type: 'UPDATE_EFFECT_PARAMETER', 
+                                    payload: { 
+                                        layerIndex: selectedLayerIndex, 
+                                        colIndex: selectedColIndex, 
+                                        effectIndex, 
+                                        paramName: paramId, 
+                                        newValue 
+                                    } 
+                                });
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-  }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, handleClipPreview, handleActivateClick, handleColumnTrigger]);
+  }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, handleClipPreview, handleActivateClick, handleColumnTrigger, clipContents, selectedLayerIndex, selectedColIndex, dacOutputSettings]);
 
   return (
     <MidiProvider onMidiCommand={handleMidiCommand}>
@@ -2144,6 +2433,7 @@ function App() {
         activeClipIndexes={activeClipIndexes}
         theme={theme}
         bpm={state.bpm}
+        quickAssigns={state.quickAssigns}
     />
     <MidiMappingOverlay />
     <div className="app">
@@ -2330,10 +2620,32 @@ function App() {
           				<p> Right Section of Middle-Bar</p>
                       </div>
                     </div>          <div className="bottom-panel">
-            <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />
-            <GeneratorPanel />
-            <EffectPanel />
-            <DacPanel dacs={dacs} onDacSelected={handleDacSelected} onDacsDiscovered={handleDacsDiscovered} />
+            <div className="bottom-panel-tabs-container">
+                <div className="bottom-panel-tabs">
+                    <button className={`tab-button ${activeBottomTab === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab('files')}>Files</button>
+                    <button className={`tab-button ${activeBottomTab === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab('generators')}>Generators</button>
+                    <button className={`tab-button ${activeBottomTab === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab('effects')}>Effects</button>
+                </div>
+                <div className="bottom-panel-tab-content">
+                    {activeBottomTab === 'files' && <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />}
+                    {activeBottomTab === 'generators' && <GeneratorPanel />}
+                    {activeBottomTab === 'effects' && <EffectPanel />}
+                </div>
+            </div>
+            
+            <DacPanel 
+                dacs={dacs} 
+                onDacSelected={handleDacSelected} 
+                onDacsDiscovered={handleDacsDiscovered} 
+                dacSettings={dacOutputSettings}
+                onUpdateDacSettings={handleUpdateDacSettings}
+            />
+
+            <LayerSettingsPanel
+                selectedLayerIndex={selectedLayerIndex}
+                autopilotMode={selectedLayerIndex !== null ? state.layerAutopilots[selectedLayerIndex] : 'off'}
+                onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
+            />
 
             <ClipSettingsPanel
               selectedLayerIndex={selectedLayerIndex}
@@ -2360,6 +2672,10 @@ function App() {
 			<SettingsPanel
               enabledShortcuts={enabledShortcuts}
               onOpenOutputSettings={() => setShowOutputSettingsWindow(true)}
+              quickAssigns={state.quickAssigns}
+              onUpdateKnob={(i, v) => dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'knob', index: i, value: v } })}
+              onToggleButton={(i) => dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'button', index: i, value: !state.quickAssigns.buttons[i].value } })}
+              onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
             />
           </div>
         </div>

@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
+import GlobalQuickAssigns from './GlobalQuickAssigns';
 
 const SettingsPanel = ({
   enabledShortcuts = {},
-  onOpenOutputSettings
+  onOpenOutputSettings,
+  quickAssigns,
+  onUpdateKnob,
+  onToggleButton,
+  onAssign
 }) => {
   const { 
     midiInitialized, 
@@ -95,6 +100,22 @@ const SettingsPanel = ({
   return (
     <div className="settings-panel settings-panel-base">
       <h3>Global Settings</h3>
+
+      {quickAssigns && (
+          <div className="settings-card quick-assigns-card">
+              <div className="settings-card-header">
+                  <h4>Quick Assigns</h4>
+              </div>
+              <div className="settings-card-content">
+                  <GlobalQuickAssigns 
+                      assigns={quickAssigns}
+                      onUpdateKnob={onUpdateKnob}
+                      onToggleButton={onToggleButton}
+                      onAssign={onAssign}
+                  />
+              </div>
+          </div>
+      )}
 
       {/* Channel/DAC Settings Placeholder */}
       <div className="settings-card">

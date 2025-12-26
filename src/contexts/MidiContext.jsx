@@ -196,8 +196,15 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
 
       if ((isNoteMatch || isCcMatch) && shiftMatch) {
         if (onMidiCommandRef.current) {
-          // Explicitly handle 0 values for CC
-          const val = (event.type === 'controlchange') ? (event.value ?? 0) : (event.velocity ?? 0);
+          // Explicitly handle 0 values for CC and NoteOff
+          let val;
+          if (event.type === 'controlchange') {
+              val = event.value ?? 0;
+          } else if (event.type === 'noteoff') {
+              val = 0;
+          } else {
+              val = event.velocity ?? 0;
+          }
           onMidiCommandRef.current(controlId, val, 127, event.type);
         }
       }
@@ -209,6 +216,14 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       setIsMapping(false);
       setLearningId(null);
   }
+
+  const removeMapping = (controlId) => {
+      setMappings(prev => {
+          const next = { ...prev };
+          delete next[controlId];
+          return next;
+      });
+  };
 
   const value = {
     midiInitialized,
@@ -222,6 +237,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     setLearningId,
     mappings,
     setMappings,
+    removeMapping, // Add removeMapping
     saveMappings,
     exportMappings,
     importMappings,

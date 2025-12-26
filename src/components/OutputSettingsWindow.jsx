@@ -391,13 +391,32 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
           {/* Middle Column: Canvas */}
           <div className="output-settings-col canvas-col">
             <div className="canvas-toolbar">
-                <button className="tool-btn" onClick={handleAddZone} title="Add Safety Zone">+ Zone</button>
-                <button className={`tool-btn ${currentSettings.transformationEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ transformationEnabled: !currentSettings.transformationEnabled })} title="Toggle Output Transformation">⛶</button>
-                <button className={`tool-btn ${currentSettings.testLineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ testLineEnabled: !currentSettings.testLineEnabled })} title="Toggle Test Line">_</button>
+                <button className="tool-btn" onClick={handleAddZone} title="Add Safety Zone">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-plus-square" viewBox="0 0 16 16">
+						<path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2z"/>
+						<path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4"/>
+					</svg>
+				</button>
+                <button className={`tool-btn ${currentSettings.transformationEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ transformationEnabled: !currentSettings.transformationEnabled })} title="Toggle Output Transformation">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-border-outer" viewBox="0 0 16 16">
+						<path d="M7.5 1.906v.938h1v-.938zm0 1.875v.938h1V3.78h-1zm0 1.875v.938h1v-.938zM1.906 8.5h.938v-1h-.938zm1.875 0h.938v-1H3.78v1zm1.875 0h.938v-1h-.938zm2.813 0v-.031H8.5V7.53h-.031V7.5H7.53v.031H7.5v.938h.031V8.5zm.937 0h.938v-1h-.938zm1.875 0h.938v-1h-.938zm1.875 0h.938v-1h-.938zM7.5 9.406v.938h1v-.938zm0 1.875v.938h1v-.938zm0 1.875v.938h1v-.938z"/>
+						<path d="M0 0v16h16V0zm1 1h14v14H1z"/>
+					</svg>
+				</button>
+                <button className={`tool-btn ${currentSettings.testLineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ testLineEnabled: !currentSettings.testLineEnabled })} title="Toggle Test Line">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-eye" viewBox="0 0 16 16">
+						<path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8M1.173 8a13 13 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5s3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5s-3.879-1.168-5.168-2.457A13 13 0 0 1 1.172 8z"/>
+						<path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0"/>
+					</svg>
+				</button>
                 
                 <span style={{width: 1, background: '#555', margin: '0 5px'}}></span>
                 
-                <button className={`tool-btn ${snapToGrid ? 'active' : ''}`} onClick={() => setSnapToGrid(!snapToGrid)} title="Snap to Grid">🧲</button>
+                <button className={`tool-btn ${snapToGrid ? 'active' : ''}`} onClick={() => setSnapToGrid(!snapToGrid)} title="Snap to Grid">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-magnet-fill" viewBox="0 0 16 16">
+						<path d="M15 12h-4v3h4zM5 12H1v3h4zM0 8a8 8 0 1 1 16 0v8h-6V8a2 2 0 1 0-4 0v8H0z"/>
+					</svg>
+				</button>
                 
                 <div style={{display:'flex', alignItems:'center', gap:5, marginLeft:5}}>
                     <span style={{fontSize:10, color:'#aaa'}}>Grid:</span>
