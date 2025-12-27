@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-const RadialKnob = ({ value, onChange, label, onDrop, size = 40, ...props }) => {
+const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, ...props }) => {
     const knobRef = useRef(null);
 
     const handleDragOver = (e) => {
@@ -14,12 +14,18 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, ...props }) => 
         if (onDrop) {
             e.preventDefault();
             try {
-                const data = JSON.parse(e.dataTransfer.getData('application/x-truelazer-param'));
-                if (data && data.type === 'range') {
+                const rawData = e.dataTransfer.getData('application/x-truelazer-param');
+                console.log('[RadialKnob] Dropped Data Raw:', rawData);
+                const data = JSON.parse(rawData);
+                console.log('[RadialKnob] Dropped Data Parsed:', data);
+
+                if (data && (data.type === 'range' || data.type === 'number')) {
                     onDrop(data);
+                } else {
+                    console.warn('[RadialKnob] Invalid data type for knob:', data?.type);
                 }
             } catch (err) {
-                console.error('Invalid drop data', err);
+                console.error('[RadialKnob] Drop Error:', err);
             }
         }
     };
@@ -28,6 +34,7 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, ...props }) => 
     const rotation = -135 + (value * 270);
 
     const handleMouseDown = (e) => {
+        if (!isAssigned) return;
         e.preventDefault(); // Prevent text selection
         const startY = e.clientY;
         const startVal = value;
@@ -53,6 +60,7 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, ...props }) => 
         if (!knobElement) return;
 
         const handleWheel = (e) => {
+            if (!isAssigned) return;
             e.preventDefault();
             e.stopPropagation();
             const change = e.deltaY * -0.001; // Negative deltaY is scrolling up
@@ -65,12 +73,12 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, ...props }) => 
         return () => {
             knobElement.removeEventListener('wheel', handleWheel);
         };
-    }, [value, onChange]); 
+    }, [value, onChange, isAssigned]); 
 
     return (
-        <div className="quick-assign-knob" 
+        <div className={`quick-assign-knob ${!isAssigned ? 'unassigned' : ''}`}
              ref={knobRef}
-             style={{ width: size, cursor: 'ns-resize', userSelect: 'none' }}
+             style={{ width: size, cursor: isAssigned ? 'ns-resize' : 'default', userSelect: 'none', opacity: isAssigned ? 1 : 0.5 }}
              onDragOver={handleDragOver} 
              onDrop={handleDrop}
              onMouseDown={handleMouseDown}

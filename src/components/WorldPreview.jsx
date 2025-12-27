@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity }) => {
+const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`world-preview-${Math.random()}`);
@@ -42,10 +42,10 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity }
+        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings }
       }
     });
-  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity]);
+  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings]);
 
   return (
     <div className="world-preview">

@@ -1,84 +1,75 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
+import { WebGLRenderer } from '../utils/WebGLRenderer';
+import { applyEffects } from '../utils/effects';
 
-const IldaThumbnail = ({ frame }) => {
+const IldaThumbnail = ({ frame, effects, width = 100, height = 100 }) => {
   const canvasRef = useRef(null);
+  const rendererRef = useRef(null);
+  const [processedFrame, setProcessedFrame] = useState(null);
 
   useEffect(() => {
-    if (!canvasRef.current || !frame || !frame.points || frame.points.length === 0) {
-      return;
+    if (canvasRef.current && !rendererRef.current) {
+        rendererRef.current = new WebGLRenderer(canvasRef.current, 'single');
     }
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const { width, height } = canvas;
-
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, width, height);
-    ctx.lineWidth = 1.5;
-
-    const scaleX = width / 2;
-    const scaleY = height / 2;
-    const offsetX = width / 2;
-    const offsetY = height / 2;
-
-    const points = frame.points;
-    const isTyped = points instanceof Float32Array || frame.isTypedArray;
-    const numPoints = isTyped ? (points.length / 8) : points.length;
-
-    const getPointData = (idx) => {
-        if (isTyped) {
-            const offset = idx * 8;
-            return {
-                x: points[offset],
-                y: points[offset + 1],
-                r: points[offset + 3],
-                g: points[offset + 4],
-                b: points[offset + 5],
-                blanking: points[offset + 6] === 1
-            };
-        } else {
-            return points[idx];
+    
+    // Cleanup on unmount
+    return () => {
+        if (rendererRef.current) {
+            // rendererRef.current.destroy(); // If destroy method exists
+            rendererRef.current = null;
         }
     };
+  }, []);
 
-    for (let i = 0; i < numPoints; i++) {
-      const point = getPointData(i);
-      const prevPoint = i > 0 ? getPointData(i - 1) : null;
-
-      if (point.blanking) {
-        continue;
-      }
-
-      const isGenerated = Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1;
-      const x = (isGenerated ? point.x : point.x / 32767.0) * scaleX + offsetX;
-      const y = (isGenerated ? -point.y : -point.y / 32767.0) * scaleY + offsetY; // Invert Y-coordinate
-      const color = `rgb(${point.r}, ${point.g}, ${point.b})`;
-
-      let prevX, prevY; // Declare here
-
-      if (prevPoint && !prevPoint.blanking) {
-        // Previous point was visible, so draw a line
-        const isPrevGenerated = Math.abs(prevPoint.x) <= 1 && Math.abs(prevPoint.y) <= 1;
-        prevX = (isPrevGenerated ? prevPoint.x : prevPoint.x / 32767.0) * scaleX + offsetX;
-        prevY = (isPrevGenerated ? -prevPoint.y : -prevPoint.y / 32767.0) * scaleY + offsetY; // Invert Y-coordinate
-        ctx.beginPath();
-        ctx.moveTo(prevX, prevY);
-        ctx.lineTo(x, y);
-        ctx.strokeStyle = color;
-        ctx.stroke();
-      } else {
-        // Previous point was blanked or this is the first point, so draw a small line segment
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + 1, y + 1); // Draw a tiny line segment to make it visible
-        ctx.strokeStyle = color;
-        ctx.stroke();
-      }
+  useEffect(() => {
+    if (!frame) {
+        setProcessedFrame(null);
+        return;
     }
-  }, [frame]);
+
+    let currentFrame = frame;
+    if (effects && effects.length > 0) {
+        const pts = frame.points;
+        const isTyped = frame.isTypedArray || pts instanceof Float32Array;
+        
+        let newPoints;
+        if (isTyped) {
+            newPoints = new Float32Array(pts);
+        } else {
+            newPoints = pts.map(p => ({...p}));
+        }
+        
+        const cloneFrame = { ...frame, points: newPoints, isTypedArray: isTyped };
+        currentFrame = applyEffects(cloneFrame, effects, { time: performance.now(), progress: 0, effectStates: new Map() });
+    }
+    
+    setProcessedFrame(currentFrame);
+
+  }, [frame, effects]);
+
+  useEffect(() => {
+      if (rendererRef.current && processedFrame) {
+          rendererRef.current.render({
+              ildaFrames: [processedFrame],
+              previewScanRate: 1,
+              intensity: 1,
+              effects: [], // Effects already applied
+              syncSettings: {}
+          });
+      } else if (rendererRef.current) {
+          rendererRef.current.clearCanvas();
+      }
+  }, [processedFrame]);
 
   return (
-    <canvas ref={canvasRef} width="100" height="100" style={{ backgroundColor: 'black' }} />
+    <div className="clip-thumbnail" style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' }}>
+        <canvas 
+            ref={canvasRef} 
+            width={width} 
+            height={height} 
+            style={{ width: '100%', height: '100%', backgroundColor: 'black' }}
+        />
+    </div>
   );
 };
 

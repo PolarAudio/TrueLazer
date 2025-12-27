@@ -1871,11 +1871,12 @@ input[type="checkbox"]:checked:before {
   justify-items: center;
 }
 
-.quick-assign-knob {
-  display: flex;
-  flex-direction: column;
+div[data-mappable-id^='quick_knob_'] {
+  width: 40px;
   align-items: center;
+  justify-items: center;
   cursor: ns-resize;
+  user-select: none;
 }
 
 .knob-circle {
@@ -1898,18 +1899,10 @@ input[type="checkbox"]:checked:before {
   margin-left: -1px;
 }
 
-.knob-label, .button-label {
-  font-size: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+div[data-mappable-id^='quick_btn_'] {
   width: 100%;
-  text-align: center;
-  color: #aaa;
-}
-
-.quick-assign-button {
-  width: 30px;
-  height: 20px;
+  min-width: 30px;
+  height: 24px;
   background: #333;
   border: 1px solid #555;
   border-radius: 3px;
@@ -1917,17 +1910,57 @@ input[type="checkbox"]:checked:before {
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.1s;
+  box-sizing: border-box;
+  padding: 2px;
 }
 
-.quick-assign-button.active {
-  background: var(--theme-color);
-  color: black;
+div[data-mappable-id^='quick_btn_']:hover {
+  background: #444;
   border-color: var(--theme-color);
 }
 
-.quick-assign-button.active .button-label {
-  color: black;
-  font-weight: bold;
+div[data-mappable-id^='quick_btn_'].active {
+  background: var(--theme-color);
+  color: #000;
+  border-color: var(--theme-color);
+  box-shadow: 0 0 8px var(--theme-color);
+}
+
+.quick-assign-button.unassigned {
+  opacity: 0.3;
+  cursor: default;
+  border-color: #444;
+}
+
+.quick-assign-button.unassigned:hover {
+  background: #333;
+  border-color: #444;
+}
+
+.quick-assign-knob.unassigned {
+  opacity: 0.3 !important; /* Force override inline style if needed, though inline logic handles it too */
+  cursor: default !important;
+}
+
+.quick-assign-knob.unassigned .knob-circle {
+  border-color: #555;
+}
+
+.quick-assign-knob.unassigned .knob-indicator {
+  background: #555;
+}
+
+
+.knob-label, .button-label {
+  font-size: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  text-align: center;
+  color: #aaa;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* Bottom Panel Tabs */

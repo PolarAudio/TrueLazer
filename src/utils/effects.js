@@ -80,6 +80,9 @@ export function applyEffects(frame, effects, context = {}) {
             currentPoints = applyDelay(currentPoints, numPoints(), effect.params, effectStates, effect.instanceId);
         }
         break;
+      case 'chase':
+        applyChase(currentPoints, numPoints(), effect.params, time);
+        break;
       default:
         break;
     }
@@ -279,7 +282,8 @@ function applyMirror(points, numPoints, params) {
     const y = points[offset + 1];
     
     // Fold logic:
-    // x+: Fold Left onto Right (Keep +). x < 0 ? x = -x : x
+    // x+: Fold Left onto Right (Keep +). if x < 0, x = -x (abs)
+    // x-: Fold Right onto Left (Keep -). if x > 0, x = -x (-abs)
     if (mode === 'x+') points[offset] = Math.abs(x);
     else if (mode === 'x-') points[offset] = -Math.abs(x);
     else if (mode === 'y+') points[offset + 1] = Math.abs(y);
@@ -344,7 +348,12 @@ function applyMove(points, numPoints, params, time) {
 }
 
 function applyDelay(points, numPoints, params, effectStates, instanceId) {
-    const { delayAmount, decay, mode, target, direction } = withDefaults(params, effectDefinitions.find(def => def.id === 'delay').defaultParams);
+    const defaults = effectDefinitions.find(def => def.id === 'delay').defaultParams;
+    const { 
+        delayAmount, decay, 
+        delayI, delayC, delayE, 
+        delayMode, delayDirection 
+    } = withDefaults(params, defaults);
     
     if (!effectStates.has(instanceId)) {
         effectStates.set(instanceId, []);
@@ -353,73 +362,250 @@ function applyDelay(points, numPoints, params, effectStates, instanceId) {
     const history = effectStates.get(instanceId);
     
     // 1. Save current frame snapshot
-    // We must clone the points because 'points' is reused/mutated in place by previous effects
+    // Ensure we clone the data
     const currentSnapshot = new Float32Array(points);
     history.unshift(currentSnapshot);
     
-    // Limit history size. Let's keep up to 4 echoes -> 4 * delayAmount
+    // Limit history size.
     const maxHistory = delayAmount * 4 + 1;
     if (history.length > maxHistory) {
         history.length = maxHistory;
     }
     
     // 2. Create Echoes
-    // We will merge current points with echoes.
-    // Calculate total size
-    // Note: We assume all history frames have same size. If not (e.g. generator changed), we might have issues.
-    // For safety, only use frames with same length.
-    
     const echoes = [];
     for(let i=1; i<=4; i++) {
         const index = i * delayAmount;
         if (index < history.length) {
             const echoPoints = history[index];
             if (echoPoints.length === points.length) {
-                echoes.push({ points: echoPoints, factor: Math.pow(decay, i) });
+                echoes.push({ points: echoPoints, factor: Math.pow(decay, i), index: i });
             }
         }
     }
     
-    if (echoes.length === 0) return points; // No history yet
+    if (echoes.length === 0) return points;
     
     // Create new buffer
     const totalPoints = numPoints + echoes.reduce((sum, e) => sum + e.points.length / 8, 0);
     const newBuffer = new Float32Array(totalPoints * 8);
     
-    // Copy current points
-    newBuffer.set(points, 0);
-    let offset = points.length;
+    // Copy current points first (on top or bottom? usually top, so echoes go first)
+    // Actually, usually echoes are "behind".
+    // Let's write Echoes first, then Current frame.
     
-    // Copy echoes
-    // target: 'intensity' (dim), 'color' (?), 'effect' (?)
-    // For now, implement Intensity Decay for all.
-    
-    for (const echo of echoes) {
+    let offset = 0;
+
+    for (const echo of echoes.reverse()) { // Draw oldest echo first (furthest back)
         const ePoints = echo.points;
         const eNum = ePoints.length / 8;
         const factor = echo.factor;
+        const echoIdx = echo.index;
         
+        // Calculate Spatial Offset based on direction/mode
+        let offX = 0, offY = 0;
+        let scaleX = 1, scaleY = 1;
+        
+        if (delayDirection === 'left_to_right') offX = -0.1 * echoIdx; // Trail behind to left? Or push echo right?
+        // If "Delay Left to Right", maybe implies the *delayed* copy appears to the Right.
+        else if (delayDirection === 'right_to_left') offX = 0.1 * echoIdx;
+        else if (delayDirection === 'center_to_out') {
+             scaleX = scaleY = 1 + (0.1 * echoIdx);
+        } else if (delayDirection === 'out_to_center') {
+             scaleX = scaleY = 1 - (0.1 * echoIdx);
+        }
+
         // Copy and Modify
         for(let i=0; i<eNum; i++) {
             const srcOff = i*8;
             const dstOff = offset + i*8;
             
-            // Copy XYZ
-            newBuffer[dstOff] = ePoints[srcOff];
-            newBuffer[dstOff+1] = ePoints[srcOff+1];
-            newBuffer[dstOff+2] = ePoints[srcOff+2];
+            // Source Data (Past)
+            const srcX = ePoints[srcOff];
+            const srcY = ePoints[srcOff+1];
+            const srcZ = ePoints[srcOff+2];
+            const srcR = ePoints[srcOff+3];
+            const srcG = ePoints[srcOff+4];
+            const srcB = ePoints[srcOff+5];
+            const srcBlk = ePoints[srcOff+6];
+
+            // Current Data (Present equivalent point)
+            // Note: If point count changed, this mapping is invalid. We assume count matches.
+            const currX = points[srcOff];
+            const currY = points[srcOff+1];
+            const currR = points[srcOff+3];
+            const currG = points[srcOff+4];
+            const currB = points[srcOff+5];
+            const currBlk = points[srcOff+6];
+
+            // Mix based on flags (I, C, E)
+            // E = Effect/Position. If true, use Past Position (transformed). If false, use Current Position.
+            // C = Color. If true, use Past Color. If false, use Current Color.
+            // I = Intensity. If true, use Past Blanking. If false, use Current Blanking.
+            // Note: We always apply decay to Color/Intensity of the echo to make it fade.
+
+            let x = delayE ? srcX : currX;
+            let y = delayE ? srcY : currY;
             
-            // Color/Intensity
-            // If target is Intensity: R,G,B are multiplied by factor
-            newBuffer[dstOff+3] = ePoints[srcOff+3] * factor;
-            newBuffer[dstOff+4] = ePoints[srcOff+4] * factor;
-            newBuffer[dstOff+5] = ePoints[srcOff+5] * factor;
+            // Apply Spatial Transform to Echo Position
+            x = x * scaleX + offX;
+            y = y * scaleY + offY;
+
+            newBuffer[dstOff] = x;
+            newBuffer[dstOff+1] = y;
+            newBuffer[dstOff+2] = srcZ; // Z usually follows X/Y logic
+
+            // Color
+            const r = delayC ? srcR : currR;
+            const g = delayC ? srcG : currG;
+            const b = delayC ? srcB : currB;
+
+            newBuffer[dstOff+3] = r * factor;
+            newBuffer[dstOff+4] = g * factor;
+            newBuffer[dstOff+5] = b * factor;
             
-            newBuffer[dstOff+6] = ePoints[srcOff+6]; // Blanking
+            // Intensity / Blanking
+            // If delayI is true, we respect the blanking of the past frame.
+            // If delayI is false, we use the blanking of the current frame?
+            // If the echo uses current blanking but shifted position, it might look weird.
+            // Usually Echo implies "Past Image".
+            // If I uncheck "I", maybe I want the echo to be fully bright (no decay)?
+            // Or maybe I want it to be visible even if originally blanked?
+            // Let's stick to: delayI selects SOURCE of blanking bit.
+            
+            const blk = delayI ? srcBlk : currBlk;
+            newBuffer[dstOff+6] = blk; 
             newBuffer[dstOff+7] = ePoints[srcOff+7]; // LastPoint
         }
         offset += ePoints.length;
     }
+
+    // Finally copy current frame
+    newBuffer.set(points, offset);
     
     return newBuffer;
+}
+
+export function applyChase(points, numPoints, params, time) {
+    const { steps, decay, speed } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
+    
+    // Simple segment chase: Divide the path into 'steps' segments.
+    // Highlight one segment based on time.
+    
+    const t = time * 0.001 * speed;
+    const activeStep = Math.floor(t % steps);
+    const pointsPerStep = numPoints / steps;
+    
+    for(let i=0; i<numPoints; i++) {
+        const stepIndex = Math.floor(i / pointsPerStep);
+        const offset = i * 8;
+        
+        // Distance from active step
+        let dist = Math.abs(stepIndex - activeStep);
+        // Wrap around distance
+        if (dist > steps / 2) dist = steps - dist;
+        
+        let intensity = 1.0;
+        if (dist > 0) {
+            intensity = Math.pow(decay, dist);
+        }
+        
+        // Apply intensity to color
+        points[offset+3] *= intensity;
+        points[offset+4] *= intensity;
+        points[offset+5] *= intensity;
+        
+        // If intensity is too low, maybe blank it?
+        if (intensity < 0.1) points[offset+6] = 1; // Blank
+    }
+}
+
+export function applyOutputProcessing(frame, settings) {
+    if (!settings || !frame || !frame.points) return frame;
+    
+    const { safetyZones, outputArea, transformationEnabled, transformationMode } = settings;
+    
+    let points = frame.points;
+    const isTyped = frame.isTypedArray || points instanceof Float32Array;
+    const numPoints = isTyped ? (points.length / 8) : points.length;
+    
+    let newPoints;
+    if (isTyped) {
+        newPoints = new Float32Array(points);
+    } else {
+        newPoints = points.map(p => ({ ...p }));
+    }
+
+    for (let i = 0; i < numPoints; i++) {
+        let x, y, r, g, b, blanking;
+        if (isTyped) {
+            x = newPoints[i*8];
+            y = newPoints[i*8+1];
+            r = newPoints[i*8+3];
+            g = newPoints[i*8+4];
+            b = newPoints[i*8+5];
+            blanking = newPoints[i*8+6];
+        } else {
+            x = newPoints[i].x;
+            y = newPoints[i].y;
+            r = newPoints[i].r;
+            g = newPoints[i].g;
+            b = newPoints[i].b;
+            blanking = newPoints[i].blanking ? 1 : 0;
+        }
+
+        // 1. Output Transformation (Crop/Scale)
+        if (transformationEnabled && outputArea) {
+            // Convert point to 0..1 (UI coords)
+            let u = (x + 1) / 2;
+            let v = (1 - y) / 2; // Y is flipped
+            
+            if (transformationMode === 'crop') {
+                if (u < outputArea.x || u > outputArea.x + outputArea.w || 
+                    v < outputArea.y || v > outputArea.y + outputArea.h) {
+                    r = 0; g = 0; b = 0; blanking = 1;
+                }
+            } else if (transformationMode === 'scale') {
+                // Map u from 0..1 to outputArea
+                u = outputArea.x + (u * outputArea.w);
+                v = outputArea.y + (v * outputArea.h);
+                
+                // Convert back to -1..1
+                x = u * 2 - 1;
+                y = 1 - (v * 2);
+            }
+        }
+
+        // 2. Safety Zones
+        if (safetyZones && safetyZones.length > 0) {
+            let u = (x + 1) / 2;
+            let v = (1 - y) / 2;
+            
+            for (const zone of safetyZones) {
+                if (u >= zone.x && u <= zone.x + zone.w &&
+                    v >= zone.y && v <= zone.y + zone.h) {
+                    r = 0; g = 0; b = 0; blanking = 1;
+                    break;
+                }
+            }
+        }
+
+        if (isTyped) {
+            newPoints[i*8] = x;
+            newPoints[i*8+1] = y;
+            newPoints[i*8+3] = r;
+            newPoints[i*8+4] = g;
+            newPoints[i*8+5] = b;
+            newPoints[i*8+6] = blanking;
+        } else {
+            newPoints[i].x = x;
+            newPoints[i].y = y;
+            newPoints[i].r = r;
+            newPoints[i].g = g;
+            newPoints[i].b = b;
+            newPoints[i].blanking = blanking > 0.5;
+        }
+    }
+    
+    return { ...frame, points: newPoints, isTypedArray: isTyped };
 }

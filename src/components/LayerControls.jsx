@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 import Mappable from './Mappable';
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo }) => {
+const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
 
   // Update internal state when layerEffects prop changes
@@ -89,19 +89,22 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
 		</div>
 		<div className="layer-preview-thumbnail">
 			{activeClipData ? (
-				<IldaThumbnail frame={thumbnailRenderMode === 'still' ? activeClipData.stillFrame : liveFrame} /> // Render thumbnail of active clip based on mode
+				<IldaThumbnail 
+                    frame={thumbnailRenderMode === 'still' ? activeClipData.stillFrame : liveFrame} 
+                    effects={[...(activeClipData.effects || []), ...(layerEffects || [])]}
+                />
 			) : (
          // Existing applied effects or placeholder
 			appliedEffects.length > 0 && (
             <div className="applied-effects">
-              {appliedEffects.map(effect => (
-                <span key={effect} className="effect-tag">{effect.substring(0, 3).toUpperCase()}</span>
+              {appliedEffects.map((effect, idx) => (
+                <span key={effect.instanceId || idx} className="effect-tag">{(effect.name || effect.id || '???').substring(0, 3).toUpperCase()}</span>
               ))}
             </div>
           )
         )}
       </div>
-      <span className="layer-name-label">{layerName}</span>
+      <span className="layer-name-label" onClick={() => onLayerSelect && onLayerSelect(index)}>{layerName}</span>
     </div>
   );
 };

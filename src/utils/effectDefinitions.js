@@ -134,23 +134,46 @@ export const effectDefinitions = [
   },
   {
     id: 'delay',
-    name: 'Delay / Chase',
+    name: 'Delay',
     type: 'effect',
-    description: 'Creates a trailing chaser effect.',
+    description: 'Channel-based delay effect.',
     defaultParams: {
-      delayAmount: 5, // Frames delay
+      useAssigned: true, // "Select your own" toggle
+      delayI: true, // Intensity
+      delayC: false, // Color
+      delayE: false, // Effect/Position
+      delayMode: 'linear', // 'linear' or 'symmetric'
+      delayDirection: 'left_to_right', // 'center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'
+      delayAmount: 5,
       decay: 0.8,
-      mode: 'linear', // 'linear' or 'symmetric'
-      target: 'intensity', // 'intensity', 'color', 'effect' (I C E)
-      direction: 'out', // 'out' (center->out/L->R), 'in' (out->center/R->L)
     },
     paramControls: [
-      { id: 'delayAmount', label: 'Delay', type: 'range', min: 1, max: 60, step: 1 },
+      { id: 'useAssigned', label: 'Use Assigned Channels', type: 'checkbox' },
+      // Custom UI handling for channel selection will be needed if useAssigned is false
+      { id: 'delayI', label: 'I (Intensity)', type: 'checkbox' },
+      { id: 'delayC', label: 'C (Color)', type: 'checkbox' },
+      { id: 'delayE', label: 'E (Effect)', type: 'checkbox' },
+      { id: 'delayMode', label: 'Mode', type: 'select', options: ['linear', 'symmetric'] },
+      { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'] },
+      { id: 'delayAmount', label: 'Delay Time', type: 'range', min: 1, max: 60, step: 1 },
       { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
-      { id: 'mode', label: 'Mode', type: 'select', options: ['linear', 'symmetric'] },
-      { id: 'target', label: 'Target', type: 'select', options: ['intensity', 'color', 'effect'] }, // I, C, E representation
-      { id: 'direction', label: 'Direction', type: 'select', options: ['out', 'in'] },
     ],
+  },
+  {
+    id: 'chase',
+    name: 'Chase',
+    type: 'effect',
+    description: 'Step-based chase effect.',
+    defaultParams: {
+        steps: 4,
+        decay: 0.8,
+        speed: 1.0,
+    },
+    paramControls: [
+        { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1 },
+        { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
+        { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 5.0, step: 0.1 },
+    ]
   },
   {
     id: 'blanking',

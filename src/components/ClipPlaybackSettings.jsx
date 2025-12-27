@@ -1,4 +1,5 @@
 import React from 'react';
+import CollapsiblePanel from './CollapsiblePanel';
 
 const ClipPlaybackSettings = ({ settings, onUpdate }) => {
   const { mode = 'fps', duration = 1, beats = 8, speedMultiplier = 1 } = settings || {};
@@ -19,11 +20,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate }) => {
   };
 
   return (
-    <div className="clip-playback-settings settings-card">
-      <div className="settings-card-header">
-        <h4>Clip Playback</h4>
-      </div>
-      <div className="settings-card-content">
+    <CollapsiblePanel title="Clip Playback">
         <div className="playback-mode-selector">
           <button 
               className={mode === 'fps' ? 'active' : ''} 
@@ -89,8 +86,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate }) => {
               </div>
           )}
         </div>
-      </div>
-    </div>
+    </CollapsiblePanel>
   );
 };
 

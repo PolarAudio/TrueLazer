@@ -2,6 +2,7 @@ import React from 'react';
 import EffectEditor from './EffectEditor';
 import GeneratorSettingsPanel from './GeneratorSettingsPanel';
 import ClipPlaybackSettings from './ClipPlaybackSettings';
+import CollapsiblePanel from './CollapsiblePanel';
 
 const ClipSettingsPanel = ({
   selectedLayerIndex,
@@ -51,11 +52,7 @@ const ClipSettingsPanel = ({
     <div className="clip-settings-panel settings-panel-base">
       <h3>Clip Settings</h3>
       
-      <div className="audio-settings-section settings-card">
-          <div className="settings-card-header">
-            <h4>Audio</h4>
-          </div>
-          <div className="settings-card-content">
+      <CollapsiblePanel title="Audio">
             {audioFile ? (
                 <div className="assigned-audio-info">
                     <div className="audio-file-name" title={audioFile.path}>{audioFile.name}</div>
@@ -70,8 +67,7 @@ const ClipSettingsPanel = ({
             ) : (
                 <button className="assign-audio-btn" onClick={onAssignAudio}>Assign Audio File</button>
             )}
-          </div>
-      </div>
+      </CollapsiblePanel>
 
       <ClipPlaybackSettings 
         settings={playbackSettings} 
@@ -79,11 +75,7 @@ const ClipSettingsPanel = ({
       />
 
       {hasAssignedDacs && (
-        <div className="assigned-dacs-settings settings-card">
-          <div className="settings-card-header">
-            <h4>Assigned DACs</h4>
-          </div>
-          <div className="settings-card-content">
+        <CollapsiblePanel title="Assigned DACs">
             <ul className="assigned-dacs-list">
               {assignedDacs.map((dac, index) => (
                 <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
@@ -104,9 +96,7 @@ const ClipSettingsPanel = ({
                 </li>
               ))}
             </ul>
-          </div>
-        </div>
-
+        </CollapsiblePanel>
       )}
 
       {hasGenerator && (
@@ -116,6 +106,8 @@ const ClipSettingsPanel = ({
           onParameterChange={onGeneratorParameterChange}
           syncSettings={syncSettings}
           onSetParamSync={onSetParamSync}
+          layerIndex={selectedLayerIndex}
+          colIndex={selectedColIndex}
         />
       )}
 
@@ -125,6 +117,7 @@ const ClipSettingsPanel = ({
           effect={effect}
           syncSettings={syncSettings}
           onSetParamSync={onSetParamSync}
+          context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect' }}
           onParamChange={(paramId, paramValue) => 
             onParameterChange(selectedLayerIndex, selectedColIndex, effectIndex, paramId, paramValue)
           }
