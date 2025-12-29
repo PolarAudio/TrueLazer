@@ -174,11 +174,25 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onMouseLeave={() => onActivateClick(false)}
         >
             {clipContent && clipContent.parsing ? (
-            <div className="clip-loading-spinner"></div>
-            ) : frameForThumbnail ? (
-            <IldaThumbnail frame={frameForThumbnail} effects={clipContent?.effects} />
+                <div className="clip-loading-spinner"></div>
             ) : (
-            <p></p>
+                <>
+                    {frameForThumbnail && <IldaThumbnail frame={frameForThumbnail} effects={clipContent?.effects} />}
+                    {clipContent?.triggerStyle && clipContent.triggerStyle !== 'normal' && (
+                        <p className="clip_icons">
+                            {clipContent.triggerStyle === 'toggle' && (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-toggles" viewBox="0 0 16 16">
+                                    <path d="M4.5 9a3.5 3.5 0 1 0 0 7h7a3.5 3.5 0 1 0 0-7zm7 6a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5m-7-14a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5m2.45 0A3.5 3.5 0 0 1 8 3.5 3.5 3.5 0 0 1 6.95 6h4.55a2.5 2.5 0 0 0 0-5zM4.5 0h7a3.5 3.5 0 1 1 0 7h-7a3.5 3.5 0 1 1 0-7"/>
+                                </svg>
+                            )}
+                            {clipContent.triggerStyle === 'flash' && (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-lightning-fill" viewBox="0 0 16 16">
+                                    <path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641z"/>
+                                </svg>
+                            )}
+                        </p>
+                    )}
+                </>
             )}
         </div>
       </Mappable>

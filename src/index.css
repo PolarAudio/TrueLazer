@@ -1280,11 +1280,10 @@ input[type="checkbox"]:checked:before {
 }
 
 .settings-card-header {
-  background: #2a2a2a;
   padding: 6px 10px;
   border-bottom: 1px solid #333;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
 }
 
@@ -1920,7 +1919,8 @@ div[data-mappable-id^='quick_btn_']:hover {
   border-color: var(--theme-color);
 }
 
-div[data-mappable-id^='quick_btn_'].active {
+div[data-mappable-id^='quick_btn_'].active,
+.quick-assign-button.active {
   background: var(--theme-color);
   color: #000;
   border-color: var(--theme-color);
@@ -1979,9 +1979,10 @@ div[data-mappable-id^='quick_btn_'].active {
 
 .bottom-panel-tabs {
     display: flex;
-    background: #1a1a1a;
+    background: #2a2a2a;
     border-bottom: 1px solid #333;
     padding: 0 5px;
+	justify-content: center;
 }
 
 .tab-button {
@@ -2072,4 +2073,7 @@ div[data-mappable-id^='quick_btn_'].active {
     color: #888;
     font-family: monospace;
 }
-
+.clip_icons {
+	position: absolute;
+	margin-block: 0;
+}

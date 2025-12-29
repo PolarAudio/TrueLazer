@@ -1368,9 +1368,9 @@ function App() {
                   return { ...eff, params: newParams };
               });
 
-              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime, effectStates: effectStatesRef.current });
+              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime, effectStates: effectStatesRef.current, assignedDacs: clip.assignedDacs });
 
-              dacList.forEach(targetDac => {
+              dacList.forEach((targetDac, dacIndex) => {
                 const ip = targetDac.ip;
                 const channel = targetDac.channel || (targetDac.channels && targetDac.channels.length > 0 ? targetDac.channels[0].serviceID : 0);
 
@@ -1382,9 +1382,26 @@ function App() {
 
                   // Apply channel-level mirroring if specified
                   let finalDacFrame = modifiedFrame;
+                  
+                  // Check for Delay Distribution
+                  if (modifiedFrame.points && modifiedFrame.points._channelDistributions) {
+                      const dist = modifiedFrame.points._channelDistributions.get(dacIndex);
+                      if (dist) {
+                          // Slice the frame for this channel
+                          const subPoints = modifiedFrame.points.subarray(dist.start, dist.start + dist.length);
+                          // Create new frame object with sliced points, preserving other props
+                          finalDacFrame = { ...modifiedFrame, points: subPoints };
+                      } else {
+                          // If this DAC is not in the distribution map (e.g. 5th laser, only 4 delays),
+                          // we should probably output nothing or the current frame?
+                          // Let's output nothing (Blank) to be safe and clean.
+                          finalDacFrame = { ...modifiedFrame, points: new Float32Array(0) };
+                      }
+                  }
+
                   if (targetDac.mirrorX || targetDac.mirrorY) {
-                      const pts = modifiedFrame.points;
-                      const isT = modifiedFrame.isTypedArray;
+                      const pts = finalDacFrame.points;
+                      const isT = finalDacFrame.isTypedArray;
                       const n = isT ? (pts.length / 8) : pts.length;
                       const newPts = isT ? new Float32Array(pts) : pts.map(p => ({ ...p }));
 
@@ -1397,7 +1414,7 @@ function App() {
                               if (targetDac.mirrorY) newPts[i].y = -newPts[i].y;
                           }
                       }
-                      finalDacFrame = { ...modifiedFrame, points: newPts };
+                      finalDacFrame = { ...finalDacFrame, points: newPts };
                   }
 
                   dacGroups.get(key).frames.push(finalDacFrame);
@@ -1529,7 +1546,10 @@ function App() {
 
           previousProgressRef.current[workerId] = currentProgress;
           progressRef.current[workerId] = currentProgress;
-          if (totalFrames > 0) targetIndex = targetIndex % totalFrames;
+          if (totalFrames > 0) {
+              targetIndex = targetIndex % totalFrames;
+              if (targetIndex < 0) targetIndex += totalFrames;
+          }
 
           // Autopilot Trigger
           if (didLoop && isPlaying) {

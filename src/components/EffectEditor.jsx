@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { effectDefinitions } from '../utils/effectDefinitions';
 import Mappable from './Mappable';
 import RangeSlider from './RangeSlider';
+import CollapsiblePanel from './CollapsiblePanel';
 
 const AnimationControls = ({ animSettings, onChange, controlDef }) => {
     const { 
@@ -14,9 +15,9 @@ const AnimationControls = ({ animSettings, onChange, controlDef }) => {
     const update = (key, val) => onChange({ ...animSettings, [key]: val });
 
     return (
-        <div className="animation-controls-grid">
+        <div className="animation-controls-grid" style={{display: 'grid', gridTemplateRows: 'auto auto', gap: '5px'}}>
             {/* Row 1: Range Selection */}
-            <div className="anim-row range-row" style={{ width: '100%', marginBottom: '8px' }}>
+            <div className="anim-row range-row" style={{ width: '100%' }}>
                 <RangeSlider 
                     min={controlDef.min} 
                     max={controlDef.max} 
@@ -28,51 +29,34 @@ const AnimationControls = ({ animSettings, onChange, controlDef }) => {
             {/* Row 2: Settings Buttons */}
             <div className="anim-row controls-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px' }}>
                  {/* Play Direction */}
-                <div className="btn-group">
-                    <button className={direction === 'backward' ? 'active' : ''} onClick={() => update('direction', 'backward')} title="Backward">
-						<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-							<path d="m3.86 8.753 5.482 4.796c.646.566 1.658.106 1.658-.753V3.204a1 1 0 0 0-1.659-.753l-5.48 4.796a1 1 0 0 0 0 1.506z"/>
-						</svg>
+                <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
+                    <button className={`speed-control-button ${direction === 'backward' ? 'active' : ''}`} onClick={() => update('direction', 'backward')} title="Backward" style={{flex:1, padding:0, fontSize:'10px'}}>
+						&lt;
 					</button>
-                    <button className={direction === 'pause' ? 'active' : ''} onClick={() => update('direction', 'pause')} title="Pause">
-						<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-							<path d="M5.5 3.5A1.5 1.5 0 0 1 7 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5m5 0A1.5 1.5 0 0 1 12 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5"/>
-						</svg>
+                    <button className={`speed-control-button ${direction === 'pause' ? 'active' : ''}`} onClick={() => update('direction', 'pause')} title="Pause" style={{flex:1, padding:0, fontSize:'10px'}}>
+						||
 					</button>
-                    <button className={direction === 'forward' ? 'active' : ''} onClick={() => update('direction', 'forward')} title="Forward">
-						<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-							<path d="m12.14 8.753-5.482 4.796c-.646.566-1.658.106-1.658-.753V3.204a1 1 0 0 1 1.659-.753l5.48 4.796a1 1 0 0 1 0 1.506z"/>
-						</svg>
+                    <button className={`speed-control-button ${direction === 'forward' ? 'active' : ''}`} onClick={() => update('direction', 'forward')} title="Forward" style={{flex:1, padding:0, fontSize:'10px'}}>
+						&gt;
 					</button>
                 </div>
                  {/* Play Style */}
-                <div className="btn-group">
-                    <button className={style === 'once' ? 'active' : ''} onClick={() => update('style', 'once')} title="Once">
-                        <span style={{fontSize: '10px'}}>
-							<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" className="bi bi-repeat-1" viewBox="0 0 16 16">
-								<path d="M11 4v1.466a.25.25 0 0 0 .41.192l2.36-1.966a.25.25 0 0 0 0-.384l-2.36-1.966a.25.25 0 0 0-.41.192V3H5a5 5 0 0 0-4.48 7.223.5.5 0 0 0 .896-.446A4 4 0 0 1 5 4zm4.48 1.777a.5.5 0 0 0-.896.446A4 4 0 0 1 11 12H5.001v-1.466a.25.25 0 0 0-.41-.192l-2.36 1.966a.25.25 0 0 0 0 .384l2.36 1.966a.25.25 0 0 0 .41-.192V13h6a5 5 0 0 0 4.48-7.223Z"/>
-								<path d="M9 5.5a.5.5 0 0 0-.854-.354l-1.75 1.75a.5.5 0 1 0 .708.708L8 6.707V10.5a.5.5 0 0 0 1 0z"/>
-							</svg>
-						</span>
+                <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
+                    <button className={`speed-control-button ${style === 'once' ? 'active' : ''}`} onClick={() => update('style', 'once')} title="Once" style={{flex:1, padding:0, fontSize:'10px'}}>
+                        |&gt;|
 					</button>
-                    <button className={style === 'bounce' ? 'active' : ''} onClick={() => update('style', 'bounce')} title="Bounce">
-                        <span style={{fontSize: '10px'}}>
-							<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" className="bi bi-arrow-left-right" viewBox="0 0 16 16">
-								<path fillRule="evenodd" d="M1 11.5a.5.5 0 0 0 .5.5h11.793l-3.147 3.146a.5.5 0 0 0 .708.708l4-4a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708.708L13.293 11H1.5a.5.5 0 0 0-.5.5m14-7a.5.5 0 0 1-.5.5H2.707l3.147 3.146a.5.5 0 1 1-.708.708l-4-4a.5.5 0 0 1 0-.708l4-4a.5.5 0 1 1 .708.708L2.707 4H14.5a.5.5 0 0 1 .5.5"/>
-							</svg>
-						</span>
+                    <button className={`speed-control-button ${style === 'bounce' ? 'active' : ''}`} onClick={() => update('style', 'bounce')} title="Bounce" style={{flex:1, padding:0, fontSize:'10px'}}>
+                        &lt;&gt;
 					</button>
-                    <button className={style === 'loop' ? 'active' : ''} onClick={() => update('style', 'loop')} title="Loop">
-						<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-							<path d="M11 5.466V4H5a4 4 0 0 0-3.584 5.777.5.5 0 1 1-.896.446A5 5 0 0 1 5 3h6V1.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966a.25.25 0 0 1-.41-.192m3.81.086a.5.5 0 0 1 .67.225A5 5 0 0 1 11 13H5v1.466a.25.25 0 0 1-.41.192l-2.36-1.966a.25.25 0 0 1 0-.384l2.36-1.966a.25.25 0 0 1 .41.192V12h6a4 4 0 0 0 3.585-5.777.5.5 0 0 1 .225-.67Z"/>
-						</svg>
+                    <button className={`speed-control-button ${style === 'loop' ? 'active' : ''}`} onClick={() => update('style', 'loop')} title="Loop" style={{flex:1, padding:0, fontSize:'10px'}}>
+						O
 					</button>
                 </div>
                  {/* Sync Mode */}
-                <div className="btn-group">
-                    <button className={syncMode === 'fps' ? 'active' : ''} onClick={() => update('syncMode', syncMode === 'fps' ? null : 'fps')}>F</button>
-                    <button className={syncMode === 'timeline' ? 'active' : ''} onClick={() => update('syncMode', syncMode === 'timeline' ? null : 'timeline')}>T</button>
-                    <button className={syncMode === 'bpm' ? 'active' : ''} onClick={() => update('syncMode', syncMode === 'bpm' ? null : 'bpm')}>B</button>
+                <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
+                    <button className={`speed-control-button ${syncMode === 'fps' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'fps' ? null : 'fps')} style={{flex:1, padding:0, fontSize:'10px'}}>F</button>
+                    <button className={`speed-control-button ${syncMode === 'timeline' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'timeline' ? null : 'timeline')} style={{flex:1, padding:0, fontSize:'10px'}}>T</button>
+                    <button className={`speed-control-button ${syncMode === 'bpm' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'bpm' ? null : 'bpm')} style={{flex:1, padding:0, fontSize:'10px'}}>B</button>
                 </div>
             </div>
         </div>
@@ -100,6 +84,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
             className={`param-editor ${expanded ? 'expanded' : ''}`}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
+            style={{ marginBottom: '8px' }}
         >
              {/* Row 1: Label */}
              <div className="param-row-label">
@@ -107,40 +92,51 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
              </div>
 
              {/* Row 2: Gear, Control, Value */}
-             <div className="param-row-control">
+             <div className="param-row-control" style={{ display: 'flex', alignItems: 'center' }}>
                 <button 
                     className={`anim-toggle-btn ${expanded ? 'active' : ''}`}
-                    style={{ visibility: (hovered || expanded) ? 'visible' : 'hidden', marginRight: '5px' }}
+                    style={{ 
+                        visibility: (hovered || expanded || animSettings.syncMode) ? 'visible' : 'hidden', 
+                        marginRight: '5px',
+                        background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: '0 2px'
+                    }}
                     onClick={() => setExpanded(!expanded)}
                     title="Animate"
                 >
-					<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" className="bi bi-gear-fill" viewBox="0 0 16 16">
-						<path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
-					</svg>
+					⚙
 				</button>
 
                 <div className="control-input-wrapper" style={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}>
                     {control.type === 'range' && (
                     <>
+                        {/* We use RangeSlider here as the Value slider? 
+                            User said: "One Slider for Value and range cropping". 
+                            If expanded, we show the RangeSlider controls in Row 3 (AnimationControls).
+                            But here we need to control the VALUE. 
+                            Wait, if we use RangeSlider for value, it returns [min, max].
+                            But effect value is a single number.
+                            So we use a standard slider here for the Value.
+                            The RangeSlider in AnimationControls controls the MIN/MAX BOUNDS of animation.
+                        */}
                         <Mappable id={`${effectId}_${control.id}`} style={{flexGrow: 1, marginRight: '5px'}}>
                         <input
-                        type="range"
-                        min={control.min}
-                        max={control.max}
-                        step={control.step}
-                        value={value}
-                        onChange={(e) => onChange(parseFloat(e.target.value))}
-                        className="param-slider"
-                        style={{width: '100%'}}
+                            type="range"
+                            min={control.min}
+                            max={control.max}
+                            step={control.step}
+                            value={value}
+                            onChange={(e) => onChange(parseFloat(e.target.value))}
+                            className="param-slider"
+                            style={{width: '100%'}}
                         />
                         </Mappable>
                         <input
-                        type="number"
-                        value={value}
-                        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-                        className="param-number-input"
-                        step={control.step}
-                        style={{width: '50px'}}
+                            type="number"
+                            value={typeof value === 'number' ? value.toFixed(2) : value}
+                            onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+                            className="param-number-input"
+                            step={control.step}
+                            style={{width: '50px'}}
                         />
                     </>
                     )}
@@ -150,11 +146,10 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                         value={value}
                         onChange={(e) => onChange(e.target.value)}
                         className="param-text-input"
-                        style={{width: '100%'}}
                     />
                     )}
                     {control.type === 'checkbox' && (
-                    <div draggable onDragStart={handleDragStart} style={{display: 'inline-block'}}>
+                    <div draggable onDragStart={handleDragStart}>
                         <Mappable id={`${effectId}_${control.id}`}>
                         <input
                             type="checkbox"
@@ -170,7 +165,6 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                         value={value}
                         onChange={(e) => onChange(e.target.value)}
                         className="param-select"
-                        style={{width: '100%'}}
                     >
                         {control.options.map(option => (
                         <option key={option} value={option}>{option}</option>
@@ -181,7 +175,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
              </div>
 
              {/* Row 3: Animation Settings (Unfolded) */}
-             {expanded && (
+             {expanded && (control.type === 'range' || control.type === 'number') && (
                  <div className="param-anim-settings" style={{ marginTop: '5px', padding: '5px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px' }}>
                     <AnimationControls 
                         animSettings={animSettings} 
@@ -194,14 +188,91 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
     );
 };
 
-import CollapsiblePanel from './CollapsiblePanel';
+// Custom Order Editor Component
+const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) => {
+    // If customOrder is empty, populate with assignedDacs indices initially?
+    // Or just show assignedDacs and let user "Enable/Reorder"?
+    // User said: "list the avialebale Channels... change the order... used for calculating delay".
+    // We should probably show a list of items.
+    
+    // State to manage list if we want drag/drop without commit every frame?
+    // Actually, we commit to parent onChange.
 
-const EffectEditor = ({ effect, onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {} }) => {
+    // available items: assignedDacs (which have name/ip/channel).
+    // The "customOrder" array probably stores indices of assignedDacs? 
+    // Or maybe it stores unique IDs of channels?
+    // Let's store the INDEX into assignedDacs for simplicity, assuming assignedDacs doesn't change often.
+    // Or better: Store { ip, channel } objects.
+
+    // Logic:
+    // 1. If customOrder is empty, initialize it with assignedDacs (default order).
+    // 2. Render list.
+    
+    const [draggedItem, setDraggedItem] = useState(null);
+
+    const items = (customOrder && customOrder.length > 0) 
+        ? customOrder 
+        : assignedDacs.map((d, i) => ({ ip: d.ip, channel: d.channel, label: `Ch ${d.channel} (${d.hostName || d.ip})`, originalIndex: i }));
+
+    // If items are just objects, we need to ensure they match assignedDacs to display labels if we stored only IDs.
+    // For now, let's assume we store full object or at least enough info.
+
+    const handleDragStart = (e, index) => {
+        setDraggedItem(items[index]);
+    };
+
+    const handleDragOver = (e, index) => {
+        e.preventDefault();
+        const draggedOverItem = items[index];
+        if (draggedItem === draggedOverItem) return;
+
+        const newItems = items.filter(item => item !== draggedItem);
+        newItems.splice(index, 0, draggedItem);
+        onChange(newItems);
+    };
+    
+    // Ensure we trigger onChange if we initialized from default
+    // (This might cause infinite loop if not careful. Only if customOrder was empty).
+    // We'll let the user explicitly interact to save.
+
+    return (
+        <div className="custom-order-editor" style={{ marginBottom: '10px', padding: '5px', background: '#222', borderRadius: '4px' }}>
+            <label style={{fontSize: '10px', color: '#888'}}>Channel Order (Drag to Sort)</label>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '5px 0' }}>
+                {items.map((item, index) => (
+                    <li 
+                        key={index}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        style={{
+                            background: '#333', 
+                            border: '1px solid #444', 
+                            padding: '4px', 
+                            marginBottom: '2px', 
+                            fontSize: '10px', 
+                            cursor: 'grab',
+                            display: 'flex',
+                            alignItems: 'center'
+                        }}
+                    >
+                        <span style={{marginRight: '5px', color: '#666'}}>☰</span>
+                        {item.label || `Ch ${item.channel} ${item.ip ? `(${item.ip})` : ''}`}
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+};
+
+const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {} }) => {
   if (!effect) return null;
 
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
 
-  if (!effectDefinition) return null; // Or error state
+  if (!effectDefinition) return null;
+
+  const isDelay = effect.id === 'delay';
 
   return (
     <CollapsiblePanel 
@@ -210,7 +281,24 @@ const EffectEditor = ({ effect, onParamChange, onRemove, syncSettings = {}, onSe
             <button className="remove-effect-btn" onClick={onRemove}>×</button>
         }
     >
+        {/* Special UI for Delay Effect */}
+        {isDelay && (
+            <>
+                {/* Custom Order UI if Custom Order Mode is enabled */}
+                {effect.params.useCustomOrder && (
+                    <CustomOrderEditor 
+                        customOrder={effect.params.customOrder} 
+                        assignedDacs={assignedDacs}
+                        onChange={(newOrder) => onParamChange('customOrder', newOrder)}
+                    />
+                )}
+            </>
+        )}
+
         {effectDefinition.paramControls.map(control => {
+          // Filter out params we handled manually
+          if (isDelay && (['customOrder'].includes(control.id))) return null;
+          
           if (control.showIf) {
             const shouldShow = Object.entries(control.showIf).every(([key, value]) => {
               return effect.params[key] === value;
@@ -219,7 +307,6 @@ const EffectEditor = ({ effect, onParamChange, onRemove, syncSettings = {}, onSe
           }
 
           const paramKey = `${effect.id}.${control.id}`;
-          // Handle complex sync settings vs legacy string
           const currentAnimSettings = typeof syncSettings[paramKey] === 'object' 
                 ? syncSettings[paramKey] 
                 : { syncMode: syncSettings[paramKey] };

@@ -38,7 +38,7 @@ const LayerSettingsPanel = ({
 
     return (
         <div className="settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
-             
+             <h3>Layer Settings</h3>
              {/* Autopilot Section */}
              <CollapsiblePanel title={`Layer ${selectedLayerIndex + 1} Autopilot`}>
                  <div className="param-editor">

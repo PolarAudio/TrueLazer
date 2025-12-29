@@ -22,7 +22,7 @@ const ClipSettingsPanel = ({
   if (selectedLayerIndex === null || selectedColIndex === null) {
     return (
       <div className="clip-settings-panel settings-panel-base">
-        <h3>Clip Settings</h3>
+        <div className="settings-card-header"><h4>Clip Settings</h4></div>
         <p className="info-text">Select a clip to view settings.</p>
       </div>
     );
@@ -50,7 +50,7 @@ const ClipSettingsPanel = ({
 
   return (
     <div className="clip-settings-panel settings-panel-base">
-      <h3>Clip Settings</h3>
+	  <div className="settings-card-header"><h4>Clip Settings</h4></div>
       
       <CollapsiblePanel title="Audio">
             {audioFile ? (
@@ -115,6 +115,7 @@ const ClipSettingsPanel = ({
         <EffectEditor
           key={effect.id + effectIndex}
           effect={effect}
+          assignedDacs={assignedDacs}
           syncSettings={syncSettings}
           onSetParamSync={onSetParamSync}
           context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect' }}

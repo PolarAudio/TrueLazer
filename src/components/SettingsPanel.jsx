@@ -100,7 +100,7 @@ const SettingsPanel = ({
 
   return (
     <div className="settings-panel settings-panel-base">
-      <h3>Global Settings</h3>
+      <div className="settings-card-header"><h4>Global Settings</h4></div>
 
       {quickAssigns && (
           <CollapsiblePanel title="Quick Assigns">

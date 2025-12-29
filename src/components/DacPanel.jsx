@@ -82,7 +82,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
 
   return (
     <div className="dac-panel">
-      <h3>DACs</h3>
+      <div className="settings-card-header"><h4>DACs</h4></div>
       <div className="network-interface-selector">
         <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''}>
           {networkInterfaces.map(iface => (

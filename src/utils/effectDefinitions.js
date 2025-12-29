@@ -56,6 +56,7 @@ export const effectDefinitions = [
       cycleSpeed: 0,
       rainbowSpread: 1.0,
       rainbowOffset: 0,
+      rainbowPalette: 'rainbow',
     },
     paramControls: [
       { id: 'mode', label: 'Mode', type: 'select', options: ['solid', 'rainbow'] },
@@ -138,23 +139,17 @@ export const effectDefinitions = [
     type: 'effect',
     description: 'Channel-based delay effect.',
     defaultParams: {
-      useAssigned: true, // "Select your own" toggle
-      delayI: true, // Intensity
-      delayC: false, // Color
-      delayE: false, // Effect/Position
-      delayMode: 'linear', // 'linear' or 'symmetric'
-      delayDirection: 'left_to_right', // 'center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'
+      useCustomOrder: false, // false = Auto (Linear/Directional), true = Custom
+      delayDirection: 'left_to_right', 
       delayAmount: 5,
       decay: 0.8,
+      customOrder: [], // Array of assigned channel indices
     },
     paramControls: [
-      { id: 'useAssigned', label: 'Use Assigned Channels', type: 'checkbox' },
-      // Custom UI handling for channel selection will be needed if useAssigned is false
-      { id: 'delayI', label: 'I (Intensity)', type: 'checkbox' },
-      { id: 'delayC', label: 'C (Color)', type: 'checkbox' },
-      { id: 'delayE', label: 'E (Effect)', type: 'checkbox' },
-      { id: 'delayMode', label: 'Mode', type: 'select', options: ['linear', 'symmetric'] },
-      { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'] },
+      // Custom Order and Mode UI will be handled in EffectEditor.jsx
+      // We list generic controls here that don't need special UI logic, or can be overridden
+      { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+      { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
       { id: 'delayAmount', label: 'Delay Time', type: 'range', min: 1, max: 60, step: 1 },
       { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
     ],
@@ -181,7 +176,7 @@ export const effectDefinitions = [
     type: 'animation',
     description: 'Controls the blanking of the laser output.',
     defaultParams: {
-      blankingInterval: 0, // Interval for blanking points (e.g., 0 for no blanking, 1 for every other point)
+      blankingInterval: 0, 
     },
     paramControls: [
       { id: 'blankingInterval', label: 'Blanking Interval', type: 'range', min: 0, max: 10, step: 1 },
@@ -193,8 +188,8 @@ export const effectDefinitions = [
     type: 'animation',
     description: 'Applies a strobe effect to the laser output.',
     defaultParams: {
-      strobeSpeed: 100, // Speed of the strobe effect in milliseconds
-      strobeAmount: 0.5, // How much of the time the laser is blanked (0-1)
+      strobeSpeed: 100,
+      strobeAmount: 0.5,
     },
     paramControls: [
       { id: 'strobeSpeed', label: 'Strobe Speed (ms)', type: 'range', min: 10, max: 1000, step: 10 },
@@ -207,7 +202,7 @@ export const effectDefinitions = [
     type: 'transform',
     description: 'Mirrors the shape from the center.',
     defaultParams: {
-      mode: 'none', // 'none', 'x+', 'x-', 'y+', 'y-'
+      mode: 'none', 
     },
     paramControls: [
       { id: 'mode', label: 'Mirror Mode', type: 'select', options: ['none', 'x+', 'x-', 'y+', 'y-'] },
