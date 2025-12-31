@@ -6,11 +6,13 @@ export const effectDefinitions = [
     description: 'Rotates the shape around its center.',
     defaultParams: {
       angle: 0,
-      rotationSpeed: 0, // Added rotation speed
+      speed: 0,
+      direction: 'CW', // 'CW' or 'CCW'
     },
     paramControls: [
       { id: 'angle', label: 'Angle', type: 'range', min: 0, max: 360, step: 1 },
-      { id: 'rotationSpeed', label: 'Rotation Speed', type: 'range', min: -10, max: 10, step: 0.1 },
+      { id: 'speed', label: 'Speed', type: 'range', min: 0, max: 10, step: 0.1 },
+      { id: 'direction', label: 'Direction', type: 'select', options: ['CW', 'CCW'] },
     ],
   },
   {
@@ -54,6 +56,7 @@ export const effectDefinitions = [
       cycleSpeed: 0,
       rainbowSpread: 1.0,
       rainbowOffset: 0,
+      rainbowPalette: 'rainbow',
     },
     paramControls: [
       { id: 'mode', label: 'Mode', type: 'select', options: ['solid', 'rainbow'] },
@@ -85,12 +88,102 @@ export const effectDefinitions = [
     ],
   },
   {
+    id: 'warp',
+    name: 'Warp',
+    type: 'animation',
+    description: 'Symmetrical chaotic wave distortion.',
+    defaultParams: {
+      amount: 0.1,
+      chaos: 0.5,
+      speed: 1,
+    },
+    paramControls: [
+      { id: 'amount', label: 'Amount', type: 'range', min: 0, max: 1.0, step: 0.01 },
+      { id: 'chaos', label: 'Chaos', type: 'range', min: 0, max: 1.0, step: 0.01 },
+      { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 10, step: 0.1 },
+    ],
+  },
+  {
+    id: 'distortion',
+    name: 'Distortion',
+    type: 'transform',
+    description: 'Distorts the point data.',
+    defaultParams: {
+      amount: 0.1,
+      scale: 10,
+      speed: 0.5,
+    },
+    paramControls: [
+      { id: 'amount', label: 'Amount', type: 'range', min: 0, max: 1.0, step: 0.01 },
+      { id: 'scale', label: 'Scale', type: 'range', min: 1, max: 50, step: 1 },
+      { id: 'speed', label: 'Speed', type: 'range', min: 0, max: 5, step: 0.1 },
+    ],
+  },
+  {
+    id: 'move',
+    name: 'Move (Bounce)',
+    type: 'transform',
+    description: 'Moves points and bounces them off the borders.',
+    defaultParams: {
+      speedX: 0.1,
+      speedY: 0.1,
+    },
+    paramControls: [
+      { id: 'speedX', label: 'Speed X', type: 'range', min: 0, max: 2.0, step: 0.01 },
+      { id: 'speedY', label: 'Speed Y', type: 'range', min: 0, max: 2.0, step: 0.01 },
+    ],
+  },
+  {
+    id: 'delay',
+    name: 'Delay',
+    type: 'effect',
+    description: 'Channel-based delay effect.',
+    defaultParams: {
+      useCustomOrder: false, // false = Auto (Linear/Directional), true = Custom
+      delayDirection: 'left_to_right', 
+      delayAmount: 5,
+      decay: 0.8,
+      customOrder: [], // Array of assigned channel indices
+    },
+    paramControls: [
+      // Custom Order and Mode UI will be handled in EffectEditor.jsx
+      // We list generic controls here that don't need special UI logic, or can be overridden
+      { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+      { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
+      { id: 'delayAmount', label: 'Delay Time', type: 'range', min: 1, max: 60, step: 1 },
+      { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
+    ],
+  },
+  {
+    id: 'chase',
+    name: 'Chase',
+    type: 'effect',
+    description: 'Step-based chase effect.',
+    defaultParams: {
+        steps: 4,
+        decay: 0.8,
+        speed: 1.0,
+        overlap: 1,
+        direction: 'left_to_right',
+        useCustomOrder: false,
+        customOrder: [],
+    },
+    paramControls: [
+        { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1 },
+        { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
+        { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 5.0, step: 0.1 },
+        { id: 'overlap', label: 'Overlap', type: 'range', min: 1, max: 4, step: 1 },
+        { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+        { id: 'direction', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
+    ]
+  },
+  {
     id: 'blanking',
     name: 'Blanking',
     type: 'animation',
     description: 'Controls the blanking of the laser output.',
     defaultParams: {
-      blankingInterval: 0, // Interval for blanking points (e.g., 0 for no blanking, 1 for every other point)
+      blankingInterval: 0, 
     },
     paramControls: [
       { id: 'blankingInterval', label: 'Blanking Interval', type: 'range', min: 0, max: 10, step: 1 },
@@ -102,8 +195,8 @@ export const effectDefinitions = [
     type: 'animation',
     description: 'Applies a strobe effect to the laser output.',
     defaultParams: {
-      strobeSpeed: 100, // Speed of the strobe effect in milliseconds
-      strobeAmount: 0.5, // How much of the time the laser is blanked (0-1)
+      strobeSpeed: 100,
+      strobeAmount: 0.5,
     },
     paramControls: [
       { id: 'strobeSpeed', label: 'Strobe Speed (ms)', type: 'range', min: 10, max: 1000, step: 10 },
@@ -114,14 +207,12 @@ export const effectDefinitions = [
     id: 'mirror',
     name: 'Mirror',
     type: 'transform',
-    description: 'Mirrors the shape along the X or Y axis.',
+    description: 'Mirrors the shape from the center.',
     defaultParams: {
-      mirrorX: false,
-      mirrorY: false,
+      mode: 'none', 
     },
     paramControls: [
-      { id: 'mirrorX', label: 'Mirror X', type: 'checkbox' },
-      { id: 'mirrorY', label: 'Mirror Y', type: 'checkbox' },
+      { id: 'mode', label: 'Mirror Mode', type: 'select', options: ['none', 'x+', 'x-', 'y+', 'y-'] },
     ],
   },
 ];

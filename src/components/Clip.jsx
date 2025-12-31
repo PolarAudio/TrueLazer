@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { applyEffects } from '../utils/effects'; // Import the applyEffects function
 import IldaThumbnail from './IldaThumbnail';
 import Mappable from './Mappable';
 
@@ -25,19 +24,9 @@ const Clip = ({
   const [isDragging, setIsDragging] = useState(false);
 
   // Determine the display name for the clip
-  const displayName = clipContent && clipContent.type === 'generator' && clipContent.generatorDefinition
-    ? clipContent.generatorDefinition.name
-    : clipName;
+  const displayName = clipName;
 
   const frameForThumbnail = thumbnailRenderMode === 'active' ? liveFrame : stillFrame;
-
-  // Apply effects to the frame that will be used for the thumbnail
-  const effectedFrameForThumbnail = useMemo(() => {
-    if (frameForThumbnail && clipContent && clipContent.effects && clipContent.effects.length > 0) {
-      return applyEffects(frameForThumbnail, clipContent.effects);
-    }
-    return frameForThumbnail;
-  }, [frameForThumbnail, clipContent]);
   
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -124,7 +113,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
           return; // Important: return after handling file path
         }
 
-        if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color') {
+        if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color' || parsedData.type === 'effect') {
           if (onDropEffect) {
             onDropEffect(parsedData);
             onLabelClick(); // Select the clip to show its new settings
@@ -183,13 +172,46 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onMouseDown={() => onActivateClick(true)}
             onMouseUp={() => onActivateClick(false)}
             onMouseLeave={() => onActivateClick(false)}
+            style={{ overflow: 'hidden' }} // Ensure image fits
         >
             {clipContent && clipContent.parsing ? (
-            <div className="clip-loading-spinner"></div>
-            ) : effectedFrameForThumbnail ? (
-            <IldaThumbnail frame={effectedFrameForThumbnail} />
+                <div className="clip-loading-spinner"></div>
             ) : (
-            <p></p>
+                <>
+                    {/* Render Mode Logic */}
+                    {thumbnailRenderMode === 'active' ? (
+                        /* Live Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
+                        <IldaThumbnail frame={liveFrame || stillFrame} effects={clipContent?.effects} />
+                    ) : (
+                        /* Still Frame Mode */
+                        /* If we have a generated thumbnail path, use it for efficiency */
+                        (clipContent?.thumbnailPath && !isActive) ? (
+                            <img 
+                                src={`file://${clipContent.thumbnailPath}?t=${Date.now()}`} // Add timestamp to force reload if updated
+                                alt="thumbnail" 
+                                style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
+                            />
+                        ) : (
+                            /* Fallback to WebGL rendering of still frame if no image yet, or if we want to show it */
+                            frameForThumbnail && <IldaThumbnail frame={frameForThumbnail} effects={clipContent?.effects} />
+                        )
+                    )}
+
+                    {clipContent?.triggerStyle && clipContent.triggerStyle !== 'normal' && (
+                        <p className="clip_icons">
+                            {clipContent.triggerStyle === 'toggle' && (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-toggles" viewBox="0 0 16 16">
+                                    <path d="M4.5 9a3.5 3.5 0 1 0 0 7h7a3.5 3.5 0 1 0 0-7zm7 6a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5m-7-14a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5m2.45 0A3.5 3.5 0 0 1 8 3.5 3.5 3.5 0 0 1 6.95 6h4.55a2.5 2.5 0 0 0 0-5zM4.5 0h7a3.5 3.5 0 1 1 0 7h-7a3.5 3.5 0 1 1 0-7"/>
+                                </svg>
+                            )}
+                            {clipContent.triggerStyle === 'flash' && (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-lightning-fill" viewBox="0 0 16 16">
+                                    <path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641z"/>
+                                </svg>
+                            )}
+                        </p>
+                    )}
+                </>
             )}
         </div>
       </Mappable>

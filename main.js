@@ -7,6 +7,9 @@ import https from 'https';
 import * as dacCommunication from './main/dac-communication.cjs';
 const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll } = dacCommunication;
 
+// Fix for "Unable to move the cache: Zugriff verweigert (0x5)"
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+app.commandLine.appendSwitch('disable-http-cache');
 // Suppress Autofill.enable and Autofill.setAddresses errors in console
 app.commandLine.appendSwitch('disable-autofill');
 
@@ -62,6 +65,8 @@ const schema = {
     default: null
   },
   loadedClips: { type: 'array', default: [] }, // Reverted to original
+  clipNames: { type: 'array', default: [] },
+  dacOutputSettings: { type: 'object', default: {} },
   sliderValue: { type: 'object', default: {} }, // Placeholder for slider values
   dacAssignment: { type: 'object', default: {} }, // Placeholder for DAC assignments
   lastOpenedProject: {
@@ -951,6 +956,20 @@ function createWindow() {
       return buffer;
     } catch (error) {
       console.error(`Failed to fetch URL ${url}:`, error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('save-thumbnail', async (event, arrayBuffer, filename) => {
+    try {
+      const tempPath = path.join(app.getPath('userData'), 'thumbnails');
+      await fs.promises.mkdir(tempPath, { recursive: true });
+      const filePath = path.join(tempPath, filename);
+      const buffer = Buffer.from(arrayBuffer);
+      await fs.promises.writeFile(filePath, buffer);
+      return filePath;
+    } catch (error) {
+      console.error('Failed to save thumbnail:', error);
       throw error;
     }
   });

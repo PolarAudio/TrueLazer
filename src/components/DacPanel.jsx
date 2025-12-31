@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import RadialKnob from './RadialKnob';
+import Mappable from './Mappable';
 
-const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered }) => {
+const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}, onUpdateDacSettings }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [selectedDac, setSelectedDac] = useState(null);
   const [networkInterfaces, setNetworkInterfaces] = useState([]);
@@ -80,7 +82,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered }) => {
 
   return (
     <div className="dac-panel">
-      <h3>DACs</h3>
+      <div className="settings-card-header"><h4>DACs</h4></div>
       <div className="network-interface-selector">
         <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''}>
           {networkInterfaces.map(iface => (
@@ -120,6 +122,33 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered }) => {
           </div>
         ))}
       </div>
+      
+      {dacs.length > 0 && (
+          <div className="dac-dimmers-section">
+            <h4>Channel Dimmers</h4>
+            <div className="dac-dimmers-grid">
+                {dacs.flatMap(dac => (dac.channels || []).map(ch => ({ dac, ch }))).map(({ dac, ch }) => {
+                    const id = `${dac.ip}:${ch.serviceID}`;
+                    const settings = dacSettings[id] || {};
+                    const dimmerVal = settings.dimmer !== undefined ? settings.dimmer : 1;
+                    
+                    return (
+                        <Mappable key={`dimmer_${id}`} id={`dimmer_${id.replace(/\./g, '_')}`}>
+                            <RadialKnob
+                                label={`${dac.hostName || dac.ip} Ch${ch.serviceID}`}
+                                value={dimmerVal}
+                                onChange={(val) => {
+                                    if (onUpdateDacSettings) {
+                                        onUpdateDacSettings(id, { ...settings, dimmer: val });
+                                    }
+                                }}
+                            />
+                        </Mappable>
+                    );
+                })}
+            </div>
+          </div>
+      )}
     </div>
   );
 };

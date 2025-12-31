@@ -838,5 +838,117 @@
     "address": "G-1",
     "requiresShift": true,
     "label": "⇧CH1:G-1"
+  },
+  "quick_knob_0": {
+    "type": "cc",
+    "channel": 1,
+    "address": 48,
+    "requiresShift": false,
+    "label": "CH1:48"
+  },
+  "quick_knob_1": {
+    "type": "cc",
+    "channel": 1,
+    "address": 49,
+    "requiresShift": false,
+    "label": "CH1:49"
+  },
+  "quick_knob_2": {
+    "type": "cc",
+    "channel": 1,
+    "address": 50,
+    "requiresShift": false,
+    "label": "CH1:50"
+  },
+  "quick_knob_3": {
+    "type": "cc",
+    "channel": 1,
+    "address": 51,
+    "requiresShift": false,
+    "label": "CH1:51"
+  },
+  "quick_knob_4": {
+    "type": "cc",
+    "channel": 1,
+    "address": 52,
+    "requiresShift": false,
+    "label": "CH1:52"
+  },
+  "quick_knob_5": {
+    "type": "cc",
+    "channel": 1,
+    "address": 53,
+    "requiresShift": false,
+    "label": "CH1:53"
+  },
+  "quick_knob_6": {
+    "type": "cc",
+    "channel": 1,
+    "address": 54,
+    "requiresShift": false,
+    "label": "CH1:54"
+  },
+  "quick_knob_7": {
+    "type": "cc",
+    "channel": 1,
+    "address": 55,
+    "requiresShift": false,
+    "label": "CH1:55"
+  },
+  "quick_btn_0": {
+    "type": "note",
+    "channel": 1,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH1:D#3"
+  },
+  "quick_btn_1": {
+    "type": "note",
+    "channel": 2,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH2:D#3"
+  },
+  "quick_btn_2": {
+    "type": "note",
+    "channel": 3,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH3:D#3"
+  },
+  "quick_btn_3": {
+    "type": "note",
+    "channel": 4,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH4:D#3"
+  },
+  "quick_btn_4": {
+    "type": "note",
+    "channel": 5,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH5:D#3"
+  },
+  "quick_btn_5": {
+    "type": "note",
+    "channel": 6,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH6:D#3"
+  },
+  "quick_btn_6": {
+    "type": "note",
+    "channel": 7,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH7:D#3"
+  },
+  "quick_btn_7": {
+    "type": "note",
+    "channel": 8,
+    "address": "D#3",
+    "requiresShift": false,
+    "label": "CH8:D#3"
   }
 }

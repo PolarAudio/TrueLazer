@@ -1,9 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
+import GlobalQuickAssigns from './GlobalQuickAssigns';
+import CollapsiblePanel from './CollapsiblePanel';
 
 const SettingsPanel = ({
-  enabledShortcuts = {}
+  enabledShortcuts = {},
+  onOpenOutputSettings,
+  quickAssigns,
+  onUpdateKnob,
+  onToggleButton,
+  onAssign
 }) => {
   const { 
     midiInitialized, 
@@ -93,27 +100,30 @@ const SettingsPanel = ({
 
   return (
     <div className="settings-panel settings-panel-base">
-      <h3>Global Settings</h3>
+      <div className="settings-card-header"><h4>Global Settings</h4></div>
+
+      {quickAssigns && (
+          <CollapsiblePanel title="Quick Assigns">
+              <GlobalQuickAssigns 
+                  assigns={quickAssigns}
+                  onUpdateKnob={onUpdateKnob}
+                  onToggleButton={onToggleButton}
+                  onAssign={onAssign}
+              />
+          </CollapsiblePanel>
+      )}
 
       {/* Channel/DAC Settings Placeholder */}
-      <div className="settings-card">
-        <div className="settings-card-header">
-          <h4>Channel/DAC Settings</h4>
-        </div>
-        <div className="settings-card-content">
-          <p className="info-text">Output routing and safety zones configuration placeholder.</p>
-        </div>
-      </div>
+      <CollapsiblePanel title="Channel/DAC Settings">
+          <p className="info-text">Output routing and safety zones configuration.</p>
+          <button className="small-btn" style={{width:'100%', marginTop:'5px'}} onClick={onOpenOutputSettings}>Open Output Settings</button>
+      </CollapsiblePanel>
 
       {/* Shortcuts Settings Section */}
       {(enabledShortcuts.midi || enabledShortcuts.artnet || enabledShortcuts.osc) && (
         <div className="shortcuts-settings-panel">
           {enabledShortcuts.midi && (
-            <div className="settings-card">
-              <div className="settings-card-header">
-                <h4>MIDI Shortcuts</h4>
-              </div>
-              <div className="settings-card-content">
+            <CollapsiblePanel title="MIDI Shortcuts">
                 {!midiInitialized ? (
                   <p className="loading-text">Initializing MIDI...</p>
                 ) : (
@@ -143,16 +153,11 @@ const SettingsPanel = ({
                     )}
                   </div>
                 )}
-              </div>
-            </div>
+            </CollapsiblePanel>
           )}
 
           {enabledShortcuts.artnet && (
-            <div className="settings-card">
-              <div className="settings-card-header">
-                <h4>ArtNet Shortcuts</h4>
-              </div>
-              <div className="settings-card-content">
+            <CollapsiblePanel title="ArtNet Shortcuts">
                 {!artnetInitialized ? (
                   <p className="loading-text">Initializing Art-Net...</p>
                 ) : (
@@ -191,21 +196,15 @@ const SettingsPanel = ({
                     )}
                   </div>
                 )}
-              </div>
-            </div>
+            </CollapsiblePanel>
           )}
 
           {enabledShortcuts.osc && (
-            <div className="settings-card">
-              <div className="settings-card-header">
-                <h4>OSC Shortcuts</h4>
-              </div>
-              <div className="settings-card-content">
+            <CollapsiblePanel title="OSC Shortcuts">
                 <div className="osc-config">
                   <p className="info-text">Listening on port: {oscLocalPort}</p>
                 </div>
-              </div>
-            </div>
+            </CollapsiblePanel>
           )}
         </div>
       )}
@@ -214,4 +213,3 @@ const SettingsPanel = ({
 };
 
 export default SettingsPanel;
-

@@ -1,4 +1,4 @@
-import { applyEffects } from './effects.js';
+import { applyEffects, applyOutputProcessing } from './effects.js';
 import { effectDefinitions } from './effectDefinitions';
 
 export class WebGLRenderer {
@@ -120,6 +120,8 @@ export class WebGLRenderer {
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
   }
 
   reset() {
@@ -173,7 +175,7 @@ export class WebGLRenderer {
     }
 
     if (this.type === 'world') {
-      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity);
+      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings);
     }
     else {
       this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings);
@@ -204,7 +206,7 @@ export class WebGLRenderer {
     }
   }
 
-  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity) {
+  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -234,8 +236,38 @@ export class WebGLRenderer {
             // Skip rendering if intensity is effectively zero
             if (finalIntensity > 0.001) {
                 const progress = (this.frameIndexes[layerIndex] % clip.frames.length) / clip.frames.length;
+                
+                // If dacSettings provided, we apply them.
+                // In exact copy mode, we might want to apply settings after merge, but here we apply per layer for simplicity if we don't want to refactor the draw loop.
+                // Actually, DAC settings (scaling/zoning) apply to the final output.
+                
+                let frameToDraw = frame;
+                if (dacSettings) {
+                    // Apply Dimmer if present in settings
+                    let processedFrame = frame;
+                    if (dacSettings.dimmer !== undefined && dacSettings.dimmer < 1) {
+                         const pts = frame.points;
+                         const isT = frame.isTypedArray || pts instanceof Float32Array;
+                         const n = isT ? (pts.length / 8) : pts.length;
+                         const newPts = isT ? new Float32Array(pts) : pts.map(p => ({...p}));
+                         for(let i=0; i<n; i++) {
+                             if (isT) {
+                                 newPts[i*8+3] *= dacSettings.dimmer;
+                                 newPts[i*8+4] *= dacSettings.dimmer;
+                                 newPts[i*8+5] *= dacSettings.dimmer;
+                             } else {
+                                 newPts[i].r *= dacSettings.dimmer;
+                                 newPts[i].g *= dacSettings.dimmer;
+                                 newPts[i].b *= dacSettings.dimmer;
+                             }
+                         }
+                         processedFrame = { ...frame, points: newPts, isTypedArray: isT };
+                    }
+                    frameToDraw = applyOutputProcessing(processedFrame, dacSettings);
+                }
+
                 // Pass layerIndex, progress and time to draw
-                this.draw(frame, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings);
+                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings);
             }
         }
       }

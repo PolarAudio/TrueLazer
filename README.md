@@ -2,7 +2,7 @@
 
   ## Laser Show Software Inspired by Resolume
 
-  TrueLazer is an ambitious open-source project aiming to create a powerful and flexible laser show control
+  TrueLazer is an ambitious source-available project aiming to create a powerful and flexible laser show control
   software, drawing inspiration from the intuitive workflow and extensive features of Resolume Arena. 
   Built with JavaScript, TrueLazer is designed to provide artists and technicians with a versatile tool for live
   ILDA mixing, generative content, and advanced laser projection.
@@ -29,6 +29,7 @@
   
   We envision a future with a node-based effect editor,
   similar to Resolume Wire, for limitless creative possibilities.
+  
   Audio-Visual Integration:* Sync your laser shows to the beat of the music with advanced audio analysis
   capabilities.
   
@@ -45,7 +46,7 @@
   The laser show community often relies on proprietary software or complex custom solutions. TrueLazer aims to
    fill a critical gap by offering:
 
-  An Open-Source Alternative:* Empowering artists and developers with a transparent, community-driven
+  An Source Available Alternative:* Empowering artists and developers with a transparent, community-driven
   platform for laser control.
      Innovation:* By combining the best UI/UX practices from video mixing with dedicated laser control, we aim
    to push the boundaries of what's possible in live laser performances.
@@ -56,7 +57,7 @@
    for the entire laser show community.
 
   creative minds should not be slowed down by a paywall.
-  That is why we believe in this project  Open-Source and free for everyone.
+  That is why we believe in this project  Source Available and free of charge for everyone.
   In the future, support for significantly more hardware will be added, either by us or by the community
   for now we focus on developing with the hardware we have on hand.
 
@@ -233,4 +234,8 @@
   6.  Open a Pull Request to the main branch of the original TrueLazer repository, describing your changes in
   detail.
 
-  We appreciate your help in making TrueLazer the ultimate open-source laser show software!
+  We appreciate your help in making TrueLazer the ultimate Laser Show Software!
+  
+  Notice: This project is Source-Available, not Open-Source. You are welcome to view and modify the code for personal use or contributions, but you are not permitted to redistribute the code or binaries on other platforms. 
+  Please read the LICENSE for full details.
+  "Forking this repository on GitHub is permitted for the sole purpose of submitting Pull Requests to this project. Redistribution of the code outside of this GitHub organization is prohibited."

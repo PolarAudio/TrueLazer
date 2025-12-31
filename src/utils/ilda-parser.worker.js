@@ -298,12 +298,20 @@ self.onmessage = function(e) {
     }
 
     const { ildaFileBuffer, framesMetadata, colorPalette } = ildaData;
-    if (frameIndex >= framesMetadata.length || frameIndex < 0) {
-      self.postMessage({ success: false, error: `Frame index ${frameIndex} out of bounds`, type: 'get-frame', workerId });
+    
+    const index = Math.floor(frameIndex);
+
+    if (!Number.isFinite(index) || index >= framesMetadata.length || index < 0) {
+      self.postMessage({ success: false, error: `Frame index ${frameIndex} out of bounds or invalid`, type: 'get-frame', workerId });
       return;
     }
 
-    const frameMeta = framesMetadata[frameIndex];
+    const frameMeta = framesMetadata[index];
+    
+    if (!frameMeta) {
+      self.postMessage({ success: false, error: `Frame metadata not found for index ${index}`, type: 'get-frame', workerId });
+      return;
+    }
     
     // Check if points are already cached in metadata
     let points = frameMeta.cachedPoints;

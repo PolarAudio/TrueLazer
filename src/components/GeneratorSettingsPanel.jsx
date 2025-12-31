@@ -1,8 +1,9 @@
 import React from 'react';
 import { generatorDefinitions } from '../utils/generatorDefinitions';
 import SyncControls from './SyncControls';
+import CollapsiblePanel from './CollapsiblePanel';
 
-const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync }) => {
+const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex }) => {
   if (!selectedGeneratorId) {
     return <div className="generator-settings-panel">No generator selected.</div>;
   }
@@ -12,6 +13,19 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
   if (!generatorDefinition) {
     return <div className="generator-settings-panel">Generator definition not found for ID: {selectedGeneratorId}</div>;
   }
+
+  const handleDragStart = (e, control) => {
+    e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
+        type: control.type,
+        paramName: control.id,
+        targetType: 'generator',
+        layerIndex,
+        colIndex,
+        min: control.min,
+        max: control.max,
+        step: control.step
+    }));
+  };
 
   const handleInputChange = (paramId, value) => {
     const paramControl = generatorDefinition.paramControls.find(control => control.id === paramId);
@@ -41,15 +55,16 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
   };
 
   return (
-    <div className="generator-settings-panel settings-card">
-      <div className="settings-card-header">
-        <h4>{generatorDefinition.name} Settings</h4>
-      </div>
-      <div className="settings-card-content">
+    <CollapsiblePanel title={`${generatorDefinition.name} Settings`}>
         {generatorDefinition.paramControls.map(control => (
           <div key={control.id} className="param-editor">
             <div className="param-label-row" style={{ display: 'flex', alignItems: 'center' }}>
-              <label htmlFor={control.id}>{control.label}</label>
+              <label 
+                htmlFor={control.id} 
+                draggable 
+                onDragStart={(e) => handleDragStart(e, control)}
+                className="param-label"
+              >{control.label}</label>
               <SyncControls 
                   paramId={`${selectedGeneratorId}.${control.id}`}
                   currentSyncMode={syncSettings[`${selectedGeneratorId}.${control.id}`]}
@@ -113,19 +128,20 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
                   className="param-text-input"
                 />
               ) : control.type === 'checkbox' ? (
-                <input
-                  type="checkbox"
-                  id={control.id}
-                  checked={selectedGeneratorParams[control.id] || false}
-                  onChange={(e) => handleInputChange(control.id, e.target.checked)}
-                  className="param-checkbox"
-                />
+                <div draggable onDragStart={(e) => handleDragStart(e, control)} style={{display: 'inline-block'}}>
+                    <input
+                    type="checkbox"
+                    id={control.id}
+                    checked={selectedGeneratorParams[control.id] || false}
+                    onChange={(e) => handleInputChange(control.id, e.target.checked)}
+                    className="param-checkbox"
+                    />
+                </div>
               ) : null}
             </div>
           </div>
         ))}
-      </div>
-    </div>
+    </CollapsiblePanel>
   );
 };
 

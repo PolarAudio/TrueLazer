@@ -8,6 +8,7 @@ import GeneratorPanel from './components/GeneratorPanel';
 import EffectPanel from './components/EffectPanel';
 import DacPanel from './components/DacPanel';
 import ClipSettingsPanel from './components/ClipSettingsPanel';
+import LayerSettingsPanel from './components/LayerSettingsPanel'; // Add this
 import NotificationPopup from './components/NotificationPopup';
 import IldaPlayer from './components/IldaPlayer';
 import WorldPreview from './components/WorldPreview';
@@ -17,6 +18,7 @@ import SettingsPanel from './components/SettingsPanel';
 import GeneratorSettingsPanel from './components/GeneratorSettingsPanel';
 import ShortcutsWindow from './components/ShortcutsWindow';
 import RenameModal from './components/RenameModal';
+import OutputSettingsWindow from './components/OutputSettingsWindow';
 import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
@@ -25,38 +27,79 @@ import { useAudioOutput } from './hooks/useAudioOutput'; // Add this
 import { MidiProvider, useMidi } from './contexts/MidiContext'; // Add this
 import { ArtnetProvider, useArtnet } from './contexts/ArtnetContext'; // Add this
 import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
-import { applyEffects } from './utils/effects';
+import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
+import { applyEffects, applyOutputProcessing } from './utils/effects';
 import { effectDefinitions } from './utils/effectDefinitions';
 import { sendNote } from './utils/midi';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText } from './utils/generators'; // Import generator functions
 
-const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => (
-  <div className="master-speed-slider">
-    <label htmlFor="masterSpeedRange">{playbackFps} FPS</label>
-    <Mappable id="master_speed">
-        <input type="range" min="1" max="120" value={playbackFps} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
-    </Mappable>
-  </div>
-));
+const generateId = () => Math.random().toString(36).substr(2, 9);
 
-const LaserOnOffButton = React.memo(({ isWorldOutputActive, onToggleWorldOutput }) => (
-  <div className="container">
-    <Mappable id="laser_output">
-        <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
-    </Mappable>
-  </div>
-));
+const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => {
+  const handleDragStart = (e) => {
+    e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
+        type: 'range',
+        paramName: 'master_speed',
+        targetType: 'global',
+        label: 'SPEED',
+        min: 1,
+        max: 120,
+        step: 1
+    }));
+  };
+
+  return (
+    <div className="master-speed-slider" draggable onDragStart={handleDragStart}>
+      <label htmlFor="masterSpeedRange">{playbackFps} FPS</label>
+      <Mappable id="master_speed">
+          <input type="range" min="1" max="120" value={playbackFps} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
+      </Mappable>
+    </div>
+  );
+});
+
+const LaserOnOffButton = React.memo(({ isWorldOutputActive, onToggleWorldOutput }) => {
+  const handleDragStart = (e) => {
+    e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
+        type: 'toggle',
+        paramName: 'laser_output',
+        targetType: 'global',
+        label: 'LASER'
+    }));
+  };
+
+  return (
+    <div className="container" draggable onDragStart={handleDragStart}>
+      <Mappable id="laser_output">
+          <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
+      </Mappable>
+    </div>
+  );
+});
+
+const ensureArrayStructure = (arr, rows, cols, defaultValueFactory) => {
+  if (!Array.isArray(arr) || arr.length !== rows) {
+    return Array(rows).fill(null).map((_, r) => 
+      Array(cols).fill(null).map((_, c) => defaultValueFactory(r, c))
+    );
+  }
+  return arr.map((row, r) => {
+    if (!Array.isArray(row) || row.length !== cols) {
+      return Array(cols).fill(null).map((_, c) => defaultValueFactory(r, c));
+    }
+    return row;
+  });
+};
 
 const getInitialState = (initialSettings) => ({
   columns: Array.from({ length: 8 }, (_, i) => `Col ${i + 1}`),
   layers: Array.from({ length: 5 }, (_, i) => `Layer ${i + 1}`),
-  clipContents: Array(5).fill(null).map(() => Array(8).fill(null).map(() => ({ parsing: false }))),
-  clipNames: Array(5).fill(null).map((_, layerIndex) =>
-    Array(8).fill(null).map((_, colIndex) => `Clip ${layerIndex + 1}-${colIndex + 1}`)
-  ),
+  clipContents: ensureArrayStructure(initialSettings?.clipContents, 5, 8, () => ({ parsing: false })),
+  clipNames: ensureArrayStructure(initialSettings?.clipNames, 5, 8, (r, c) => `Clip ${r + 1}-${c + 1}`),
   thumbnailFrameIndexes: Array(5).fill(null).map(() => Array(8).fill(0)),
   layerEffects: Array(5).fill([]),
   layerIntensities: Array(5).fill(1), // Add this
+  layerAutopilots: Array(5).fill('off'), // Add layer autopilots
   layerBlackouts: Array(5).fill(false), // Add layer blackouts
   layerSolos: Array(5).fill(false), // Add layer solos
   masterIntensity: 1, // Add this
@@ -65,7 +108,7 @@ const getInitialState = (initialSettings) => ({
   selectedColIndex: null,
   notification: { message: '', visible: false },
   dacs: [],
-  selectedDac: initialSettings?.dacAssignment?.selectedDac ?? null,
+  selectedDac: initialSettings?.dacAssignment?.selectedDac ?? initialSettings?.selectedDac ?? null,
   ildaFrames: [],
   selectedIldaWorkerId: null,
   selectedIldaTotalFrames: 0,
@@ -84,19 +127,35 @@ const getInitialState = (initialSettings) => ({
   theme: initialSettings?.theme ?? 'orange', // Add theme to state
   projectLoadTimestamp: null, // Add this to track project loads
   clipClipboard: null, // For copy/paste
+  dacOutputSettings: initialSettings?.dacOutputSettings ?? {}, // Add dacOutputSettings to state
+  quickAssigns: {
+      knobs: Array(8).fill(null).map(() => ({ value: 0, label: null, link: null })),
+      buttons: Array(8).fill(null).map(() => ({ value: false, label: null, link: null }))
+  },
 });
 
 function reducer(state, action) {
   switch (action.type) {
-    case 'SET_COLUMNS':
+    case 'SET_DAC_OUTPUT_SETTINGS': {
+        return {
+            ...state,
+            dacOutputSettings: {
+                ...state.dacOutputSettings,
+                [action.payload.id]: action.payload.settings
+            }
+        };
+    }
+    case 'SET_COLUMNS': {
       return { ...state, columns: action.payload };
+	}
     case 'SET_COLUMN_NAME': {
         const newColumns = [...state.columns];
         newColumns[action.payload.index] = action.payload.name;
         return { ...state, columns: newColumns };
     }
-    case 'SET_LAYERS':
+    case 'SET_LAYERS': {
       return { ...state, layers: action.payload };
+	}
     case 'SET_LAYER_NAME': {
         const newLayers = [...state.layers];
         newLayers[action.payload.index] = action.payload.name;
@@ -121,6 +180,7 @@ function reducer(state, action) {
     }
     case 'SET_CLIP_NAME': {
         const newClipNames = [...state.clipNames];
+        newClipNames[action.payload.layerIndex] = [...newClipNames[action.payload.layerIndex]];
         newClipNames[action.payload.layerIndex][action.payload.colIndex] = action.payload.name;
         return { ...state, clipNames: newClipNames };
     }
@@ -131,7 +191,12 @@ function reducer(state, action) {
     }
     case 'ADD_LAYER_EFFECT': {
         const newLayerEffects = [...state.layerEffects];
-        newLayerEffects[action.payload.layerIndex].push(action.payload.effect);
+        const newEffectInstance = {
+            ...action.payload.effect,
+            instanceId: generateId(),
+            params: { ...action.payload.effect.defaultParams }
+        };
+        newLayerEffects[action.payload.layerIndex].push(newEffectInstance);
         return { ...state, layerEffects: newLayerEffects };
     }
     case 'ADD_CLIP_EFFECT': {
@@ -149,6 +214,7 @@ function reducer(state, action) {
         // Create a new effect "instance" with its own params object
         const newEffectInstance = {
           ...action.payload.effect,
+          instanceId: generateId(),
           params: { ...action.payload.effect.defaultParams }
         };
 
@@ -159,14 +225,18 @@ function reducer(state, action) {
         newClipContentsWithEffect[action.payload.layerIndex][action.payload.colIndex] = updatedClip;
         return { ...state, clipContents: newClipContentsWithEffect };
     }
-    case 'SET_SELECTED_CLIP':
+    case 'SET_SELECTED_CLIP': {
         return { ...state, selectedLayerIndex: action.payload.layerIndex, selectedColIndex: action.payload.colIndex };
-    case 'SET_NOTIFICATION':
+	}
+    case 'SET_NOTIFICATION': {
         return { ...state, notification: action.payload };
-    case 'SET_ILDA_FRAMES': // This might become deprecated or refactored later
+	}
+    case 'SET_ILDA_FRAMES': {// This might become deprecated or refactored later
         return { ...state, ildaFrames: action.payload };
-    case 'SET_SELECTED_ILDA_DATA': // For ILDA files, or when a generator's frame is selected
+	}
+    case 'SET_SELECTED_ILDA_DATA': {// For ILDA files, or when a generator's frame is selected
         return { ...state, selectedIldaWorkerId: action.payload.workerId, selectedIldaTotalFrames: action.payload.totalFrames, selectedGeneratorId: action.payload.generatorId, selectedGeneratorParams: action.payload.generatorParams };
+	}
     case 'SET_ACTIVE_CLIP': {
         const newActiveClipIndexes = [...state.activeClipIndexes];
         newActiveClipIndexes[action.payload.layerIndex] = action.payload.colIndex;
@@ -203,6 +273,11 @@ function reducer(state, action) {
         newLayerIntensities[action.payload.layerIndex] = action.payload.intensity;
         return { ...state, layerIntensities: newLayerIntensities };
     }
+    case 'SET_LAYER_AUTOPILOT': {
+        const newLayerAutopilots = [...state.layerAutopilots];
+        newLayerAutopilots[action.payload.layerIndex] = action.payload.mode;
+        return { ...state, layerAutopilots: newLayerAutopilots };
+    }
     case 'TOGGLE_LAYER_BLACKOUT': {
         const newLayerBlackouts = [...state.layerBlackouts];
         newLayerBlackouts[action.payload.layerIndex] = !newLayerBlackouts[action.payload.layerIndex];
@@ -223,8 +298,9 @@ function reducer(state, action) {
     case 'TOGGLE_GLOBAL_BLACKOUT': {
         return { ...state, globalBlackout: !state.globalBlackout };
     }
-    case 'SET_RENDER_SETTING':
+    case 'SET_RENDER_SETTING': {
         return { ...state, [action.payload.setting]: action.payload.value };
+	}
     case 'REMOVE_CLIP_EFFECT': {
         const updatedClipContents = [...state.clipContents];
         updatedClipContents[action.payload.layerIndex] = [...updatedClipContents[action.payload.layerIndex]];
@@ -236,6 +312,27 @@ function reducer(state, action) {
             updatedClipContents[action.payload.layerIndex][action.payload.colIndex] = clipToUpdate;
         }
         return { ...state, clipContents: updatedClipContents };
+    }
+    case 'REMOVE_LAYER_EFFECT': {
+        const newLayerEffects = [...state.layerEffects];
+        if (newLayerEffects[action.payload.layerIndex]) {
+            newLayerEffects[action.payload.layerIndex] = [...newLayerEffects[action.payload.layerIndex]];
+            newLayerEffects[action.payload.layerIndex].splice(action.payload.effectIndex, 1);
+        }
+        return { ...state, layerEffects: newLayerEffects };
+    }
+    case 'UPDATE_LAYER_EFFECT_PARAMETER': {
+        const newLayerEffects = [...state.layerEffects];
+        if (newLayerEffects[action.payload.layerIndex]) {
+             newLayerEffects[action.payload.layerIndex] = [...newLayerEffects[action.payload.layerIndex]];
+             const effectIndex = action.payload.effectIndex;
+             if (newLayerEffects[action.payload.layerIndex][effectIndex]) {
+                 const effect = { ...newLayerEffects[action.payload.layerIndex][effectIndex] };
+                 effect.params = { ...effect.params, [action.payload.paramName]: action.payload.newValue };
+                 newLayerEffects[action.payload.layerIndex][effectIndex] = effect;
+             }
+        }
+        return { ...state, layerEffects: newLayerEffects };
     }
     case 'UPDATE_EFFECT_PARAMETER': {
         const updatedClipContents = [...state.clipContents];
@@ -302,22 +399,30 @@ function reducer(state, action) {
         }
         return { ...state, clipContents: updatedGenClipContents };
     }
-    case 'SET_DACS':
+    case 'SET_DACS': {
       return { ...state, dacs: action.payload };
-    case 'SET_BPM':
+	}
+    case 'SET_BPM': {
       return { ...state, bpm: action.payload };
-    case 'SET_SELECTED_DAC':
+	}
+    case 'SET_SELECTED_DAC': {
       return { ...state, selectedDac: action.payload };
-    case 'SET_IS_PLAYING':
+	}
+    case 'SET_IS_PLAYING': {
       return { ...state, isPlaying: action.payload };
-    case 'SET_IS_STOPPED':
+	}
+    case 'SET_IS_STOPPED': {
       return { ...state, isStopped: action.payload };
-    case 'SET_WORLD_OUTPUT_ACTIVE':
+	}
+    case 'SET_WORLD_OUTPUT_ACTIVE': {
       return { ...state, isWorldOutputActive: action.payload };
-    case 'TOGGLE_WORLD_OUTPUT_ACTIVE':
+	}
+    case 'TOGGLE_WORLD_OUTPUT_ACTIVE': {
       return { ...state, isWorldOutputActive: !state.isWorldOutputActive };
-    case 'SET_CLIPBOARD':
+	}
+    case 'SET_CLIPBOARD': {
       return { ...state, clipClipboard: action.payload };
+	}
     case 'SET_CLIP_DAC': {
       console.log('App.jsx Reducer: SET_CLIP_DAC payload.dac:', action.payload.dac);
       const newClipContentsWithDac = [...state.clipContents];
@@ -405,8 +510,6 @@ function reducer(state, action) {
         }
         return state;
     }
-
-
     case 'SET_CLIP_PARSING_STATUS': {
         const { layerIndex, colIndex, status } = action.payload;
         const newClipContents = [...state.clipContents];
@@ -416,8 +519,9 @@ function reducer(state, action) {
         newClipContents[layerIndex][colIndex] = { ...existingClip, parsing: status };
         return { ...state, clipContents: newClipContents };
     }
-    case 'SET_THUMBNAIL_RENDER_MODE':
+    case 'SET_THUMBNAIL_RENDER_MODE': {
       return { ...state, thumbnailRenderMode: action.payload };
+	}
     case 'SET_CLIP_TRIGGER_STYLE': {
         const { layerIndex, colIndex, style } = action.payload;
         const newClipContents = [...state.clipContents];
@@ -426,18 +530,25 @@ function reducer(state, action) {
         newClipContents[layerIndex][colIndex] = { ...existingClip, triggerStyle: style };
         return { ...state, clipContents: newClipContents };
     }
-    case 'SET_THEME':
+    case 'SET_THEME': {
         return { ...state, theme: action.payload };
+	}
     case 'UPDATE_THUMBNAIL': {
-    const { layerIndex, colIndex, frameIndex } = action.payload;
-    const newThumbnailFrameIndexes = [...state.thumbnailFrameIndexes];
-    newThumbnailFrameIndexes[layerIndex][colIndex] = frameIndex;
-    return { ...state, thumbnailFrameIndexes: newThumbnailFrameIndexes };
+        const { layerIndex, colIndex, frameIndex } = action.payload;
+        const newThumbnailFrameIndexes = [...state.thumbnailFrameIndexes];
+        newThumbnailFrameIndexes[layerIndex] = [...newThumbnailFrameIndexes[layerIndex]];
+        newThumbnailFrameIndexes[layerIndex][colIndex] = frameIndex;
+        return { ...state, thumbnailFrameIndexes: newThumbnailFrameIndexes };
     }
-    case 'RESET_STATE':
+    case 'RESET_STATE': {
         return getInitialState({});
-    case 'LOAD_PROJECT':
+	}
+    case 'LOAD_PROJECT': {
         const loadedState = { ...state, ...action.payload };
+        // Validate structures
+        loadedState.clipContents = ensureArrayStructure(loadedState.clipContents, 5, 8, () => ({ parsing: false }));
+        loadedState.clipNames = ensureArrayStructure(loadedState.clipNames, 5, 8, (r, c) => `Clip ${r + 1}-${c + 1}`);
+        
         // Invalidate workerIds for ILDA clips to trigger re-parsing
         loadedState.clipContents = loadedState.clipContents.map(layer =>
             layer.map(clip => {
@@ -457,7 +568,8 @@ function reducer(state, action) {
         loadedState.selectedGeneratorParams = {};
         loadedState.projectLoadTimestamp = Date.now(); // Add timestamp
         return loadedState;
-    case 'LOAD_SETTINGS':
+	}
+    case 'LOAD_SETTINGS': {
         return {
             ...state,
             showBeamEffect: action.payload.renderSettings?.showBeamEffect ?? state.showBeamEffect,
@@ -469,27 +581,171 @@ function reducer(state, action) {
             theme: action.payload.theme ?? state.theme,
             thumbnailRenderMode: action.payload.thumbnailRenderMode ?? state.thumbnailRenderMode,
             selectedDac: action.payload.selectedDac ?? state.selectedDac,
+            clipNames: action.payload.clipNames ? ensureArrayStructure(action.payload.clipNames, 5, 8, (r, c) => `Clip ${r + 1}-${c + 1}`) : state.clipNames,
+            dacOutputSettings: action.payload.dacOutputSettings ?? state.dacOutputSettings,
             // sliderValue, dacAssignment (other than selectedDac), lastOpenedProject will be handled as full objects
             // These will likely require more complex merging or direct assignment based on their structure
         };
-    default:
-      return state;
+	}
+    case 'ASSIGN_QUICK_CONTROL': {
+        const { type, index, link } = action.payload; // type: 'knob' or 'button'
+        const newAssigns = { 
+            knobs: [...state.quickAssigns.knobs],
+            buttons: [...state.quickAssigns.buttons]
+        };
+        const collection = type === 'knob' ? 'knobs' : 'buttons';
+        newAssigns[collection][index] = {
+            ...newAssigns[collection][index],
+            label: link.paramName || link.paramId,
+            link: link,
+            // Store range data for scaling
+            min: link.min,
+            max: link.max,
+            step: link.step
+        };
+        return { ...state, quickAssigns: newAssigns };
+    }
+    case 'UPDATE_QUICK_CONTROL': {
+        const { type, index, value } = action.payload;
+        
+        const newAssigns = { 
+            knobs: [...state.quickAssigns.knobs],
+            buttons: [...state.quickAssigns.buttons]
+        };
+        const collection = type === 'knob' ? 'knobs' : 'buttons';
+        const control = newAssigns[collection][index];
+        
+        // Update the UI state of the control
+        newAssigns[collection][index] = {
+            ...control,
+            value: value
+        };
+        
+        let newState = { ...state, quickAssigns: newAssigns };
+    
+        // Update linked parameter if exists
+        if (control.link) {
+            const { layerIndex, colIndex, effectIndex, targetType } = control.link;
+            const paramName = control.link.paramName || control.link.paramId;
+            
+            // Calculate target value
+            let targetValue = value;
+            if (type === 'knob' && control.min !== undefined && control.max !== undefined) {
+                // Scale 0-1 to min-max
+                targetValue = control.min + (value * (control.max - control.min));
+                if (control.step) {
+                    targetValue = Math.round(targetValue / control.step) * control.step;
+                }
+                // Fix floating point precision issues
+                targetValue = parseFloat(targetValue.toFixed(5));
+            }
+            
+            console.log(`Updating ${targetType} param ${paramName} to ${targetValue} (Link: L${layerIndex} C${colIndex} E${effectIndex})`);
+
+                            if (targetType === 'layerEffect') {
+                                const newLayerEffects = [...newState.layerEffects];
+                                if (newLayerEffects[layerIndex]) {
+                                    newLayerEffects[layerIndex] = [...newLayerEffects[layerIndex]];
+                                    if (newLayerEffects[layerIndex][effectIndex]) {
+                                        const effect = { ...newLayerEffects[layerIndex][effectIndex] };
+                                        effect.params = { ...effect.params, [paramName]: targetValue };
+                                        newLayerEffects[layerIndex][effectIndex] = effect;
+                                        newState = { ...newState, layerEffects: newLayerEffects };
+                                    }
+                                }
+                            } else if (targetType === 'global') {
+                                if (paramName === 'master_intensity') newState = { ...newState, masterIntensity: targetValue };
+                                else if (paramName === 'master_speed') newState = { ...newState, playbackFps: targetValue };
+                            } else {
+                                const updatedClipContents = [...newState.clipContents];                // Check if layer exists
+                if (updatedClipContents[layerIndex]) {
+                     updatedClipContents[layerIndex] = [...updatedClipContents[layerIndex]];
+                     const clip = updatedClipContents[layerIndex][colIndex];
+                     
+                     if (clip) {
+                        if (targetType === 'effect' && clip.effects && clip.effects[effectIndex]) {
+                             const newEffects = [...clip.effects];
+                             const effect = { ...newEffects[effectIndex] };
+                             effect.params = { ...effect.params, [paramName]: targetValue };
+                             newEffects[effectIndex] = effect;
+                             updatedClipContents[layerIndex][colIndex] = { ...clip, effects: newEffects };
+                        } else if (targetType === 'generator') {
+                             updatedClipContents[layerIndex][colIndex] = {
+                                 ...clip,
+                                 currentParams: { ...clip.currentParams, [paramName]: targetValue }
+                             };
+                        }
+                     }
+                     newState.clipContents = updatedClipContents;
+                }
+            }
+        }
+        return newState;
+    }
+    case 'TOGGLE_QUICK_BUTTON': {
+        const { index } = action.payload;
+        const currentVal = state.quickAssigns.buttons[index].value;
+        const newValue = !currentVal;
+        
+        // Reuse logic by calling reducer recursively? No, that's bad practice/hard here.
+        // We just duplicate the logic for now, or cleaner: create the action payload and fall through?
+        // Switch statements don't easily allow fallthrough with changed payload variables.
+        // We'll just copy the logic, it's safer.
+        
+        const newAssigns = { ...state.quickAssigns };
+        newAssigns.buttons[index] = {
+            ...newAssigns.buttons[index],
+            value: newValue
+        };
+        
+        let newState = { ...state, quickAssigns: newAssigns };
+    
+        const control = newAssigns.buttons[index];
+        if (control.link) {
+            const { layerIndex, colIndex, effectIndex, paramName, targetType } = control.link;
+            
+            const updatedClipContents = [...newState.clipContents];
+            if (updatedClipContents[layerIndex]) {
+                 updatedClipContents[layerIndex] = [...updatedClipContents[layerIndex]];
+                 const clip = updatedClipContents[layerIndex][colIndex];
+                 
+                 if (clip) {
+                    if (targetType === 'effect' && clip.effects && clip.effects[effectIndex]) {
+                         const newEffects = [...clip.effects];
+                         const effect = { ...newEffects[effectIndex] };
+                         effect.params = { ...effect.params, [paramName]: newValue };
+                         newEffects[effectIndex] = effect;
+                         updatedClipContents[layerIndex][colIndex] = { ...clip, effects: newEffects };
+                    } else if (targetType === 'generator') {
+                         updatedClipContents[layerIndex][colIndex] = {
+                             ...clip,
+                             currentParams: { ...clip.currentParams, [paramName]: newValue }
+                         };
+                    }
+                 }
+                 newState.clipContents = updatedClipContents;
+            }
+        }
+        return newState;
+    }
+    default: 
+	return state;
   }
 }
 
 const THEME_COLORS = {
-    'orange': { full: 9, dim: 10 }, // Orange
-    'yellow': { full: 13, dim: 14 }, // Yellow
+    'orange': { full: 60, dim: 10 }, // Orange
+    'yellow': { full: 74, dim: 15 }, // Yellow
     'cyan': { full: 36, dim: 35 }, // Cyan
     'light-blue': { full: 41, dim: 43 }, // Light-Blue
-    'blue': { full: 45, dim: 46 }, // Blue
-    'magenta': { full: 53, dim: 54 }, // Magenta
-    'red': { full: 5, dim: 6 }, // Red
-    'green': { full: 21, dim: 22 }, // Green
+    'blue': { full: 45, dim: 47 }, // Blue
+    'magenta': { full: 53, dim: 55 }, // Magenta
+    'red': { full: 5, dim: 7 }, // Red
+    'green': { full: 21, dim: 23 }, // Green
     'white': { full: 3, dim: 1 }, // White/Gray
 };
 
-const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, theme, bpm }) => {
+const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, theme, bpm, quickAssigns }) => {
   const { sendFeedback, mappings, selectedMidiInputId, midiInitialized } = useMidi();
 
   // Metronome BPM Blink
@@ -581,6 +837,15 @@ const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerS
       });
   }, [clipContents, activeClipIndexes, theme, mappings, sendFeedback]);
 
+  // Quick Assigns Feedback
+  useEffect(() => {
+      if (!quickAssigns) return;
+      const colors = THEME_COLORS[theme] || THEME_COLORS['orange'];
+      quickAssigns.buttons.forEach((btn, index) => {
+          sendFeedback(`quick_btn_${index}`, btn.value ? colors.full : 0);
+      });
+  }, [quickAssigns, theme, sendFeedback]);
+
   return null;
 };
 
@@ -604,6 +869,7 @@ function App() {
   const ildaPlayerCurrentFrameIndex = useRef(0);
 
   const liveFramesRef = useRef({});
+  const effectStatesRef = useRef(new Map()); // Add effectStatesRef
   const progressRef = useRef({}); // New ref for fine-grained progress
   const [frameTick, setFrameTick] = useState(0);
 
@@ -615,7 +881,9 @@ function App() {
   const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
   const [enabledShortcuts, setEnabledShortcuts] = useState({ midi: false, artnet: false, osc: false, keyboard: false });
   const [showRenameModal, setShowRenameModal] = useState(false);
+  const [showOutputSettingsWindow, setShowOutputSettingsWindow] = useState(false);
   const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => {} });
+  const [activeBottomTab, setActiveBottomTab] = useState('files');
 
   const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
   const {
@@ -626,6 +894,7 @@ function App() {
     thumbnailFrameIndexes,
     layerEffects,
     layerIntensities,
+    layerAutopilots, // Add layer autopilots
     layerBlackouts, // Add this
     layerSolos, // Add this
     masterIntensity,
@@ -651,22 +920,105 @@ function App() {
     selectedGeneratorParams,
     thumbnailRenderMode, // Add this
     theme,
+    dacOutputSettings,
   } = state;
+
+  const activeClipsData = useMemo(() => layers.map((_, layerIndex) => {
+    const activeColIndex = activeClipIndexes[layerIndex];
+    if (activeColIndex !== null) {
+        const clip = clipContents[layerIndex][activeColIndex];
+        if (clip) {
+            let workerId;
+            let stillFrame = null;
+
+            if (clip.type === 'ilda' && clip.workerId && clip.totalFrames) {
+                workerId = clip.workerId;
+                stillFrame = clip.stillFrame;
+
+                return {
+                    type: 'ilda',
+                    workerId,
+                    totalFrames: clip.totalFrames,
+                    effects: clip.effects || [],
+                    dac: clip.dac || null,
+                    assignedDacs: clip.assignedDacs || [],
+                    ildaFormat: clip.ildaFormat || 0,
+                    stillFrame,
+                    layerIndex,
+                };
+            } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
+                workerId = `generator-${layerIndex}-${activeColIndex}`;
+                stillFrame = clip.stillFrame || clip.frames?.[0] || null;
+                return {
+                    type: 'generator',
+                    workerId,
+                    totalFrames: clip.frames.length,
+                    effects: clip.effects || [],
+                    dac: clip.dac || null,
+                    assignedDacs: clip.assignedDacs || [],
+                    ildaFormat: 0,
+                    stillFrame,
+                    layerIndex,
+                };
+            }
+        }
+    }
+    return null;
+  }).filter(Boolean), [layers, activeClipIndexes, clipContents]);
 
   // Refs for real-time access in animation loop
   const layerIntensitiesRef = useRef(layerIntensities);
+  const layerAutopilotsRef = useRef(layerAutopilots);
+  const layerEffectsRef = useRef(layerEffects); // Add this
   const masterIntensityRef = useRef(masterIntensity);
   const layerBlackoutsRef = useRef(layerBlackouts);
   const layerSolosRef = useRef(layerSolos);
   const globalBlackoutRef = useRef(globalBlackout);
+  const dacOutputSettingsRef = useRef(dacOutputSettings);
+  const dacsRef = useRef(dacs);
+  const activeClipsDataRef = useRef([]);
+  const clipContentsRef = useRef(clipContents);
+  const activeClipIndexesRef = useRef(activeClipIndexes);
+  const clipNamesRef = useRef(clipNames);
+  const selectedIldaWorkerIdRef = useRef(selectedIldaWorkerId);
+  const selectedIldaTotalFramesRef = useRef(selectedIldaTotalFrames);
+  const previousProgressRef = useRef({});
+  const prevGeneratorParamsRef = useRef(new Map());
+  const prevWorkerIdsRef = useRef(new Map()); // Add this
 
   useEffect(() => {
     layerIntensitiesRef.current = layerIntensities;
+    layerAutopilotsRef.current = layerAutopilots;
+    layerEffectsRef.current = layerEffects; // Update this
     masterIntensityRef.current = masterIntensity;
     layerBlackoutsRef.current = layerBlackouts;
     layerSolosRef.current = layerSolos;
     globalBlackoutRef.current = globalBlackout;
-  }, [layerIntensities, masterIntensity, layerBlackouts, layerSolos, globalBlackout]);
+    dacOutputSettingsRef.current = dacOutputSettings;
+    dacsRef.current = dacs;
+    activeClipsDataRef.current = activeClipsData;
+    clipContentsRef.current = clipContents;
+    activeClipIndexesRef.current = activeClipIndexes;
+    clipNamesRef.current = clipNames;
+    selectedIldaWorkerIdRef.current = selectedIldaWorkerId;
+    selectedIldaTotalFramesRef.current = selectedIldaTotalFrames;
+  }, [layerIntensities, layerAutopilots, layerEffects, masterIntensity, layerBlackouts, layerSolos, globalBlackout, dacOutputSettings, dacs, activeClipsData, clipContents, activeClipIndexes, clipNames, selectedIldaWorkerId, selectedIldaTotalFrames]);
+
+  const generateTestLineFrame = useCallback((yPos) => {
+      // yPos: 0 (top) to 1 (bottom). ILDA: 1 to -1.
+      const y = 1 - (yPos * 2);
+      const points = [];
+      const numPoints = 100;
+      for (let i = 0; i < numPoints; i++) {
+          const x = (i / (numPoints - 1)) * 2 - 1; // -1 to 1
+          points.push({ x, y, r: 0, g: 255, b: 0, blanking: false });
+      }
+      return { points, isTypedArray: false };
+  }, []);
+
+  const handleUpdateDacSettings = useCallback((dacId, settings) => {
+    dispatch({ type: 'SET_DAC_OUTPUT_SETTINGS', payload: { id: dacId, settings } });
+  }, []);
 
   const handlePlaybackFpsChange = useCallback((value) => {
     dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'playbackFps', value } });
@@ -683,49 +1035,6 @@ function App() {
       dispatch({ type: 'SET_NOTIFICATION', payload: { message: '', visible: false } });
     }, 3000);
   };
-
-    const activeClipsData = useMemo(() => layers.map((_, layerIndex) => {
-      const activeColIndex = activeClipIndexes[layerIndex];
-      if (activeColIndex !== null) {
-          const clip = clipContents[layerIndex][activeColIndex];
-          if (clip) {
-              let workerId;
-              let stillFrame = null;
-
-              if (clip.type === 'ilda' && clip.workerId && clip.totalFrames) {
-                  workerId = clip.workerId;
-                  stillFrame = clip.stillFrame;
-
-                  return {
-                      type: 'ilda',
-                      workerId,
-                      totalFrames: clip.totalFrames,
-                      effects: clip.effects || [],
-                      dac: clip.dac || null,
-                      assignedDacs: clip.assignedDacs || [],
-                      ildaFormat: clip.ildaFormat || 0,
-                      stillFrame,
-                      layerIndex,
-                  };
-              } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
-                  workerId = `generator-${layerIndex}-${activeColIndex}`;
-                  stillFrame = clip.frames[0];
-                  return {
-                      type: 'generator',
-                      workerId,
-                      totalFrames: clip.frames.length,
-                      effects: clip.effects || [],
-                      dac: clip.dac || null,
-                      assignedDacs: clip.assignedDacs || [],
-                      ildaFormat: 0,
-                      stillFrame,
-                      layerIndex,
-                  };
-              }
-          }
-      }
-      return null;
-    }).filter(Boolean), [layers, activeClipIndexes, clipContents]);
 
   // Update CSS variables when theme changes
   useEffect(() => {
@@ -771,32 +1080,34 @@ function App() {
   useEffect(() => {
     if (!ildaParserWorker) return;
 
-    const handleMessage = (e) => {
+    const handleMessage = async (e) => {
       if (e.data.type === 'get-frame' && e.data.success) {
         if (e.data.isStillFrame) {
           const { workerId, frame, layerIndex, colIndex } = e.data;
-          // Update stillFrame and set parsing status to false in a single SET_CLIP_CONTENT dispatch
-          dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false } } });
+          
+          // Generate Thumbnail
+          let thumbnailPath = null;
+          const currentClip = clipContentsRef.current[layerIndex]?.[colIndex];
+          const effects = currentClip?.effects || [];
+          thumbnailPath = await generateThumbnail(frame, effects);
+
+          // Update stillFrame and set parsing status to false
+          dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false, thumbnailPath } } });
         } else {
           liveFramesRef.current[e.data.workerId] = e.data.frame;
         }
       } else if (e.data.type === 'parse-ilda' && e.data.success) {
         const { workerId, totalFrames, ildaFormat, fileName, filePath, layerIndex, colIndex } = e.data;
 
-        // Get existing clip to preserve effects
-        const existingClip = state.clipContents[layerIndex][colIndex] || {};
-
         const newClipContent = {
-          ...existingClip,
           type: 'ilda',
           workerId,
           totalFrames,
           ildaFormat,
           fileName,
           filePath,
-          stillFrame: null, // Initialize stillFrame to null
           parsing: true, // Set parsing status to true
-          playbackSettings: existingClip.playbackSettings || {
+          playbackSettings: {
             mode: 'fps',
             duration: totalFrames / 60,
             beats: 8,
@@ -804,9 +1115,17 @@ function App() {
           },
         };
         dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
-        dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: fileName } }); // Update clip name
-        // Request the still frame
-        ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: 0, isStillFrame: true, layerIndex, colIndex });
+        
+        // Only update the clip name if it's currently the default name
+        const currentName = clipNamesRef.current[layerIndex][colIndex];
+        const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
+        if (currentName === defaultPattern) {
+            dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: fileName } });
+        }
+        
+        // Request the still frame using the saved index
+        const savedFrameIndex = state.thumbnailFrameIndexes[layerIndex][colIndex] || 0;
+        ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: savedFrameIndex, isStillFrame: true, layerIndex, colIndex });
       } else if (e.data.success === false) {
         showNotification(`Worker error: ${e.data.error}`);
         const { layerIndex, colIndex } = e.data; // Get layerIndex and colIndex from error message
@@ -931,10 +1250,11 @@ function App() {
       }
 
       if (currentTime - lastFrameTime > dacFrameInterval) {
-        if (window.electronAPI && activeClipsData.length > 0 && isWorldOutputActive) {
+        if (window.electronAPI && isWorldOutputActive) {
           const dacGroups = new Map(); // key: "ip:channel", value: { ip, channel, frames: [] }
 
-          activeClipsData.forEach(clip => {
+          // 1. Process Clip Content
+          activeClipsDataRef.current.forEach(clip => {
             if (clip && liveFramesRef.current[clip.workerId]) {
               const dacList = (clip.assignedDacs && clip.assignedDacs.length > 0)
                 ? clip.assignedDacs
@@ -942,7 +1262,11 @@ function App() {
 
               if (dacList.length === 0) return;
 
-              const effects = clip.effects || [];
+              // Merge clip effects with layer effects
+              const layerIdx = clip.layerIndex;
+              const currentLayerEffects = layerEffectsRef.current[layerIdx] || [];
+              const effects = [...(clip.effects || []), ...currentLayerEffects];
+              
               const frame = liveFramesRef.current[clip.workerId];
 
               // Calculate Effective Intensity using Refs
@@ -1006,29 +1330,58 @@ function App() {
                   if (definition) {
                       definition.paramControls.forEach(ctrl => {
                           const syncKey = `${eff.id}.${ctrl.id}`;
-                          const syncMode = syncSettings[syncKey];
-                          if (syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
+                          const rawSettings = syncSettings[syncKey];
+                          
+                          // Handle both legacy (string) and new (object) formats
+                          const settings = typeof rawSettings === 'string' 
+                              ? { syncMode: rawSettings, range: [ctrl.min, ctrl.max], direction: 'forward', style: 'loop' }
+                              : rawSettings;
+
+                          if (settings && settings.syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
                               let progress = 0;
-                              if (syncMode === 'fps') {
-                                  progress = (currentTime * 0.001 * (playbackFps / 60)) % 1.0;
-                              } else if (syncMode === 'timeline' || syncMode === 'bpm') {
+                              
+                              // 1. Calculate Base Progress
+                              if (settings.syncMode === 'fps') {
+                                  // Default roughly 1Hz cycle
+                                  progress = (currentTime * 0.001) % 1.0;
+                              } else if (settings.syncMode === 'timeline' || settings.syncMode === 'bpm') {
+                                  // Use clip progress (bpm logic handled in frame fetcher, both map to 0-1)
                                   progress = clipProgress;
                               }
-                              // Sweep from min to max over the progress
-                              newParams[ctrl.id] = ctrl.min + (ctrl.max - ctrl.min) * progress;
+
+                              // 2. Apply Direction
+                              if (settings.direction === 'backward') {
+                                  progress = 1.0 - progress;
+                              } else if (settings.direction === 'pause') {
+                                  progress = 0; // Or hold last frame? For now 0 or middle
+                              }
+
+                              // 3. Apply Style (Loop is default 0-1)
+                              if (settings.style === 'bounce') {
+                                  // 0 -> 1 -> 0
+                                  progress = progress < 0.5 ? progress * 2 : 2 - (progress * 2);
+                              } else if (settings.style === 'once') {
+                                  progress = Math.min(progress, 1);
+                              }
+
+                              // 4. Map to Range
+                              const min = settings.range ? settings.range[0] : ctrl.min;
+                              const max = settings.range ? settings.range[1] : ctrl.max;
+                              
+                              newParams[ctrl.id] = min + (max - min) * progress;
                           }
                       });
                   }
                   return { ...eff, params: newParams };
               });
 
-              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime });
+              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime, effectStates: effectStatesRef.current, assignedDacs: clip.assignedDacs });
 
-              dacList.forEach(targetDac => {
+              dacList.forEach((targetDac, dacIndex) => {
                 const ip = targetDac.ip;
                 const channel = targetDac.channel || (targetDac.channels && targetDac.channels.length > 0 ? targetDac.channels[0].serviceID : 0);
 
-                if (channel !== 0) {
+                if (channel !== undefined) { // Check undefined instead of 0 to allow channel 0
                   const key = `${ip}:${channel}`;
                   if (!dacGroups.has(key)) {
                     dacGroups.set(key, { ip, channel, frames: [] });
@@ -1036,9 +1389,26 @@ function App() {
 
                   // Apply channel-level mirroring if specified
                   let finalDacFrame = modifiedFrame;
+                  
+                  // Check for Delay Distribution
+                  if (modifiedFrame.points && modifiedFrame.points._channelDistributions) {
+                      const dist = modifiedFrame.points._channelDistributions.get(dacIndex);
+                      if (dist) {
+                          // Slice the frame for this channel
+                          const subPoints = modifiedFrame.points.subarray(dist.start, dist.start + dist.length);
+                          // Create new frame object with sliced points, preserving other props
+                          finalDacFrame = { ...modifiedFrame, points: subPoints };
+                      } else {
+                          // If this DAC is not in the distribution map (e.g. 5th laser, only 4 delays),
+                          // we should probably output nothing or the current frame?
+                          // Let's output nothing (Blank) to be safe and clean.
+                          finalDacFrame = { ...modifiedFrame, points: new Float32Array(0) };
+                      }
+                  }
+
                   if (targetDac.mirrorX || targetDac.mirrorY) {
-                      const pts = modifiedFrame.points;
-                      const isT = modifiedFrame.isTypedArray;
+                      const pts = finalDacFrame.points;
+                      const isT = finalDacFrame.isTypedArray;
                       const n = isT ? (pts.length / 8) : pts.length;
                       const newPts = isT ? new Float32Array(pts) : pts.map(p => ({ ...p }));
 
@@ -1051,7 +1421,7 @@ function App() {
                               if (targetDac.mirrorY) newPts[i].y = -newPts[i].y;
                           }
                       }
-                      finalDacFrame = { ...modifiedFrame, points: newPts };
+                      finalDacFrame = { ...finalDacFrame, points: newPts };
                   }
 
                   dacGroups.get(key).frames.push(finalDacFrame);
@@ -1060,9 +1430,58 @@ function App() {
             }
           });
 
+          // 2. Process Test Lines and ensure all available DACs are considered
+          dacsRef.current.forEach(dac => {
+              const channels = (dac.channels && dac.channels.length > 0) ? dac.channels.map(c => c.serviceID) : [0];
+              channels.forEach(ch => {
+                  const id = `${dac.ip}:${ch}`;
+                  const settings = dacOutputSettingsRef.current[id];
+                  
+                  if (settings) {
+                      if (!dacGroups.has(id)) {
+                          dacGroups.set(id, { ip: dac.ip, channel: ch, frames: [] });
+                      }
+                      
+                      const group = dacGroups.get(id);
+                      
+                      if (settings.testLineEnabled) {
+                          const testFrame = generateTestLineFrame(settings.testLineY !== undefined ? settings.testLineY : 0.5);
+                          group.frames = [testFrame]; // Override existing frames
+                      }
+                  }
+              });
+          });
+
           // Send merged frames to each DAC channel
           dacGroups.forEach(group => {
-            const mergedFrame = mergeFrames(group.frames);
+            let mergedFrame = mergeFrames(group.frames);
+            
+            const id = `${group.ip}:${group.channel}`;
+            const settings = dacOutputSettingsRef.current[id];
+            
+            if (mergedFrame && settings) {
+                // Apply Dimmer
+                if (settings.dimmer !== undefined && settings.dimmer < 1) {
+                     const dim = settings.dimmer;
+                     const pts = mergedFrame.points;
+                     const isT = mergedFrame.isTypedArray;
+                     const n = isT ? (pts.length / 8) : pts.length;
+                     for(let i=0; i<n; i++) {
+                         if (isT) {
+                             pts[i*8+3] *= dim;
+                             pts[i*8+4] *= dim;
+                             pts[i*8+5] *= dim;
+                         } else {
+                             pts[i].r *= dim;
+                             pts[i].g *= dim;
+                             pts[i].b *= dim;
+                         }
+                     }
+                }
+
+                mergedFrame = applyOutputProcessing(mergedFrame, settings);
+            }
+
             if (mergedFrame) {
               window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame, OUTPUT_FPS);
             }
@@ -1080,23 +1499,16 @@ function App() {
     // Frame fetcher loop for updating liveFrames
     const frameFetcherLoop = (timestamp) => {
       const currentFrameInterval = 1000 / playbackFps;
+      const currentBpm = state.bpm || 120;
 
-      // 1. Process active clips
-      layers.forEach((_, layerIndex) => {
-          const activeColIndex = activeClipIndexes[layerIndex];
-          if (activeColIndex === null) return;
-          const clip = clipContents[layerIndex][activeColIndex];
-          if (!clip) return;
-
-          let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${layerIndex}-${activeColIndex}` : null);
-          if (!workerId) return;
-
+      const processClip = (clip, layerIndex, workerId) => {
           if (!lastFrameFetchTimeRef.current[workerId]) {
               lastFrameFetchTimeRef.current[workerId] = timestamp;
           }
 
           const delta = timestamp - lastFrameFetchTimeRef.current[workerId];
-          const audioInfo = getAudioInfo(layerIndex);
+          // We only use audio sync if it's an active clip (not a preview only)
+          const audioInfo = activeClipIndexesRef.current[layerIndex] !== null ? getAudioInfo(layerIndex) : null;
 
           let targetIndex = frameIndexesRef.current[workerId] || 0;
           let currentProgress = 0;
@@ -1104,38 +1516,88 @@ function App() {
           const pSettings = clip.playbackSettings || { mode: 'fps', duration: totalFrames / 60, beats: 8, speedMultiplier: 1 };
 
           if (audioInfo && isPlaying && !audioInfo.paused) {
-              // Absolute sync to audio: frameIndex = seconds * fps
-              currentProgress = audioInfo.currentTime / audioInfo.duration;
+              currentProgress = audioInfo.duration > 0 ? (audioInfo.currentTime / audioInfo.duration) : 0;
               targetIndex = Math.floor(currentProgress * totalFrames);
           } else if (pSettings.mode === 'timeline') {
               const totalDurationMs = (pSettings.duration * 1000) / (pSettings.speedMultiplier || 1);
-              if (isPlaying) {
+              if (isPlaying && totalDurationMs > 0) {
                   currentProgress = (delta / totalDurationMs) % 1.0;
                   targetIndex = Math.floor(currentProgress * totalFrames);
               }
           } else if (pSettings.mode === 'bpm') {
-              const oneBeatMs = 60000 / (state.bpm || 120);
+              const oneBeatMs = 60000 / currentBpm;
               const totalDurationMs = (pSettings.beats * oneBeatMs) / (pSettings.speedMultiplier || 1);
-              if (isPlaying) {
+              if (isPlaying && totalDurationMs > 0) {
                   currentProgress = (delta / totalDurationMs) % 1.0;
                   targetIndex = Math.floor(currentProgress * totalFrames);
               }
           } else if (delta >= currentFrameInterval) {
-              // Standard FPS sync
               const framesToAdvance = Math.floor(delta / currentFrameInterval);
               lastFrameFetchTimeRef.current[workerId] = timestamp - (delta % currentFrameInterval);
               if (isPlaying) {
                   targetIndex = (targetIndex + framesToAdvance);
               }
-              currentProgress = (targetIndex % totalFrames) / totalFrames;
+              currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
           } else {
-              return; // Not time yet for this worker
+              return; 
           }
 
-          progressRef.current[workerId] = currentProgress;
+          if (isNaN(targetIndex)) targetIndex = 0;
+          if (isNaN(currentProgress)) currentProgress = 0;
 
+          const prevProgress = previousProgressRef.current[workerId] || 0;
+          // Check for loop/completion
+          // Only trigger if playing and progress wrapped around (e.g. 0.9 -> 0.1)
+          // We use a threshold to avoid jitter, e.g., prev was > 0.9 and current < 0.1
+          const didLoop = (prevProgress > 0.9 && currentProgress < 0.1);
+
+          previousProgressRef.current[workerId] = currentProgress;
+          progressRef.current[workerId] = currentProgress;
           if (totalFrames > 0) {
               targetIndex = targetIndex % totalFrames;
+              if (targetIndex < 0) targetIndex += totalFrames;
+          }
+
+          // Autopilot Trigger
+          if (didLoop && isPlaying) {
+             const mode = layerAutopilotsRef.current[layerIndex];
+             if (mode && mode !== 'off') {
+                 // Trigger next clip
+                 const currentLayerClips = clipContentsRef.current[layerIndex];
+                 const currentCol = activeClipIndexesRef.current[layerIndex];
+                 let nextCol = -1;
+
+                 if (mode === 'forward') {
+                     // Find next column with content
+                     for (let i = 1; i < currentLayerClips.length; i++) {
+                         const idx = (currentCol + i) % currentLayerClips.length;
+                         const clip = currentLayerClips[idx];
+                         if (clip && (clip.type === 'ilda' || clip.type === 'generator')) {
+                             nextCol = idx;
+                             break;
+                         }
+                     }
+                 } else if (mode === 'random') {
+                     // Find all valid columns
+                     const validCols = currentLayerClips.map((c, i) => (c && (c.type === 'ilda' || c.type === 'generator')) ? i : -1).filter(i => i !== -1);
+                     if (validCols.length > 0) {
+                         const randIdx = Math.floor(Math.random() * validCols.length);
+                         nextCol = validCols[randIdx];
+                         // Avoid repeating same clip if possible
+                         if (nextCol === currentCol && validCols.length > 1) {
+                             nextCol = validCols[(randIdx + 1) % validCols.length];
+                         }
+                     }
+                 }
+
+                 if (nextCol !== -1 && nextCol !== currentCol) {
+                     // We need to call handleActivateClick, but we are in a loop.
+                     // Use setTimeout to break out of the loop and safe update state.
+                     setTimeout(() => {
+                         handleActivateClick(layerIndex, nextCol);
+                     }, 0);
+                 }
+             }
           }
 
           if (frameIndexesRef.current[workerId] !== targetIndex || !liveFramesRef.current[workerId]) {
@@ -1143,74 +1605,35 @@ function App() {
               if (clip.type === 'ilda') {
                   ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: targetIndex });
               } else if (clip.type === 'generator') {
-                  // Handle sync for generator parameters
-                  const syncedParams = { ...clip.currentParams };
-                  const syncSettings = clip.syncSettings || {};
-                  const definition = clip.generatorDefinition;
-
-                  if (definition) {
-                      definition.paramControls.forEach(ctrl => {
-                          const syncKey = `${definition.id}.${ctrl.id}`;
-                          const syncMode = syncSettings[syncKey];
-                          if (syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
-                              let syncProgress = 0;
-                              if (syncMode === 'fps') {
-                                  syncProgress = (timestamp * 0.001 * (playbackFps / 60)) % 1.0;
-                              } else if (syncMode === 'timeline' || syncMode === 'bpm') {
-                                  syncProgress = currentProgress;
-                              }
-                              syncedParams[ctrl.id] = ctrl.min + (ctrl.max - ctrl.min) * syncProgress;
-                          }
-                      });
-                  }
-
-                  // We need to re-generate the frame if params are synced
-                  // For now, if any param is synced, we'd need a real-time generator
-                  // But our generators currently run in a worker and return frames.
-                  // For simple shapes, we might want a lightweight sync-capable generation.
-
                   if (clip.frames && clip.frames[targetIndex % clip.frames.length]) {
                       liveFramesRef.current[workerId] = clip.frames[targetIndex % clip.frames.length];
                   }
               }
           }
+      };
+
+      // 1. Process active clips
+      layers.forEach((_, layerIndex) => {
+          const activeColIndex = activeClipIndexesRef.current[layerIndex];
+          if (activeColIndex === null) return;
+          const clip = clipContentsRef.current[layerIndex][activeColIndex];
+          if (!clip) return;
+
+          let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${layerIndex}-${activeColIndex}` : null);
+          if (!workerId) return;
+
+          processClip(clip, layerIndex, workerId);
       });
 
-      // 2. Process selected clip (for preview) if it's not active
-      if (selectedIldaWorkerId && !activeClipsData.some(c => c.workerId === selectedIldaWorkerId)) {
-          const workerId = selectedIldaWorkerId;
-          if (!lastFrameFetchTimeRef.current[workerId]) {
-              lastFrameFetchTimeRef.current[workerId] = timestamp;
-          }
-          const delta = timestamp - lastFrameFetchTimeRef.current[workerId];
-          if (delta >= currentFrameInterval) {
-              const framesToAdvance = Math.floor(delta / currentFrameInterval);
-              lastFrameFetchTimeRef.current[workerId] = timestamp - (delta % currentFrameInterval);
-
-              const currentFrameIndex = frameIndexesRef.current[workerId] || 0;
-              let nextFrameIndex = currentFrameIndex;
-
-              if (isPlaying) {
-                  nextFrameIndex = (currentFrameIndex + framesToAdvance) % (selectedIldaTotalFrames || 1);
-                  frameIndexesRef.current[workerId] = nextFrameIndex;
-              }
-
-              if (workerId.startsWith('generator-')) {
-                  // For generator clips, find the clip and update liveFrames
-                   // We need to find the clip in clipContents.
-                   // workerId format: generator-{layerIndex}-{colIndex}
-                   const parts = workerId.split('-');
-                   if (parts.length === 3) {
-                       const lIndex = parseInt(parts[1]);
-                       const cIndex = parseInt(parts[2]);
-                       const clip = state.clipContents[lIndex][cIndex];
-                       if (clip && clip.type === 'generator' && clip.frames) {
-                           liveFramesRef.current[workerId] = clip.frames[nextFrameIndex % clip.frames.length];
-                       }
-                   }
-              } else {
-                  // For ILDA clips, request frame from worker
-                  ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: nextFrameIndex });
+      // 2. Process selected clip (for preview) if it's not already handled as active
+      const selWorkerId = selectedIldaWorkerIdRef.current;
+      if (selWorkerId && !activeClipsDataRef.current.some(c => c.workerId === selWorkerId)) {
+          const lIdx = selectedLayerIndex; // We use these from closure as they change rarely and loop restart is OK then
+          const cIdx = selectedColIndex;
+          if (lIdx !== null && cIdx !== null) {
+              const clip = clipContentsRef.current[lIdx][cIdx];
+              if (clip) {
+                  processClip(clip, lIdx, selWorkerId);
               }
           }
       }
@@ -1243,159 +1666,231 @@ function App() {
       cancelAnimationFrame(dacRefreshAnimationFrameId); // Clean up DAC animation frame
       cancelAnimationFrame(previewRefreshAnimationFrameId);
     };
-  }, [ildaParserWorker, workerIdsToFetch, playbackFps, clipContents, isPlaying, activeClipsData, isWorldOutputActive, selectedDac, state.clipContents, selectedIldaWorkerId, selectedIldaTotalFrames, getAudioInfo, state.bpm]);
+  }, [ildaParserWorker, playbackFps, isPlaying, isWorldOutputActive, selectedDac, getAudioInfo, state.bpm, selectedLayerIndex, selectedColIndex]);
 
     // Listen for context menu commands
-    useEffect(() => {
-        let unsubClip, unsubLayer, unsubCtx;
+  useEffect(() => {
+      let unsubClip, unsubLayer, unsubCtx;
 
-        if (window.electronAPI) {
-            unsubClip = window.electronAPI.onClipContextMenuCommand((command, layerIndex, colIndex) => {
-                console.log(`Clip context menu command received: ${command} for ${layerIndex}-${colIndex}`);
-                if (command === 'update-thumbnail') {
-                    const clipToUpdate = clipContents[layerIndex][colIndex];
-                    if (clipToUpdate) {
-                        if (clipToUpdate.type === 'ilda' && clipToUpdate.workerId && ildaParserWorker) {
-                            const currentFrame = frameIndexesRef.current[clipToUpdate.workerId] || 0;
-                            ildaParserWorker.postMessage({
-                                type: 'get-frame',
-                                workerId: clipToUpdate.workerId,
-                                frameIndex: currentFrame,
-                                isStillFrame: true,
-                                layerIndex,
-                                colIndex,
-                            });
-                        } else if (clipToUpdate.type === 'generator' && clipToUpdate.generatorDefinition && generatorWorker) {
-                            regenerateGeneratorClip(layerIndex, colIndex, clipToUpdate.generatorDefinition, clipToUpdate.currentParams);
-                        }
-                    }
-                } else if (command === 'clear-clip') {
-                    dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex, colIndex } });
-                } else if (command === 'rename-clip') {
-                    const oldName = clipNames[layerIndex][colIndex];
-                    setRenameModalConfig({
-                        title: 'Rename Clip',
-                        initialValue: oldName,
-                        onSave: (newName) => dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: newName } })
-                    });
-                    setShowRenameModal(true);
-                } else if (command === 'copy-clip') {
-                    const clipToCopy = {
-                        content: clipContents[layerIndex][colIndex],
-                        name: clipNames[layerIndex][colIndex],
-                    };
-                    dispatch({ type: 'SET_CLIPBOARD', payload: clipToCopy });
-                    showNotification('Clip copied.');
-                } else if (command === 'cut-clip') {
-                    const clipToCut = {
-                        content: clipContents[layerIndex][colIndex],
-                        name: clipNames[layerIndex][colIndex],
-                    };
-                    dispatch({ type: 'SET_CLIPBOARD', payload: clipToCut });
-                    dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex, colIndex } });
-                    showNotification('Clip cut.');
-                } else if (command === 'paste-clip') {
-                    if (state.clipClipboard) {
-                        const { content, name } = state.clipClipboard;
-                        let contentToPaste = { ...content };
-                        if (contentToPaste.type === 'ilda') {
-                            contentToPaste.workerId = null;
-                        }
+      if (window.electronAPI) {
+          unsubClip = window.electronAPI.onClipContextMenuCommand((command, layerIndex, colIndex) => {
+              console.log(`Clip context menu command received: ${command} for ${layerIndex}-${colIndex}`);
+              if (command === 'update-thumbnail') {
+                  const clipToUpdate = clipContents[layerIndex][colIndex];
+                  if (clipToUpdate) {
+                      if (clipToUpdate.type === 'ilda' && clipToUpdate.workerId && ildaParserWorker) {
+                          const currentFrame = frameIndexesRef.current[clipToUpdate.workerId] || 0;
+                          ildaParserWorker.postMessage({
+                              type: 'get-frame',
+                              workerId: clipToUpdate.workerId,
+                              frameIndex: currentFrame,
+                              isStillFrame: true,
+                              layerIndex,
+                              colIndex,
+                          });
+                      } else if (clipToUpdate.type === 'generator' && clipToUpdate.generatorDefinition) {
+                          const currentIdx = frameIndexesRef.current[`generator-${layerIndex}-${colIndex}`] || 0;
+                          const currentFrame = clipToUpdate.frames?.[currentIdx % clipToUpdate.frames.length];
+                          if (currentFrame) {
+                              const effects = clipToUpdate.effects || [];
+                              generateThumbnail(currentFrame, effects).then(thumbnailPath => {
+                                  dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame, thumbnailPath } } });
+                              });
+                          }
+                      }
+                  }
+              } else if (command === 'clear-clip') {
+                  dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex, colIndex } });
+              } else if (command === 'rename-clip') {
+                  const oldName = clipNamesRef.current[layerIndex][colIndex];
+                  setRenameModalConfig({
+                      title: 'Rename Clip',
+                      initialValue: oldName,
+                      onSave: (newName) => dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: newName } })
+                  });
+                  setShowRenameModal(true);
+              } else if (command === 'copy-clip') {
+                  const clipToCopy = {
+                      content: clipContentsRef.current[layerIndex][colIndex],
+                      name: clipNamesRef.current[layerIndex][colIndex],
+                  };
+                  dispatch({ type: 'SET_CLIPBOARD', payload: clipToCopy });
+                  showNotification('Clip copied.');
+              } else if (command === 'cut-clip') {
+                  const clipToCut = {
+                      content: clipContentsRef.current[layerIndex][colIndex],
+                      name: clipNamesRef.current[layerIndex][colIndex],
+                  };
+                  dispatch({ type: 'SET_CLIPBOARD', payload: clipToCut });
+                  dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex, colIndex } });
+                  showNotification('Clip cut.');
+              } else if (command === 'paste-clip') {
+                  if (state.clipClipboard) {
+                      const { content, name } = state.clipClipboard;
+                      let contentToPaste = { ...content };
+                      if (contentToPaste.type === 'ilda') {
+                          contentToPaste.workerId = null;
+                      }
 
-                        dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: contentToPaste }});
-                        dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name }});
-                        showNotification('Clip pasted.');
+                      dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: contentToPaste }});
+                      dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name }});
+                      showNotification('Clip pasted.');
 
-                        setTimeout(() => {
-                            const newClip = contentToPaste;
-                            if (newClip.type === 'generator' && newClip.generatorDefinition) {
-                                regenerateGeneratorClip(layerIndex, colIndex, newClip.generatorDefinition, newClip.currentParams);
-                            }
-                        }, 100);
+                      setTimeout(() => {
+                          const newClip = contentToPaste;
+                          if (newClip.type === 'generator' && newClip.generatorDefinition) {
+                              regenerateGeneratorClip(layerIndex, colIndex, newClip.generatorDefinition, newClip.currentParams);
+                          }
+                      }, 100);
 
-                    } else {
-                        showNotification('Clipboard is empty.');
-                    }
-                } else if (command === 'set-trigger-style-normal') {
-                    dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'normal' } });
-                } else if (command === 'set-trigger-style-toggle') {
-                    dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'toggle' } });
-                } else if (command === 'set-trigger-style-flash') {
-                    dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'flash' } });
-                }
+                  } else {
+                      showNotification('Clipboard is empty.');
+                  }
+              } else if (command === 'set-trigger-style-normal') {
+                  dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'normal' } });
+              } else if (command === 'set-trigger-style-toggle') {
+                  dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'toggle' } });
+              } else if (command === 'set-trigger-style-flash') {
+                  dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'flash' } });
+              }
+          });
+
+          unsubLayer = window.electronAPI.onLayerFullContextMenuCommand((command, layerIndex) => {
+              console.log(`Layer context menu command received: ${command} for ${layerIndex}`);
+              if (command === 'layer-rename') {
+                  const oldName = layers[layerIndex];
+                  setRenameModalConfig({
+                      title: 'Rename Layer',
+                      initialValue: oldName,
+                      onSave: (newName) => dispatch({ type: 'SET_LAYER_NAME', payload: { index: layerIndex, name: newName } })
+                  });
+                  setShowRenameModal(true);
+              } else if (command === 'layer-clear-clips') {
+                  dispatch({ type: 'DEACTIVATE_LAYER_CLIPS', payload: { layerIndex } });
+              }
+          });
+
+          unsubCtx = window.electronAPI.onContextMenuActionFromMain((action) => {
+              console.log(`General context menu action received:`, action);
+              if (action.type === 'rename-column') {
+                  const oldName = columns[action.index];
+                  setRenameModalConfig({
+                      title: 'Rename Column',
+                      initialValue: oldName,
+                      onSave: (newName) => dispatch({ type: 'SET_COLUMN_NAME', payload: { index: action.index, name: newName } })
+                  });
+                  setShowRenameModal(true);
+              } else if (action.type === 'rename-layer') { // Support for simpler layer menu if used
+                  const oldName = layers[action.index];
+                  setRenameModalConfig({
+                      title: 'Rename Layer',
+                      initialValue: oldName,
+                      onSave: (newName) => dispatch({ type: 'SET_LAYER_NAME', payload: { index: action.index, name: newName } })
+                  });
+                  setShowRenameModal(true);
+              }
+          });
+      }
+
+      return () => {
+          if (unsubClip) unsubClip();
+          if (unsubLayer) unsubLayer();
+          if (unsubCtx) unsubCtx();
+      };
+  }, [clipContents, clipNames, layers, columns, ildaParserWorker, generatorWorker, state.clipClipboard]);
+
+      const prevThumbnailFrameIndexesRef = useRef(thumbnailFrameIndexes);
+
+    
+
+      useEffect(() => {
+
+      // Find which thumbnails have changed or where workerId became valid
+
+      for (let i = 0; i < layers.length; i++) {
+
+        for (let j = 0; j < columns.length; j++) {
+
+          const currentIndex = thumbnailFrameIndexes[i][j];
+
+          const prevIndex = prevThumbnailFrameIndexesRef.current[i][j];
+
+          const clip = clipContents[i][j];
+
+          const currentWorkerId = clip?.workerId;
+
+          const prevWorkerId = prevWorkerIdsRef.current.get(`${i}-${j}`);
+
+  
+
+          const indexChanged = currentIndex !== prevIndex;
+
+          const workerBecameValid = currentWorkerId && !prevWorkerId;
+
+  
+
+          if ((indexChanged || workerBecameValid) && clip && clip.type === 'ilda' && currentWorkerId) {
+
+            console.log(`[App.jsx] Fetching still frame for ${i}-${j} at index ${currentIndex}. Reason: ${indexChanged ? 'index change' : 'worker ready'}`);
+
+            ildaParserWorker.postMessage({
+
+              type: 'get-frame',
+
+              workerId: currentWorkerId,
+
+              frameIndex: currentIndex,
+
+              isStillFrame: true,
+
+              layerIndex: i,
+
+              colIndex: j,
+
             });
 
-            unsubLayer = window.electronAPI.onLayerFullContextMenuCommand((command, layerIndex) => {
-                console.log(`Layer context menu command received: ${command} for ${layerIndex}`);
-                if (command === 'layer-rename') {
-                    const oldName = layers[layerIndex];
-                    setRenameModalConfig({
-                        title: 'Rename Layer',
-                        initialValue: oldName,
-                        onSave: (newName) => dispatch({ type: 'SET_LAYER_NAME', payload: { index: layerIndex, name: newName } })
-                    });
-                    setShowRenameModal(true);
-                } else if (command === 'layer-clear-clips') {
-                    dispatch({ type: 'DEACTIVATE_LAYER_CLIPS', payload: { layerIndex } });
-                }
-            });
+          }
 
-            unsubCtx = window.electronAPI.onContextMenuActionFromMain((action) => {
-                console.log(`General context menu action received:`, action);
-                if (action.type === 'rename-column') {
-                    const oldName = columns[action.index];
-                    setRenameModalConfig({
-                        title: 'Rename Column',
-                        initialValue: oldName,
-                        onSave: (newName) => dispatch({ type: 'SET_COLUMN_NAME', payload: { index: action.index, name: newName } })
-                    });
-                    setShowRenameModal(true);
-                } else if (action.type === 'rename-layer') { // Support for simpler layer menu if used
-                    const oldName = layers[action.index];
-                    setRenameModalConfig({
-                        title: 'Rename Layer',
-                        initialValue: oldName,
-                        onSave: (newName) => dispatch({ type: 'SET_LAYER_NAME', payload: { index: action.index, name: newName } })
-                    });
-                    setShowRenameModal(true);
-                }
-            });
+          
+
+          // Update workerId ref
+
+          if (currentWorkerId) prevWorkerIdsRef.current.set(`${i}-${j}`, currentWorkerId);
+
+          else prevWorkerIdsRef.current.delete(`${i}-${j}`);
+
         }
 
-        return () => {
-            if (unsubClip) unsubClip();
-            if (unsubLayer) unsubLayer();
-            if (unsubCtx) unsubCtx();
-        };
-    }, [clipContents, clipNames, layers, columns, ildaParserWorker, generatorWorker, state.clipClipboard]);
+      }
 
-  const prevThumbnailFrameIndexesRef = useRef(thumbnailFrameIndexes);
+      // Update the ref for the next render
+
+      prevThumbnailFrameIndexesRef.current = thumbnailFrameIndexes;
+
+    }, [thumbnailFrameIndexes, clipContents, layers.length, columns.length, ildaParserWorker]);
+
+  // Sync generator frames whenever their parameters change
   useEffect(() => {
-    // Find which thumbnails have changed and fetch new still frames
-    for (let i = 0; i < layers.length; i++) {
-      for (let j = 0; j < columns.length; j++) {
-        const currentIndex = thumbnailFrameIndexes[i][j];
-        const prevIndex = prevThumbnailFrameIndexesRef.current[i][j];
+    if (!generatorWorker) return;
 
-        if (currentIndex !== prevIndex) {
-          const clip = clipContents[i][j];
-          if (clip && clip.type === 'ilda' && clip.workerId) {
-            console.log(`[App.jsx] Fetching new still frame for ${i}-${j} at index ${currentIndex}`);
-            ildaParserWorker.postMessage({
-              type: 'get-frame',
-              workerId: clip.workerId,
-              frameIndex: currentIndex,
-              isStillFrame: true,
-              layerIndex: i,
-              colIndex: j,
-            });
+    clipContents.forEach((layer, layerIndex) => {
+      layer.forEach((clip, colIndex) => {
+        if (clip && clip.type === 'generator' && clip.generatorDefinition) {
+          const key = `${layerIndex}-${colIndex}`;
+          // Merge defaults for a stable comparison
+          const completeParams = { ...clip.generatorDefinition.defaultParams, ...(clip.currentParams || {}) };
+          const currentParamsJson = JSON.stringify(completeParams);
+          
+          if (prevGeneratorParamsRef.current.get(key) !== currentParamsJson) {
+            // Parameters changed (via MIDI, Quick Assign, or UI)
+            console.log(`[App.jsx] Generator ${key} params changed, regenerating...`);
+            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams);
+            prevGeneratorParamsRef.current.set(key, currentParamsJson);
           }
         }
-      }
-    }
-    // Update the ref for the next render
-    prevThumbnailFrameIndexesRef.current = thumbnailFrameIndexes;
-  }, [thumbnailFrameIndexes, clipContents, layers.length, columns.length, ildaParserWorker]);
+      });
+    });
+  }, [clipContents, generatorWorker]);
 
   // Re-parse ILDA files and re-generate generator frames on project load
   useEffect(() => {
@@ -1469,7 +1964,9 @@ function App() {
       // Listener for general menu actions like theme changes
       unlistenMenu = window.electronAPI.onMenuAction((action) => {
         console.log("Menu action received:", action);
-        if (action.startsWith('set-theme-')) {
+        if (action === 'output-settings') {
+          setShowOutputSettingsWindow(true);
+        } else if (action.startsWith('set-theme-')) {
           const themeColor = action.split('set-theme-')[1];
           dispatch({ type: 'SET_THEME', payload: themeColor });
         } else if (action === 'shortcuts-window' || (action.startsWith('open-') && action.endsWith('-settings'))) {
@@ -1553,16 +2050,12 @@ function App() {
         if (e.data.success) {
             const { layerIndex, colIndex, frames, generatorDefinition, currentParams } = e.data;
 
-            // Get the existing clip to preserve its effects and other properties
-            const existingClip = state.clipContents[layerIndex][colIndex] || {};
-
             const newClipContent = {
-                ...existingClip, // Preserve existing properties like effects
                 type: 'generator',
                 generatorDefinition,
                 frames,
                 currentParams,
-                playbackSettings: existingClip.playbackSettings || {
+                playbackSettings: {
                     mode: 'fps',
                     duration: frames.length / 60,
                     beats: 8,
@@ -1570,6 +2063,13 @@ function App() {
                 },
             };
             dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
+
+            // Only update the clip name if it's currently the default name
+            const currentName = clipNamesRef.current[layerIndex][colIndex];
+            const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
+            if (currentName === defaultPattern) {
+                dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
+            }
 
             // **NEW**: Also update liveFrames for this generated clip's workerId
             const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
@@ -1692,6 +2192,21 @@ function App() {
     frameIndexesRef.current = {};
   }, [resetAllAudio, pauseAllAudio]);
 
+  const handleClipPreview = useCallback((layerIndex, colIndex) => {
+      dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
+      const clip = clipContents[layerIndex][colIndex];
+      if (clip && clip.type === 'ilda') {
+          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames, generatorId: null, generatorParams: {} } });
+      } else if (clip && clip.type === 'generator') {
+          const generatorWorkerId = `generator-${layerIndex}-${colIndex}`; // Generate a workerId
+          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
+          console.log(`[App.jsx] handleClipPreview - Dispatched SET_SELECTED_ILDA_DATA for generator. workerId: ${generatorWorkerId}`); // DEBUG LOG
+      } else {
+        // Clip is empty, clear the selection data
+        dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: null, generatorParams: {} } });
+      }
+  }, [clipContents]);
+
   const handleActivateClick = useCallback((layerIndex, colIndex, isPress = true) => {
     const clip = clipContents[layerIndex][colIndex];
 
@@ -1727,7 +2242,7 @@ function App() {
         }
     }
 
-    if (clip && clip.type === 'generator' && clip.frames) {
+    if (clip && clip.type === 'generator' && clip.frames && clip.frames.length > 0) {
       const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
       // Ensure the frame is in liveFrames so WorldPreview can render it.
       liveFramesRef.current[generatorWorkerId] = clip.frames[0];
@@ -1746,8 +2261,22 @@ function App() {
     }
 
     dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } });
-  }, [clipContents, activeClipIndexes, handleDeactivateLayerClips, playAudio, isPlaying, stopAudio]);
 
+    // Capture still frame for thumbnail
+    if (clip) {
+        if (clip.type === 'ilda' && clip.workerId) {
+            const currentIndex = frameIndexesRef.current[clip.workerId] || 0;
+            dispatch({ type: 'UPDATE_THUMBNAIL', payload: { layerIndex, colIndex, frameIndex: currentIndex } });
+        } else if (clip.type === 'generator' && clip.frames) {
+            const currentIdx = frameIndexesRef.current[`generator-${layerIndex}-${colIndex}`] || 0;
+            const currentFrame = clip.frames[currentIdx % clip.frames.length];
+            if (currentFrame) {
+                dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame } } });
+            }
+        }
+    }
+  }, [clipContents, activeClipIndexes, handleDeactivateLayerClips, playAudio, isPlaying, stopAudio, handleClipPreview]);
+	
   const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectData) => {
       dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex, colIndex, effect: effectData } });
   }, []);
@@ -1756,21 +2285,6 @@ function App() {
     console.trace('App.jsx: handleDropDac received dacData:', dacData);
       dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
   }, []);
-
-  const handleClipPreview = useCallback((layerIndex, colIndex) => {
-      dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
-      const clip = clipContents[layerIndex][colIndex];
-      if (clip && clip.type === 'ilda') {
-          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames, generatorId: null, generatorParams: {} } });
-      } else if (clip && clip.type === 'generator') {
-          const generatorWorkerId = `generator-${layerIndex}-${colIndex}`; // Generate a workerId
-          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
-          console.log(`[App.jsx] handleClipPreview - Dispatched SET_SELECTED_ILDA_DATA for generator. workerId: ${generatorWorkerId}`); // DEBUG LOG
-      } else {
-        // Clip is empty, clear the selection data
-        dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: null, generatorParams: {} } });
-      }
-  }, [clipContents]);
 
   const handleShowLayerFullContextMenu = (layerIndex) => {
     if (window.electronAPI && window.electronAPI.showLayerFullContextMenu) {
@@ -1838,33 +2352,48 @@ function App() {
 
   const selectedClipFrame = useMemo(() => {
     const frame = liveFramesRef.current[selectedIldaWorkerId] || null;
-    if (frame && selectedClipFinalIntensity !== 1) {
-      return {
-        ...frame,
-        points: frame.points.map(p => ({
-          ...p,
-          r: Math.round(p.r * selectedClipFinalIntensity),
-          g: Math.round(p.g * selectedClipFinalIntensity),
-          b: Math.round(p.b * selectedClipFinalIntensity),
-        })),
-      };
+    if (frame && selectedClipFinalIntensity < 0.999) {
+      const isTyped = frame.isTypedArray || frame.points instanceof Float32Array;
+      if (isTyped) {
+          const pts = frame.points;
+          const numPts = pts.length / 8;
+          const newPts = new Float32Array(pts);
+          for (let i = 0; i < numPts; i++) {
+              newPts[i*8+3] *= selectedClipFinalIntensity;
+              newPts[i*8+4] *= selectedClipFinalIntensity;
+              newPts[i*8+5] *= selectedClipFinalIntensity;
+          }
+          return { ...frame, points: newPts, isTypedArray: true };
+      } else {
+          return {
+            ...frame,
+            points: frame.points.map(p => ({
+              ...p,
+              r: Math.round(p.r * selectedClipFinalIntensity),
+              g: Math.round(p.g * selectedClipFinalIntensity),
+              b: Math.round(p.b * selectedClipFinalIntensity),
+            })),
+          };
+      }
     }
     return frame;
   }, [frameTick, selectedIldaWorkerId, selectedClipFinalIntensity]);
 
-      const worldFrames = useMemo(() => {
-        const frames = {};
-        activeClipsData.forEach(clip => {
-          if (clip && clip.workerId && liveFramesRef.current[clip.workerId]) {
-            frames[clip.workerId] = {
-              frame: liveFramesRef.current[clip.workerId],
-              effects: clip.effects || [],
-              layerIndex: clip.layerIndex, // Add layerIndex here
-            };
-          }
-        });
-        return frames;
-      }, [activeClipsData, frameTick]);
+  const worldFrames = useMemo(() => {
+    const frames = {};
+    activeClipsData.forEach(clip => {
+      if (clip && clip.workerId && liveFramesRef.current[clip.workerId]) {
+        const currentLayerEffects = layerEffects[clip.layerIndex] || [];
+        const mergedEffects = [...(clip.effects || []), ...currentLayerEffects];
+        frames[clip.workerId] = {
+          frame: liveFramesRef.current[clip.workerId],
+          effects: mergedEffects,
+          layerIndex: clip.layerIndex, 
+        };
+      }
+    });
+    return frames;
+  }, [activeClipsData, frameTick, layerEffects]);
 
   const effectiveLayerIntensities = useMemo(() => {
       const isAnySolo = layerSolos.some(s => s);
@@ -1884,7 +2413,7 @@ function App() {
   const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon') => {
     // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
     // ALLOW value 0 if it's a clip trigger (to support Flash mode release)
-    if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_') && id !== 'bpm_value' && id !== 'bpm_fine_up' && id !== 'bpm_fine_down') return;
+    if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_') && id !== 'bpm_value' && id !== 'bpm_fine_up' && id !== 'bpm_fine_down' && !id.startsWith('quick_') && !id.startsWith('dimmer_')) return;
 
     const normalizedValue = value / maxValue;
 
@@ -1973,9 +2502,71 @@ function App() {
             if (value > 0) {
                 handleColumnTrigger(colIndex);
             }
+        } else if (id.startsWith('quick_knob_')) {
+            const index = parseInt(id.split('_')[2]);
+            dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'knob', index, value: normalizedValue } });
+        } else if (id.startsWith('quick_btn_')) {
+            const index = parseInt(id.split('_')[2]);
+            if (value > 0) { // Toggle on press
+                dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index } });
+            }
+        } else if (id.startsWith('dimmer_')) {
+            // Reconstruct the key: dimmer_192_168_1_50:1 -> 192.168.1.50:1
+            const cleanId = id.replace('dimmer_', '').replace(/_/g, '.');
+            const currentSettings = dacOutputSettings[cleanId] || {};
+            dispatch({ 
+                type: 'SET_DAC_OUTPUT_SETTINGS', 
+                payload: { 
+                    id: cleanId, 
+                    settings: { ...currentSettings, dimmer: normalizedValue } 
+                } 
+            });
+        } else {
+            // Check if it matches an effect parameter (e.g. rotate_angle)
+            // This applies to the CURRENTLY SELECTED CLIP
+            const parts = id.split('_');
+            if (parts.length >= 2) {
+                // Try to map to effect param
+                // Format could be "rotate_angle" or "color_r"
+                // We iterate selected clip effects to find a match
+                if (selectedLayerIndex !== null && selectedColIndex !== null) {
+                    const clip = clipContents[selectedLayerIndex][selectedColIndex];
+                    if (clip && clip.effects) {
+                        const effId = parts[0];
+                        const paramId = parts.slice(1).join('_'); // Handle params with underscores
+                        
+                        const effectIndex = clip.effects.findIndex(e => e.id === effId);
+                        if (effectIndex !== -1) {
+                            const def = effectDefinitions.find(d => d.id === effId);
+                            const ctrl = def?.paramControls.find(c => c.id === paramId);
+                            
+                            if (ctrl) {
+                                // Map normalized MIDI (0-1) to param range
+                                let newValue = normalizedValue;
+                                if (ctrl.type === 'range' || ctrl.type === 'number') {
+                                    newValue = ctrl.min + (ctrl.max - ctrl.min) * normalizedValue;
+                                } else if (ctrl.type === 'checkbox') {
+                                    newValue = normalizedValue > 0.5;
+                                }
+                                
+                                dispatch({ 
+                                    type: 'UPDATE_EFFECT_PARAMETER', 
+                                    payload: { 
+                                        layerIndex: selectedLayerIndex, 
+                                        colIndex: selectedColIndex, 
+                                        effectIndex, 
+                                        paramName: paramId, 
+                                        newValue 
+                                    } 
+                                });
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-  }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, handleClipPreview, handleActivateClick, handleColumnTrigger]);
+  }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, handleClipPreview, handleActivateClick, handleColumnTrigger, clipContents, selectedLayerIndex, selectedColIndex, dacOutputSettings]);
 
   return (
     <MidiProvider onMidiCommand={handleMidiCommand}>
@@ -1990,11 +2581,19 @@ function App() {
         activeClipIndexes={activeClipIndexes}
         theme={theme}
         bpm={state.bpm}
+        quickAssigns={state.quickAssigns}
     />
     <MidiMappingOverlay />
     <div className="app">
       <ErrorBoundary>
         <NotificationPopup message={notification.message} visible={notification.visible} />
+        <OutputSettingsWindow
+            show={showOutputSettingsWindow}
+            onClose={() => setShowOutputSettingsWindow(false)}
+            dacs={dacs}
+            dacSettings={dacOutputSettings}
+            onUpdateDacSettings={handleUpdateDacSettings}
+        />
         <RenameModal
             show={showRenameModal}
             title={renameModalConfig.title}
@@ -2053,6 +2652,7 @@ function App() {
                   isSolo={layerSolos[layerIndex]}
                   onToggleBlackout={() => dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex } })}
                   onToggleSolo={() => dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex } })}
+                  onLayerSelect={(idx) => dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex: idx, colIndex: null } })}
                 />
               );
             })}          </div>
@@ -2072,7 +2672,7 @@ function App() {
               {layers.map((layerName, layerIndex) => (
                 <div key={layerIndex} className="layer-row">
                   {columns.map((colName, colIndex) => {
-                    const currentClipContent = clipContents[layerIndex][colIndex];
+                    const currentClipContent = clipContents?.[layerIndex]?.[colIndex];
 
                     // Determine workerId for this clip to fetch frames
                     let clipWorkerId = null;
@@ -2083,14 +2683,14 @@ function App() {
                     }
 
                     const clipLiveFrame = clipWorkerId ? liveFramesRef.current[clipWorkerId] : null;
-                    const clipStillFrame = currentClipContent && currentClipContent.type === 'ilda' ? currentClipContent.stillFrame : (currentClipContent && currentClipContent.type === 'generator' ? currentClipContent.frames[0] : null);
+                    const clipStillFrame = currentClipContent?.stillFrame || (currentClipContent?.type === 'generator' ? currentClipContent.frames?.[0] : null);
 
                     return (
                       <Clip
                         key={colIndex}
                         layerIndex={layerIndex}
                         colIndex={colIndex}
-                        clipName={clipNames[layerIndex][colIndex]}
+                        clipName={clipNames?.[layerIndex]?.[colIndex] || `Clip ${layerIndex + 1}-${colIndex + 1}`}
                         clipContent={currentClipContent}
                         thumbnailFrameIndex={thumbnailFrameIndexes[layerIndex][colIndex]}
                         thumbnailRenderMode={thumbnailRenderMode} // Add this prop
@@ -2146,6 +2746,7 @@ function App() {
               beamRenderMode={beamRenderMode}
               layerIntensities={effectiveLayerIntensities}
               masterIntensity={masterIntensity}
+              dacSettings={selectedDac ? dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`] : null}
             />
 
           </div>
@@ -2169,10 +2770,36 @@ function App() {
           				<p> Right Section of Middle-Bar</p>
                       </div>
                     </div>          <div className="bottom-panel">
-            <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />
-            <GeneratorPanel />
-            <EffectPanel />
-            <DacPanel dacs={dacs} onDacSelected={handleDacSelected} onDacsDiscovered={handleDacsDiscovered} />
+            <div className="bottom-panel-tabs-container">
+                <div className="bottom-panel-tabs">
+                    <button className={`tab-button ${activeBottomTab === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab('files')}>Files</button>
+                    <button className={`tab-button ${activeBottomTab === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab('generators')}>Generators</button>
+                    <button className={`tab-button ${activeBottomTab === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab('effects')}>Effects</button>
+                </div>
+                <div className="bottom-panel-tab-content">
+                    {activeBottomTab === 'files' && <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />}
+                    {activeBottomTab === 'generators' && <GeneratorPanel />}
+                    {activeBottomTab === 'effects' && <EffectPanel />}
+                </div>
+            </div>
+            
+            <DacPanel 
+                dacs={dacs} 
+                onDacSelected={handleDacSelected} 
+                onDacsDiscovered={handleDacsDiscovered} 
+                dacSettings={dacOutputSettings}
+                onUpdateDacSettings={handleUpdateDacSettings}
+            />
+
+            <LayerSettingsPanel
+                selectedLayerIndex={selectedLayerIndex}
+                autopilotMode={selectedLayerIndex !== null ? state.layerAutopilots[selectedLayerIndex] : 'off'}
+                onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
+                layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
+                onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
+                onRemoveEffect={(index) => selectedLayerIndex !== null && dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex: index } })}
+                onParamChange={(effectIndex, paramName, val) => selectedLayerIndex !== null && dispatch({ type: 'UPDATE_LAYER_EFFECT_PARAMETER', payload: { layerIndex: selectedLayerIndex, effectIndex, paramName, newValue: val } })}
+            />
 
             <ClipSettingsPanel
               selectedLayerIndex={selectedLayerIndex}
@@ -2198,6 +2825,26 @@ function App() {
 
 			<SettingsPanel
               enabledShortcuts={enabledShortcuts}
+              onOpenOutputSettings={() => setShowOutputSettingsWindow(true)}
+              quickAssigns={state.quickAssigns}
+              onUpdateKnob={(i, v) => dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'knob', index: i, value: v } })}
+              onToggleButton={(i) => {
+                  const btn = state.quickAssigns.buttons[i];
+                  const link = btn.link;
+                  if (link) {
+                      if (link.targetType === 'transport') {
+                          if (link.paramName === 'play') handlePlay();
+                          else if (link.paramName === 'pause') handlePause();
+                          else if (link.paramName === 'stop') handleStop();
+                      } else if (link.targetType === 'global') {
+                          if (link.paramName === 'blackout') dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
+                          else if (link.paramName === 'laser_output') dispatch({ type: 'TOGGLE_WORLD_OUTPUT_ACTIVE' });
+                          else if (link.paramName === 'clear') handleClearAllActive();
+                      }
+                  }
+                  dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'button', index: i, value: !btn.value } });
+              }}
+              onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
             />
           </div>
         </div>
