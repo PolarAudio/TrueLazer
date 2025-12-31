@@ -519,6 +519,23 @@ function reducer(state, action) {
         newClipContents[layerIndex][colIndex] = { ...existingClip, parsing: status };
         return { ...state, clipContents: newClipContents };
     }
+    case 'SET_BULK_PARSING_STATUS': {
+        const newClipContents = [...state.clipContents];
+        // Clone all layers first to ensure immutability if any changes occur
+        // Optimization: only clone affected layers.
+        const affectedLayers = new Set(action.payload.map(p => p.layerIndex));
+        affectedLayers.forEach(lIdx => {
+             if(newClipContents[lIdx]) newClipContents[lIdx] = [...newClipContents[lIdx]];
+        });
+
+        action.payload.forEach(({ layerIndex, colIndex, status }) => {
+            if (newClipContents[layerIndex]) {
+                 const existingClip = newClipContents[layerIndex][colIndex] || {};
+                 newClipContents[layerIndex][colIndex] = { ...existingClip, parsing: status };
+            }
+        });
+        return { ...state, clipContents: newClipContents };
+    }
     case 'SET_THUMBNAIL_RENDER_MODE': {
       return { ...state, thumbnailRenderMode: action.payload };
 	}
@@ -553,7 +570,7 @@ function reducer(state, action) {
         loadedState.clipContents = loadedState.clipContents.map(layer =>
             layer.map(clip => {
                 if (clip && clip.type === 'ilda') {
-                    return { ...clip, workerId: null };
+                    return { ...clip, workerId: null, parsing: false };
                 }
                 return clip;
             })
@@ -2030,6 +2047,40 @@ function App() {
     };
   }, [ildaParserWorker]);
 
+  // Effect to trigger re-parsing of ILDA clips when workerId is missing (e.g. after load)
+  useEffect(() => {
+      if (!ildaParserWorker) return;
+
+      const clipsToParse = [];
+      clipContents.forEach((layer, layerIndex) => {
+          layer.forEach((clip, colIndex) => {
+              if (clip && clip.type === 'ilda' && clip.filePath && !clip.workerId && !clip.parsing) {
+                  clipsToParse.push({ layerIndex, colIndex, fileName: clip.fileName, filePath: clip.filePath });
+              }
+          });
+      });
+
+      if (clipsToParse.length > 0) {
+          console.log(`Triggering re-parse for ${clipsToParse.length} clips.`);
+          // Bulk update status to parsing
+          dispatch({ 
+              type: 'SET_BULK_PARSING_STATUS', 
+              payload: clipsToParse.map(c => ({ layerIndex: c.layerIndex, colIndex: c.colIndex, status: true })) 
+          });
+
+          // Send requests
+          clipsToParse.forEach(clip => {
+              ildaParserWorker.postMessage({
+                  type: 'load-and-parse-ilda',
+                  fileName: clip.fileName,
+                  filePath: clip.filePath,
+                  layerIndex: clip.layerIndex,
+                  colIndex: clip.colIndex
+              });
+          });
+      }
+  }, [clipContents, ildaParserWorker]);
+
   const selectedClipEffects = useMemo(() => {
     return selectedLayerIndex !== null && selectedColIndex !== null
       ? clipContents[selectedLayerIndex][selectedColIndex]?.effects || []
@@ -2099,9 +2150,9 @@ function App() {
     const completeParams = { ...generatorDefinition.defaultParams, ...params };
 
     let fontBuffer = null;
-    if (generatorDefinition.id === 'text') {
+    if (['text', 'ndi-source', 'spout-receiver'].includes(generatorDefinition.id)) {
       const defaultFontUrl = 'src/fonts/arial.ttf';
-      let fontUrl = completeParams.fontUrl;
+      let fontUrl = completeParams.fontUrl || defaultFontUrl;
 
       // Migration for old projects with dead URLs
       const deadUrls = [

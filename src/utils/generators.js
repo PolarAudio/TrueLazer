@@ -331,3 +331,57 @@ export function generateStar(params) {
     throw error;
   }
 }
+
+export async function generateNdiSource(params, fontBuffer) {
+    try {
+        const { sourceName, x, y, r, g, b, scale } = withDefaults(params, {
+            sourceName: 'NDI Input',
+            x: 0,
+            y: 0,
+            r: 255,
+            g: 255,
+            b: 255,
+            scale: 1.0
+        });
+        
+        // Use generateText to create a placeholder
+        // We use a smaller font size scaled by 'scale' param
+        const textParams = {
+            text: sourceName || 'NDI Input',
+            x, y, r, g, b,
+            fontSize: 72 * scale,
+            numPoints: 200
+        };
+        
+        return await generateText(textParams, fontBuffer);
+    } catch (error) {
+        console.error('Error in generateNdiSource:', error);
+        throw error;
+    }
+}
+
+export async function generateSpoutReceiver(params, fontBuffer) {
+    try {
+        const { sourceName, x, y, r, g, b, scale } = withDefaults(params, {
+            sourceName: 'Spout Input',
+            x: 0,
+            y: 0,
+            r: 255,
+            g: 255,
+            b: 255,
+            scale: 1.0
+        });
+        
+        const textParams = {
+            text: sourceName || 'Spout Input',
+            x, y, r, g, b,
+            fontSize: 72 * scale,
+            numPoints: 200
+        };
+        
+        return await generateText(textParams, fontBuffer);
+    } catch (error) {
+        console.error('Error in generateSpoutReceiver:', error);
+        throw error;
+    }
+}

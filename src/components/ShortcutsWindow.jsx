@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useMidi } from '../contexts/MidiContext';
+import { useArtnet } from '../contexts/ArtnetContext';
 import { initializeArtnet, getArtnetUniverses, sendArtnetData, closeArtnet } from '../utils/artnet';
 import { initializeOsc, sendOscMessage, addOscMessageListener, closeOsc } from '../utils/osc';
 
@@ -14,6 +15,13 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
     stopMapping,
     learningId // Optional: could show what is currently being learned
   } = useMidi();
+
+  const {
+      isMapping: isArtnetMapping,
+      startMapping: startArtnetMapping,
+      stopMapping: stopArtnetMapping,
+      learningId: artnetLearningId
+  } = useArtnet() || {};
 
   const [artnetInitialized, setArtnetInitialized] = useState(false);
   const [artnetUniverses, setArtnetUniverses] = useState([]);
@@ -112,6 +120,14 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
     }
   };
 
+  const toggleArtnetLearnMode = () => {
+    if (isArtnetMapping) {
+        stopArtnetMapping();
+    } else {
+        startArtnetMapping();
+    }
+  };
+
   const handleArtnetUniverseChange = (e) => {
     setSelectedArtnetUniverseId(e.target.value);
     const universeNumber = parseInt(e.target.value.replace('universe-', ''));
@@ -191,21 +207,37 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
           {artnetInitialized && artnetUniverses.length === 0 && <p>No Art-Net universes found (using placeholder).</p>}
           {artnetInitialized && artnetUniverses.length > 0 && (
             <div>
-              <label htmlFor="artnetUniverseSelect">Select Art-Net Universe:</label>
-              <select id="artnetUniverseSelect" value={selectedArtnetUniverseId} onChange={handleArtnetUniverseChange}>
-                {artnetUniverses.map(universe => (
-                  <option key={universe.id} value={universe.id}>{universe.name}</option>
-                ))}
-              </select>
-              <div>
-                <label htmlFor="artnetChannel">Channel:</label>
-                <input type="number" id="artnetChannel" min="0" max="511" value={artnetChannel} onChange={handleArtnetChannelChange} />
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px' }}>
+                <label htmlFor="artnetUniverseSelect" style={{ marginRight: '10px' }}>Select Art-Net Universe:</label>
+                <select id="artnetUniverseSelect" value={selectedArtnetUniverseId} onChange={handleArtnetUniverseChange}>
+                  {artnetUniverses.map(universe => (
+                    <option key={universe.id} value={universe.id}>{universe.name}</option>
+                  ))}
+                </select>
+                <button onClick={toggleArtnetLearnMode} style={{ marginLeft: '10px', backgroundColor: isArtnetMapping ? 'var(--theme-color)' : '' }}>
+                  {isArtnetMapping ? 'Stop Mapping' : 'Start Mapping'}
+                </button>
               </div>
-              <div>
-                <label htmlFor="artnetValue">Value:</label>
-                <input type="number" id="artnetValue" min="0" max="255" value={artnetValue} onChange={handleArtnetValueChange} />
+
+              {isArtnetMapping && (
+                 <p style={{color: 'var(--theme-color)'}}>DMX Mapping Mode Active: Click a button/slider to assign.</p>
+              )}
+              {artnetLearningId && (
+                  <p style={{color: 'yellow'}}>Waiting for DMX input for selected control...</p>
+              )}
+
+              <div style={{ borderTop: '1px solid #444', paddingTop: '10px', marginTop: '10px' }}>
+                <h4>Test Output</h4>
+                <div>
+                  <label htmlFor="artnetChannel">Channel:</label>
+                  <input type="number" id="artnetChannel" min="0" max="511" value={artnetChannel} onChange={handleArtnetChannelChange} />
+                </div>
+                <div>
+                  <label htmlFor="artnetValue">Value:</label>
+                  <input type="number" id="artnetValue" min="0" max="255" value={artnetValue} onChange={handleArtnetValueChange} />
+                </div>
+                <button onClick={handleSendArtnetData}>Send Art-Net Data</button>
               </div>
-              <button onClick={handleSendArtnetData}>Send Art-Net Data</button>
             </div>
           )}
         </div>

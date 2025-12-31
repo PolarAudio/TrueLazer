@@ -139,7 +139,7 @@ function sendFrame(ip, channel, frame, fps) {
         }
     }
 
-    const numPoints = isTyped ? (points.length / 8) : points.length;
+    const numPoints = Math.floor(isTyped ? (points.length / 8) : points.length);
     
     const pointSize = 8; // IDN point size in this implementation
     const frameDataSize = numPoints * pointSize;

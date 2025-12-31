@@ -327,7 +327,9 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       transformationEnabled: false,
       transformationMode: 'crop',
       testLineEnabled: false,
-      testLineY: 0.5
+      testLineY: 0.5,
+      flipX: false,
+      flipY: false
   };
 
   const updateCurrentSettings = (updates) => {
@@ -448,6 +450,14 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                         <div className="control-row" style={{marginBottom:10}}>
                              <label style={{flex:1}}>Enable Editing</label>
                              <input type="checkbox" checked={currentSettings.transformationEnabled} onChange={(e) => updateCurrentSettings({ transformationEnabled: e.target.checked })} />
+                        </div>
+                        <div className="control-row" style={{marginBottom:10}}>
+                             <label style={{flex:1}}>Flip X</label>
+                             <input type="checkbox" checked={currentSettings.flipX || false} onChange={(e) => updateCurrentSettings({ flipX: e.target.checked })} />
+                        </div>
+                        <div className="control-row" style={{marginBottom:10}}>
+                             <label style={{flex:1}}>Flip Y</label>
+                             <input type="checkbox" checked={currentSettings.flipY || false} onChange={(e) => updateCurrentSettings({ flipY: e.target.checked })} />
                         </div>
                         {currentSettings.transformationEnabled && (
                             <div className="control-row">
