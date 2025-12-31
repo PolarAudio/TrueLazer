@@ -201,7 +201,7 @@ export function applyEffects(frame, effects, context = {}) {
         }
         break;
       case 'chase':
-        applyChase(currentPoints, numPoints(), resolvedParams, time);
+        currentPoints = applyChase(currentPoints, numPoints(), resolvedParams, time, context);
         break;
       default:
         break;
@@ -659,26 +659,159 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
     return newBuffer;
 }
 
-export function applyChase(points, numPoints, params, time) {
-    const { steps, decay, speed } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
-    const t = time * 0.001 * speed;
-    const activeStep = Math.floor(t % steps);
-    const pointsPerStep = numPoints / steps;
+export function applyChase(points, numPoints, params, time, context = {}) {
+    const { steps, decay, speed, overlap, direction, useCustomOrder, customOrder } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
     
-    for(let i=0; i<numPoints; i++) {
-        const stepIndex = Math.floor(i / pointsPerStep);
-        const offset = i * 8;
-        let dist = Math.abs(stepIndex - activeStep);
-        if (dist > steps / 2) dist = steps - dist;
-        let intensity = 1.0;
-        if (dist > 0) {
-            intensity = Math.pow(decay, dist);
+    // Chase now operates on CHANNEL Intensity, not point geometry, if mapped to channels.
+    // However, effects.js processes "Frame Data".
+    // "Intensity output for each channel".
+    // If the frame is broadcast to multiple channels, this effect should MODIFY the intensity 
+    // SPECIFICALLY for the channel it is being rendered for.
+    // BUT `applyEffects` is usually called once per frame, NOT once per channel.
+    // Wait. `IldaPlayer` renders ONE frame. 
+    // If we want different output per channel, we need to know WHICH channel we are rendering for.
+    // The `context` passed to `applyEffects` might need to contain `targetChannel` or similar?
+    // In `App.jsx`, `animate` loops over `dacs`.
+    // It calls `applyEffects` for EACH dac if `delay` or `chase` needs it?
+    // Actually, `App.jsx` calls `applyEffects` ONCE globally for the clip.
+    // Then it sends the result to all DACs.
+    // UNLESS the effect is `delay` (which returns a buffer with `_channelDistributions`).
+    // If `chase` is like `delay`, it should probably return a buffer that `App.jsx` or `idn-communication` understands.
+    // `applyDelay` logic splits the frame into "Channel Distributions".
+    // If `chase` works similarly, it should create separate intensity maps?
+    // BUT `chase` logic described: "first channel is on while all other are off".
+    // This implies `Chase` is a Multi-Channel effect like `Delay`.
+    // So `applyChase` should likely behave like `applyDelay`:
+    // It receives the points, and it needs to assign them to channels with modified intensity.
+    // Actually, `applyDelay` creates echo frames.
+    // `Chase` just needs to modulate brightness based on the assigned channel index.
+    
+    // We need to know:
+    // 1. Total assigned channels (N).
+    // 2. Which channel is "active" at time T.
+    // 3. For each channel i, calculate intensity.
+    // 4. Return a structure that tells the renderer/sender what to send to each channel.
+    // `applyDelay` returns `newBuffer._channelDistributions`.
+    // We can use the same mechanism!
+    // We can create N copies of the frame (one for each channel).
+    // Modulate intensity for each copy.
+    // Combine them into one big buffer and set `_channelDistributions`.
+    
+    const { assignedDacs } = context || {};
+    // Determine channel mapping (like Delay)
+    let channelStepMap = new Map();
+    let numChannels = 0;
+
+    if (useCustomOrder) {
+        let list = [];
+        if (customOrder && Array.isArray(customOrder) && customOrder.length > 0) {
+            list = customOrder.map(item => (item.originalIndex !== undefined ? item.originalIndex : 0));
+        } else if (assignedDacs) {
+            list = assignedDacs.map((_, i) => i);
+        } else {
+            list = [0];
         }
-        points[offset+3] *= intensity;
-        points[offset+4] *= intensity;
-        points[offset+5] *= intensity;
-        if (intensity < 0.1) points[offset+6] = 1;
+        
+        list.forEach((dacIdx, stepIndex) => {
+            channelStepMap.set(dacIdx, stepIndex); // Map DAC Index -> Logical Step Index
+            numChannels++;
+        });
+    } else {
+        const dacs = assignedDacs || [];
+        numChannels = dacs.length || 1;
+        for(let i=0; i<numChannels; i++) {
+            let stepIndex = i; // Default linear
+             if (direction === 'right_to_left') {
+                stepIndex = numChannels - 1 - i;
+            } else if (direction === 'center_to_out') {
+                stepIndex = Math.floor(Math.abs(i - (numChannels - 1) / 2));
+            } else if (direction === 'out_to_center') {
+                stepIndex = Math.min(i, numChannels - 1 - i);
+            }
+            channelStepMap.set(i, stepIndex);
+        }
     }
+    
+    // If no channels, treat as single
+    if (numChannels === 0) numChannels = 1;
+
+    // Time-based Chase Position
+    // Cycle length = numChannels (or maxStep?)
+    // Actually, let's say cycle covers all channels.
+    const cycleLength = numChannels;
+    const t = (time * 0.001 * speed) % cycleLength;
+    
+    // Create big buffer
+    const pointsPerChannel = numPoints; 
+    const totalPoints = pointsPerChannel * numChannels; // We create a copy for EACH channel
+    const newBuffer = new Float32Array(totalPoints * 8);
+    
+    const distributions = new Map();
+    let offset = 0;
+    
+    // Iterate over PHYSICALLY ASSIGNED DACs (or 0..N-1 if simple)
+    // We need to iterate 0..N-1 to create the buffer segments.
+    // And map them to DACs.
+    
+    // Wait, channelStepMap keys are DAC indices.
+    // We should iterate over the Map entries.
+    
+    // If assignedDacs is missing, we simulate 1 channel?
+    const dacIndices = Array.from(channelStepMap.keys());
+    if (dacIndices.length === 0) dacIndices.push(0);
+    
+    for (const dacIndex of dacIndices) {
+        const stepIndex = channelStepMap.get(dacIndex) || 0;
+        
+        // Calculate Intensity for this channel
+        // Distance between 't' (active head) and 'stepIndex'.
+        // Circular distance? "Chase" usually loops.
+        
+        let dist = Math.abs(t - stepIndex);
+        // Handle wrap-around for loop
+        if (dist > cycleLength / 2) dist = cycleLength - dist;
+        
+        // Overlap Logic
+        // If dist < overlap/2 ?
+        // Let's say overlap=1 means only 1 active. overlap=2 means neighbors active.
+        // We use a bell curve or linear falloff.
+        // Intensity = 1 at dist=0. 0 at dist=overlap.
+        
+        let intensity = 0;
+        if (dist < overlap) {
+             intensity = 1.0 - (dist / overlap);
+             intensity = Math.max(0, intensity);
+             // Apply decay curve?
+             if (decay > 0) intensity = Math.pow(intensity, 1 - decay); // Modify curve
+        }
+        
+        // Copy points and Apply Intensity
+        const startOffset = offset;
+        for (let i = 0; i < numPoints; i++) {
+             const srcOff = i * 8;
+             const dstOff = offset + i * 8;
+             
+             newBuffer[dstOff] = points[srcOff];
+             newBuffer[dstOff+1] = points[srcOff+1];
+             newBuffer[dstOff+2] = points[srcOff+2] || 0;
+             
+             newBuffer[dstOff+3] = points[srcOff+3] * intensity;
+             newBuffer[dstOff+4] = points[srcOff+4] * intensity;
+             newBuffer[dstOff+5] = points[srcOff+5] * intensity;
+             
+             // Blanking: If intensity is near zero, force blank?
+             // Or keep color but dark?
+             // If very dark, maybe blank to save galvos?
+             newBuffer[dstOff+6] = (intensity < 0.05) ? 1 : (points[srcOff+6]);
+             newBuffer[dstOff+7] = points[srcOff+7];
+        }
+        
+        distributions.set(dacIndex, { start: startOffset, length: numPoints });
+        offset += numPoints * 8;
+    }
+    
+    newBuffer._channelDistributions = distributions;
+    return newBuffer;
 }
 
 export function applyOutputProcessing(frame, settings) {

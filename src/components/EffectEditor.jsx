@@ -4,9 +4,18 @@ import Mappable from './Mappable';
 import RangeSlider from './RangeSlider';
 import CollapsiblePanel from './CollapsiblePanel';
 
-const AnimationControls = ({ animSettings, onChange, controlDef }) => {
+// Icons as simple SVGs or characters
+const Icons = {
+    Backward: () => <span>&lt;|</span>,
+    Pause: () => <span>||</span>,
+    Forward: () => <span>|&gt;</span>,
+    Once: () => <span>-&gt;|</span>,
+    Bounce: () => <span>|&lt;-&gt;|</span>,
+    Loop: () => <span>Loop</span>
+};
+
+const AnimationControls = ({ animSettings, onChange }) => {
     const { 
-        range = [controlDef.min, controlDef.max], 
         direction = 'forward', 
         style = 'loop', 
         syncMode = null 
@@ -15,41 +24,29 @@ const AnimationControls = ({ animSettings, onChange, controlDef }) => {
     const update = (key, val) => onChange({ ...animSettings, [key]: val });
 
     return (
-        <div className="animation-controls-grid" style={{display: 'grid', gridTemplateRows: 'auto auto', gap: '5px'}}>
-            {/* Row 1: Range Selection */}
-            <div className="anim-row range-row" style={{ width: '100%' }}>
-                <RangeSlider 
-                    min={controlDef.min} 
-                    max={controlDef.max} 
-                    step={controlDef.step} 
-                    value={range}
-                    onChange={(newRange) => update('range', newRange)}
-                />
-            </div>
-            {/* Row 2: Settings Buttons */}
-            <div className="anim-row controls-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px' }}>
+        <div className="anim-row controls-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px' }}>
                  {/* Play Direction */}
                 <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
                     <button className={`speed-control-button ${direction === 'backward' ? 'active' : ''}`} onClick={() => update('direction', 'backward')} title="Backward" style={{flex:1, padding:0, fontSize:'10px'}}>
-						&lt;
+						&lt;|
 					</button>
                     <button className={`speed-control-button ${direction === 'pause' ? 'active' : ''}`} onClick={() => update('direction', 'pause')} title="Pause" style={{flex:1, padding:0, fontSize:'10px'}}>
 						||
 					</button>
                     <button className={`speed-control-button ${direction === 'forward' ? 'active' : ''}`} onClick={() => update('direction', 'forward')} title="Forward" style={{flex:1, padding:0, fontSize:'10px'}}>
-						&gt;
+						|&gt;
 					</button>
                 </div>
                  {/* Play Style */}
                 <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
                     <button className={`speed-control-button ${style === 'once' ? 'active' : ''}`} onClick={() => update('style', 'once')} title="Once" style={{flex:1, padding:0, fontSize:'10px'}}>
-                        |&gt;|
+                        -&gt;|
 					</button>
                     <button className={`speed-control-button ${style === 'bounce' ? 'active' : ''}`} onClick={() => update('style', 'bounce')} title="Bounce" style={{flex:1, padding:0, fontSize:'10px'}}>
-                        &lt;&gt;
+                        |&lt;&gt;|
 					</button>
                     <button className={`speed-control-button ${style === 'loop' ? 'active' : ''}`} onClick={() => update('style', 'loop')} title="Loop" style={{flex:1, padding:0, fontSize:'10px'}}>
-						O
+						Loop
 					</button>
                 </div>
                  {/* Sync Mode */}
@@ -58,7 +55,6 @@ const AnimationControls = ({ animSettings, onChange, controlDef }) => {
                     <button className={`speed-control-button ${syncMode === 'timeline' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'timeline' ? null : 'timeline')} style={{flex:1, padding:0, fontSize:'10px'}}>T</button>
                     <button className={`speed-control-button ${syncMode === 'bpm' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'bpm' ? null : 'bpm')} style={{flex:1, padding:0, fontSize:'10px'}}>B</button>
                 </div>
-            </div>
         </div>
     );
 };
@@ -79,26 +75,37 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
         }));
     };
 
+    // Range Logic
+    const currentRange = animSettings?.range || [control.min, control.max];
+    const handleRangeChange = (newRange) => {
+        onAnimChange({ ...animSettings, range: newRange });
+    };
+
     return (
         <div 
             className={`param-editor ${expanded ? 'expanded' : ''}`}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
-            style={{ marginBottom: '8px' }}
+            style={{ 
+                marginBottom: '8px', 
+                display: 'grid', 
+                gridTemplateColumns: '1fr', // Container grid
+                gap: '2px'
+            }}
         >
-             {/* Row 1: Label */}
-             <div className="param-row-label">
-                <label className="param-label" draggable onDragStart={handleDragStart}>{control.label}</label>
+             {/* Row 1: Label (Span 3 if we were using a 3-column grid for outer, but here we nest) */}
+             <div className="param-row-label" style={{ width: '100%' }}>
+                <label className="param-label" draggable onDragStart={handleDragStart} style={{fontSize: '11px', color: '#aaa'}}>{control.label}</label>
              </div>
 
-             {/* Row 2: Gear, Control, Value */}
-             <div className="param-row-control" style={{ display: 'flex', alignItems: 'center' }}>
+             {/* Row 2: Gear | RangeSlider | Value Input */}
+             <div className="param-row-control" style={{ display: 'grid', gridTemplateColumns: '20px 1fr 50px', gap: '5px', alignItems: 'center' }}>
+                {/* Col 1: Gear */}
                 <button 
                     className={`anim-toggle-btn ${expanded ? 'active' : ''}`}
                     style={{ 
-                        visibility: (hovered || expanded || animSettings.syncMode) ? 'visible' : 'hidden', 
-                        marginRight: '5px',
-                        background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: '0 2px'
+                        visibility: (hovered || expanded || animSettings?.syncMode) ? 'visible' : 'hidden', 
+                        background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 0, fontSize: '14px'
                     }}
                     onClick={() => setExpanded(!expanded)}
                     title="Animate"
@@ -106,81 +113,53 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
 					⚙
 				</button>
 
-                <div className="control-input-wrapper" style={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}>
-                    {control.type === 'range' && (
-                    <>
-                        {/* We use RangeSlider here as the Value slider? 
-                            User said: "One Slider for Value and range cropping". 
-                            If expanded, we show the RangeSlider controls in Row 3 (AnimationControls).
-                            But here we need to control the VALUE. 
-                            Wait, if we use RangeSlider for value, it returns [min, max].
-                            But effect value is a single number.
-                            So we use a standard slider here for the Value.
-                            The RangeSlider in AnimationControls controls the MIN/MAX BOUNDS of animation.
-                        */}
-                        <Mappable id={`${effectId}_${control.id}`} style={{flexGrow: 1, marginRight: '5px'}}>
-                        <input
-                            type="range"
-                            min={control.min}
-                            max={control.max}
-                            step={control.step}
-                            value={value}
-                            onChange={(e) => onChange(parseFloat(e.target.value))}
-                            className="param-slider"
-                            style={{width: '100%'}}
-                        />
+                {/* Col 2: Slider (Value & Range) */}
+                <div className="control-input-wrapper" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+                    {control.type === 'range' ? (
+                        <Mappable id={`${effectId}_${control.id}`} style={{width: '100%'}}>
+                            <RangeSlider
+                                min={control.min}
+                                max={control.max}
+                                step={control.step}
+                                value={value}
+                                rangeValue={currentRange}
+                                onChange={onChange} // Update Main Value
+                                onRangeChange={handleRangeChange} // Update Animation Range
+                                showRange={expanded} // Show Min/Max handles only when expanded
+                            />
                         </Mappable>
-                        <input
-                            type="number"
-                            value={typeof value === 'number' ? value.toFixed(2) : value}
-                            onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-                            className="param-number-input"
-                            step={control.step}
-                            style={{width: '50px'}}
-                        />
-                    </>
-                    )}
-                    {control.type === 'text' && (
-                    <input
-                        type="text"
-                        value={value}
-                        onChange={(e) => onChange(e.target.value)}
-                        className="param-text-input"
-                    />
-                    )}
-                    {control.type === 'checkbox' && (
-                    <div draggable onDragStart={handleDragStart}>
+                    ) : control.type === 'text' ? (
+                         <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className="param-text-input" />
+                    ) : control.type === 'checkbox' ? (
                         <Mappable id={`${effectId}_${control.id}`}>
-                        <input
-                            type="checkbox"
-                            checked={value}
-                            onChange={(e) => onChange(e.target.checked)}
-                            className="param-checkbox"
-                        />
+                         <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} className="param-checkbox" />
                         </Mappable>
-                    </div>
-                    )}
-                    {control.type === 'select' && (
-                    <select
-                        value={value}
-                        onChange={(e) => onChange(e.target.value)}
-                        className="param-select"
-                    >
-                        {control.options.map(option => (
-                        <option key={option} value={option}>{option}</option>
-                        ))}
-                    </select>
-                    )}
+                    ) : control.type === 'select' ? (
+                        <select value={value} onChange={(e) => onChange(e.target.value)} className="param-select">
+                            {control.options.map(option => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                    ) : null}
                 </div>
+
+                {/* Col 3: Value Display */}
+                 {control.type === 'range' && (
+                    <input
+                        type="number"
+                        value={typeof value === 'number' ? value.toFixed(2) : value}
+                        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+                        className="param-number-input"
+                        step={control.step}
+                        style={{width: '100%', fontSize: '10px'}}
+                    />
+                 )}
              </div>
 
-             {/* Row 3: Animation Settings (Unfolded) */}
-             {expanded && (control.type === 'range' || control.type === 'number') && (
-                 <div className="param-anim-settings" style={{ marginTop: '5px', padding: '5px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px' }}>
+             {/* Row 3: Animation Settings (Unfolded) - Spans full width */}
+             {expanded && (control.type === 'range') && (
+                 <div className="param-anim-settings" style={{ marginTop: '5px', padding: '5px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
                     <AnimationControls 
                         animSettings={animSettings} 
                         onChange={onAnimChange} 
-                        controlDef={control}
                     />
                  </div>
              )}

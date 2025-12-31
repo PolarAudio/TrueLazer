@@ -959,6 +959,20 @@ function createWindow() {
       throw error;
     }
   });
+
+  ipcMain.handle('save-thumbnail', async (event, arrayBuffer, filename) => {
+    try {
+      const tempPath = path.join(app.getPath('userData'), 'thumbnails');
+      await fs.promises.mkdir(tempPath, { recursive: true });
+      const filePath = path.join(tempPath, filename);
+      const buffer = Buffer.from(arrayBuffer);
+      await fs.promises.writeFile(filePath, buffer);
+      return filePath;
+    } catch (error) {
+      console.error('Failed to save thumbnail:', error);
+      throw error;
+    }
+  });
 }
 
 app.whenReady().then(() => {

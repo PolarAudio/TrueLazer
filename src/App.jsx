@@ -1080,12 +1080,19 @@ function App() {
   useEffect(() => {
     if (!ildaParserWorker) return;
 
-    const handleMessage = (e) => {
+    const handleMessage = async (e) => {
       if (e.data.type === 'get-frame' && e.data.success) {
         if (e.data.isStillFrame) {
           const { workerId, frame, layerIndex, colIndex } = e.data;
-          // Update stillFrame and set parsing status to false in a single SET_CLIP_CONTENT dispatch
-          dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false } } });
+          
+          // Generate Thumbnail
+          let thumbnailPath = null;
+          const currentClip = clipContentsRef.current[layerIndex]?.[colIndex];
+          const effects = currentClip?.effects || [];
+          thumbnailPath = await generateThumbnail(frame, effects);
+
+          // Update stillFrame and set parsing status to false
+          dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false, thumbnailPath } } });
         } else {
           liveFramesRef.current[e.data.workerId] = e.data.frame;
         }
@@ -1685,7 +1692,10 @@ function App() {
                           const currentIdx = frameIndexesRef.current[`generator-${layerIndex}-${colIndex}`] || 0;
                           const currentFrame = clipToUpdate.frames?.[currentIdx % clipToUpdate.frames.length];
                           if (currentFrame) {
-                              dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame } } });
+                              const effects = clipToUpdate.effects || [];
+                              generateThumbnail(currentFrame, effects).then(thumbnailPath => {
+                                  dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame, thumbnailPath } } });
+                              });
                           }
                       }
                   }

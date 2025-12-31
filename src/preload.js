@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld(
 	                                          ipcRenderer.on('update-audio-device-id', subscription);
 	                                          return () => ipcRenderer.removeListener('update-audio-device-id', subscription);
 	                                        },
+                                            saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
                                             // ArtNet
                                             initializeArtnet: () => ipcRenderer.invoke('initialize-artnet'),
                                             getArtnetUniverses: () => ipcRenderer.invoke('get-artnet-universes'),

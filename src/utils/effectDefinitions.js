@@ -163,11 +163,18 @@ export const effectDefinitions = [
         steps: 4,
         decay: 0.8,
         speed: 1.0,
+        overlap: 1,
+        direction: 'left_to_right',
+        useCustomOrder: false,
+        customOrder: [],
     },
     paramControls: [
         { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1 },
         { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
         { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 5.0, step: 0.1 },
+        { id: 'overlap', label: 'Overlap', type: 'range', min: 1, max: 4, step: 1 },
+        { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+        { id: 'direction', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
     ]
   },
   {
