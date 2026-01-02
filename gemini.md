@@ -168,14 +168,20 @@ New		|	|___idn-toolbox-master
 	(Loaded Clips,Render-settings,theme-color,slider-value,dac-assignment,last-opened-project.)
 *	Create a default folder path to save projects. like c:user/documents/truLazer/projects or C:User/Programm Files/TruLazer/..
 
-*		 "Save project"	Developing the save project system for users to save there project.
-			(In Developement)
+*		 "Save project"	System implemented. Projects save full state including clip paths, settings, and assignments. Loading re-initializes and re-parses ILDA files automatically.
+
+*		 "NDI/Spout Integration"	Implemented UI components and placeholder generators for NDI and Spout sources. Full video streaming integration requires native module compilation (currently on hold).
+
+**Done**
+
+*   **Fixed Chase Effect Crash:** Resolved a buffer overflow issue in `idn-communication.js` and `effects.js` caused by fractional point counts.
+*   **Save/Load Project:** Implemented full save/load functionality, including automatic re-parsing of ILDA files upon project load.
+*   **NDI/Spout UI:** Added "NDI Source" and "Spout Receiver" to the Generator Panel with placeholder text rendering.
+*   **Output Settings Mirroring:** Added Flip X and Flip Y controls to the Output Settings window for projector correction.
 
 **Next Steps:**
 
-*   Implement sending of real-time messages using `idn-communication.js`.
-
-*   Integrate NDI 5&6 by either grandiose or NDI SDK, Syphon, and Spout  streaming
+*   Investigate `grandiose` or `node-spout` compilation fixes or alternatives for full video streaming support.
 	
 
 	

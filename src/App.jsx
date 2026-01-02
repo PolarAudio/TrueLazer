@@ -519,6 +519,23 @@ function reducer(state, action) {
         newClipContents[layerIndex][colIndex] = { ...existingClip, parsing: status };
         return { ...state, clipContents: newClipContents };
     }
+    case 'SET_BULK_PARSING_STATUS': {
+        const newClipContents = [...state.clipContents];
+        // Clone all layers first to ensure immutability if any changes occur
+        // Optimization: only clone affected layers.
+        const affectedLayers = new Set(action.payload.map(p => p.layerIndex));
+        affectedLayers.forEach(lIdx => {
+             if(newClipContents[lIdx]) newClipContents[lIdx] = [...newClipContents[lIdx]];
+        });
+
+        action.payload.forEach(({ layerIndex, colIndex, status }) => {
+            if (newClipContents[layerIndex]) {
+                 const existingClip = newClipContents[layerIndex][colIndex] || {};
+                 newClipContents[layerIndex][colIndex] = { ...existingClip, parsing: status };
+            }
+        });
+        return { ...state, clipContents: newClipContents };
+    }
     case 'SET_THUMBNAIL_RENDER_MODE': {
       return { ...state, thumbnailRenderMode: action.payload };
 	}
@@ -553,7 +570,7 @@ function reducer(state, action) {
         loadedState.clipContents = loadedState.clipContents.map(layer =>
             layer.map(clip => {
                 if (clip && clip.type === 'ilda') {
-                    return { ...clip, workerId: null };
+                    return { ...clip, workerId: null, parsing: false };
                 }
                 return clip;
             })
@@ -849,6 +866,108 @@ const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerS
   return null;
 };
 
+const generateThumbnail = async (frame, effects, layerIndex, colIndex) => {
+    // Basic validation
+    if (!frame || !frame.points) return null;
+
+    // Apply effects to the frame for the thumbnail
+    // We pass a minimal context since we are generating a static thumbnail
+    let processedFrame = frame;
+    try {
+        if (effects && effects.length > 0) {
+             processedFrame = applyEffects(frame, effects, { 
+                progress: 0, 
+                time: 0, 
+                effectStates: {}, 
+                assignedDacs: [] 
+            });
+        }
+    } catch (e) {
+        console.warn("Failed to apply effects for thumbnail:", e);
+    }
+
+    const width = 128;
+    const height = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    // Fill background
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, width, height);
+
+    const points = processedFrame.points;
+    const isTyped = processedFrame.isTypedArray || (points instanceof Float32Array);
+    const numPoints = isTyped ? (points.length / 8) : points.length;
+
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    
+    let lastX = null;
+    let lastY = null;
+
+    for (let i = 0; i < numPoints; i++) {
+        let x, y, r, g, b, blanking;
+        if (isTyped) {
+            x = points[i*8];
+            y = points[i*8+1];
+            r = points[i*8+3];
+            g = points[i*8+4];
+            b = points[i*8+5];
+            blanking = points[i*8+6] > 0.5;
+        } else {
+            const p = points[i];
+            x = p.x;
+            y = p.y;
+            r = p.r;
+            g = p.g;
+            b = p.b;
+            blanking = p.blanking;
+        }
+
+        // Map Normalized Coordinates (-1 to 1) to Canvas (0 to width/height)
+        // Y is inverted in ILDA relative to Canvas (usually +Y is up, Canvas +Y is down)
+        const screenX = (x + 1) * 0.5 * width;
+        const screenY = (1 - (y + 1) * 0.5) * height;
+
+        if (!blanking) {
+            if (lastX !== null) {
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(screenX, screenY);
+                
+                // Color
+                const ir = Math.floor(Math.max(0, Math.min(1, r)) * 255);
+                const ig = Math.floor(Math.max(0, Math.min(1, g)) * 255);
+                const ib = Math.floor(Math.max(0, Math.min(1, b)) * 255);
+                
+                ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
+                ctx.stroke();
+            }
+        }
+
+        lastX = screenX;
+        lastY = screenY;
+    }
+
+    // Convert to Blob and then ArrayBuffer
+    try {
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const arrayBuffer = await blob.arrayBuffer();
+
+        if (window.electronAPI && window.electronAPI.saveThumbnail) {
+             // Deterministic filename based on slot
+             const filename = `thumb_L${layerIndex}_C${colIndex}.png`;
+             return await window.electronAPI.saveThumbnail(arrayBuffer, filename);
+        }
+    } catch (e) {
+        console.error("Error generating/saving thumbnail:", e);
+    }
+    
+    return null;
+};
+
 function App() {
   const ildaParserWorker = useIldaParserWorker();
   const generatorWorker = useGeneratorWorker();
@@ -1089,10 +1208,10 @@ function App() {
           let thumbnailPath = null;
           const currentClip = clipContentsRef.current[layerIndex]?.[colIndex];
           const effects = currentClip?.effects || [];
-          thumbnailPath = await generateThumbnail(frame, effects);
+          thumbnailPath = await generateThumbnail(frame, effects, layerIndex, colIndex);
 
           // Update stillFrame and set parsing status to false
-          dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false, thumbnailPath } } });
+          dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false, thumbnailPath, thumbnailVersion: Date.now() } } });
         } else {
           liveFramesRef.current[e.data.workerId] = e.data.frame;
         }
@@ -1123,9 +1242,8 @@ function App() {
             dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: fileName } });
         }
         
-        // Request the still frame using the saved index
-        const savedFrameIndex = state.thumbnailFrameIndexes[layerIndex][colIndex] || 0;
-        ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: savedFrameIndex, isStillFrame: true, layerIndex, colIndex });
+        // Removed redundant get-frame call to prevent duplicate thumbnail generation
+        // The useEffect watching workerBecameValid will trigger it
       } else if (e.data.success === false) {
         showNotification(`Worker error: ${e.data.error}`);
         const { layerIndex, colIndex } = e.data; // Get layerIndex and colIndex from error message
@@ -1693,8 +1811,8 @@ function App() {
                           const currentFrame = clipToUpdate.frames?.[currentIdx % clipToUpdate.frames.length];
                           if (currentFrame) {
                               const effects = clipToUpdate.effects || [];
-                              generateThumbnail(currentFrame, effects).then(thumbnailPath => {
-                                  dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame, thumbnailPath } } });
+                              generateThumbnail(currentFrame, effects, layerIndex, colIndex).then(thumbnailPath => {
+                                  dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame, thumbnailPath, thumbnailVersion: Date.now() } } });
                               });
                           }
                       }
@@ -2030,6 +2148,40 @@ function App() {
     };
   }, [ildaParserWorker]);
 
+  // Effect to trigger re-parsing of ILDA clips when workerId is missing (e.g. after load)
+  useEffect(() => {
+      if (!ildaParserWorker) return;
+
+      const clipsToParse = [];
+      clipContents.forEach((layer, layerIndex) => {
+          layer.forEach((clip, colIndex) => {
+              if (clip && clip.type === 'ilda' && clip.filePath && !clip.workerId && !clip.parsing) {
+                  clipsToParse.push({ layerIndex, colIndex, fileName: clip.fileName, filePath: clip.filePath });
+              }
+          });
+      });
+
+      if (clipsToParse.length > 0) {
+          console.log(`Triggering re-parse for ${clipsToParse.length} clips.`);
+          // Bulk update status to parsing
+          dispatch({ 
+              type: 'SET_BULK_PARSING_STATUS', 
+              payload: clipsToParse.map(c => ({ layerIndex: c.layerIndex, colIndex: c.colIndex, status: true })) 
+          });
+
+          // Send requests
+          clipsToParse.forEach(clip => {
+              ildaParserWorker.postMessage({
+                  type: 'load-and-parse-ilda',
+                  fileName: clip.fileName,
+                  filePath: clip.filePath,
+                  layerIndex: clip.layerIndex,
+                  colIndex: clip.colIndex
+              });
+          });
+      }
+  }, [clipContents, ildaParserWorker]);
+
   const selectedClipEffects = useMemo(() => {
     return selectedLayerIndex !== null && selectedColIndex !== null
       ? clipContents[selectedLayerIndex][selectedColIndex]?.effects || []
@@ -2099,9 +2251,9 @@ function App() {
     const completeParams = { ...generatorDefinition.defaultParams, ...params };
 
     let fontBuffer = null;
-    if (generatorDefinition.id === 'text') {
+    if (['text', 'ndi-source', 'spout-receiver'].includes(generatorDefinition.id)) {
       const defaultFontUrl = 'src/fonts/arial.ttf';
-      let fontUrl = completeParams.fontUrl;
+      let fontUrl = completeParams.fontUrl || defaultFontUrl;
 
       // Migration for old projects with dead URLs
       const deadUrls = [

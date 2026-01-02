@@ -973,6 +973,28 @@ function createWindow() {
       throw error;
     }
   });
+
+  ipcMain.handle('delete-thumbnail', async (event, filePath) => {
+      try {
+          if (!filePath) return { success: false };
+          // Security check: ensure the file is within the thumbnails directory
+          const thumbnailsDir = path.join(app.getPath('userData'), 'thumbnails');
+          if (!filePath.startsWith(thumbnailsDir)) {
+              console.warn(`Attempt to delete file outside thumbnails directory: ${filePath}`);
+              return { success: false, error: 'Access denied' };
+          }
+
+          await fs.promises.unlink(filePath);
+          return { success: true };
+      } catch (error) {
+          if (error.code === 'ENOENT') {
+              // File not found, which is fine
+              return { success: true };
+          }
+          console.error('Failed to delete thumbnail:', error);
+          return { success: false, error: error.message };
+      }
+  });
 }
 
 app.whenReady().then(() => {

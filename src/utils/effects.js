@@ -660,6 +660,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
+    numPoints = Math.floor(numPoints);
     const { steps, decay, speed, overlap, direction, useCustomOrder, customOrder } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
     
     // Chase now operates on CHANNEL Intensity, not point geometry, if mapped to channels.
@@ -816,7 +817,7 @@ export function applyChase(points, numPoints, params, time, context = {}) {
 
 export function applyOutputProcessing(frame, settings) {
     if (!settings || !frame || !frame.points) return frame;
-    const { safetyZones, outputArea, transformationEnabled, transformationMode } = settings;
+    const { safetyZones, outputArea, transformationEnabled, transformationMode, flipX, flipY } = settings;
     let points = frame.points;
     const isTyped = frame.isTypedArray || points instanceof Float32Array;
     const numPoints = isTyped ? (points.length / 8) : points.length;
@@ -845,6 +846,10 @@ export function applyOutputProcessing(frame, settings) {
             b = newPoints[i].b;
             blanking = newPoints[i].blanking ? 1 : 0;
         }
+
+        // Apply Mirroring (Projector Correction)
+        if (flipX) x = -x;
+        if (flipY) y = -y;
 
         if (transformationEnabled && outputArea) {
             let u = (x + 1) / 2;

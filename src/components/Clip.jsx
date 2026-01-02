@@ -179,15 +179,16 @@ const handleFilePathDrop = async (filePath, fileName) => {
             ) : (
                 <>
                     {/* Render Mode Logic */}
-                    {thumbnailRenderMode === 'active' ? (
+                    {thumbnailRenderMode === 'active' && clipContent ? (
                         /* Live Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
+                        /* Only render if clipContent exists to prevent blank box */
                         <IldaThumbnail frame={liveFrame || stillFrame} effects={clipContent?.effects} />
                     ) : (
                         /* Still Frame Mode */
                         /* If we have a generated thumbnail path, use it for efficiency */
                         (clipContent?.thumbnailPath && !isActive) ? (
                             <img 
-                                src={`file://${clipContent.thumbnailPath}?t=${Date.now()}`} // Add timestamp to force reload if updated
+                                src={`file://${clipContent.thumbnailPath}?v=${clipContent.thumbnailVersion || 0}`} // Add version timestamp to force reload if updated
                                 alt="thumbnail" 
                                 style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
                             />

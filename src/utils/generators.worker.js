@@ -1,4 +1,4 @@
-import { generateCircle, generateSquare, generateLine, generateText, generateStar } from './generators.js';
+import { generateCircle, generateSquare, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver } from './generators.js';
 
 self.onmessage = async (event) => {
   const { type, layerIndex, colIndex, generator, params } = event.data;
@@ -27,6 +27,12 @@ self.onmessage = async (event) => {
               break;
             case 'star':
               frames = [generateStar(currentParams)];
+              break;
+            case 'ndi-source':
+              frames = [await generateNdiSource(currentParams, event.data.fontBuffer)];
+              break;
+            case 'spout-receiver':
+              frames = [await generateSpoutReceiver(currentParams, event.data.fontBuffer)];
               break;
             default:
               frames = [{ points: [] }];
