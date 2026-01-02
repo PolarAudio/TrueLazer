@@ -43,3 +43,45 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Author and Copyright holder as of 2025-2026 Kevin Bahr (MAXQON)
 
+Version 1.0
+1. Definitions
+
+    "Software" refers to the source code and compiled binaries provided in this repository.
+
+    "Licensor" refers to the copyright holder (the owner of this GitHub repository).
+
+    "You" refers to the individual or entity exercising permissions granted by this License.
+
+2. Grant of Rights
+
+Subject to the terms and conditions of this License, the Licensor hereby grants You a non-exclusive, worldwide, royalty-free license to:
+
+    Use: Download, install, and run the compiled Software for any purpose (personal, internal, or commercial).
+
+    Modify: Create modifications, enhancements, or derivative works of the Source Code solely for personal use or for the purpose of contributing back to the original repository.
+
+3. Restrictions (The "No Distribution" Rule)
+
+This is a Source-Available license, not an Open-Source license. The following restrictions apply:
+
+    No Redistribution of Source: You may not host, mirror, or redistribute the source code or any modified versions of it on any other platform, website, or server.
+
+    No Redistribution of Binaries: You may not distribute the compiled software (original or modified) to third parties. All downloads must originate from the Licensor’s official GitHub repository.
+
+    No Commercial Resale: You are strictly prohibited from selling, leasing, or sublicensing the Software or any derivative works created from the source code.
+
+4. GitHub Forking & Contributions
+
+    Forking: You are permitted to "Fork" this repository within GitHub for the sole purpose of developing modifications or submitting Pull Requests to this project.
+
+    Contributions: By submitting a Pull Request, you grant the Licensor the right to incorporate your changes into the Software under these same license terms.
+
+5. Preservation of Notices
+
+You must retain all copyright, patent, and trademark notices from the original source code in any copies or modifications you make.
+
+6. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY.
+
+Author and Copyright holder as of 2025-2026 Kevin Bahr (MAXQON)
