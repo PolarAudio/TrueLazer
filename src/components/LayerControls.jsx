@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 import Mappable from './Mappable';
 
@@ -9,6 +9,10 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
   useEffect(() => {
     setAppliedEffects(layerEffects || []);
   }, [layerEffects]);
+
+  const combinedEffects = useMemo(() => {
+      return [...(activeClipData?.effects || []), ...(layerEffects || [])];
+  }, [activeClipData?.effects, layerEffects]);
 
   const handleContextMenu = (e) => {
     e.preventDefault();
@@ -91,7 +95,7 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
 			{activeClipData ? (
 				<IldaThumbnail 
                     frame={thumbnailRenderMode === 'still' ? activeClipData.stillFrame : liveFrame} 
-                    effects={[...(activeClipData.effects || []), ...(layerEffects || [])]}
+                    effects={combinedEffects}
                 />
 			) : (
          // Existing applied effects or placeholder
