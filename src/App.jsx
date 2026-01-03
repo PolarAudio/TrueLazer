@@ -1104,6 +1104,7 @@ function App() {
   const previousProgressRef = useRef({});
   const prevGeneratorParamsRef = useRef(new Map());
   const prevWorkerIdsRef = useRef(new Map()); // Add this
+  const lastNdiSourceNameRef = useRef(null); // Ref to track NDI source name across renders
 
   useEffect(() => {
     layerIntensitiesRef.current = layerIntensities;
@@ -1778,6 +1779,7 @@ function App() {
     }
 
 
+    // Cleanup on unmount
     return () => {
       ildaParserWorker.removeEventListener('message', handleMessage);
       cancelAnimationFrame(animationFrameId);
@@ -1994,6 +1996,9 @@ function App() {
     clipContents.forEach((layer, layerIndex) => {
       layer.forEach((clip, colIndex) => {
         if (clip && clip.type === 'generator' && clip.generatorDefinition) {
+          // Skip NDI source here as it's handled by the NDI frame loop
+          if (clip.generatorDefinition.id === 'ndi-source') return;
+
           const key = `${layerIndex}-${colIndex}`;
           // Merge defaults for a stable comparison
           const completeParams = { ...clip.generatorDefinition.defaultParams, ...(clip.currentParams || {}) };
@@ -2200,32 +2205,40 @@ function App() {
 
     const handleMessage = (e) => {
         if (e.data.success) {
-            const { layerIndex, colIndex, frames, generatorDefinition, currentParams } = e.data;
+            const { layerIndex, colIndex, frames, generatorDefinition, currentParams, isLive } = e.data;
 
-            const newClipContent = {
-                type: 'generator',
-                generatorDefinition,
-                frames,
-                currentParams,
-                playbackSettings: {
-                    mode: 'fps',
-                    duration: frames.length / 60,
-                    beats: 8,
-                    speedMultiplier: 1
-                },
-            };
-            dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
-
-            // Only update the clip name if it's currently the default name
-            const currentName = clipNamesRef.current[layerIndex][colIndex];
-            const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
-            if (currentName === defaultPattern) {
-                dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
-            }
-
-            // **NEW**: Also update liveFrames for this generated clip's workerId
+            // Update liveFrames ref regardless of whether it's a live update or param change
             const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
-            liveFramesRef.current[generatorWorkerId] = frames[0]; // Assuming frames[0] is the primary frame
+            liveFramesRef.current[generatorWorkerId] = frames[0];
+
+            // Only dispatch to state if it's NOT a live frame update (i.e., it's a parameter change)
+            if (!isLive) {
+                const newClipContent = {
+                    type: 'generator',
+                    generatorDefinition,
+                    frames,
+                    currentParams,
+                    playbackSettings: {
+                        mode: 'fps',
+                        duration: frames.length / 60,
+                        beats: 8,
+                        speedMultiplier: 1
+                    },
+                };
+                dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
+
+                // Only update the clip name if it's currently the default name
+                const currentName = clipNamesRef.current[layerIndex][colIndex];
+                const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
+                if (currentName === defaultPattern) {
+                    dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
+                }
+            } else {
+                // If it's a live frame update, signal ready for the next one
+                if (window.electronAPI && window.electronAPI.ndiSignalReady) {
+                    window.electronAPI.ndiSignalReady();
+                }
+            }
         } else {
             showNotification(`Error generating frames: ${e.data.error}`);
         }
@@ -2497,6 +2510,97 @@ function App() {
   const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null
     ? clipContents[selectedLayerIndex][selectedColIndex]
     : null;
+
+  // NDI Lifecycle Management
+  useEffect(() => {
+      if (!window.electronAPI || !generatorWorker) return;
+
+      const checkNdiClips = async () => {
+          // Find any active NDI clip
+          let activeNdiClip = null;
+          layers.forEach((_, layerIndex) => {
+              const activeColIndex = activeClipIndexes[layerIndex];
+              if (activeColIndex !== null) {
+                  const clip = clipContents[layerIndex][activeColIndex];
+                  if (clip && clip.type === 'generator' && clip.generatorDefinition?.id === 'ndi-source') {
+                      activeNdiClip = clip;
+                  }
+              }
+          });
+
+          // Also check selected clip for preview
+          if (!activeNdiClip && selectedClip?.type === 'generator' && selectedClip?.generatorDefinition?.id === 'ndi-source') {
+              activeNdiClip = selectedClip;
+          }
+
+          const currentSourceName = activeNdiClip?.currentParams?.sourceName;
+
+          if (currentSourceName && currentSourceName !== 'No Source') {
+              if (currentSourceName !== lastNdiSourceNameRef.current) {
+                  console.log(`[NDI] Switching to source: ${currentSourceName}`);
+                  await window.electronAPI.ndiCreateReceiver(currentSourceName);
+                  lastNdiSourceNameRef.current = currentSourceName;
+              }
+          } else if (lastNdiSourceNameRef.current) {
+              console.log(`[NDI] Destroying receiver`);
+              await window.electronAPI.ndiDestroyReceiver();
+              lastNdiSourceNameRef.current = null;
+          }
+      };
+
+      checkNdiClips();
+  }, [activeClipIndexes, clipContents, selectedClip, layers]);
+
+  // Sync NDI Settings (Resolution)
+  useEffect(() => {
+      const activeNdiClip = [...activeClipsData, selectedClip].find(c => c?.type === 'generator' && c?.generatorDefinition?.id === 'ndi-source');
+      if (activeNdiClip && window.electronAPI?.ndiUpdateSettings) {
+          const { captureWidth, captureHeight } = activeNdiClip.currentParams || {};
+          if (captureWidth && captureHeight) {
+              window.electronAPI.ndiUpdateSettings({ width: captureWidth, height: captureHeight });
+          }
+      }
+  }, [activeClipsData, selectedClip]);
+
+  // NDI Frame Handling
+  useEffect(() => {
+      if (!window.electronAPI || !generatorWorker) return;
+
+      const unsubscribe = window.electronAPI.onNdiFrame((frame) => {
+          // Forward frame to generator worker for processing
+          // Use refs for high-frequency loop to avoid closure staleness and overhead
+          activeClipIndexesRef.current.forEach((activeColIndex, layerIndex) => {
+              if (activeColIndex === null) return;
+              const clip = clipContentsRef.current[layerIndex][activeColIndex];
+              if (clip && clip.type === 'generator' && clip.generatorDefinition?.id === 'ndi-source') {
+                  generatorWorker.postMessage({
+                      type: 'generate',
+                      layerIndex,
+                      colIndex: activeColIndex,
+                      generator: clip.generatorDefinition,
+                      params: { ...clip.generatorDefinition.defaultParams, ...clip.currentParams },
+                      ndiFrame: frame, // Pass the raw frame data
+                      isLive: true // Flag to indicate this is a live frame update
+                  });
+              }
+          });
+
+          // Also handle selected clip preview
+          if (selectedClip?.type === 'generator' && selectedClip?.generatorDefinition?.id === 'ndi-source') {
+              generatorWorker.postMessage({
+                  type: 'generate',
+                  layerIndex: selectedLayerIndex,
+                  colIndex: selectedColIndex,
+                  generator: selectedClip.generatorDefinition,
+                  params: { ...selectedClip.generatorDefinition.defaultParams, ...selectedClip.currentParams },
+                  ndiFrame: frame,
+                  isLive: true
+              });
+          }
+      });
+
+      return () => unsubscribe();
+  }, [activeClipIndexes, clipContents, selectedClip, selectedLayerIndex, selectedColIndex, layers, generatorWorker]);
 
   const selectedClipLayerIndex = selectedClip ? selectedLayerIndex : null;
   const selectedClipLayerIntensity = selectedClipLayerIndex !== null ? layerIntensities[selectedClipLayerIndex] : 1;

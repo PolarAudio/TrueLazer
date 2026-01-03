@@ -4,8 +4,35 @@ import path, { dirname } from 'path';
 import fs from 'fs';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
 import * as dacCommunication from './main/dac-communication.cjs';
 const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll } = dacCommunication;
+
+// Load Native NDI Wrapper
+let ndi;
+try {
+    const nativeModulePath = app.isPackaged 
+        ? path.join(process.resourcesPath, 'app.asar.unpacked', 'native', 'build', 'Release')
+        : path.join(__dirname, 'native', 'build', 'Release');
+
+    // On Windows, we need to ensure the DLL is in the search path
+    if (process.platform === 'win32') {
+        process.env.PATH = nativeModulePath + path.delimiter + process.env.PATH;
+    }
+
+    const ndiModule = require(path.join(nativeModulePath, 'ndi_wrapper.node'));
+    ndi = new ndiModule.NdiWrapper();
+    console.log('NDI Wrapper loaded successfully from:', nativeModulePath);
+    if (ndi.initialize()) {
+        console.log('NDI initialized');
+    } else {
+        console.error('Failed to initialize NDI');
+    }
+} catch (e) {
+    console.error('Failed to load NDI wrapper:', e);
+}
 
 // Fix for "Unable to move the cache: Zugriff verweigert (0x5)"
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
@@ -848,7 +875,8 @@ function createWindow() {
 
   ipcMain.handle('read-file-content', async (event, filePath) => {
     try {
-      const content = await fs.promises.readFile(filePath);
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      const content = await fs.promises.readFile(fullPath);
       return content;
     } catch (error) {
       console.error('Failed to read file content:', error);
@@ -858,7 +886,8 @@ function createWindow() {
 
   ipcMain.handle('read-ild-files', async (event, directoryPath) => {
     try {
-      const files = await fs.promises.readdir(directoryPath);
+      const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
+      const files = await fs.promises.readdir(fullPath);
       const ildFiles = files
         .filter(file => file.toLowerCase().endsWith('.ild'))
         .map(file => path.join(directoryPath, file));
@@ -870,7 +899,8 @@ function createWindow() {
   });
   ipcMain.handle('read-file-as-binary', async (event, filePath) => {
   try {
-    const buffer = await fs.promises.readFile(filePath);
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+    const buffer = await fs.promises.readFile(fullPath);
     return buffer;
   } catch (error) {
     console.error('Error reading file:', error);
@@ -880,7 +910,8 @@ function createWindow() {
 
   ipcMain.handle('read-file-for-worker', async (event, filePath) => {
     try {
-      const buffer = await fs.promises.readFile(filePath);
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      const buffer = await fs.promises.readFile(fullPath);
       // Convert Node.js Buffer to ArrayBuffer for transfer to worker
       const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
       return arrayBuffer;
@@ -995,6 +1026,55 @@ function createWindow() {
           return { success: false, error: error.message };
       }
   });
+
+  // NDI IPC Handlers
+  let ndiCaptureSettings = { width: 1280, height: 720 };
+
+  ipcMain.handle('ndi-update-settings', (event, settings) => {
+      if (settings.width) ndiCaptureSettings.width = settings.width;
+      if (settings.height) ndiCaptureSettings.height = settings.height;
+      return true;
+  });
+
+  ipcMain.handle('ndi-find-sources', async () => {
+      if (!ndi) return [];
+      return ndi.findSources();
+  });
+
+  ipcMain.handle('ndi-create-receiver', async (event, sourceName) => {
+      if (!ndi) return false;
+      return ndi.createReceiver(sourceName);
+  });
+
+  ipcMain.handle('ndi-capture-video', async () => {
+      if (!ndi) return null;
+      return ndi.captureVideo();
+  });
+
+  ipcMain.handle('ndi-destroy-receiver', async () => {
+      if (!ndi) return;
+      ndi.destroyReceiver();
+  });
+
+  // Flow control for NDI frames to prevent IPC backlog
+  let isRendererReadyForNdi = true;
+  ipcMain.on('ndi-renderer-ready', () => {
+      isRendererReadyForNdi = true;
+  });
+
+  // Background NDI Capture Loop
+  const ndiCaptureLoop = async () => {
+      if (ndi && mainWindow && !mainWindow.isDestroyed() && isRendererReadyForNdi) {
+          // Use dynamic capture resolution
+          const frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
+          if (frame) {
+              isRendererReadyForNdi = false; // Wait for renderer to process
+              mainWindow.webContents.send('ndi-frame', frame);
+          }
+      }
+      setTimeout(ndiCaptureLoop, 33); // Poll at ~30fps
+  };
+  ndiCaptureLoop();
 }
 
 app.whenReady().then(() => {
@@ -1008,6 +1088,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  if (ndi) {
+      ndi.destroyReceiver();
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }

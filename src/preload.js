@@ -114,4 +114,16 @@ contextBridge.exposeInMainWorld(
                                                 ipcRenderer.on('osc-message-received', listener);
                                                 return () => ipcRenderer.removeListener('osc-message-received', listener);
                                             },
+                                            // NDI
+                                            ndiFindSources: () => ipcRenderer.invoke('ndi-find-sources'),
+                                            ndiUpdateSettings: (settings) => ipcRenderer.invoke('ndi-update-settings', settings),
+                                            ndiCreateReceiver: (sourceName) => ipcRenderer.invoke('ndi-create-receiver', sourceName),
+                                            ndiCaptureVideo: () => ipcRenderer.invoke('ndi-capture-video'),
+                                            ndiDestroyReceiver: () => ipcRenderer.invoke('ndi-destroy-receiver'),
+                                            ndiSignalReady: () => ipcRenderer.send('ndi-renderer-ready'),
+                                            onNdiFrame: (callback) => {
+                                                const listener = (event, frame) => callback(frame);
+                                                ipcRenderer.on('ndi-frame', listener);
+                                                return () => ipcRenderer.removeListener('ndi-frame', listener);
+                                            },
 	                          	          }	        );

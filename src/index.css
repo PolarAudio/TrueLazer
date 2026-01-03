@@ -2077,3 +2077,14 @@ div[data-mappable-id^='quick_btn_'].active,
 	position: absolute;
 	margin-block: 0;
 }
+
+.ndi-item {
+    background-color: #004a99 !important;
+    color: white;
+    border: 1px solid #0089ff;
+}
+
+.ndi-item:hover {
+    background-color: #005aff !important;
+}
+

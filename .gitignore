@@ -149,3 +149,20 @@ OpenIDN-Laser-DAC-Framework-main
 /sdk/OpenIDN-Laser-DAC-Framework
 src/fonts/vgafix.fon
 Showbridge_Showtower_Requirements.md
+
+# NDI 6 SDK - Keep only minimal build files
+/sdk/NDI 6 SDK/*
+!/sdk/NDI 6 SDK/Include/
+!/sdk/NDI 6 SDK/Include/**
+!/sdk/NDI 6 SDK/Libv6/
+!/sdk/NDI 6 SDK/Libv6/x64/
+!/sdk/NDI 6 SDK/Libv6/x64/Processing.NDI.Lib.x64.lib
+!/sdk/NDI 6 SDK/Bin/
+!/sdk/NDI 6 SDK/Bin/x64/
+!/sdk/NDI 6 SDK/Bin/x64/Processing.NDI.Lib.x64.dll
+
+# Native addons
+native/build/
+native/node_modules/
+
+

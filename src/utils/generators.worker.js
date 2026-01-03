@@ -29,7 +29,7 @@ self.onmessage = async (event) => {
               frames = [generateStar(currentParams)];
               break;
             case 'ndi-source':
-              frames = [await generateNdiSource(currentParams, event.data.fontBuffer)];
+              frames = [await generateNdiSource(currentParams, event.data.fontBuffer, event.data.ndiFrame)];
               break;
             case 'spout-receiver':
               frames = [await generateSpoutReceiver(currentParams, event.data.fontBuffer)];
@@ -50,6 +50,7 @@ self.onmessage = async (event) => {
           frames,
           generatorDefinition: generator, // Send back the original definition
           currentParams: currentParams, // Send back the params used for generation
+          isLive: event.data.isLive // Pass through the live flag
         });
         break;
       default:
