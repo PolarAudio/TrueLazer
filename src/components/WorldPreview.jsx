@@ -31,11 +31,14 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
   useEffect(() => {
     if (!worker) return;
 
-    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects, layerIndex }]) => ({
+    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects, layerIndex, syncSettings, bpm, clipDuration }]) => ({
       frames: [frame],
       effects: effects,
       workerId: workerId,
       layerIndex,
+      syncSettings,
+      bpm,
+      clipDuration
     }));
 
     worker.postMessage({

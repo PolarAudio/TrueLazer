@@ -1,0 +1,317 @@
+No.     Time               Source                Destination           Protocol Length Info
+     20 16:27:27,725434    169.254.25.104        255.255.255.255       DMX Channels 572    ArtDMX Seq=77 Port=0 Univ=0
+
+Frame 20: Packet, 572 bytes on wire (4576 bits), 572 bytes captured (4576 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 64802, Dst Port: 6454
+Art-Net, Opcode: ArtDMX (0x5000)
+DMX Channels
+
+No.     Time               Source                Destination           Protocol Length Info
+     21 16:27:28,017954    169.254.235.200       255.255.255.255       UDP      78     7654 → 7654 Len=36
+
+Frame 21: Packet, 78 bytes on wire (624 bits), 78 bytes captured (624 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 7654, Dst Port: 7654
+Data (36 bytes)
+
+0000  9a c0 91 22 c8 ea 28 00 03 00 ff 0e 20 bf 02 00   ..."..(..... ...
+0010  00 00 01 00 00 00 00 00 00 00 ea 01 00 00 00 00   ................
+0020  6b 64 34 03                                       kd4.
+    Data: 9ac09122c8ea28000300ff0e20bf020000000100000000000000ea01000000006b643403
+    [Length: 36]
+
+No.     Time               Source                Destination           Protocol Length Info
+     22 16:27:28,726460    169.254.25.104        255.255.255.255       DMX Channels 572    ArtDMX Seq=78 Port=0 Univ=0
+
+Frame 22: Packet, 572 bytes on wire (4576 bits), 572 bytes captured (4576 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 64802, Dst Port: 6454
+Art-Net, Opcode: ArtDMX (0x5000)
+DMX Channels
+
+No.     Time               Source                Destination           Protocol Length Info
+     23 16:27:29,018708    169.254.235.200       255.255.255.255       UDP      78     7654 → 7654 Len=36
+
+Frame 23: Packet, 78 bytes on wire (624 bits), 78 bytes captured (624 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 7654, Dst Port: 7654
+Data (36 bytes)
+
+0000  9a c0 91 22 c8 ea 28 00 03 00 ff 0e 20 bf 02 00   ..."..(..... ...
+0010  00 00 01 00 00 00 00 00 00 00 ea 01 00 00 00 00   ................
+0020  6b 64 34 03                                       kd4.
+    Data: 9ac09122c8ea28000300ff0e20bf020000000100000000000000ea01000000006b643403
+    [Length: 36]
+
+No.     Time               Source                Destination           Protocol Length Info
+     24 16:27:29,237310    169.254.25.104        169.254.235.200       TCP      66     63201 → 7765 [SYN] Seq=0 Win=64240 Len=0 MSS=1460 WS=256 SACK_PERM
+
+Frame 24: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 63201, Dst Port: 7765, Seq: 0, Len: 0
+
+No.     Time               Source                Destination           Protocol Length Info
+     25 16:27:29,237392    169.254.235.200       169.254.25.104        TCP      62     7765 → 63201 [SYN, ACK] Seq=0 Ack=1 Win=5840 Len=0 MSS=1460 SACK_PERM
+
+Frame 25: Packet, 62 bytes on wire (496 bits), 62 bytes captured (496 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 63201, Seq: 0, Ack: 1, Len: 0
+
+No.     Time               Source                Destination           Protocol Length Info
+     26 16:27:29,237470    169.254.25.104        169.254.235.200       TCP      54     63201 → 7765 [ACK] Seq=1 Ack=1 Win=64240 Len=0
+
+Frame 26: Packet, 54 bytes on wire (432 bits), 54 bytes captured (432 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 63201, Dst Port: 7765, Seq: 1, Ack: 1, Len: 0
+
+No.     Time               Source                Destination           Protocol Length Info
+     27 16:27:29,237792    169.254.235.200       169.254.25.104        TCP      76     7765 → 63201 [PSH, ACK] Seq=1 Ack=1 Win=5840 Len=22
+
+Frame 27: Packet, 76 bytes on wire (608 bits), 76 bytes captured (608 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 63201, Seq: 1, Ack: 1, Len: 22
+Data (22 bytes)
+
+0000  61 3f 00 00 01 00 00 00 00 00 00 00 ea 01 00 00   a?..............
+0010  00 00 6b 64 34 03                                 ..kd4.
+    Data: 613f00000100000000000000ea01000000006b643403
+    [Length: 22]
+
+No.     Time               Source                Destination           Protocol Length Info
+     28 16:27:29,239846    169.254.25.104        169.254.235.200       TCP      55     63201 → 7765 [PSH, ACK] Seq=1 Ack=23 Win=64218 Len=1
+
+Frame 28: Packet, 55 bytes on wire (440 bits), 55 bytes captured (440 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 63201, Dst Port: 7765, Seq: 1, Ack: 23, Len: 1
+Data (1 byte)
+
+0000  3f                                                ?
+    Data: 3f
+    [Length: 1]
+
+No.     Time               Source                Destination           Protocol Length Info
+     29 16:27:29,239926    169.254.235.200       169.254.25.104        TCP      76     7765 → 63201 [PSH, ACK] Seq=23 Ack=2 Win=5839 Len=22
+
+Frame 29: Packet, 76 bytes on wire (608 bits), 76 bytes captured (608 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 63201, Seq: 23, Ack: 2, Len: 22
+Data (22 bytes)
+
+0000  61 3f 00 00 01 00 00 00 00 00 00 00 ea 01 00 00   a?..............
+0010  00 00 6b 64 34 03                                 ..kd4.
+    Data: 613f00000100000000000000ea01000000006b643403
+    [Length: 22]
+
+No.     Time               Source                Destination           Protocol Length Info
+     30 16:27:29,240792    169.254.25.104        169.254.235.200       TCP      55     63201 → 7765 [PSH, ACK] Seq=2 Ack=45 Win=64196 Len=1
+
+Frame 30: Packet, 55 bytes on wire (440 bits), 55 bytes captured (440 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 63201, Dst Port: 7765, Seq: 2, Ack: 45, Len: 1
+Data (1 byte)
+
+0000  63                                                c
+    Data: 63
+    [Length: 1]
+
+No.     Time               Source                Destination           Protocol Length Info
+     31 16:27:29,240895    169.254.235.200       169.254.25.104        TCP      76     7765 → 63201 [PSH, ACK] Seq=45 Ack=3 Win=5838 Len=22
+
+Frame 31: Packet, 76 bytes on wire (608 bits), 76 bytes captured (608 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 63201, Seq: 45, Ack: 3, Len: 22
+Data (22 bytes)
+
+0000  61 63 00 00 01 00 00 00 00 00 00 00 ea 01 00 00   ac..............
+0010  00 00 6b 64 34 03                                 ..kd4.
+    Data: 616300000100000000000000ea01000000006b643403
+    [Length: 22]
+
+No.     Time               Source                Destination           Protocol Length Info
+     32 16:27:29,242601    169.254.25.104        169.254.235.200       TCP      1502   63201 → 7765 [PSH, ACK] Seq=3 Ack=67 Win=64174 Len=1448
+
+Frame 32: Packet, 1502 bytes on wire (12016 bits), 1502 bytes captured (12016 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 63201, Dst Port: 7765, Seq: 3, Ack: 67, Len: 1448
+Data (1448 bytes)
+
+0000  71 30 75 00 00 64 50 00 00 00 00 40 00 00 ff ff   q0u..dP....@....
+0010  ff ff ff ff ff ff 00 00 00 00 00 00 df 3f 05 04   .............?..
+0020  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 7e 3f   ..............~?
+0030  05 08 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   ................
+0040  dd 3e fe 0b ff ff ff ff ff ff ff ff 00 00 00 00   .>..............
+0050  00 00 fd 3d ea 0f ff ff ff ff ff ff ff ff 00 00   ...=............
+0060  00 00 00 00 de 3c c7 13 ff ff ff ff ff ff ff ff   .....<..........
+0070  00 00 00 00 00 00 81 3b 8f 17 ff ff ff ff ff ff   .......;........
+0080  ff ff 00 00 00 00 00 00 e8 39 40 1b ff ff ff ff   .........9@.....
+0090  ff ff ff ff 00 00 00 00 00 00 15 38 d5 1e ff ff   ...........8....
+00a0  ff ff ff ff ff ff 00 00 00 00 00 00 09 36 4b 22   .............6K"
+00b0  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 c7 33   ...............3
+00c0  9e 25 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   .%..............
+00d0  50 31 cb 28 ff ff ff ff ff ff ff ff 00 00 00 00   P1.(............
+00e0  00 00 a7 2e cf 2b ff ff ff ff ff ff ff ff 00 00   .....+..........
+00f0  00 00 00 00 cf 2b a7 2e ff ff ff ff ff ff ff ff   .....+..........
+0100  00 00 00 00 00 00 cb 28 50 31 ff ff ff ff ff ff   .......(P1......
+0110  ff ff 00 00 00 00 00 00 9e 25 c7 33 ff ff ff ff   .........%.3....
+0120  ff ff ff ff 00 00 00 00 00 00 4b 22 09 36 ff ff   ..........K".6..
+0130  ff ff ff ff ff ff 00 00 00 00 00 00 d5 1e 15 38   ...............8
+0140  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 40 1b   ..............@.
+0150  e8 39 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   .9..............
+0160  8f 17 81 3b ff ff ff ff ff ff ff ff 00 00 00 00   ...;............
+0170  00 00 c7 13 de 3c ff ff ff ff ff ff ff ff 00 00   .....<..........
+0180  00 00 00 00 ea 0f fd 3d ff ff ff ff ff ff ff ff   .......=........
+0190  00 00 00 00 00 00 fe 0b dd 3e ff ff ff ff ff ff   .........>......
+01a0  ff ff 00 00 00 00 00 00 05 08 7e 3f ff ff ff ff   ..........~?....
+01b0  ff ff ff ff 00 00 00 00 00 00 05 04 df 3f ff ff   .............?..
+01c0  ff ff ff ff ff ff 00 00 00 00 00 00 00 00 00 40   ...............@
+01d0  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 fb fb   ................
+01e0  df 3f ff ff ff ff ff ff ff ff 00 00 00 00 00 00   .?..............
+01f0  fb f7 7e 3f ff ff ff ff ff ff ff ff 00 00 00 00   ..~?............
+0200  00 00 02 f4 dd 3e ff ff ff ff ff ff ff ff 00 00   .....>..........
+0210  00 00 00 00 16 f0 fd 3d ff ff ff ff ff ff ff ff   .......=........
+0220  00 00 00 00 00 00 39 ec de 3c ff ff ff ff ff ff   ......9..<......
+0230  ff ff 00 00 00 00 00 00 71 e8 81 3b ff ff ff ff   ........q..;....
+0240  ff ff ff ff 00 00 00 00 00 00 c0 e4 e8 39 ff ff   .............9..
+0250  ff ff ff ff ff ff 00 00 00 00 00 00 2b e1 15 38   ............+..8
+0260  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 b5 dd   ................
+0270  09 36 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   .6..............
+0280  62 da c7 33 ff ff ff ff ff ff ff ff 00 00 00 00   b..3............
+0290  00 00 35 d7 50 31 ff ff ff ff ff ff ff ff 00 00   ..5.P1..........
+02a0  00 00 00 00 31 d4 a7 2e ff ff ff ff ff ff ff ff   ....1...........
+02b0  00 00 00 00 00 00 59 d1 cf 2b ff ff ff ff ff ff   ......Y..+......
+02c0  ff ff 00 00 00 00 00 00 b0 ce cb 28 ff ff ff ff   ...........(....
+02d0  ff ff ff ff 00 00 00 00 00 00 39 cc 9e 25 ff ff   ..........9..%..
+02e0  ff ff ff ff ff ff 00 00 00 00 00 00 f7 c9 4b 22   ..............K"
+02f0  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 eb c7   ................
+0300  d5 1e ff ff ff ff ff ff ff ff 00 00 00 00 00 00   ................
+0310  18 c6 40 1b ff ff ff ff ff ff ff ff 00 00 00 00   ..@.............
+0320  00 00 7f c4 8f 17 ff ff ff ff ff ff ff ff 00 00   ................
+0330  00 00 00 00 22 c3 c7 13 ff ff ff ff ff ff ff ff   ...."...........
+0340  00 00 00 00 00 00 03 c2 ea 0f ff ff ff ff ff ff   ................
+0350  ff ff 00 00 00 00 00 00 23 c1 fe 0b ff ff ff ff   ........#.......
+0360  ff ff ff ff 00 00 00 00 00 00 82 c0 05 08 ff ff   ................
+0370  ff ff ff ff ff ff 00 00 00 00 00 00 21 c0 05 04   ............!...
+0380  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 01 c0   ................
+0390  00 00 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   ................
+03a0  21 c0 fb fb ff ff ff ff ff ff ff ff 00 00 00 00   !...............
+03b0  00 00 82 c0 fb f7 ff ff ff ff ff ff ff ff 00 00   ................
+03c0  00 00 00 00 23 c1 02 f4 ff ff ff ff ff ff ff ff   ....#...........
+03d0  00 00 00 00 00 00 03 c2 16 f0 ff ff ff ff ff ff   ................
+03e0  ff ff 00 00 00 00 00 00 22 c3 39 ec ff ff ff ff   ........".9.....
+03f0  ff ff ff ff 00 00 00 00 00 00 7f c4 71 e8 ff ff   ............q...
+0400  ff ff ff ff ff ff 00 00 00 00 00 00 18 c6 c0 e4   ................
+0410  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 eb c7   ................
+0420  2b e1 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   +...............
+0430  f7 c9 b5 dd ff ff ff ff ff ff ff ff 00 00 00 00   ................
+0440  00 00 39 cc 62 da ff ff ff ff ff ff ff ff 00 00   ..9.b...........
+0450  00 00 00 00 b0 ce 35 d7 ff ff ff ff ff ff ff ff   ......5.........
+0460  00 00 00 00 00 00 59 d1 31 d4 ff ff ff ff ff ff   ......Y.1.......
+0470  ff ff 00 00 00 00 00 00 31 d4 59 d1 ff ff ff ff   ........1.Y.....
+0480  ff ff ff ff 00 00 00 00 00 00 35 d7 b0 ce ff ff   ..........5.....
+0490  ff ff ff ff ff ff 00 00 00 00 00 00 62 da 39 cc   ............b.9.
+04a0  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 b5 dd   ................
+04b0  f7 c9 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   ................
+04c0  2b e1 eb c7 ff ff ff ff ff ff ff ff 00 00 00 00   +...............
+04d0  00 00 c0 e4 18 c6 ff ff ff ff ff ff ff ff 00 00   ................
+04e0  00 00 00 00 71 e8 7f c4 ff ff ff ff ff ff ff ff   ....q...........
+04f0  00 00 00 00 00 00 39 ec 22 c3 ff ff ff ff ff ff   ......9.".......
+0500  ff ff 00 00 00 00 00 00 16 f0 03 c2 ff ff ff ff   ................
+0510  ff ff ff ff 00 00 00 00 00 00 02 f4 23 c1 ff ff   ............#...
+0520  ff ff ff ff ff ff 00 00 00 00 00 00 fb f7 82 c0   ................
+0530  ff ff ff ff ff ff ff ff 00 00 00 00 00 00 fb fb   ................
+0540  21 c0 ff ff ff ff ff ff ff ff 00 00 00 00 00 00   !...............
+0550  00 00 01 c0 ff ff ff ff ff ff ff ff 00 00 00 00   ................
+0560  00 00 05 04 21 c0 ff ff ff ff ff ff ff ff 00 00   ....!...........
+0570  00 00 00 00 05 08 82 c0 ff ff ff ff ff ff ff ff   ................
+0580  00 00 00 00 00 00 fe 0b 23 c1 ff ff ff ff ff ff   ........#.......
+0590  ff ff 00 00 00 00 00 00 ea 0f 03 c2 ff ff ff ff   ................
+05a0  ff ff ff ff 00 00 00 00                           ........
+    Data […]: 7130750000645000000000400000ffffffffffffffff000000000000df3f0504ffffffffffffffff0000000000007e3f0508ffffffffffffffff000000000000dd3efe0bffffffffffffffff000000000000fd3dea0fffffffffffffffff000000000000de3cc713ffffffffffffffff000
+    [Length: 1448]
+
+No.     Time               Source                Destination           Protocol Length Info
+     33 16:27:29,242908    169.254.235.200       169.254.25.104        TCP      98     7765 → 63201 [PSH, ACK] Seq=67 Ack=1451 Win=4390 Len=44
+
+Frame 33: Packet, 98 bytes on wire (784 bits), 98 bytes captured (784 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 63201, Seq: 67, Ack: 1451, Len: 44
+Data (44 bytes)
+
+0000  61 71 00 00 01 00 00 00 00 00 00 00 ea 01 00 00   aq..............
+0010  00 00 6b 64 34 03 61 64 00 00 01 00 00 00 00 00   ..kd4.ad........
+0020  00 00 3a 02 00 00 00 00 6b 64 34 03               ..:.....kd4.
+    Data: 617100000100000000000000ea01000000006b6434036164000001000000000000003a02000000006b643403
+    [Length: 44]
+
+No.     Time               Source                Destination           Protocol Length Info
+     34 16:27:29,283787    169.254.25.104        169.254.235.200       TCP      54     63201 → 7765 [ACK] Seq=1451 Ack=111 Win=64130 Len=0
+
+Frame 34: Packet, 54 bytes on wire (432 bits), 54 bytes captured (432 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 63201, Dst Port: 7765, Seq: 1451, Ack: 111, Len: 0
+
+No.     Time               Source                Destination           Protocol Length Info
+     35 16:27:29,727974    169.254.25.104        255.255.255.255       DMX Channels 572    ArtDMX Seq=79 Port=0 Univ=0
+
+Frame 35: Packet, 572 bytes on wire (4576 bits), 572 bytes captured (4576 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 64802, Dst Port: 6454
+Art-Net, Opcode: ArtDMX (0x5000)
+DMX Channels
+
+No.     Time               Source                Destination           Protocol Length Info
+     36 16:27:30,019449    169.254.235.200       255.255.255.255       UDP      78     7654 → 7654 Len=36
+
+Frame 36: Packet, 78 bytes on wire (624 bits), 78 bytes captured (624 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 7654, Dst Port: 7654
+Data (36 bytes)
+
+0000  9a c0 91 22 c8 ea 28 00 03 00 ff 0e 20 bf 02 00   ..."..(..... ...
+0010  00 00 01 00 00 00 00 00 00 00 3a 02 00 00 00 00   ..........:.....
+0020  6b 64 34 03                                       kd4.
+    Data: 9ac09122c8ea28000300ff0e20bf0200000001000000000000003a02000000006b643403
+    [Length: 36]
+
+No.     Time               Source                Destination           Protocol Length Info
+     37 16:27:30,728905    169.254.25.104        255.255.255.255       DMX Channels 572    ArtDMX Seq=80 Port=0 Univ=0
+
+Frame 37: Packet, 572 bytes on wire (4576 bits), 572 bytes captured (4576 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 64802, Dst Port: 6454
+Art-Net, Opcode: ArtDMX (0x5000)
+DMX Channels
+
+No.     Time               Source                Destination           Protocol Length Info
+     38 16:27:31,020195    169.254.235.200       255.255.255.255       UDP      78     7654 → 7654 Len=36
+
+Frame 38: Packet, 78 bytes on wire (624 bits), 78 bytes captured (624 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 7654, Dst Port: 7654
+Data (36 bytes)
+
+0000  9a c0 91 22 c8 ea 28 00 03 00 ff 0e 20 bf 02 00   ..."..(..... ...
+0010  00 00 01 00 00 00 00 00 00 00 3a 02 00 00 00 00   ..........:.....
+0020  6b 64 34 03                                       kd4.
+    Data: 9ac09122c8ea28000300ff0e20bf0200000001000000000000003a02000000006b643403
+    [Length: 36]

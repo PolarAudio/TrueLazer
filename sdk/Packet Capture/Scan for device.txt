@@ -1,0 +1,386 @@
+No.     Time               Source                Destination           Protocol Length Info
+     19 15:22:30,955036    169.254.25.104        169.254.235.200       TCP      66     62669 → 7765 [SYN] Seq=0 Win=64240 Len=0 MSS=1460 WS=256 SACK_PERM
+
+Frame 19: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 62669, Dst Port: 7765, Seq: 0, Len: 0
+    Source Port: 62669
+    Destination Port: 7765
+    [Stream index: 0]
+    [Stream Packet Number: 1]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 0]
+    Sequence Number: 0    (relative sequence number)
+    Sequence Number (raw): 131624804
+    [Next Sequence Number: 1    (relative sequence number)]
+    Acknowledgment Number: 0
+    Acknowledgment number (raw): 0
+    1000 .... = Header Length: 32 bytes (8)
+    Flags: 0x002 (SYN)
+    Window: 64240
+    [Calculated window size: 64240]
+    Checksum: 0x9092 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    Options: (12 bytes), Maximum segment size, No-Operation (NOP), Window scale, No-Operation (NOP), No-Operation (NOP), SACK permitted
+    [Timestamps]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+
+No.     Time               Source                Destination           Protocol Length Info
+     20 15:22:30,955123    169.254.235.200       169.254.25.104        TCP      62     7765 → 62669 [SYN, ACK] Seq=0 Ack=1 Win=5840 Len=0 MSS=1460 SACK_PERM
+
+Frame 20: Packet, 62 bytes on wire (496 bits), 62 bytes captured (496 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 62669, Seq: 0, Ack: 1, Len: 0
+    Source Port: 7765
+    Destination Port: 62669
+    [Stream index: 0]
+    [Stream Packet Number: 2]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 0]
+    Sequence Number: 0    (relative sequence number)
+    Sequence Number (raw): 547914
+    [Next Sequence Number: 1    (relative sequence number)]
+    Acknowledgment Number: 1    (relative ack number)
+    Acknowledgment number (raw): 131624805
+    0111 .... = Header Length: 28 bytes (7)
+    Flags: 0x012 (SYN, ACK)
+    Window: 5840
+    [Calculated window size: 5840]
+    Checksum: 0x2c5f [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    Options: (8 bytes), Maximum segment size, No-Operation (NOP), No-Operation (NOP), SACK permitted
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+
+No.     Time               Source                Destination           Protocol Length Info
+     21 15:22:30,955187    169.254.25.104        169.254.235.200       TCP      54     62669 → 7765 [ACK] Seq=1 Ack=1 Win=64240 Len=0
+
+Frame 21: Packet, 54 bytes on wire (432 bits), 54 bytes captured (432 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 62669, Dst Port: 7765, Seq: 1, Ack: 1, Len: 0
+    Source Port: 62669
+    Destination Port: 7765
+    [Stream index: 0]
+    [Stream Packet Number: 3]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 0]
+    Sequence Number: 1    (relative sequence number)
+    Sequence Number (raw): 131624805
+    [Next Sequence Number: 1    (relative sequence number)]
+    Acknowledgment Number: 1    (relative ack number)
+    Acknowledgment number (raw): 547915
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x010 (ACK)
+    Window: 64240
+    [Calculated window size: 64240]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x7502 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+
+No.     Time               Source                Destination           Protocol Length Info
+     22 15:22:30,955510    169.254.235.200       169.254.25.104        TCP      76     7765 → 62669 [PSH, ACK] Seq=1 Ack=1 Win=5840 Len=22
+
+Frame 22: Packet, 76 bytes on wire (608 bits), 76 bytes captured (608 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 62669, Seq: 1, Ack: 1, Len: 22
+    Source Port: 7765
+    Destination Port: 62669
+    [Stream index: 0]
+    [Stream Packet Number: 4]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 22]
+    Sequence Number: 1    (relative sequence number)
+    Sequence Number (raw): 547915
+    [Next Sequence Number: 23    (relative sequence number)]
+    Acknowledgment Number: 1    (relative ack number)
+    Acknowledgment number (raw): 131624805
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x018 (PSH, ACK)
+    Window: 5840
+    [Calculated window size: 5840]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x2420 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (22 bytes)
+Data (22 bytes)
+
+0000  61 3f 00 00 00 00 00 00 00 00 00 00 40 06 00 00   a?..........@...
+0010  00 00 6b 9c 28 03                                 ..k.(.
+    Data: 613f000000000000000000004006000000006b9c2803
+    [Length: 22]
+
+No.     Time               Source                Destination           Protocol Length Info
+     23 15:22:30,955580    169.254.25.104        169.254.235.200       TCP      55     62669 → 7765 [PSH, ACK] Seq=1 Ack=23 Win=64218 Len=1
+
+Frame 23: Packet, 55 bytes on wire (440 bits), 55 bytes captured (440 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 62669, Dst Port: 7765, Seq: 1, Ack: 23, Len: 1
+    Source Port: 62669
+    Destination Port: 7765
+    [Stream index: 0]
+    [Stream Packet Number: 5]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 1]
+    Sequence Number: 1    (relative sequence number)
+    Sequence Number (raw): 131624805
+    [Next Sequence Number: 2    (relative sequence number)]
+    Acknowledgment Number: 23    (relative ack number)
+    Acknowledgment number (raw): 547937
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x018 (PSH, ACK)
+    Window: 64218
+    [Calculated window size: 64218]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x04f9 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (1 byte)
+Data (1 byte)
+
+0000  70                                                p
+    Data: 70
+    [Length: 1]
+
+No.     Time               Source                Destination           Protocol Length Info
+     24 15:22:30,955639    169.254.235.200       169.254.25.104        TCP      76     7765 → 62669 [PSH, ACK] Seq=23 Ack=2 Win=5839 Len=22
+
+Frame 24: Packet, 76 bytes on wire (608 bits), 76 bytes captured (608 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 62669, Seq: 23, Ack: 2, Len: 22
+    Source Port: 7765
+    Destination Port: 62669
+    [Stream index: 0]
+    [Stream Packet Number: 6]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 22]
+    Sequence Number: 23    (relative sequence number)
+    Sequence Number (raw): 547937
+    [Next Sequence Number: 45    (relative sequence number)]
+    Acknowledgment Number: 2    (relative ack number)
+    Acknowledgment number (raw): 131624806
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x018 (PSH, ACK)
+    Window: 5839
+    [Calculated window size: 5839]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x62df [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (22 bytes)
+Data (22 bytes)
+
+0000  61 70 00 00 01 00 00 00 00 00 00 00 00 00 00 00   ap..............
+0010  00 00 6b 9c 28 03                                 ..k.(.
+    Data: 6170000001000000000000000000000000006b9c2803
+    [Length: 22]
+
+No.     Time               Source                Destination           Protocol Length Info
+     25 15:22:30,955690    169.254.25.104        169.254.235.200       TCP      55     62669 → 7765 [PSH, ACK] Seq=2 Ack=45 Win=64196 Len=1
+
+Frame 25: Packet, 55 bytes on wire (440 bits), 55 bytes captured (440 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 62669, Dst Port: 7765, Seq: 2, Ack: 45, Len: 1
+    Source Port: 62669
+    Destination Port: 7765
+    [Stream index: 0]
+    [Stream Packet Number: 7]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 1]
+    Sequence Number: 2    (relative sequence number)
+    Sequence Number (raw): 131624806
+    [Next Sequence Number: 3    (relative sequence number)]
+    Acknowledgment Number: 45    (relative ack number)
+    Acknowledgment number (raw): 547959
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x018 (PSH, ACK)
+    Window: 64196
+    [Calculated window size: 64196]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0xfef7 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (1 byte)
+Data (1 byte)
+
+0000  76                                                v
+    Data: 76
+    [Length: 1]
+
+No.     Time               Source                Destination           Protocol Length Info
+     26 15:22:30,955777    169.254.235.200       169.254.25.104        TCP      86     7765 → 62669 [PSH, ACK] Seq=45 Ack=3 Win=5838 Len=32
+
+Frame 26: Packet, 86 bytes on wire (688 bits), 86 bytes captured (688 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 62669, Seq: 45, Ack: 3, Len: 32
+    Source Port: 7765
+    Destination Port: 62669
+    [Stream index: 0]
+    [Stream Packet Number: 8]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 32]
+    Sequence Number: 45    (relative sequence number)
+    Sequence Number (raw): 547959
+    [Next Sequence Number: 77    (relative sequence number)]
+    Acknowledgment Number: 3    (relative ack number)
+    Acknowledgment number (raw): 131624807
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x018 (PSH, ACK)
+    Window: 5838
+    [Calculated window size: 5838]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x213f [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (32 bytes)
+Data (32 bytes)
+
+0000  65 64 34 2d 31 37 36 2d 65 30 65 38 39 31 33 00   ed4-176-e0e8913.
+0010  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+    Data: 6564342d3137362d653065383931330000000000000000000000000000000000
+    [Length: 32]
+
+No.     Time               Source                Destination           Protocol Length Info
+     27 15:22:30,955833    169.254.25.104        169.254.235.200       TCP      56     62669 → 7765 [PSH, ACK] Seq=3 Ack=77 Win=64164 Len=2
+
+Frame 27: Packet, 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 62669, Dst Port: 7765, Seq: 3, Ack: 77, Len: 2
+    Source Port: 62669
+    Destination Port: 7765
+    [Stream index: 0]
+    [Stream Packet Number: 9]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 2]
+    Sequence Number: 3    (relative sequence number)
+    Sequence Number (raw): 131624807
+    [Next Sequence Number: 5    (relative sequence number)]
+    Acknowledgment Number: 77    (relative ack number)
+    Acknowledgment number (raw): 547991
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x018 (PSH, ACK)
+    Window: 64164
+    [Calculated window size: 64164]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x0186 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (2 bytes)
+Data (2 bytes)
+
+0000  73 70                                             sp
+    Data: 7370
+    [Length: 2]
+
+No.     Time               Source                Destination           Protocol Length Info
+     28 15:22:30,955900    169.254.235.200       169.254.25.104        TCP      98     7765 → 62669 [PSH, ACK] Seq=77 Ack=5 Win=5836 Len=44
+
+Frame 28: Packet, 98 bytes on wire (784 bits), 98 bytes captured (784 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea), Dst: TPLink_09:48:5c (5c:62:8b:09:48:5c)
+Internet Protocol Version 4, Src: 169.254.235.200, Dst: 169.254.25.104
+Transmission Control Protocol, Src Port: 7765, Dst Port: 62669, Seq: 77, Ack: 5, Len: 44
+    Source Port: 7765
+    Destination Port: 62669
+    [Stream index: 0]
+    [Stream Packet Number: 10]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 44]
+    Sequence Number: 77    (relative sequence number)
+    Sequence Number (raw): 547991
+    [Next Sequence Number: 121    (relative sequence number)]
+    Acknowledgment Number: 5    (relative ack number)
+    Acknowledgment number (raw): 131624809
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x018 (PSH, ACK)
+    Window: 5836
+    [Calculated window size: 5836]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x6d80 [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]
+    TCP payload (44 bytes)
+Data (44 bytes)
+
+0000  61 73 00 00 00 00 00 00 00 00 00 00 00 00 00 00   as..............
+0010  00 00 6b 9c 28 03 61 70 00 00 01 00 00 00 00 00   ..k.(.ap........
+0020  00 00 00 00 00 00 00 00 6b 9c 28 03               ........k.(.
+    Data: 6173000000000000000000000000000000006b9c28036170000001000000000000000000000000006b9c2803
+    [Length: 44]
+
+No.     Time               Source                Destination           Protocol Length Info
+     29 15:22:30,996819    169.254.25.104        169.254.235.200       TCP      54     62669 → 7765 [ACK] Seq=5 Ack=121 Win=64120 Len=0
+
+Frame 29: Packet, 54 bytes on wire (432 bits), 54 bytes captured (432 bits) on interface \Device\NPF_{6AFAD7F1-7301-42EF-8DF6-88C3A56E2F3F}, id 0
+Ethernet II, Src: TPLink_09:48:5c (5c:62:8b:09:48:5c), Dst: 9a:c0:91:22:c8:ea (9a:c0:91:22:c8:ea)
+Internet Protocol Version 4, Src: 169.254.25.104, Dst: 169.254.235.200
+Transmission Control Protocol, Src Port: 62669, Dst Port: 7765, Seq: 5, Ack: 121, Len: 0
+    Source Port: 62669
+    Destination Port: 7765
+    [Stream index: 0]
+    [Stream Packet Number: 11]
+    [Conversation completeness: Incomplete, DATA (15)]
+    [TCP Segment Len: 0]
+    Sequence Number: 5    (relative sequence number)
+    Sequence Number (raw): 131624809
+    [Next Sequence Number: 5    (relative sequence number)]
+    Acknowledgment Number: 121    (relative ack number)
+    Acknowledgment number (raw): 548035
+    0101 .... = Header Length: 20 bytes (5)
+    Flags: 0x010 (ACK)
+    Window: 64120
+    [Calculated window size: 64120]
+    [Window size scaling factor: -2 (no window scaling used)]
+    Checksum: 0x74fe [unverified]
+    [Checksum Status: Unverified]
+    Urgent Pointer: 0
+    [Timestamps]
+    [SEQ/ACK analysis]
+    [Client Contiguous Streams: 1]
+    [Server Contiguous Streams: 1]

@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import IldaThumbnail from './IldaThumbnail'; // Import IldaThumbnail
 import Mappable from './Mappable';
 
-const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect }) => {
+const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Update internal state when layerEffects prop changes
   useEffect(() => {
@@ -24,13 +25,45 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
 
   const handleDragOver = (e) => {
     e.preventDefault(); // Necessary to allow dropping
+    e.stopPropagation();
+    setIsDragging(true);
     e.dataTransfer.dropEffect = 'copy'; // Visual feedback
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
-    const droppedId = e.dataTransfer.getData('text/plain');
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const jsonData = e.dataTransfer.getData('application/json');
+    if (jsonData) {
+      try {
+        const parsedData = JSON.parse(jsonData);
+        
+        if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color' || parsedData.type === 'effect') {
+          if (onDropEffect) {
+            onDropEffect(parsedData.id || parsedData.name);
+            return;
+          }
+        } else if (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels)) {
+          if (onDropDac) {
+            onDropDac(index, parsedData);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Error parsing drop data in LayerControls:', err);
+      }
+    }
 
+    // Fallback for old plain text format
+    const droppedId = e.dataTransfer.getData('text/plain');
     if (droppedId.startsWith('effect_')) {
       const effectId = droppedId.replace('effect_', '');
       if (onDropEffect) {
@@ -41,9 +74,10 @@ const LayerControls = ({ layerName, index, onDropEffect, layerEffects, activeCli
 
   return (
     <div
-      className="layer-controls"
+      className={`layer-controls ${isDragging ? 'dragging' : ''}`}
       onContextMenu={handleContextMenu}
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <div className="grid-layer">

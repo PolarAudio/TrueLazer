@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity }) => {
+const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings = {}, bpm = 120, clipDuration = 1 }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`ilda-player-${Math.random()}`);
@@ -18,7 +18,7 @@ const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, prev
         id: canvasId.current,
         canvas: offscreen,
         type: 'single',
-        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration }
       }
     }, [offscreen]);
 
@@ -37,10 +37,10 @@ const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, prev
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { ildaFrames: framesToSend, effects: effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity }
+        data: { ildaFrames: framesToSend, effects: effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration }
       }
     });
-  }, [worker, frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity]);
+  }, [worker, frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration]);
 
   return (
     <div className="ilda-player">

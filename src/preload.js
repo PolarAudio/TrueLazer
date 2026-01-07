@@ -3,8 +3,14 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld(
   'electronAPI', {
     discoverDacs: (timeout, networkInterfaceIp) => ipcRenderer.invoke('discover-dacs', timeout, networkInterfaceIp),
-    getDacServices: (ip, localIp) => ipcRenderer.invoke('get-dac-services', ip, localIp),
-    sendFrame: (ip, channel, frame, fps) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps),
+    getDacServices: (ip, localIp, type) => ipcRenderer.invoke('get-dac-services', ip, localIp, type),
+    sendFrame: (ip, channel, frame, fps, type) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps, type),
+    stopDacOutput: (ip, type) => ipcRenderer.invoke('stop-dac-output', ip, type),
+    onDacStatus: (callback) => {
+        const listener = (event, data) => callback(data);
+        ipcRenderer.on('dac-status', listener);
+        return () => ipcRenderer.removeListener('dac-status', listener);
+    },
     getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     send: (channel, data) => ipcRenderer.send(channel, data),
     on: (channel, callback) => {

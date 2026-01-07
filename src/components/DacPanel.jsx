@@ -26,15 +26,19 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
       scanInProgressRef.current = true;
       console.log('Starting DAC scan on:', selectedNetworkInterface?.address);
       if (window.electronAPI) {
-        window.electronAPI.discoverDacs(2000, selectedNetworkInterface?.address)
+          window.electronAPI.discoverDacs(2000, selectedNetworkInterface?.address)
           .then(async (discoveredDacs) => {
             console.log('DACs discovered:', discoveredDacs);
             const dacsWithServices = await Promise.all(
               discoveredDacs.map(async (dac) => {
                 try {
-                  const services = await window.electronAPI.getDacServices(dac.ip, selectedNetworkInterface?.address);
+                  const services = await window.electronAPI.getDacServices(dac.ip, selectedNetworkInterface?.address, dac.type);
                   // Filter for valid services (e.g., serviceType for laser graphics)
-                  const laserServices = services.filter(s => s.serviceID !== 0); // Assuming serviceID 0 is not a usable channel
+                  // For IDN, serviceID 0 is often a management service, so we filter it out.
+                  // For EtherDream, we typically only have one service at ID 0.
+                  const laserServices = (dac.type && dac.type.toLowerCase() === 'etherdream') 
+                    ? services 
+                    : services.filter(s => s.serviceID !== 0);
                   return { ...dac, channels: laserServices };
                 } catch (error) {
                   console.error(`Error fetching services for DAC ${dac.ip}:`, error);
@@ -80,6 +84,12 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
     setSelectedNetworkInterface(iface);
   };
 
+  const handleGroupDragStart = (e, dac) => {
+    // When dragging the group, we pass all channels
+    const dacWithAllChannels = { ...dac, allChannels: true };
+    e.dataTransfer.setData('application/json', JSON.stringify(dacWithAllChannels));
+  };
+
   return (
     <div className="dac-panel">
       <div className="settings-card-header"><h4>DACs</h4></div>
@@ -100,14 +110,16 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
         {dacs.map((dac) => (
           <div key={dac.unitID || dac.ip}
             className={`dac-group`}
+            draggable
+            onDragStart={(e) => handleGroupDragStart(e, dac)}
           >
             <div className="dac-ip">{dac.hostName || dac.ip} ({dac.ip})</div>
             <div className="dac-channels">
               {dac.channels && dac.channels.length > 0 ? (
                 dac.channels.map((channel) => (
                   <div
-                    key={`${dac.unitID}-${channel.serviceID}`}
-                    className={`dac-channel-item ${selectedDac && selectedDac.unitID === dac.unitID && selectedDac.channel === channel.serviceID ? 'selected' : ''}`}
+                    key={`${dac.unitID || dac.ip}-${channel.serviceID}`}
+                    className={`dac-channel-item ${selectedDac && (selectedDac.unitID === dac.unitID || selectedDac.ip === dac.ip) && selectedDac.channel === channel.serviceID ? 'selected' : ''}`}
                     onClick={() => handleDacClick(dac, channel.serviceID)}
                     draggable
                     onDragStart={(e) => handleDragStart(e, dac, channel.serviceID)}

@@ -7,8 +7,19 @@ import https from 'https';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
-import * as dacCommunication from './main/dac-communication.cjs';
-const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll } = dacCommunication;
+// ES module equivalent of __dirname and __filename
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+import dacCommunication from './main/dac-communication.cjs';
+const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
+
+// Setup DAC Status Listener
+setDacStatusCallback((ip, status) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('dac-status', { ip, status });
+    }
+});
 
 // Load Native NDI Wrapper
 let ndi;
@@ -39,10 +50,6 @@ app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-http-cache');
 // Suppress Autofill.enable and Autofill.setAddresses errors in console
 app.commandLine.appendSwitch('disable-autofill');
-
-// ES module equivalent of __dirname and __filename
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -337,6 +344,9 @@ ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
 
 ipcMain.handle('set-selected-dac', (event, dac) => {
   store.set('selectedDac', dac);
+  if (dac && dac.ip) {
+    dacCommunication.connectDac(dac.ip, dac.type);
+  }
 });
 
 ipcMain.handle('get-midi-mappings', () => {
@@ -703,12 +713,16 @@ function createWindow() {
     return await discoverDacs(timeout, networkInterfaceIp);
   });
 
-  ipcMain.handle('get-dac-services', async (event, ip, localIp) => {
-    return await getDacServices(ip, localIp);
+  ipcMain.handle('get-dac-services', async (event, ip, localIp, type) => {
+    return await getDacServices(ip, localIp, 1000, type);
   });
 
-  ipcMain.handle('send-frame', async (event, ip, channel, frame, fps) => {
-    sendFrame(ip, channel, frame, fps);
+  ipcMain.handle('send-frame', async (event, ip, channel, frame, fps, type) => {
+    sendFrame(ip, channel, frame, fps, type);
+  });
+
+  ipcMain.handle('stop-dac-output', async (event, ip, type) => {
+    stopSending(ip, type);
   });
 
   ipcMain.handle('get-network-interfaces', async () => {
@@ -1054,6 +1068,7 @@ function createWindow() {
   ipcMain.handle('ndi-destroy-receiver', async () => {
       if (!ndi) return;
       ndi.destroyReceiver();
+      isRendererReadyForNdi = true; // Reset flow control
   });
 
   // Flow control for NDI frames to prevent IPC backlog
@@ -1066,10 +1081,23 @@ function createWindow() {
   const ndiCaptureLoop = async () => {
       if (ndi && mainWindow && !mainWindow.isDestroyed() && isRendererReadyForNdi) {
           // Use dynamic capture resolution
-          const frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
-          if (frame) {
+          let frame = null;
+          let latestFrame = null;
+          let drainCount = 0;
+          const maxDrain = 5;
+
+          // Drain queue to get the latest frame
+          do {
+            frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
+            if (frame) {
+                latestFrame = frame;
+                drainCount++;
+            }
+          } while (frame && drainCount < maxDrain);
+
+          if (latestFrame) {
               isRendererReadyForNdi = false; // Wait for renderer to process
-              mainWindow.webContents.send('ndi-frame', frame);
+              mainWindow.webContents.send('ndi-frame', latestFrame);
           }
       }
       setTimeout(ndiCaptureLoop, 33); // Poll at ~30fps

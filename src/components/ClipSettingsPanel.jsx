@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import EffectEditor from './EffectEditor';
 import GeneratorSettingsPanel from './GeneratorSettingsPanel';
 import ClipPlaybackSettings from './ClipPlaybackSettings';
@@ -17,8 +17,23 @@ const ClipSettingsPanel = ({
   onRemoveDac,
   onRemoveEffect,
   onParameterChange,
-  onGeneratorParameterChange
+  onGeneratorParameterChange,
+  progressRef
 }) => {
+  const [dacStatuses, setDacStatuses] = useState({});
+
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.onDacStatus) {
+        const unsubscribe = window.electronAPI.onDacStatus((data) => {
+            setDacStatuses(prev => ({
+                ...prev,
+                [data.ip]: data.status
+            }));
+        });
+        return unsubscribe;
+    }
+  }, []);
+
   if (selectedLayerIndex === null || selectedColIndex === null) {
     return (
       <div className="clip-settings-panel settings-panel-base">
@@ -36,12 +51,18 @@ const ClipSettingsPanel = ({
     audioFile = null,
     type = null,
     generatorDefinition = null,
-    currentParams = {}
+    currentParams = {},
+    workerId = null
   } = clip || {};
 
   const hasEffects = effects.length > 0;
   const hasGenerator = type === 'generator' && !!generatorDefinition;
   const hasAssignedDacs = assignedDacs.length > 0;
+
+  // Calculate clip duration in seconds
+  // App.jsx passes playbackFps in state, but we don't have it here.
+  // We'll try to get it from clip.fps or fallback.
+  const clipDuration = (clip?.totalFrames || 30) / (clip?.fps || 30);
 
   // Calculate audio progress percentage
   const audioProgress = audioInfo && audioInfo.duration 
@@ -77,9 +98,20 @@ const ClipSettingsPanel = ({
       {hasAssignedDacs && (
         <CollapsiblePanel title="Assigned DACs">
             <ul className="assigned-dacs-list">
-              {assignedDacs.map((dac, index) => (
+              {assignedDacs.map((dac, index) => {
+                const status = dacStatuses[dac.ip];
+                return (
                 <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
-                  <span className="dac-name-tiny">{dac.hostName || dac.ip} - Ch {dac.channel}</span>
+                  <div className="dac-info-block">
+                      <span className="dac-name-tiny">{dac.hostName || dac.ip} - Ch {dac.channel}</span>
+                      {status && (
+                          <div className="dac-status-tiny" style={{fontSize: '9px', color: '#888'}}>
+                              State: {status.state === 2 ? 'PLAYING' : status.state === 1 ? 'PREPARED' : 'IDLE'} | 
+                              Buf: {status.buffer_fullness}/{status.buffer_capacity} | 
+                              PPS: {status.point_rate}
+                          </div>
+                      )}
+                  </div>
                   <div className="dac-mirror-controls">
                     <button 
                         className={`mirror-btn ${dac.mirrorX ? 'active' : ''}`}
@@ -94,7 +126,7 @@ const ClipSettingsPanel = ({
                   </div>
                   <button className="remove-dac-btn" onClick={() => onRemoveDac(index)}>×</button>
                 </li>
-              ))}
+              )})}
             </ul>
         </CollapsiblePanel>
       )}
@@ -108,6 +140,9 @@ const ClipSettingsPanel = ({
           onSetParamSync={onSetParamSync}
           layerIndex={selectedLayerIndex}
           colIndex={selectedColIndex}
+          progressRef={progressRef}
+          workerId={workerId}
+          clipDuration={clipDuration}
         />
       )}
 
@@ -118,11 +153,13 @@ const ClipSettingsPanel = ({
           assignedDacs={assignedDacs}
           syncSettings={syncSettings}
           onSetParamSync={onSetParamSync}
-          context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect' }}
+          context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect', workerId }}
           onParamChange={(paramId, paramValue) => 
             onParameterChange(selectedLayerIndex, selectedColIndex, effectIndex, paramId, paramValue)
           }
           onRemove={() => onRemoveEffect(selectedLayerIndex, selectedColIndex, effectIndex)}
+          progressRef={progressRef}
+          clipDuration={clipDuration}
         />
       ))}
 

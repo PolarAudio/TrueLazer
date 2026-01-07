@@ -3,63 +3,9 @@ import { effectDefinitions } from '../utils/effectDefinitions';
 import Mappable from './Mappable';
 import RangeSlider from './RangeSlider';
 import CollapsiblePanel from './CollapsiblePanel';
+import AnimationControls from './AnimationControls';
 
-// Icons as simple SVGs or characters
-const Icons = {
-    Backward: () => <span>&lt;|</span>,
-    Pause: () => <span>||</span>,
-    Forward: () => <span>|&gt;</span>,
-    Once: () => <span>-&gt;|</span>,
-    Bounce: () => <span>|&lt;-&gt;|</span>,
-    Loop: () => <span>Loop</span>
-};
-
-const AnimationControls = ({ animSettings, onChange }) => {
-    const { 
-        direction = 'forward', 
-        style = 'loop', 
-        syncMode = null 
-    } = animSettings || {};
-
-    const update = (key, val) => onChange({ ...animSettings, [key]: val });
-
-    return (
-        <div className="anim-row controls-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px' }}>
-                 {/* Play Direction */}
-                <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
-                    <button className={`speed-control-button ${direction === 'backward' ? 'active' : ''}`} onClick={() => update('direction', 'backward')} title="Backward" style={{flex:1, padding:0, fontSize:'10px'}}>
-						&lt;|
-					</button>
-                    <button className={`speed-control-button ${direction === 'pause' ? 'active' : ''}`} onClick={() => update('direction', 'pause')} title="Pause" style={{flex:1, padding:0, fontSize:'10px'}}>
-						||
-					</button>
-                    <button className={`speed-control-button ${direction === 'forward' ? 'active' : ''}`} onClick={() => update('direction', 'forward')} title="Forward" style={{flex:1, padding:0, fontSize:'10px'}}>
-						|&gt;
-					</button>
-                </div>
-                 {/* Play Style */}
-                <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
-                    <button className={`speed-control-button ${style === 'once' ? 'active' : ''}`} onClick={() => update('style', 'once')} title="Once" style={{flex:1, padding:0, fontSize:'10px'}}>
-                        -&gt;|
-					</button>
-                    <button className={`speed-control-button ${style === 'bounce' ? 'active' : ''}`} onClick={() => update('style', 'bounce')} title="Bounce" style={{flex:1, padding:0, fontSize:'10px'}}>
-                        |&lt;&gt;|
-					</button>
-                    <button className={`speed-control-button ${style === 'loop' ? 'active' : ''}`} onClick={() => update('style', 'loop')} title="Loop" style={{flex:1, padding:0, fontSize:'10px'}}>
-						Loop
-					</button>
-                </div>
-                 {/* Sync Mode */}
-                <div className="btn-group" style={{display: 'flex', gap: '2px'}}>
-                    <button className={`speed-control-button ${syncMode === 'fps' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'fps' ? null : 'fps')} style={{flex:1, padding:0, fontSize:'10px'}}>F</button>
-                    <button className={`speed-control-button ${syncMode === 'timeline' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'timeline' ? null : 'timeline')} style={{flex:1, padding:0, fontSize:'10px'}}>T</button>
-                    <button className={`speed-control-button ${syncMode === 'bpm' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'bpm' ? null : 'bpm')} style={{flex:1, padding:0, fontSize:'10px'}}>B</button>
-                </div>
-        </div>
-    );
-};
-
-const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context }) => {
+const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration }) => {
     const [expanded, setExpanded] = useState(false);
     const [hovered, setHovered] = useState(false);
 
@@ -79,6 +25,14 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
     const currentRange = animSettings?.range || [control.min, control.max];
     const handleRangeChange = (newRange) => {
         onAnimChange({ ...animSettings, range: newRange });
+    };
+
+    // Wrap onAnimChange for AnimationControls to ensure range is present
+    const handleAnimControlChange = (newSettings) => {
+        onAnimChange({
+            range: currentRange, // Ensure range is set (using default if missing)
+            ...newSettings
+        });
     };
 
     return (
@@ -126,6 +80,10 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                                 onChange={onChange} // Update Main Value
                                 onRangeChange={handleRangeChange} // Update Animation Range
                                 showRange={expanded} // Show Min/Max handles only when expanded
+                                animSettings={animSettings}
+                                progressRef={progressRef}
+                                workerId={workerId}
+                                clipDuration={clipDuration}
                             />
                         </Mappable>
                     ) : control.type === 'text' ? (
@@ -159,7 +117,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                  <div className="param-anim-settings" style={{ marginTop: '5px', padding: '5px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
                     <AnimationControls 
                         animSettings={animSettings} 
-                        onChange={onAnimChange} 
+                        onChange={handleAnimControlChange} 
                     />
                  </div>
              )}
@@ -244,7 +202,7 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) =>
     );
 };
 
-const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {} }) => {
+const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration }) => {
   if (!effect) return null;
 
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
@@ -300,6 +258,9 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                 onAnimChange={(newSettings) => onSetParamSync(paramKey, newSettings)}
                 effectId={effect.id}
                 context={context}
+                progressRef={progressRef}
+                workerId={context.workerId}
+                clipDuration={clipDuration}
             />
           );
         })}

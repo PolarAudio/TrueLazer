@@ -436,15 +436,26 @@ function reducer(state, action) {
       // Get the existing clip, create a new copy of it, and then modify its dac
       const existingClip = newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] || {};
 
-      const currentAssignedDacs = existingClip.assignedDacs || [];
-      // Check for duplicates
-      if (currentAssignedDacs.some(d => d.ip === action.payload.dac.ip && d.channel === action.payload.dac.channel)) {
-          return state;
+      let currentAssignedDacs = existingClip.assignedDacs || [];
+      
+      const dacsToAdd = [];
+      if (action.payload.dac.allChannels && action.payload.dac.channels) {
+          action.payload.dac.channels.forEach(ch => {
+              if (!currentAssignedDacs.some(d => d.ip === action.payload.dac.ip && d.channel === ch.serviceID)) {
+                  dacsToAdd.push({ ...action.payload.dac, channel: ch.serviceID, mirrorX: false, mirrorY: false, allChannels: undefined });
+              }
+          });
+      } else {
+          if (!currentAssignedDacs.some(d => d.ip === action.payload.dac.ip && d.channel === action.payload.dac.channel)) {
+              dacsToAdd.push({ ...action.payload.dac, mirrorX: false, mirrorY: false });
+          }
       }
+
+      if (dacsToAdd.length === 0) return state;
 
       const updatedClip = {
           ...existingClip,
-          assignedDacs: [...currentAssignedDacs, { ...action.payload.dac, mirrorX: false, mirrorY: false }],
+          assignedDacs: [...currentAssignedDacs, ...dacsToAdd],
       };
       newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] = updatedClip;
       return { ...state, clipContents: newClipContentsWithDac };
@@ -1064,6 +1075,8 @@ function App() {
                     ildaFormat: clip.ildaFormat || 0,
                     stillFrame,
                     layerIndex,
+                    syncSettings: clip.syncSettings || {},
+                    fps: clip.fps || null
                 };
             } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
                 workerId = `generator-${layerIndex}-${activeColIndex}`;
@@ -1078,6 +1091,8 @@ function App() {
                     ildaFormat: 0,
                     stillFrame,
                     layerIndex,
+                    syncSettings: clip.syncSettings || {},
+                    fps: clip.fps || null
                 };
             }
         }
@@ -1176,13 +1191,21 @@ function App() {
     const r = parseInt(color.slice(1, 3), 16);
     const g = parseInt(color.slice(3, 5), 16);
     const b = parseInt(color.slice(5, 7), 16);
-    document.documentElement.style.setProperty('--theme-color-transparent', `rgba(${r}, ${g}, ${b}, 0.2)`);
+    document.documentElement.style.setProperty('--theme-color-transparent', `rgba(${r}, ${g}, ${b}, 0.3)`);
 
     // Save theme to global settings
     if (window.electronAPI && window.electronAPI.setTheme) {
         window.electronAPI.setTheme(theme);
     }
   }, [theme]);
+
+  // Sync selected DAC to main process
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.setSelectedDac) {
+        console.log('[App.jsx] Syncing selectedDac to main process:', selectedDac);
+        window.electronAPI.setSelectedDac(selectedDac);
+    }
+  }, [selectedDac]);
 
   const workerIdsToFetch = useMemo(() => {
     const ids = new Set();
@@ -1442,59 +1465,20 @@ function App() {
                   intensityAdjustedFrame.points = newPts;
               }
 
-              // Apply sync overrides to effects
-              const syncedEffects = effects.map(eff => {
-                  const newParams = { ...eff.params };
-                  const definition = effectDefinitions.find(d => d.id === eff.id);
-                  if (definition) {
-                      definition.paramControls.forEach(ctrl => {
-                          const syncKey = `${eff.id}.${ctrl.id}`;
-                          const rawSettings = syncSettings[syncKey];
-                          
-                          // Handle both legacy (string) and new (object) formats
-                          const settings = typeof rawSettings === 'string' 
-                              ? { syncMode: rawSettings, range: [ctrl.min, ctrl.max], direction: 'forward', style: 'loop' }
-                              : rawSettings;
+              // Calculate clip duration in seconds
+              // Use playbackFps as fallback if clip doesn't have its own rate
+              const clipFps = clip.fps || playbackFps || 30;
+              const clipDuration = (clip.totalFrames || 30) / clipFps;
 
-                          if (settings && settings.syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
-                              let progress = 0;
-                              
-                              // 1. Calculate Base Progress
-                              if (settings.syncMode === 'fps') {
-                                  // Default roughly 1Hz cycle
-                                  progress = (currentTime * 0.001) % 1.0;
-                              } else if (settings.syncMode === 'timeline' || settings.syncMode === 'bpm') {
-                                  // Use clip progress (bpm logic handled in frame fetcher, both map to 0-1)
-                                  progress = clipProgress;
-                              }
-
-                              // 2. Apply Direction
-                              if (settings.direction === 'backward') {
-                                  progress = 1.0 - progress;
-                              } else if (settings.direction === 'pause') {
-                                  progress = 0; // Or hold last frame? For now 0 or middle
-                              }
-
-                              // 3. Apply Style (Loop is default 0-1)
-                              if (settings.style === 'bounce') {
-                                  // 0 -> 1 -> 0
-                                  progress = progress < 0.5 ? progress * 2 : 2 - (progress * 2);
-                              } else if (settings.style === 'once') {
-                                  progress = Math.min(progress, 1);
-                              }
-
-                              // 4. Map to Range
-                              const min = settings.range ? settings.range[0] : ctrl.min;
-                              const max = settings.range ? settings.range[1] : ctrl.max;
-                              
-                              newParams[ctrl.id] = min + (max - min) * progress;
-                          }
-                      });
-                  }
-                  return { ...eff, params: newParams };
+              const modifiedFrame = applyEffects(intensityAdjustedFrame, effects, { 
+                  progress: clipProgress, 
+                  time: currentTime, 
+                  effectStates: effectStatesRef.current, 
+                  assignedDacs: clip.assignedDacs,
+                  syncSettings: clip.syncSettings || {},
+                  bpm: state.bpm,
+                  clipDuration: clipDuration
               });
-
-              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime, effectStates: effectStatesRef.current, assignedDacs: clip.assignedDacs });
 
               dacList.forEach((targetDac, dacIndex) => {
                 const ip = targetDac.ip;
@@ -1503,7 +1487,7 @@ function App() {
                 if (channel !== undefined) { // Check undefined instead of 0 to allow channel 0
                   const key = `${ip}:${channel}`;
                   if (!dacGroups.has(key)) {
-                    dacGroups.set(key, { ip, channel, frames: [] });
+                    dacGroups.set(key, { ip, channel, type: targetDac.type, frames: [] });
                   }
 
                   // Apply channel-level mirroring if specified
@@ -1558,7 +1542,7 @@ function App() {
                   
                   if (settings) {
                       if (!dacGroups.has(id)) {
-                          dacGroups.set(id, { ip: dac.ip, channel: ch, frames: [] });
+                          dacGroups.set(id, { ip: dac.ip, channel: ch, type: dac.type, frames: [] });
                       }
                       
                       const group = dacGroups.get(id);
@@ -1602,7 +1586,7 @@ function App() {
             }
 
             if (mergedFrame) {
-              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame, OUTPUT_FPS);
+              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame, OUTPUT_FPS, group.type);
             }
           });
         }
@@ -2446,9 +2430,26 @@ function App() {
       dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex, colIndex, effect: effectData } });
   }, []);
 
+  const handleDropEffectOnLayer = useCallback((layerIndex, effectId) => {
+    console.log(`App.jsx: handleDropEffectOnLayer for layer ${layerIndex}`, effectId);
+    // Find effect definition
+    const effectData = state.effects.find(e => (e.id || e.name) === effectId);
+    if (effectData) {
+        dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex, effectData } });
+    }
+  }, [state.effects]);
+
   const handleDropDac = useCallback((layerIndex, colIndex, dacData) => {
     console.trace('App.jsx: handleDropDac received dacData:', dacData);
       dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
+  }, []);
+
+  const handleDropDacOnLayer = useCallback((layerIndex, dacData) => {
+    console.log(`App.jsx: handleDropDacOnLayer for layer ${layerIndex}`, dacData);
+    // Apply to all clips in this layer
+    for (let colIndex = 0; colIndex < 8; colIndex++) {
+        dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
+    }
   }, []);
 
   const handleShowLayerFullContextMenu = (layerIndex) => {
@@ -2637,19 +2638,29 @@ function App() {
 
   const worldFrames = useMemo(() => {
     const frames = {};
-    activeClipsData.forEach(clip => {
-      if (clip && clip.workerId && liveFramesRef.current[clip.workerId]) {
-        const currentLayerEffects = layerEffects[clip.layerIndex] || [];
-        const mergedEffects = [...(clip.effects || []), ...currentLayerEffects];
-        frames[clip.workerId] = {
-          frame: liveFramesRef.current[clip.workerId],
-          effects: mergedEffects,
-          layerIndex: clip.layerIndex, 
-        };
+    activeClipIndexes.forEach((colIndex, layerIndex) => {
+      if (colIndex !== null) {
+        const clip = clipContents[layerIndex][colIndex];
+        if (clip) {
+          let workerId;
+          if (clip.type === 'ilda') workerId = clip.workerId;
+          else if (clip.type === 'generator') workerId = `generator-${layerIndex}-${colIndex}`;
+
+          if (workerId && liveFramesRef.current[workerId]) {
+            frames[workerId] = {
+              frame: liveFramesRef.current[workerId],
+              effects: clip.effects || [],
+              layerIndex,
+              syncSettings: clip.syncSettings || {},
+              bpm: state.bpm,
+              clipDuration: (clip.totalFrames || 30) / (clip.fps || playbackFps || 30)
+            };
+          }
+        }
       }
     });
     return frames;
-  }, [activeClipsData, frameTick, layerEffects]);
+  }, [activeClipIndexes, clipContents, frameTick, state.bpm]);
 
   const effectiveLayerIntensities = useMemo(() => {
       const isAnySolo = layerSolos.some(s => s);
@@ -2896,6 +2907,8 @@ function App() {
                   key={layerIndex}
                   layerName={layerName}
                   index={layerIndex}
+                  onDropEffect={(effectId) => handleDropEffectOnLayer(layerIndex, effectId)}
+                  onDropDac={(layerIndex, dacData) => handleDropDacOnLayer(layerIndex, dacData)}
                   layerEffects={layerEffects[layerIndex]}
                   activeClipData={activeClipDataForLayer}
                   liveFrame={liveFrameForLayer}
@@ -2992,6 +3005,9 @@ function App() {
               previewScanRate={previewScanRate}
               beamRenderMode={beamRenderMode}
               intensity={selectedClipFinalIntensity}
+              syncSettings={selectedClip?.syncSettings}
+              bpm={state.bpm}
+              clipDuration={(selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30)}
             />
             <WorldPreview
               activeFrames={worldFrames}
@@ -3077,6 +3093,7 @@ function App() {
               onRemoveEffect={(lIdx, cIdx, eIdx) => dispatch({ type: 'REMOVE_CLIP_EFFECT', payload: { layerIndex: lIdx, colIndex: cIdx, effectIndex: eIdx } })}
               onParameterChange={handleEffectParameterChange}
               onGeneratorParameterChange={handleGeneratorParameterChange}
+              progressRef={progressRef}
             />
 
 			<SettingsPanel

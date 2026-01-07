@@ -3,7 +3,7 @@ import { effectDefinitions } from './effectDefinitions';
 const withDefaults = (params, defaults) => ({ ...defaults, ...params });
 
 // Helper to resolve animated parameter values
-function resolveParam(key, baseValue, animSettings, context) {
+export function resolveParam(key, baseValue, animSettings, context) {
     if (!animSettings) return baseValue;
 
     // Handle legacy simple string mode or object mode
@@ -13,40 +13,98 @@ function resolveParam(key, baseValue, animSettings, context) {
     
     if (!settings.syncMode) return baseValue;
 
-    const { time, progress } = context;
-    let animProgress = 0;
+    const { time, progress = 0, bpm = 120, clipDuration = 0 } = context;
+    let rawProgress = 0;
 
-    // 1. Calculate Base Progress
+    // 1. Calculate Raw Progress (Unwrapped, 0..infinity)
+    const speedMult = settings.speedMultiplier || 1.0;
+
     if (settings.syncMode === 'fps') {
-        // Default 1Hz cycle roughly
-        animProgress = (time * 0.001) % 1.0;
-    } else if (settings.syncMode === 'timeline' || settings.syncMode === 'bpm') {
-        animProgress = progress || 0;
+        // FPS Mode: Free running based on Time * Speed
+        // Base rate: 1 cycle per second
+        rawProgress = (time * 0.001 * speedMult);
+
+    } else if (settings.syncMode === 'timeline') {
+        // Timeline Mode: Synced to Clip Progress
+        // Param Duration (s)
+        const paramDur = Math.max(0.01, settings.duration || 1.0);
+        
+        // If we have clip duration, we can map clip progress to parameter cycles
+        if (clipDuration > 0) {
+            // How many parameter cycles fit in the current clip position?
+            // clipTime = progress * clipDuration
+            // paramCycles = clipTime / paramDur
+            const clipTime = progress * clipDuration;
+            rawProgress = (clipTime / paramDur) * speedMult;
+        } else {
+            // Fallback if no clip duration (shouldn't happen for active clips)
+            rawProgress = 0;
+        }
+
+    } else if (settings.syncMode === 'bpm') {
+        // BPM Mode: Synced to Clip Progress but scaled by Beats
+        const paramBeats = Math.max(0.1, settings.beats || 4);
+        const bps = bpm / 60;
+        const paramDur = paramBeats / (bps || 2); // Duration in Seconds
+
+        if (clipDuration > 0) {
+            const clipTime = progress * clipDuration;
+            rawProgress = (clipTime / paramDur) * speedMult;
+        } else {
+            rawProgress = 0;
+        }
     }
 
-    // 2. Apply Direction
+    // 2. Apply Direction (Inverse logic for raw progress is tricky without bounds)
+    // We apply direction to the final phase 0..1
     const direction = settings.direction || 'forward';
-    if (direction === 'backward') {
-        animProgress = 1.0 - animProgress;
-    } else if (direction === 'pause') {
-        // TODO: Handle pause better (hold value)
-        // For now, static at 0 or current
+    if (direction === 'pause') {
         return baseValue; 
     }
 
-    // 3. Apply Style
+    // 3. Apply Style (Loop, Bounce, Once)
     const style = settings.style || 'loop';
-    if (style === 'bounce') {
+    let animPhase = 0;
+
+    if (style === 'once') {
+        // Clamp at 1.0
+        animPhase = Math.min(rawProgress, 1.0);
+        if (direction === 'backward') {
+             // For 'once' + 'backward', strictly it should go 1 -> 0 and hold 0?
+             // Or just invert the phase? 1 - clamp(prog).
+             animPhase = 1.0 - animPhase;
+        }
+    } else if (style === 'bounce') {
         // 0 -> 1 -> 0
-        animProgress = animProgress < 0.5 ? animProgress * 2 : 2 - (animProgress * 2);
-    } else if (style === 'once') {
-        animProgress = Math.min(animProgress, 1);
+        // We look at the integer part of rawProgress to know which "lap" we are in
+        // Lap 0: 0->1. Lap 1: 1->0. Lap 2: 0->1.
+        // Even laps: forward. Odd laps: backward.
+        // But we also need to account for 'direction' setting reversing the whole thing?
+        // Let's apply direction first? No, bounce handles direction implicitly.
+        
+        // If direction is backward, we just shift the time? 
+        // Standard behavior: 'backward' just inverts the result.
+        
+        let localPhase = rawProgress % 1.0;
+        const lap = Math.floor(rawProgress);
+        
+        if (lap % 2 === 1) {
+            // Odd lap: 1 -> 0
+            animPhase = 1.0 - localPhase;
+        } else {
+            // Even lap: 0 -> 1
+            animPhase = localPhase;
+        }
+        
+        if (direction === 'backward') animPhase = 1.0 - animPhase;
+
+    } else {
+        // Loop (Default)
+        animPhase = rawProgress % 1.0;
+        if (direction === 'backward') animPhase = 1.0 - animPhase;
     }
 
     // 4. Map to Range
-    // The RangeSlider gives us [min, max].
-    // If range is defined in settings, use it. Else use definition min/max? 
-    // Usually settings.range is populated by the UI.
     const range = settings.range; 
     let min = 0, max = 1;
 
@@ -54,15 +112,10 @@ function resolveParam(key, baseValue, animSettings, context) {
         min = range[0];
         max = range[1];
     } else {
-        // Fallback? We don't have access to definition here easily without passing it.
-        // We'll rely on baseValue being the "start" or similar?
-        // Actually, the UI saves 'range' in syncSettings.
-        // If no range, maybe we just oscillate around baseValue?
-        // Let's assume range is passed.
-        return baseValue; // Fallback if no range
+        return baseValue;
     }
 
-    return min + (max - min) * animProgress;
+    return min + (max - min) * animPhase;
 }
 
 /**
@@ -103,63 +156,17 @@ export function applyEffects(frame, effects, context = {}) {
     // Resolve Animated Parameters
     const resolvedParams = { ...effect.params };
     
-    // Check for sync settings attached to the effect (passed from App.jsx usually in effect.params or syncSettings map)
-    // In App.jsx, syncSettings are stored in clip.syncSettings and passed in 'context' or merged into effect?
-    // The 'effects' array passed here from App.jsx ALREADY has resolved params!
-    // Wait, App.jsx line 2370: "const syncedEffects = effects.map(eff => ...)"
-    // So App.jsx IS ALREADY doing the animation resolution!
-    // I don't need to do it here again.
-    // BUT, the user requirement is "Effects & Generator Parameter/Values Mappable & Animate-able".
-    // If App.jsx handles it, I might just need to fix the UI to set the settings correctly.
-    // However, the user said: "The animation part is still not working... If the Function for Clip-Playback Style is flawed..."
-    // AND "We want to use the same logic for each effect sepperatly".
-    // I see logic in App.jsx.
-    // I will double check App.jsx logic.
-    // App.jsx logic seemed to handle 'range' and 'style'.
-    // Maybe I should just trust the passed params are resolved.
-    // But for "Generator", parameters are updated in state?
-    // For Effects, they are calculated per frame.
-    // I will stick to using `effect.params` as they are passed.
-    // If `applyEffects` is called from `IldaPlayer` (Preview), `App.jsx` might not have resolved them yet?
-    // In `IldaPlayer.jsx`: `worker.postMessage({ action: 'update', payload: { data: { effects: effects ... } } })`.
-    // `IldaPlayer` receives `effects` as props.
-    // `App.jsx` passes `effects` from `clip.effects`.
-    // `App.jsx` does NOT resolve params before passing to `IldaPlayer`.
-    // `App.jsx` ONLY resolves params inside the `animate` function for DAC OUTPUT.
-    // So the Preview (IldaPlayer) does NOT see animations?
-    // This explains why "animation part is still not working" (in preview?).
-    // I should implement the resolution HERE in `effects.js` so it works for both Preview (Worker) and Output.
-    // AND I should remove the resolution from `App.jsx` to avoid double application?
-    // Or just be safe: If `context` has `syncSettings`, I resolve.
-    // `App.jsx` `animate` passes `syncedEffects` where params are already modified.
-    // `IldaPlayer` passes raw `effects`.
-    // So if I modify `applyEffects` to resolve params, I need to make sure `App.jsx` doesn't resolve them twice.
-    // `App.jsx` passes `syncedEffects` to `applyEffects`.
-    // If `syncedEffects` params are already numbers, `resolveParam` will likely just return them if no syncSettings found for them?
-    // But `App.jsx` logic creates new params.
-    // Ideally, logic should be central here.
-    // I will implement resolution here. The `App.jsx` resolution is redundant but probably harmless if I check `syncSettings` from context.
-    // `App.jsx` passes `effectStates` but NOT `syncSettings` explicitly in the `context` object in `animate` loop?
-    // Line 2406: `applyEffects(..., { progress..., effectStates: effectStatesRef.current })`.
-    // No `syncSettings` passed in context.
-    // But `IldaPlayer` -> `rendering.worker.js` -> `applyEffects`.
-    // `rendering.worker.js` receives `data` which has `effects`.
-    // `IldaPlayer` does not pass `syncSettings` separately. `effects` object usually contains `params`.
-    // Where are `syncSettings` stored? In `clip.syncSettings`.
-    // `IldaPlayer` prop `effects` is just the array. It doesn't know about `clip.syncSettings`.
-    // I need to ensure `effects` objects have the sync data attached or passed.
-    // In `App.jsx`, `layerEffects` and `clip.effects` are arrays of objects.
-    // `syncSettings` seem to be stored in `clip.syncSettings`.
-    // `clip.effects` elements don't have `syncSettings` inside them.
-    // So `IldaPlayer` receiving `clip.effects` will NOT have sync info.
-    // I must update `IldaPlayer` to receive `syncSettings` or merge them into effects.
-    // BUT I cannot edit `App.jsx` extensively right now (too big, risk).
-    // I will assume `effect.sync` or similar property?
-    // Use Case: User edits `EffectEditor`. Updates `syncSettings`.
-    // If I can't easily fix the pipeline, I will focus on the logic in `effects.js` assuming the data gets there.
-    
-    // For now, I'll stick to the requested changes in `effects.js` logic (Mirror/Delay).
-    
+    // Iterate over all keys in params and resolve them if sync settings exist
+    for (const key of Object.keys(resolvedParams)) {
+        const paramKey = `${effect.id}.${key}`;
+        // syncSettings key format might vary. 
+        // In EffectEditor: `${effect.id}.${control.id}`
+        // We check syncSettings passed in context.
+        if (syncSettings[paramKey]) {
+             resolvedParams[key] = resolveParam(key, resolvedParams[key], syncSettings[paramKey], context);
+        }
+    }
+
     switch (effect.id) {
       case 'rotate':
         applyRotate(currentPoints, numPoints(), resolvedParams, progress, time);

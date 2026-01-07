@@ -119,14 +119,14 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onLabelClick(); // Select the clip to show its new settings
             return;
           }
+        } else if (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels)) { // Check if this is DAC data - CHECK THIS BEFORE GENERATOR
+          if (onDropDac) {
+            onDropDac(layerIndex, colIndex, parsedData);
+            return;
+          }
         } else if (parsedData.name) {
           if (onDropGenerator) {
             onDropGenerator(layerIndex, colIndex, parsedData);
-            return;
-          }
-        } else if (parsedData.ip && typeof parsedData.channel === 'number') { // Check if this is DAC data
-          if (onDropDac) {
-            onDropDac(layerIndex, colIndex, parsedData);
             return;
           }
         }

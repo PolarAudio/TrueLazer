@@ -9,13 +9,13 @@
   --theme-color-green: #00ff00;
   --theme-color-white: #ffffff;
 
-  --theme-color-orange-transparent: #ff5e0038;
-  --theme-color-yellow-transparent: #ffd40038;
-  --theme-color-cyan-transparent: #00fff338;
-  --theme-color-light-blue-transparent: #0089ff38;
-  --theme-color-blue-transparent: #005aff38;
-  --theme-color-magenta-transparent: #fb00ff38;
-  --theme-color-red-transparent: #ff000038;
+  --theme-color-orange-transparent: #ff5e007a;
+  --theme-color-yellow-transparent: #ffd4007a;
+  --theme-color-cyan-transparent: #00fff37a;
+  --theme-color-light-blue-transparent: #0089ff7a;
+  --theme-color-blue-transparent: #005aff7a;
+  --theme-color-magenta-transparent: #fb00ff7a;
+  --theme-color-red-transparent: #ff00007a;
 
   --theme-color: var(--theme-color-orange);
   --theme-color-transparent: var(--theme-color-orange-transparent);
@@ -164,12 +164,12 @@ body {
     transition: all 0.1s;
   }
   .speed-control-button:hover, .speed-control-button-pause:hover, .speed-control-button-stop:hover {
-	outline: 2px solid var(--theme-color);
+	outline: 1px solid var(--theme-color);
 	background: #444;
   }
   .speed-control-button.active {
-	outline: 2px solid var(--theme-color);
-	background: var(--theme-color);
+	outline: 1px solid var(--theme-color);
+	background: var(--theme-color-transparent);
     color: black;
   }
 
@@ -874,8 +874,9 @@ input[type="checkbox"]:checked:before {
 
 .generator-list {
   display: flex;
+  flex-direction: column;
   flex-wrap: wrap;
-  gap: 10px;
+  row-gap: 3px;
 }
 
 .generator-item {
@@ -2061,6 +2062,29 @@ div[data-mappable-id^='quick_btn_'].active,
     border-radius: 2px;
     border: 1px solid #000;
 }
+
+
+.max-handle {
+	position: absolute;
+	width: 7px;
+	height: 15px;
+	background: var(--theme-color);
+	top: 50%;
+	transform: translate(0%, -50%);
+	cursor: ew-resize;
+	clip-path: polygon(100% 0%, 0% 0%, 0% 100%);
+	  z-index: 10;}
+.min-handle {
+	position: absolute;
+	width: 7px;
+	height: 15px;
+	background: var(--theme-color);
+	top: 50%;
+	transform: translate(-100%, -50%);
+	cursor: ew-resize;
+	clip-path: polygon(100% 0%, 0% 0%, 100% 100%);
+	  z-index: 10;}
+
 
 .range-slider-handle:hover, .range-slider-handle:active {
     background: var(--theme-color);

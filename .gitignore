@@ -166,3 +166,6 @@ native/build/
 native/node_modules/
 
 
+/sdk/j4cDAC
+/sdk/etherdream-driver
+src/trueLazer.png

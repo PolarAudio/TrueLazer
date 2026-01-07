@@ -1,6 +1,6 @@
 {
   "name": "TrueLazer",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "first development build",
   "main": "main.js",
   "scripts": {
@@ -23,7 +23,7 @@
       "main.js",
       "main/**/*",
       "preload.js",
-      "src/trueLazer.ico",
+      "src/favicon.ico",
       "src/**/*",
       "dist/**/*",
       "native/build/Release/ndi_wrapper.node",
@@ -34,7 +34,7 @@
       "**/*.dll"
     ],
     "win": {
-      "icon": "src/trueLazer.ico",
+      "icon": "src/favicon.ico",
       "target": [
         "nsis"
       ]
@@ -46,8 +46,8 @@
     }
   },
   "keywords": [],
-  "author": "MAXQON",
-  "license": "GNU GPL",
+  "author": "Kevin Bahr (MAXQON)",
+  "license": "Source Available",
   "type": "module",
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.2",
