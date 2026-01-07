@@ -69,16 +69,19 @@ class EtherDreamConnection {
                 this.connecting = false;
                 console.log(`[EtherDream] Connected to ${this.ip}`);
                 
-                // 1. Initial status response from DAC
-                await this.waitForResponse(0, 2000);
+                // 1. Initial status
+                const initStatus = await this.waitForResponse(0, 500); 
+                if (initStatus) {
+                    console.log(`[EtherDream] Initial Status: PB=${initStatus.status.playback_state}, LE=${initStatus.status.light_engine_state}`);
+                    this.handleStatus(initStatus);
+                }
 
                 // 2. Sync with a ping
+                console.log(`[EtherDream] Sending Sync Ping...`);
                 await this.sendCommand(0x3F);
 
-                // 3. Proactively clear E-Stop immediately
-                console.log(`[EtherDream] Proactively clearing E-Stop for ${this.ip}...`);
-                await this.sendCommand(0x63); // 'c'
-
+                // Force active state immediately
+                this.laserActive = true; 
                 this.startStreaming();
                 resolve(true);
             });
@@ -103,6 +106,7 @@ class EtherDreamConnection {
 
     destroy() {
         this.isStreaming = false;
+        this.laserActive = false;
         if (this.client) {
             this.client.destroy();
             this.client = null;
@@ -160,6 +164,7 @@ class EtherDreamConnection {
                 const idx = this.responseHandlers.findIndex(h => h.resolve === resolve);
                 if (idx !== -1) {
                     this.responseHandlers.splice(idx, 1);
+                    console.warn(`[EtherDream] Timeout waiting for 0x${commandByte.toString(16)}`);
                     resolve(null);
                 }
             }, timeoutMs);
@@ -190,8 +195,12 @@ class EtherDreamConnection {
     async sendCommand(cmdByte, extraData = null) {
         if (!this.connected) return null;
         const buf = extraData ? Buffer.concat([Buffer.from([cmdByte]), extraData]) : Buffer.from([cmdByte]);
+        
+        // Critical: Register handler BEFORE writing
+        const promise = this.waitForResponse(cmdByte);
         this.client.write(buf);
-        const resp = await this.waitForResponse(cmdByte);
+        
+        const resp = await promise;
         if (resp) this.handleStatus(resp);
         return resp;
     }
@@ -209,37 +218,41 @@ class EtherDreamConnection {
             try {
                 if (!this.laserActive) {
                     if (this.playbackState !== PLAYBACK_IDLE) {
-                        await this.sendCommand(0x73); // Stop ('s')
+                        await this.sendCommand(0x73); 
                     }
-                    await this.sendCommand(0x3F); // Ping ('?')
+                    await this.sendCommand(0x3F); 
                     await new Promise(r => setTimeout(r, 200));
                     continue;
                 }
 
-                // 1. Recover from E-Stop (Command 'c' = 0x63)
+                // 1. Recover from E-Stop
                 if (this.lightEngineState === LIGHT_ENGINE_ESTOP) {
-                    console.log(`[EtherDream] E-Stop state detected, clearing...`);
+                    console.log(`[EtherDream] Clearing E-Stop...`);
                     await this.sendCommand(0x63); 
+                    await new Promise(r => setTimeout(r, 50));
                     continue;
                 }
 
-                // 2. Prepare (Command 'p' = 0x70)
-                if (this.playbackState === PLAYBACK_IDLE) {
-                    console.log(`[EtherDream] Initializing DAC (Prepare)...`);
+                // 2. Prepare
+                if (this.playbackState === PLAYBACK_IDLE || (this.playbackState === PLAYBACK_PREPARED && this.bufferFullness === 0)) {
+                    console.log(`[EtherDream] Initializing (Prepare), State: ${this.playbackState}`);
                     const pResp = await this.sendCommand(0x70);
+                    
                     if (pResp && pResp.response === RESP_NAK_INVL) {
-                        // If Invalid, trace shows we should immediately try Clear E-Stop
-                        console.log(`[EtherDream] Prepare rejected, attempting Clear E-Stop...`);
-                        await this.sendCommand(0x63);
+                        console.log(`[EtherDream] Prepare NAK'd. Clearing E-Stop...`);
+                        await this.sendCommand(0x63); 
+                        await new Promise(r => setTimeout(r, 50)); 
+                    } else if (pResp && pResp.response === RESP_ACK) {
+                        console.log(`[EtherDream] Prepare ACK'd.`);
                     }
-                    continue;
+                    // If we were already prepared, we proceed to buffer filling
                 }
 
-                // 3. Persistent point streaming
+                // 3. Keep Buffer Full
                 const TARGET_BUFFER = 1700;
                 let sentData = false;
                 
-                while (this.connected && this.playbackState !== PLAYBACK_IDLE && this.bufferFullness < TARGET_BUFFER) {
+                while (this.connected && (this.playbackState === PLAYBACK_PREPARED || this.playbackState === PLAYBACK_PLAYING) && this.bufferFullness < TARGET_BUFFER) {
                     let framePoints;
                     let isTyped = false;
 
@@ -248,18 +261,21 @@ class EtherDreamConnection {
                         framePoints = frame.points;
                         isTyped = frame.isTypedArray;
                     } else {
-                        // Continuous blanking points
                         framePoints = Array(80).fill({ x: 0, y: 0, r: 0, g: 0, b: 0, blanking: true });
                         isTyped = false;
                     }
 
+                    // console.log(`[EtherDream] Sending data...`);
                     const success = await this.sendRateAndPoints(framePoints, isTyped);
-                    if (!success) break;
+                    if (!success) {
+                        console.log(`[EtherDream] Send Points failed.`);
+                        break;
+                    }
                     sentData = true;
                     
-                    // 4. Begin (Command 'b' = 0x62)
+                    // 4. Begin
                     if (this.playbackState === PLAYBACK_PREPARED && this.bufferFullness > 400) {
-                        console.log(`[EtherDream] Starting playback (Begin)...`);
+                        console.log(`[EtherDream] Sending Begin...`);
                         const beginData = Buffer.alloc(6);
                         beginData.writeUInt16LE(0, 0); // LWM
                         beginData.writeUInt32LE(this.fixedRate, 2);
@@ -270,7 +286,7 @@ class EtherDreamConnection {
                 await new Promise(r => setTimeout(r, sentData ? 1 : 10));
 
                 if (!sentData && this.connected) {
-                    await this.sendCommand(0x3F); // Keepalive
+                    await this.sendCommand(0x3F); 
                 }
 
             } catch (err) {
@@ -290,11 +306,11 @@ class EtherDreamConnection {
             const payload = Buffer.alloc(5 + 3 + (batchSize * 18));
             
             let offset = 0;
-            payload[offset++] = 0x71; // 'q' (Rate)
+            payload[offset++] = 0x71; // 'q'
             payload.writeUInt32LE(this.fixedRate, offset);
             offset += 4;
             
-            payload[offset++] = 0x64; // 'd' (Data)
+            payload[offset++] = 0x64; // 'd'
             payload.writeUInt16LE(batchSize, offset);
             offset += 2;
             
@@ -323,11 +339,21 @@ class EtherDreamConnection {
                 offset += 18;
             }
             
+            // Critical Fix: Register handlers BEFORE writing
+            const p1 = this.waitForResponse(0x71);
+            const p2 = this.waitForResponse(0x64);
+            
             this.client.write(payload);
-            const r1 = await this.waitForResponse(0x71);
-            const r2 = await this.waitForResponse(0x64);
-            if (r2) this.handleStatus(r2);
-            if (!r1 || !r2 || r1.response !== RESP_ACK || r2.response !== RESP_ACK) return false;
+            
+            const r1 = await p1;
+            const r2 = await p2;
+            
+            if (r2) this.handleStatus(r2); // Update buffer fullness from 'd' ACK
+            
+            if (!r1 || !r2 || r1.response !== RESP_ACK || r2.response !== RESP_ACK) {
+                // If r2 is null, it timed out.
+                return false;
+            }
             processed += batchSize;
         }
         return true;
@@ -385,6 +411,7 @@ function sendFrame(ip, channel, frame, fps) {
 }
 
 function connectDac(ip) {
+    console.log(`[EtherDream] Connect DAC called for ${ip}`);
     let conn = connections.get(ip);
     if (!conn) {
         conn = new EtherDreamConnection(ip, ETHERDREAM_TCP_PORT);
