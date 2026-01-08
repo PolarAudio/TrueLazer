@@ -2,13 +2,21 @@
 
 *Introduction*
 
-This protocol documentation applies to all versions of the Ether Dream. Newer versions have a larger buffer size but otherwise implement the same protocol.
+This protocol documentation applies to all versions of the Ether Dream. 
+Newer versions have a larger buffer size but otherwise implement the same protocol.
 
-Communication with the DAC happens over TCP on port 7765. The DAC will only communicate with one host at a time; another device that connects while the DAC has an established control connection will have its connection attempt rejected.
+Communication with the DAC happens over TCP on port 7765. 
+The DAC will only communicate with one host at a time; 
+another device that connects while the DAC has an established control connection will have its connection attempt rejected.
 
-The DAC has a USB interface as well. This is used only for firmware updates. The original Ether Dream 1 implements firmware updates via DFU, while later versions use a standard USB Mass Storage Class interface.
+The DAC has a USB interface as well. This is used only for firmware updates. 
+The original Ether Dream 1 implements firmware updates via DFU, while later versions use a standard USB Mass Storage Class interface.
 
-In this document, protocol messages are described as structs. Fields are packed together with no padding (__attribute__((packed)) or #pragma pack(1)); standard C typedefs such as uint8_t, uint32_t, int32_t, etc. have their usual meanings, and multi-byte values are transmitted little-endian ("host" byte order on x86 and ARM): the most significant byte appears first.
+In this document, protocol messages are described as structs. 
+Fields are packed together with no padding (__attribute__((packed)) or #pragma pack(1)); 
+standard C typedefs such as uint8_t, uint32_t, int32_t, etc. have their usual meanings, 
+and multi-byte values are transmitted little-endian ("host" byte order on x86 and ARM): the most significant byte appears first.
+
 State Machines
 
 There are three distinct state machines within the DAC: light engine, playback, and source. The light engine states are:
@@ -20,7 +28,11 @@ There are three distinct state machines within the DAC: light engine, playback, 
 
 The light engine state machine is for future use cases where the Ether Dream is built in to a projector. The "warmup" and "cooldown" states are not currently used.
 
-The DAC has one playback system, which buffers data and sends it to the analog output hardware at its current point rate. At any given time, the playback system is connected to a source. Usually, the source is the network streamer, which uses the protocol described in this document; however, other sources exist, such as a built-in abstract generator and file playback from SD card. The playback system is in one of the following states:
+The DAC has one playback system, which buffers data and sends it to the analog output hardware at its current point rate. 
+At any given time, the playback system is connected to a source. 
+Usually, the source is the network streamer, which uses the protocol described in this document; 
+however, other sources exist, such as a built-in abstract generator and file playback from SD card. 
+The playback system is in one of the following states:
 
     0: Idle. This is the default state. No points may be added to the buffer. No output is generated; all analog outputs are at 0v, and the shutter is controlled by the data source.
     1: Prepared. The buffer will accept points. The output is the same as in the Idle state.
@@ -43,7 +55,8 @@ Periodically, and as part of ACK packets, the DAC sends to the host information 
     	uint32_t point_count;
     };
 
-The light_engine_state field gives the current state of the light engine. If the light engine is Ready, light_engine_flags will be 0. Otherwise, bits in light_engine_flags will be set as follows:
+The light_engine_state field gives the current state of the light engine. If the light engine is Ready, light_engine_flags will be 0. 
+Otherwise, bits in light_engine_flags will be set as follows:
 
     [0]: Emergency stop occurred due to E-Stop packet or invalid command.
     [1]: Emergency stop occurred due to E-Stop input to projector.
@@ -53,13 +66,16 @@ The light_engine_state field gives the current state of the light engine. If the
     [5]: Emergency stop occurred due to loss of Ethernet link.
     [15:5]: Future use. 
 
-Similarly, playback_state gives the state of the playback system. The playback_flags field may be nonzero during normal operation. Its bits are defined as follows:
+Similarly, playback_state gives the state of the playback system. The playback_flags field may be nonzero during normal operation. 
+Its bits are defined as follows:
 
     [0]: Shutter state: 0 = closed, 1 = open.
     [1]: Underflow. 1 if the last stream ended with underflow, rather than a Stop command. Reset to zero by the Prepare command.
     [2]: E-Stop. 1 if the last stream ended because the E-Stop state was entered. Reset to zero by the Prepare command. 
 
-The buffer_fullness field contains the number of points currently buffered. point_rate is the number of points per second for which the DAC is configured (if Prepared or Playing), or zero if the DAC is idle. point_count is the number of points that the DAC has actually emitted since it started playing (if Playing), or zero (if Prepared or Idle).
+The buffer_fullness field contains the number of points currently buffered. 
+point_rate is the number of points per second for which the DAC is configured (if Prepared or Playing), or zero if the DAC is idle. 
+point_count is the number of points that the DAC has actually emitted since it started playing (if Playing), or zero (if Prepared or Idle).
 
 The currently-selected data source is specified in the source field:
 
@@ -69,7 +85,8 @@ The currently-selected data source is specified in the source field:
 
 *Broadcast*
 
-Regardless of the data source being used, each DAC broadcasts a status/ID datagram over UDP to its local network's broadcast address once per second. This datagram is formed as follows:
+Regardless of the data source being used, each DAC broadcasts a status/ID datagram over UDP to its local network's broadcast address once per second. 
+This datagram is formed as follows:
 
     struct j4cDAC_broadcast {
     	uint8_t mac_address[6];
@@ -82,12 +99,20 @@ Regardless of the data source being used, each DAC broadcasts a status/ID datagr
 
 *Commands*
 
-When a host first connects to the device, the device immediately sends it a status reply, as if the host had sent a ping packet (described later). The host sends to the device a series of commands. All commands receive a response from the DAC; responses are described after the list of commands. The commands are as follows:
+When a host first connects to the device, the device immediately sends it a status reply, as if the host had sent a ping packet (described later). 
+The host sends to the device a series of commands. 
+All commands receive a response from the DAC; responses are described after the list of commands. 
+The commands are as follows:
+
 Prepare Stream
 
 Single byte: 'p' (0x70)
 
-This command causes the playback system to enter the Prepared state. The DAC resets its buffer to be empty and sets "point_count" to 0. This command may only be sent if the light engine is Ready and the playback system is Idle. If so, the DAC replies with ACK; otherwise, it replies with NAK - Invalid.
+This command causes the playback system to enter the Prepared state. 
+The DAC resets its buffer to be empty and sets "point_count" to 0. 
+This command may only be sent if the light engine is Ready and the playback system is Idle. 
+If so, the DAC replies with ACK; otherwise, it replies with NAK - Invalid.
+
 Begin Playback
 
     struct begin_command {
@@ -96,7 +121,9 @@ Begin Playback
     	uint32_t point_rate;
     };
 
-This causes the DAC to begin producing output. point_rate is the number of points per second to be read from the buffer. If the playback system was Prepared and there was data in the buffer, then the DAC will reply with ACK; otherwise, it replies with NAK - Invalid.
+This causes the DAC to begin producing output. 
+point_rate is the number of points per second to be read from the buffer. 
+If the playback system was Prepared and there was data in the buffer, then the DAC will reply with ACK; otherwise, it replies with NAK - Invalid.
 
 TODO: The low_water_mark parameter is currently unused.
 Queue Rate Change
@@ -106,7 +133,11 @@ Queue Rate Change
     	uint32_t point_rate;
     };
 
-This adds a new point rate to the point rate buffer. Point rate changes are read out of the buffer when a point with an appropriate flag is played; see the Write Data command. If the DAC is not Prepared or Playing, it replies with NAK - Invalid. If the point rate buffer is full, it replies with NAK - Full. Otherwise, it replies with ACK.
+This adds a new point rate to the point rate buffer. 
+Point rate changes are read out of the buffer when a point with an appropriate flag is played; see the Write Data command. 
+If the DAC is not Prepared or Playing, it replies with NAK - Invalid. 
+If the point rate buffer is full, it replies with NAK - Full. Otherwise, it replies with ACK.
+
 Write Data
 
     struct data_command {

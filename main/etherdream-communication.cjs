@@ -7,6 +7,7 @@ const ETHERDREAM_TCP_PORT = 7765;
 const STANDARD_RESPONSE_SIZE = 22;
 
 const RESP_ACK = 0x61; // 'a'
+const RESP_NAK = 0x4E; // 'N'
 const RESP_NAK_FULL = 0x46; // 'F'
 const RESP_NAK_INVL = 0x49; // 'I'
 const RESP_NAK_ESTOP = 0x21; // '!'
@@ -16,6 +17,8 @@ const PLAYBACK_PREPARED = 1;
 const PLAYBACK_PLAYING = 2;
 
 const LIGHT_ENGINE_READY = 0;
+const LIGHT_ENGINE_WARMUP = 1;
+const LIGHT_ENGINE_COOLDOWN = 2;
 const LIGHT_ENGINE_ESTOP = 3;
 
 let globalStatusCallback = null;
@@ -261,6 +264,14 @@ class EtherDreamConnection {
                         framePoints = frame.points;
                         isTyped = frame.isTypedArray;
                     } else {
+                        // Queue empty.
+                        // If we are PLAYING and buffer is healthy, stop filling to avoid strobing (interleaving blanks with data).
+                        // We wait for more real frames or for buffer to drop.
+                        if (this.playbackState === PLAYBACK_PLAYING && this.bufferFullness > 600) {
+                            break; 
+                        }
+
+                        // Otherwise (Prepared state needs fill to start, or Playing but starving), send blanks.
                         framePoints = Array(80).fill({ x: 0, y: 0, r: 0, g: 0, b: 0, blanking: true });
                         isTyped = false;
                     }
