@@ -64,7 +64,9 @@ const schema = {
     type: 'object',
     properties: {
       showBeamEffect: { type: 'boolean', default: true },
-      beamRenderMode: { type: 'string', default: 'points' },
+      beamRenderMode: { type: 'string', default: 'both' },
+      worldShowBeamEffect: { type: 'boolean', default: true },
+      worldBeamRenderMode: { type: 'string', default: 'both' },
       previewScanRate: { type: 'number', default: 1 },
       fadeAlpha: { type: 'number', default: 0.1 },
       beamAlpha: { type: 'number', default: 0.1 }
@@ -618,15 +620,16 @@ function buildApplicationMenu(mode) {
             // New thumbnail render mode options
             { label: 'Thumbnail Still Frame', type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
             { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
+            { label: 'Thumbnail Hover Render', type: 'radio', checked: mode === 'hover', click: () => { sendThumbnailModeToRenderer('hover'); } },
             { type: 'separator' },
             { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
             { type: 'separator' },
             {
-              label: 'Effect Mode',
+              label: 'Display Mode',
               submenu: [
-                { label: 'Points', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
+                { label: 'Points', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
                 { label: 'Lines', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
-                { label: 'Points & Lines', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
+                { label: 'Points & Lines', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
               ]
             },
             { type: 'separator' },

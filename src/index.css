@@ -19,6 +19,7 @@
 
   --theme-color: var(--theme-color-orange);
   --theme-color-transparent: var(--theme-color-orange-transparent);
+  user-select: none;
 }
 
 body {
@@ -308,7 +309,7 @@ body {
 	grid-row-end: 3;
 	justify-self: stretch;
 	display: grid;
-	grid-template-rows: auto 47.5% 47.5%;
+	grid-template-rows: 1fr 1fr;
   }
   .ilda-player,
   .world-preview {
@@ -933,6 +934,19 @@ input[type="checkbox"]:checked:before {
   align-items: center;
   width: 100%;
   flex-shrink: 0;
+}
+
+.renderSettingToggle {
+	display: flex;
+	gap: 5px;
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	z-index: 2;
+}
+
+.renderSettingToggle button:hover {
+	color: white !important;
 }
 
 .clip.selected-clip {
@@ -1922,19 +1936,18 @@ div[data-mappable-id^='quick_btn_']:hover {
 
 div[data-mappable-id^='quick_btn_'].active,
 .quick-assign-button.active {
-  background: var(--theme-color);
-  color: #000;
-  border-color: var(--theme-color);
-  box-shadow: 0 0 8px var(--theme-color);
+  background: var(--theme-color) !important;
+  color: #000 !important;
+  border-color: var(--theme-color) !important;
+  box-shadow: 0 0 8px var(--theme-color) !important;
 }
-
-.quick-assign-button.unassigned {
+div[data-mappable-id^='quick_btn_'].unassigned {
   opacity: 0.3;
   cursor: default;
   border-color: #444;
 }
 
-.quick-assign-button.unassigned:hover {
+div[data-mappable-id^='quick_btn_'].unassigned:hover {
   background: #333;
   border-color: #444;
 }
@@ -2112,3 +2125,8 @@ div[data-mappable-id^='quick_btn_'].active,
     background-color: #005aff !important;
 }
 
+.renderSettingToggle {
+	position: absolute;
+	z-index: 2;
+	padding-top: 5px;
+}

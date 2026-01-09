@@ -46,20 +46,27 @@ class EtherDreamConnection {
         
         this.frameQueue = [];
         this.isStreaming = false;
-        this.laserActive = false; 
-        this.fixedRate = 30000; 
+        this.laserActive = false;
         
-        // Streaming state
-        this.streamingActive = false;
+        // Fixed rate for now - no adaptation
+        this.currentRate = 12000;
+        
+        // Blanking mode
+        this.blankingMode = true;
+        this.lastDataReceived = 0;
+        this.dataTimeout = 1000; // Increased to 1 second
+        
+        // Timing control
         this.lastSendTime = 0;
-        this.sendInterval = null;
-        this.minBufferLevel = 500;
-        this.targetBufferLevel = 1200;
-        this.maxBufferLevel = 1700;
+        this.sendTimer = null;
+        this.sendInterval = 20;
         
-        // Performance monitoring
-        this.packetsSent = 0;
-        this.lastStatusUpdate = 0;
+        // State
+        this.initialized = false;
+        this.connectionEstablished = false;
+        this.initializationInProgress = false;
+        
+        console.log(`[EtherDream] Created connection for ${ip}:${port}`);
     }
 
     async connect() {
@@ -82,9 +89,17 @@ class EtherDreamConnection {
                 this.client.setNoDelay(true);
                 this.connected = true;
                 this.connecting = false;
+                this.connectionEstablished = true;
                 console.log(`[EtherDream] Connected to ${this.ip}`);
                 
-                // Start streaming
+                // Wait a moment for the connection to stabilize
+                await new Promise(r => setTimeout(r, 100));
+                
+                // Start with blanking mode
+                this.blankingMode = true;
+                this.currentRate = 12000;
+                
+                // Initialize streaming
                 this.startStreaming();
                 resolve(true);
             });
@@ -110,11 +125,10 @@ class EtherDreamConnection {
     destroy() {
         this.isStreaming = false;
         this.laserActive = false;
-        this.streamingActive = false;
         
-        if (this.sendInterval) {
-            clearInterval(this.sendInterval);
-            this.sendInterval = null;
+        if (this.sendTimer) {
+            clearInterval(this.sendTimer);
+            this.sendTimer = null;
         }
         
         if (this.client) {
@@ -124,10 +138,13 @@ class EtherDreamConnection {
         
         this.connected = false;
         this.connecting = false;
+        this.connectionEstablished = false;
         this.inputBuffer = Buffer.alloc(0);
         this.responseHandlers.forEach(handler => handler.resolve(null));
         this.responseHandlers = [];
         this.frameQueue = [];
+        this.initialized = false;
+        this.initializationInProgress = false;
     }
 
     processInput() {
@@ -141,7 +158,7 @@ class EtherDreamConnection {
             // Update status immediately
             this.updateStatusFromResponse(resp);
             
-            // Find handler for this specific command
+            // Find handler for this command
             const handlerIndex = this.responseHandlers.findIndex(h => h.command === resp.command);
             if (handlerIndex !== -1) {
                 const handler = this.responseHandlers[handlerIndex];
@@ -179,7 +196,6 @@ class EtherDreamConnection {
         this.lightEngineState = resp.status.light_engine_state;
         this.bufferFullness = resp.status.buffer_fullness;
         this.source = resp.status.source;
-        this.lastStatusUpdate = Date.now();
         
         if (globalStatusCallback) {
             globalStatusCallback(this.ip, this.status);
@@ -223,129 +239,286 @@ class EtherDreamConnection {
         if (this.isStreaming) return;
         this.isStreaming = true;
         
-        // Use setInterval for consistent data sending
-        this.sendInterval = setInterval(() => {
-            this.sendDataLoop();
-        }, 1); // Run every 1ms for high frequency updates
+        console.log(`[EtherDream] Starting streaming in blanking mode (${this.currentRate}pps)`);
         
-        console.log(`[EtherDream] Started streaming for ${this.ip}`);
+        // Start the send loop with initial interval
+        this.sendTimer = setInterval(() => {
+            this.streamTick();
+        }, this.sendInterval);
     }
 
-    async sendDataLoop() {
+    async streamTick() {
         if (!this.connected || !this.isStreaming) return;
         
         try {
-            // If laser is not active, just maintain connection
-            if (!this.laserActive) {
-                if (this.playbackState !== PLAYBACK_IDLE) {
-                    await this.sendCommand(0x73); // Stop
-                }
+            // Check if we should switch to blanking mode
+            const now = Date.now();
+            if (!this.blankingMode && now - this.lastDataReceived > this.dataTimeout) {
+                console.log(`[EtherDream] No data for ${this.dataTimeout}ms, switching to blanking mode`);
+                this.switchToBlankingMode();
                 return;
             }
-
-            // Handle E-Stop
-            if (this.lightEngineState === LIGHT_ENGINE_ESTOP) {
-                await this.sendCommand(0x63); // Clear E-Stop
-                return;
-            }
-
+            
             // Initialize playback if needed
-            if (this.playbackState === PLAYBACK_IDLE) {
+            if (!this.initialized && !this.initializationInProgress) {
                 await this.initializePlayback();
                 return;
             }
-
-            // Send data if we're in prepared or playing state
-            if (this.playbackState === PLAYBACK_PREPARED || this.playbackState === PLAYBACK_PLAYING) {
-                await this.sendDataToBuffer();
+            
+            // Don't send data if we're not initialized or initializing
+            if (!this.initialized || this.initializationInProgress) {
+                return;
+            }
+            
+            // Handle E-Stop
+            if (this.lightEngineState === LIGHT_ENGINE_ESTOP) {
+                console.log(`[EtherDream] Clearing E-Stop...`);
+                await this.sendCommand(0x63); // Clear E-Stop
+                await new Promise(r => setTimeout(r, 50));
+                this.initialized = false; // Need to reinitialize
+                return;
+            }
+            
+            // Send appropriate data based on mode
+            if (this.blankingMode) {
+                await this.sendBlankingBatch();
+            } else {
+                await this.sendDataBatch();
             }
             
         } catch (err) {
-            console.error(`[EtherDream] Send loop error:`, err.message);
+            console.error(`[EtherDream] Stream tick error:`, err.message);
         }
     }
-
+    
     async initializePlayback() {
-        console.log(`[EtherDream] Initializing playback...`);
+        if (this.initializationInProgress) return false;
         
-        // Prepare
-        const prepResp = await this.sendCommand(0x70);
-        if (!prepResp || prepResp.response !== RESP_ACK) {
-            console.log(`[EtherDream] Prepare failed`);
-            return false;
+        this.initializationInProgress = true;
+        console.log(`[EtherDream] Initializing playback at ${this.currentRate}pps`);
+        
+        try {
+            // Send a ping to get current status
+            const pingResp = await this.sendCommand(0x3F);
+            if (!pingResp) {
+                console.log(`[EtherDream] No response to ping`);
+                return false;
+            }
+            
+            console.log(`[EtherDream] Current state: playback=${this.playbackState}, light_engine=${this.lightEngineState}`);
+            
+            // Clear E-Stop if needed
+            if (this.lightEngineState === LIGHT_ENGINE_ESTOP) {
+                console.log(`[EtherDream] Clearing E-Stop...`);
+                await this.sendCommand(0x63); // Clear E-Stop
+                await new Promise(r => setTimeout(r, 100));
+            }
+            
+            // If we're already playing or prepared, stop first
+            if (this.playbackState === PLAYBACK_PLAYING || this.playbackState === PLAYBACK_PREPARED) {
+                console.log(`[EtherDream] Stopping current playback...`);
+                const stopResp = await this.sendCommand(0x73); // Stop
+                if (!stopResp || stopResp.response !== RESP_ACK) {
+                    console.log(`[EtherDream] Stop command failed`);
+                }
+                await new Promise(r => setTimeout(r, 100));
+            }
+            
+            // Wait for IDLE state
+            let attempts = 0;
+            while (attempts < 5 && this.playbackState !== PLAYBACK_IDLE) {
+                await this.sendCommand(0x3F); // Ping for status
+                await new Promise(r => setTimeout(r, 20));
+                attempts++;
+            }
+            
+            if (this.playbackState !== PLAYBACK_IDLE) {
+                console.log(`[EtherDream] Could not get to IDLE state after ${attempts} attempts`);
+                return false;
+            }
+            
+            // Prepare
+            const prepResp = await this.sendCommand(0x70);
+            if (!prepResp) {
+                console.log(`[EtherDream] No response to prepare command`);
+                return false;
+            }
+            
+            if (prepResp.response !== RESP_ACK) {
+                console.log(`[EtherDream] Prepare failed with response: 0x${prepResp.response.toString(16)}`);
+                return false;
+            }
+            
+            console.log(`[EtherDream] Prepare successful`);
+            
+            // Begin with current rate
+            const beginData = Buffer.alloc(6);
+            beginData.writeUInt16LE(0, 0); // Low water mark
+            beginData.writeUInt32LE(this.currentRate, 2); // Rate
+            
+            const beginResp = await this.sendCommand(0x62, beginData);
+            if (!beginResp || beginResp.response !== RESP_ACK) {
+                console.log(`[EtherDream] Begin failed`);
+                return false;
+            }
+            
+            console.log(`[EtherDream] Playback initialized at ${this.currentRate}pps`);
+            this.initialized = true;
+            
+            // Wait a bit for playback to start
+            await new Promise(r => setTimeout(r, 100));
+            return true;
+            
+        } finally {
+            this.initializationInProgress = false;
         }
-        
-        console.log(`[EtherDream] Prepare successful`);
-        
-        // Begin with rate
-        const beginData = Buffer.alloc(6);
-        beginData.writeUInt16LE(0, 0); // Low water mark
-        beginData.writeUInt32LE(this.fixedRate, 2); // Rate
-        
-        const beginResp = await this.sendCommand(0x62, beginData);
-        if (!beginResp || beginResp.response !== RESP_ACK) {
-            console.log(`[EtherDream] Begin failed`);
-            return false;
-        }
-        
-        console.log(`[EtherDream] Playback started at ${this.fixedRate}pps`);
-        return true;
     }
-
-    async sendDataToBuffer() {
-        // Only send if buffer needs more data
-        if (this.bufferFullness >= this.maxBufferLevel) {
+    
+    switchToBlankingMode() {
+        if (this.blankingMode) return;
+        
+        console.log(`[EtherDream] Switching to blanking mode at 12000pps`);
+        this.blankingMode = true;
+        this.currentRate = 12000;
+        
+        // Clear any pending frames
+        this.frameQueue = [];
+        
+        // Adjust send interval for blanking
+        this.sendInterval = 50; // 20Hz for blanking
+        this.updateSendInterval();
+    }
+    
+    switchToDataMode() {
+        if (!this.blankingMode) return;
+        
+        console.log(`[EtherDream] Switching to data mode at ${this.currentRate}pps`);
+        this.blankingMode = false;
+        this.lastDataReceived = Date.now();
+        
+        // Adjust send interval for data
+        this.sendInterval = 20; // 50Hz for data
+        this.updateSendInterval();
+    }
+    
+    updateSendInterval() {
+        if (this.sendTimer) {
+            clearInterval(this.sendTimer);
+            this.sendTimer = setInterval(() => {
+                this.streamTick();
+            }, this.sendInterval);
+        }
+    }
+    
+    async sendBlankingBatch() {
+        // In blanking mode, we only need to send enough points to keep the buffer from underflowing
+        const TARGET_BUFFER_BLANKING = 400;
+        
+        if (this.bufferFullness >= TARGET_BUFFER_BLANKING) {
+            return; // Buffer is full enough
+        }
+        
+        // Only send if we're in a state that can accept data
+        if (this.playbackState !== PLAYBACK_PLAYING && this.playbackState !== PLAYBACK_PREPARED) {
             return;
         }
         
-        // Get points to send
+        // Send a small batch of blanking points
+        const blankCount = 20; // Very small batch
+        const points = Array(blankCount).fill({ 
+            x: 0, y: 0, r: 0, g: 0, b: 0, blanking: true 
+        });
+        
+        const success = await this.sendPoints(points, false, blankCount);
+        if (success) {
+            this.lastSendTime = Date.now();
+        }
+        
+        // Log occasionally
+        if (Math.random() < 0.01) { // 1% chance per batch
+            console.log(`[EtherDream] Blanking: ${blankCount} points, buffer: ${this.bufferFullness}, state: ${this.playbackState}`);
+        }
+    }
+    
+        async sendDataBatch() {
+        // In data mode, we need to maintain buffer for smooth playback
+        const TARGET_BUFFER_DATA = 1200;
+        
+        console.log(`[EtherDream] sendDataBatch: buffer=${this.bufferFullness}, queue=${this.frameQueue.length}, state=${this.playbackState}`);
+        
+        if (this.bufferFullness >= TARGET_BUFFER_DATA) {
+            console.log(`[EtherDream] Buffer full (${this.bufferFullness} >= ${TARGET_BUFFER_DATA})`);
+            return; // Buffer is full enough
+        }
+        
+        // Only send if we're in a state that can accept data
+        if (this.playbackState !== PLAYBACK_PLAYING && this.playbackState !== PLAYBACK_PREPARED) {
+            console.log(`[EtherDream] Cannot send data, state is ${this.playbackState}`);
+            return;
+        }
+        
         let points;
         let isTyped = false;
+        let pointCount = 0;
         
         if (this.frameQueue.length > 0) {
             const frame = this.frameQueue.shift();
             points = frame.points;
             isTyped = frame.isTypedArray;
+            pointCount = isTyped ? (points.length / 8) : points.length;
+            this.lastDataReceived = Date.now();
+            
+            console.log(`[EtherDream] Got frame with ${pointCount} points, first point:`, 
+                isTyped ? 
+                    {x: points[0], y: points[1], r: points[3], g: points[4], b: points[5]} :
+                    points[0]);
         } else {
-            // No data available - send minimal blanking
-            const blankCount = 20; // Small batch to avoid strobing
-            points = Array(blankCount).fill({ 
+            // No data - send minimal blanking but stay in data mode
+            pointCount = 10;
+            points = Array(pointCount).fill({ 
                 x: 0, y: 0, r: 0, g: 0, b: 0, blanking: true 
             });
             isTyped = false;
+            console.log(`[EtherDream] No frames in queue, sending ${pointCount} blanking points`);
         }
         
         // Send the points
-        await this.sendPoints(points, isTyped);
-        this.lastSendTime = Date.now();
-        this.packetsSent++;
+        const success = await this.sendPoints(points, isTyped, pointCount);
+        if (success) {
+            this.lastSendTime = Date.now();
+        } else {
+            console.log(`[EtherDream] Failed to send points`);
+        }
     }
-
-    async sendPoints(points, isTyped) {
-        const pointCount = isTyped ? (points.length / 8) : points.length;
+    
+        async sendPoints(points, isTyped, pointCount) {
         if (pointCount === 0) return false;
         
-        // Determine optimal batch size (80 points max per EtherDream spec)
-        const batchSize = Math.min(pointCount, 80);
+        // Only send if we're in a state that can accept data
+        if (this.playbackState !== PLAYBACK_PLAYING && this.playbackState !== PLAYBACK_PREPARED) {
+            console.log(`[EtherDream] Cannot send points, state is ${this.playbackState}`);
+            return false;
+        }
         
-        // Create combined packet: 'q' + rate + 'd' + count + points
-        const packetSize = 5 + 3 + (batchSize * 18);
+        // According to EtherDream protocol, we need to send 'q' (rate) command followed by 'd' (data) command
+        // Packet structure: 'q' (1 byte) + rate (4 bytes) + 'd' (1 byte) + point count (2 bytes) + points (pointCount * 18 bytes)
+        const packetSize = 1 + 4 + 1 + 2 + (pointCount * 18);
         const packet = Buffer.alloc(packetSize);
         
         let offset = 0;
         
         // 'q' command with rate (0x71)
         packet[offset++] = 0x71;
-        packet.writeUInt32LE(this.fixedRate, offset);
+        packet.writeUInt32LE(this.currentRate, offset);
         offset += 4;
         
         // 'd' command with point count (0x64)
         packet[offset++] = 0x64;
-        packet.writeUInt16LE(batchSize, offset);
+        packet.writeUInt16LE(pointCount, offset);
         offset += 2;
         
         // Add points
-        for (let i = 0; i < batchSize; i++) {
+        for (let i = 0; i < pointCount; i++) {
             let x, y, r, g, b, blanking;
             
             if (isTyped) {
@@ -360,13 +533,32 @@ class EtherDreamConnection {
                 const point = points[i];
                 x = point.x;
                 y = point.y;
-                r = point.r;
-                g = point.g;
-                b = point.b;
-                blanking = point.blanking;
+                
+                // Handle missing blanking field
+                blanking = point.blanking || false;
+                
+                // Convert colors from 0-255 to 0-1 if needed
+                if (point.r !== undefined) {
+                    // Check if color values are in 0-255 range
+                    if (point.r > 1.0 || point.g > 1.0 || point.b > 1.0) {
+                        r = point.r / 255.0;
+                        g = point.g / 255.0;
+                        b = point.b / 255.0;
+                    } else {
+                        // Already in 0-1 range
+                        r = point.r;
+                        g = point.g;
+                        b = point.b;
+                    }
+                } else {
+                    // Default to white if colors not specified
+                    r = 1.0;
+                    g = 1.0;
+                    b = 1.0;
+                }
             }
             
-            // Control word
+            // Control word (0 = normal point)
             packet.writeUInt16LE(0, offset);
             offset += 2;
             
@@ -380,15 +572,19 @@ class EtherDreamConnection {
             packet.writeInt16LE(yInt, offset);
             offset += 2;
             
-            // RGB colors (0-65535, scaled from 0-255)
-            packet.writeUInt16LE(blanking ? 0 : Math.round(r * 257), offset);
+            // RGB colors - convert from 0-1 to 0-65535
+            const rInt = blanking ? 0 : Math.round(r * 65535);
+            const gInt = blanking ? 0 : Math.round(g * 65535);
+            const bInt = blanking ? 0 : Math.round(b * 65535);
+            
+            packet.writeUInt16LE(rInt, offset);
             offset += 2;
-            packet.writeUInt16LE(blanking ? 0 : Math.round(g * 257), offset);
+            packet.writeUInt16LE(gInt, offset);
             offset += 2;
-            packet.writeUInt16LE(blanking ? 0 : Math.round(b * 257), offset);
+            packet.writeUInt16LE(bInt, offset);
             offset += 2;
             
-            // Intensity
+            // Intensity - 65535 = full intensity
             packet.writeUInt16LE(blanking ? 0 : 65535, offset);
             offset += 2;
             
@@ -410,24 +606,40 @@ class EtherDreamConnection {
         
         // Check responses
         if (!qResp || !dResp) {
-            console.warn(`[EtherDream] Missing responses for packet`);
+            console.warn(`[EtherDream] Missing responses for ${pointCount} points: q=${!!qResp}, d=${!!dResp}`);
             return false;
         }
         
-        if (qResp.response !== RESP_ACK || dResp.response !== RESP_ACK) {
-            console.warn(`[EtherDream] NAK received: q=0x${qResp.response.toString(16)}, d=0x${dResp.response.toString(16)}`);
+        if (qResp.response !== RESP_ACK) {
+            console.warn(`[EtherDream] 'q' command NAK: 0x${qResp.response.toString(16)}`);
+            return false;
+        }
+        
+        if (dResp.response !== RESP_ACK) {
+            console.warn(`[EtherDream] 'd' command NAK: 0x${dResp.response.toString(16)}`);
             return false;
         }
         
         // Update status from 'd' response
         this.updateStatusFromResponse(dResp);
         
+        // Log successful send
+        console.log(`[EtherDream] Successfully sent ${pointCount} points, buffer: ${this.bufferFullness}`);
+        
         return true;
     }
 
     enqueueFrame(frame) {
+        // Don't process frames if not connected
+        if (!this.connected) return;
+        
         this.laserActive = true;
         this.frameQueue.push(frame);
+        
+        // Switch to data mode if we're in blanking mode and initialized
+        if (this.blankingMode && this.initialized) {
+            this.switchToDataMode();
+        }
         
         // Limit queue size
         if (this.frameQueue.length > 30) {
@@ -498,7 +710,7 @@ async function stop(ip) {
     if (conn) {
         conn.laserActive = false;
         conn.frameQueue = [];
-        if (conn.connected) {
+        if (conn.connected && conn.initialized) {
             await conn.sendCommand(0x73); // Stop command
         }
     }

@@ -8,6 +8,8 @@ const OutputCanvas = ({
   testLineEnabled, 
   transformationEnabled,
   transformationMode,
+  flipX,
+  flipY,
   onUpdateSafetyZones, 
   onUpdateOutputArea, 
   selectedZoneIndex, 
@@ -110,19 +112,89 @@ const OutputCanvas = ({
 
     // Draw Test Line
     if (testLineEnabled) {
+      // 1. Apply Flip
+      let finalLineY = testLineY;
+      if (flipY) {
+          finalLineY = 1.0 - finalLineY;
+      }
+
+      // 2. Apply Transformation
+      let startX = 0;
+      let endX = 1;
+      
+      if (transformationEnabled && outputArea) {
+          if (transformationMode === 'scale') {
+              startX = outputArea.x;
+              endX = outputArea.x + outputArea.w;
+              finalLineY = outputArea.y + (finalLineY * outputArea.h);
+          } else if (transformationMode === 'crop') {
+              // In crop mode, inputs outside the area are blanked.
+              if (finalLineY < outputArea.y || finalLineY > outputArea.y + outputArea.h) {
+                  // Line is vertically outside crop area, don't draw
+                  return; 
+              }
+              startX = Math.max(0, outputArea.x);
+              endX = Math.min(1, outputArea.x + outputArea.w);
+          }
+      }
+
+      // Convert to pixels
+      const yPx = finalLineY * height;
+      const startPx = startX * width;
+      const endPx = endX * width;
+
+      // 3. Apply Safety Zones (Subtraction)
+      let segments = [[startPx, endPx]];
+
+      if (safetyZones && safetyZones.length > 0) {
+          safetyZones.forEach(zone => {
+              const zY = zone.y * height;
+              const zH = zone.h * height;
+              const zX = zone.x * width;
+              const zW = zone.w * width;
+
+              // Check if zone overlaps with line Y
+              if (yPx >= zY && yPx <= zY + zH) {
+                  // Subtract horizontal range [zX, zX + zW]
+                  const newSegments = [];
+                  segments.forEach(seg => {
+                      const [s, e] = seg;
+                      const holeStart = zX;
+                      const holeEnd = zX + zW;
+
+                      if (holeEnd <= s || holeStart >= e) {
+                          // No overlap
+                          newSegments.push(seg);
+                      } else {
+                          // Overlap
+                          if (holeStart > s) {
+                              newSegments.push([s, holeStart]);
+                          }
+                          if (holeEnd < e) {
+                              newSegments.push([holeEnd, e]);
+                          }
+                      }
+                  });
+                  segments = newSegments;
+              }
+          });
+      }
+
+      // Draw segments
       ctx.strokeStyle = '#00ff00';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      const lineY = testLineY * height;
-      ctx.moveTo(0, lineY);
-      ctx.lineTo(width, lineY);
+      segments.forEach(seg => {
+          ctx.moveTo(seg[0], yPx);
+          ctx.lineTo(seg[1], yPx);
+      });
       ctx.stroke();
     }
   };
 
   useEffect(() => {
     render();
-  }, [safetyZones, outputArea, testLineY, testLineEnabled, transformationEnabled, selectedZoneIndex, gridSize]);
+  }, [safetyZones, outputArea, testLineY, testLineEnabled, transformationEnabled, selectedZoneIndex, gridSize, flipX, flipY]);
 
   // Interaction Helpers
   const getMousePos = (e) => {
@@ -432,6 +504,8 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 testLineEnabled={currentSettings.testLineEnabled}
                 transformationEnabled={currentSettings.transformationEnabled}
                 transformationMode={currentSettings.transformationMode}
+                flipX={currentSettings.flipX}
+                flipY={currentSettings.flipY}
                 onUpdateSafetyZones={handleUpdateZone}
                 onUpdateOutputArea={(rect) => updateCurrentSettings({ outputArea: rect })}
                 selectedZoneIndex={selectedZoneIndex}

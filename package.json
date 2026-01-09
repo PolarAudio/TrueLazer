@@ -29,6 +29,17 @@
       "native/build/Release/ndi_wrapper.node",
       "native/build/Release/Processing.NDI.Lib.x64.dll"
     ],
+    "extraResources": [
+      {
+        "from": "src/ILDA-FILE-FORMAT-FILES",
+        "to": "ILDA-FILE-FORMAT-FILES"
+      },
+      {
+        "from": "src/*.json",
+        "to": ".",
+        "filter": ["*Mappings.json"]
+      }
+    ],
     "asarUnpack": [
       "**/*.node",
       "**/*.dll"

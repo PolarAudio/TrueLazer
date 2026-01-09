@@ -84,14 +84,20 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
             // Snap to step
             if (step) {
                 newVal = Math.round(newVal / step) * step;
+                // Recalculate percentage for visual snap
+                percentage = ((newVal - safeMin) / (safeMax - safeMin)) * 100;
             }
 
             // Constraints
-            // Value handle is constrained by safeMin/safeMax (track)
-            // Range handles are constrained by each other and track
-            
             if (handle === 'value') {
                 newVal = Math.max(currentRangeMin, Math.min(currentRangeMax, newVal));
+                // Update visual immediately
+                if (valueHandleRef.current) {
+                    valueHandleRef.current.style.left = `${getPercentage(newVal)}%`;
+                }
+                if (valueFillRef.current && !showRange) {
+                    valueFillRef.current.style.width = `${getPercentage(newVal)}%`;
+                }
                 onChange && onChange(newVal);
             } else if (handle === 'min') {
                 newVal = Math.max(safeMin, Math.min(currentRangeMax, newVal)); // Can't cross max
@@ -143,7 +149,7 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                              height: '100%',
                              background: 'var(--theme-color-transparent)',
                              left: '0%',
-                             width: `${getPercentage(currentValue)}%`,
+                             // Remove width from here to prevent React fighting
                              borderRadius: '2px'
                          }}
                     />
@@ -179,7 +185,7 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                     className="range-slider-handle value-handle" 
                     ref={valueHandleRef}
                     style={{ 
-                        left: `${getPercentage(currentValue)}%`,
+                        // Remove left from here to prevent React fighting
                         position: 'absolute', width: '6px', height: '16px', top: '-50%', transform: 'translate(-50%, -25%)', cursor: 'pointer', zIndex: 20,
                         boxShadow: '0 0 2px rgba(0,0,0,0.5)'
                     }}

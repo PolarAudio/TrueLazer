@@ -32,6 +32,14 @@ function getDacServices(ip, localIp, timeout = 1000, type) {
 
 function sendFrame(ip, channel, frame, fps, type) {
     if (type === 'EtherDream') {
+	
+		console.log(`[App] Sending frame to ${ip}:`);
+		console.log(`  Type: ${frame.isTypedArray ? 'TypedArray' : 'RegularArray'}`);
+		console.log(`  Points: ${frame.isTypedArray ? frame.points.length/8 : frame.points.length}`);
+		console.log(`  First point:`, frame.isTypedArray ? 
+        {x: frame.points[0], y: frame.points[1], r: frame.points[3], g: frame.points[4], b: frame.points[5]} :
+        frame.points[0]);
+		
         return etherdream.sendFrame(ip, channel, frame, fps);
     }
     return idn.sendFrame(ip, channel, frame, fps);

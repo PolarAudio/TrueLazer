@@ -93,17 +93,36 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
   return (
     <div className="dac-panel">
       <div className="settings-card-header"><h4>DACs</h4></div>
-      <div className="network-interface-selector">
-        <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''}>
-          {networkInterfaces.map(iface => (
-            <option key={iface.address} value={iface.address}>
-              {iface.name} ({iface.address})
-            </option>
-          ))}
-        </select>
-        <label>
-          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} disabled={isScanning} />
-          Scan
+      <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px'}}>
+        <div style={{flex:1, display:'flex'}}>
+            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', marginBottom: 2}}>
+              {networkInterfaces.map(iface => (
+                <option key={iface.address} value={iface.address}>
+                  {iface.name} ({iface.address})
+                </option>
+              ))}
+            </select>
+            <button 
+                onClick={() => {
+                     if (window.electronAPI) {
+                        window.electronAPI.getNetworkInterfaces().then(interfaces => {
+                            setNetworkInterfaces(interfaces);
+                            if (interfaces.length > 0 && !selectedNetworkInterface) {
+                                setSelectedNetworkInterface(interfaces[0]);
+                            }
+                        });
+                     }
+                }}
+                style={{fontSize: '9px', padding: '2px', background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', borderRadius: '5px'}}
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+					<path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
+					<path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
+				</svg>
+            </button>
+        </div>
+        <label style={{display:'flex', alignItems:'center', fontSize: '10px'}}>
+          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} disabled={isScanning} style={{ height: '100%'}} />
         </label>
       </div>
       <div className="dac-list">
