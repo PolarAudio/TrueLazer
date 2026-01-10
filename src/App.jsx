@@ -3504,6 +3504,26 @@ function App() {
       }
   }, [showBeamEffect, beamRenderMode, previewScanRate, beamAlpha, fadeAlpha, state.worldShowBeamEffect, state.worldBeamRenderMode]);
 
+  const handleToggleWorldOutput = useCallback(() => {
+    const nextActive = !isWorldOutputActive;
+    dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: nextActive });
+    
+    if (window.electronAPI) {
+        if (nextActive) {
+            // Trigger handshake for all available DACs
+            // We use the dacs list from state
+            state.dacs.forEach(dac => {
+                window.electronAPI.startDacOutput(dac.ip, dac.type);
+            });
+        } else {
+            // Stop output for all DACs
+            state.dacs.forEach(dac => {
+                window.electronAPI.stopDacOutput(dac.ip, dac.type);
+            });
+        }
+    }
+  }, [isWorldOutputActive, state.dacs]);
+
   return (
     <MidiProvider onMidiCommand={handleMidiCommand}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
@@ -3548,7 +3568,7 @@ function App() {
               />
               <LaserOnOffButton
                 isWorldOutputActive={isWorldOutputActive}
-                onToggleWorldOutput={() => dispatch({ type: 'TOGGLE_WORLD_OUTPUT_ACTIVE' })}
+                onToggleWorldOutput={handleToggleWorldOutput}
               />
             </div>
 		<div className="layer-controls-container">

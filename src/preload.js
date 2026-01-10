@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld(
     discoverDacs: (timeout, networkInterfaceIp) => ipcRenderer.invoke('discover-dacs', timeout, networkInterfaceIp),
     getDacServices: (ip, localIp, type) => ipcRenderer.invoke('get-dac-services', ip, localIp, type),
     sendFrame: (ip, channel, frame, fps, type) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps, type),
+    startDacOutput: (ip, type) => ipcRenderer.invoke('start-dac-output', ip, type),
     stopDacOutput: (ip, type) => ipcRenderer.invoke('stop-dac-output', ip, type),
     onDacStatus: (callback) => {
         const listener = (event, data) => callback(data);

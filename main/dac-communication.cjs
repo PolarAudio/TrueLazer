@@ -31,15 +31,12 @@ function getDacServices(ip, localIp, timeout = 1000, type) {
 }
 
 function sendFrame(ip, channel, frame, fps, type) {
+    if (!frame || !frame.points) {
+        console.error(`[DacComm] Invalid frame for ${ip}:`, frame);
+        return;
+    }
+
     if (type === 'EtherDream') {
-	
-		console.log(`[App] Sending frame to ${ip}:`);
-		console.log(`  Type: ${frame.isTypedArray ? 'TypedArray' : 'RegularArray'}`);
-		console.log(`  Points: ${frame.isTypedArray ? frame.points.length/8 : frame.points.length}`);
-		console.log(`  First point:`, frame.isTypedArray ? 
-        {x: frame.points[0], y: frame.points[1], r: frame.points[3], g: frame.points[4], b: frame.points[5]} :
-        frame.points[0]);
-		
         return etherdream.sendFrame(ip, channel, frame, fps);
     }
     return idn.sendFrame(ip, channel, frame, fps);
@@ -56,7 +53,12 @@ function connectDac(ip, type) {
     if (type === 'EtherDream') {
         return etherdream.connectDac(ip);
     }
-    // IDN typically connects on demand via UDP, but we could add a ping here if needed
+}
+
+function startOutput(ip, type) {
+    if (type === 'EtherDream') {
+        return etherdream.startOutput(ip);
+    }
 }
 
 function closeAll() {
@@ -69,6 +71,7 @@ module.exports = {
     getDacServices,
     sendFrame,
     connectDac,
+    startOutput,
     stopSending,
     closeAll,
     getNetworkInterfaces: idn.getNetworkInterfaces,

@@ -724,6 +724,10 @@ function createWindow() {
     sendFrame(ip, channel, frame, fps, type);
   });
 
+  ipcMain.handle('start-dac-output', async (event, ip, type) => {
+    dacCommunication.startOutput(ip, type);
+  });
+
   ipcMain.handle('stop-dac-output', async (event, ip, type) => {
     stopSending(ip, type);
   });
