@@ -426,7 +426,6 @@ function reducer(state, action) {
       return { ...state, clipClipboard: action.payload };
 	}
     case 'SET_CLIP_DAC': {
-      console.log('App.jsx Reducer: SET_CLIP_DAC payload.dac:', action.payload.dac);
       const newClipContentsWithDac = [...state.clipContents];
       // Ensure the layer array exists and create a new copy of it
       if (!newClipContentsWithDac[action.payload.layerIndex]) {
@@ -1531,7 +1530,6 @@ function App() {
   // Sync selected DAC to main process
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.setSelectedDac) {
-        console.log('[App.jsx] Syncing selectedDac to main process:', selectedDac);
         window.electronAPI.setSelectedDac(selectedDac);
     }
   }, [selectedDac]);
@@ -2715,9 +2713,7 @@ function App() {
   }, [generatorWorker, state.clipContents]); // Add state.clipContents to dependency array to get the latest version
 
   const handleDropGenerator = useCallback((layerIndex, colIndex, generatorDefinition) => {
-    console.log('[App.jsx] handleDropGenerator - Received generatorDefinition:', generatorDefinition); // DEBUG LOG
     if (generatorWorker) {
-        console.log('[App.jsx] handleDropGenerator - Using new regenerateGeneratorClip function'); // DEBUG LOG
         
         // Initialize prev params to avoid immediate double-regen or diff issues
         const key = `${layerIndex}-${colIndex}`;
@@ -2846,7 +2842,6 @@ function App() {
       } else if (clip && clip.type === 'generator') {
           const generatorWorkerId = `generator-${layerIndex}-${colIndex}`; // Generate a workerId
           dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
-          console.log(`[App.jsx] handleClipPreview - Dispatched SET_SELECTED_ILDA_DATA for generator. workerId: ${generatorWorkerId}`); // DEBUG LOG
       } else {
         // Clip is empty, clear the selection data
         dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: null, generatorParams: {} } });
@@ -2940,7 +2935,6 @@ function App() {
   }, []);
 
   const handleDropEffectOnLayer = useCallback((layerIndex, effectId) => {
-    console.log(`App.jsx: handleDropEffectOnLayer for layer ${layerIndex}`, effectId);
     // Find effect definition
     const effectData = state.effects.find(e => (e.id || e.name) === effectId);
     if (effectData) {
@@ -2950,13 +2944,11 @@ function App() {
   }, [state.effects]);
 
   const handleDropDac = useCallback((layerIndex, colIndex, dacData) => {
-    console.trace('App.jsx: handleDropDac received dacData:', dacData);
       hasPendingClipUpdate.current = true;
       dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
   }, []);
 
   const handleDropDacOnLayer = useCallback((layerIndex, dacData) => {
-    console.log(`App.jsx: handleDropDacOnLayer for layer ${layerIndex}`, dacData);
     // Apply to all clips in this layer
     hasPendingClipUpdate.current = true;
     for (let colIndex = 0; colIndex < 8; colIndex++) {
@@ -3660,7 +3652,6 @@ function App() {
                         onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)}
                         onDropGenerator={handleDropGenerator}
                         onDropDac={(passedLayerIndex, passedColIndex, dacDataFromClip) => {
-                            console.log('App.jsx: Lambda dacData from Clip:', dacDataFromClip);
                             handleDropDac(passedLayerIndex, passedColIndex, dacDataFromClip);
                         }}
                         onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
