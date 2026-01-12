@@ -664,6 +664,7 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: true,
       webSecurity: false, // Ensure this is false to allow file:// protocol for media
+      backgroundThrottling: false, // Keep animations and timers running in background
     },
     frame: true, // Set to false to remove the default window frame and title bar
   });

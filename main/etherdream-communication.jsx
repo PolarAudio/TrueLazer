@@ -67,6 +67,10 @@ class EtherDreamConnection {
         // Pipeline tracking
         this.pointsInFlight = 0;
         
+        // Frame repetition for buffer under-run prevention
+        this.lastValidFramePoints = null;
+        this.lastValidFrameIsTyped = false;
+        
         console.log(`[EtherDream] Created connection for ${ip}:${port}`);
     }
 
@@ -356,6 +360,7 @@ class EtherDreamConnection {
     async sendDataBatch() {
         const MAX_CAPACITY = 1750;
         const TARGET_FILL = 1600;
+        const MIN_SAFE_BUFFER = 800; // Safe margin for ~26ms at 30kpps (Tick is 20ms)
         
         while (this.connected && this.initialized && this.playbackState !== PLAYBACK_IDLE) {
             let estimatedFullness = this.bufferFullness + this.pointsInFlight;
@@ -364,22 +369,42 @@ class EtherDreamConnection {
             let pointsToSend = [];
             let isTyped = false;
             let count = 0;
+            let isRepeatFrame = false;
 
             if (this.frameQueue.length > 0) {
                 const frame = this.frameQueue.shift();
                 pointsToSend = frame.points;
                 isTyped = this.isPointsTyped(pointsToSend);
-                count = isTyped ? (pointsToSend.length / 8) : pointsToSend.length;
                 
-                if (estimatedFullness + count > MAX_CAPACITY) {
-                    this.frameQueue.unshift(frame);
-                    break;
-                }
-                this.lastDataReceived = Date.now();
+                // Store for repetition
+                this.lastValidFramePoints = pointsToSend;
+                this.lastValidFrameIsTyped = isTyped;
             } else {
-                count = Math.max(100, Math.min(400, TARGET_FILL - estimatedFullness));
-                pointsToSend = Array(count).fill({ x: 0, y: 0, r: 0, g: 0, b: 0, blanking: true });
-                isTyped = false;
+                // Queue is empty.
+                if (this.lastValidFramePoints) {
+                    // REPEAT LAST FRAME: Prevents under-run / IDLE switching
+                    pointsToSend = this.lastValidFramePoints;
+                    isTyped = this.lastValidFrameIsTyped;
+                    isRepeatFrame = true;
+                } else {
+                    // No data ever received? Send blanking if strictly necessary.
+                    if (estimatedFullness > MIN_SAFE_BUFFER) {
+                        break;
+                    }
+                    count = Math.max(100, Math.min(400, TARGET_FILL - estimatedFullness));
+                    pointsToSend = Array(count).fill({ x: 0, y: 0, r: 0, g: 0, b: 0, blanking: true });
+                    isTyped = false;
+                }
+            }
+
+            count = isTyped ? (pointsToSend.length / 8) : pointsToSend.length;
+            
+            if (estimatedFullness + count > MAX_CAPACITY) {
+                if (!isRepeatFrame) {
+                    // Only put it back if it was a NEW frame from the queue
+                    this.frameQueue.unshift({ points: pointsToSend });
+                }
+                break;
             }
 
             this.sendPoints(pointsToSend, isTyped, count);
