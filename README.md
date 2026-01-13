@@ -76,7 +76,9 @@
   - Runtime DLL in `Bin/x64/`
 
   Discovered NDI sources can be dragged from the Generator Panel onto the clip grid for real-time laser rendering.
-
+	The Current implementation of NDI has a big performance impact on the application.
+	So if you consider using NDI within these early Builds you should use a Workstation with Great Compute power. 
+	I will investigate the NDI Integration further in the future to gain more performance.
   
   ☐ - Not yet done
   

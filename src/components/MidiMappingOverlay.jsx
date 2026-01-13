@@ -2,12 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
+import { useKeyboard } from '../contexts/KeyboardContext';
 
 const MidiMappingOverlay = () => {
   const { isMapping: isMidiMapping, mappings: midiMappings, learningId: midiLearningId } = useMidi();
   const { isMapping: isArtnetMapping, mappings: artnetMappings, learningId: artnetLearningId } = useArtnet() || {};
+  const { isMapping: isKeyboardMapping, mappings: keyboardMappings, learningId: keyboardLearningId } = useKeyboard() || {};
 
-  const isMapping = isMidiMapping || isArtnetMapping;
+  const isMapping = isMidiMapping || isArtnetMapping || isKeyboardMapping;
   const [overlays, setOverlays] = useState([]);
 
   const updateOverlayPositions = useCallback(() => {
@@ -51,22 +53,25 @@ const MidiMappingOverlay = () => {
       {overlays.map(overlay => {
         const midiMapping = midiMappings[overlay.id];
         const artnetMapping = artnetMappings ? artnetMappings[overlay.id] : null;
+        const keyboardMapping = keyboardMappings ? keyboardMappings[overlay.id] : null;
         
         const isLearning = (isMidiMapping && midiLearningId === overlay.id) || 
-                           (isArtnetMapping && artnetLearningId === overlay.id);
+                           (isArtnetMapping && artnetLearningId === overlay.id) ||
+                           (isKeyboardMapping && keyboardLearningId === overlay.id);
 
-        // Show MIDI labels if MIDI mapping mode is active, otherwise show Art-Net labels if Art-Net mapping mode is active
         let mappingLabel = null;
         if (isMidiMapping) {
             mappingLabel = midiMapping ? midiMapping.label : null;
         } else if (isArtnetMapping) {
             mappingLabel = artnetMapping ? artnetMapping.label : null;
+        } else if (isKeyboardMapping) {
+            mappingLabel = keyboardMapping ? keyboardMapping.label : null;
         }
 
         return (
           <div
             key={overlay.id}
-            className={`midi-mapping-label-box ${isLearning ? 'learning' : ''} ${mappingLabel ? 'mapped' : ''} ${isArtnetMapping ? 'artnet-mapping' : ''}`}
+            className={`midi-mapping-label-box ${isLearning ? 'learning' : ''} ${mappingLabel ? 'mapped' : ''} ${isArtnetMapping ? 'artnet-mapping' : ''} ${isKeyboardMapping ? 'keyboard-mapping' : ''}`}
             style={{
               position: 'fixed',
               top: overlay.rect.top,

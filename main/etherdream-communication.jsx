@@ -21,6 +21,12 @@ const LIGHT_ENGINE_WARMUP = 1;
 const LIGHT_ENGINE_COOLDOWN = 2;
 const LIGHT_ENGINE_ESTOP = 3;
 
+// Optimization Constants
+const OPT_MAX_DIST = 0.08; 
+const OPT_ANGLE_THRESHOLD = 0.4; // ~23 degrees
+const OPT_CORNER_DWELL = 5;
+const OPT_PATH_DWELL = 4;
+
 let globalStatusCallback = null;
 
 function setStatusCallback(cb) {
@@ -357,6 +363,129 @@ class EtherDreamConnection {
         return points instanceof Float32Array || points instanceof Float64Array || Buffer.isBuffer(points);
     }
 
+    optimizePoints(points, isTyped) {
+        if (!points || points.length === 0) return points;
+
+        const result = [];
+        const numPoints = isTyped ? (points.length / 8) : points.length;
+
+        const getPoint = (i) => {
+            if (isTyped) {
+                const off = i * 8;
+                return {
+                    x: points[off], y: points[off+1], 
+                    r: points[off+3], g: points[off+4], b: points[off+5],
+                    blanking: points[off+6] > 0.5
+                };
+            }
+            return points[i];
+        };
+
+        const firstPoint = getPoint(0);
+        let prevPoint = firstPoint;
+        
+        // Initial path dwell (Blanked)
+        for (let d = 0; d < OPT_PATH_DWELL; d++) {
+            result.push({ ...firstPoint, r: 0, g: 0, b: 0, blanking: true });
+        }
+
+        for (let i = 0; i < numPoints; i++) {
+            const currPoint = getPoint(i);
+            
+            // 1. Path Dwell (Laser state change)
+            if (prevPoint.blanking !== currPoint.blanking) {
+                if (currPoint.blanking) {
+                    // Transitioning to blanked: Dwell at end of visible segment (Visible then Blanked)
+                    for (let d = 0; d < 2; d++) result.push({ ...prevPoint });
+                    for (let d = 0; d < OPT_PATH_DWELL; d++) result.push({ ...prevPoint, r: 0, g: 0, b: 0, blanking: true });
+                } else {
+                    // Transitioning to visible: Dwell at start of visible segment (Blanked then Visible)
+                    for (let d = 0; d < OPT_PATH_DWELL; d++) result.push({ ...currPoint, r: 0, g: 0, b: 0, blanking: true });
+                    for (let d = 0; d < 2; d++) result.push({ ...currPoint });
+                }
+            }
+
+            // 2. Interpolation (Long lines / Jumps)
+            const dx = currPoint.x - prevPoint.x;
+            const dy = currPoint.y - prevPoint.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist > OPT_MAX_DIST) {
+                const steps = Math.floor(dist / OPT_MAX_DIST);
+                for (let s = 1; s < steps; s++) {
+                    const t = s / steps;
+                    result.push({
+                        x: prevPoint.x + dx * t,
+                        y: prevPoint.y + dy * t,
+                        r: currPoint.blanking ? 0 : currPoint.r, 
+                        g: currPoint.blanking ? 0 : currPoint.g, 
+                        b: currPoint.blanking ? 0 : currPoint.b,
+                        blanking: currPoint.blanking
+                    });
+                }
+            }
+
+            // 3. Corner Dwell
+            if (!currPoint.blanking && i > 0 && i < numPoints - 1) {
+                const nextPoint = getPoint(i + 1);
+                const v1x = currPoint.x - prevPoint.x;
+                const v1y = currPoint.y - prevPoint.y;
+                const v2x = nextPoint.x - currPoint.x;
+                const v2y = nextPoint.y - currPoint.y;
+                
+                const mag1 = Math.sqrt(v1x * v1x + v1y * v1y);
+                const mag2 = Math.sqrt(v2x * v2x + v2y * v2y);
+                
+                if (mag1 > 0.001 && mag2 > 0.001) {
+                    const dot = (v1x * v2x + v1y * v2y) / (mag1 * mag2);
+                    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+                    
+                    if (angle > OPT_ANGLE_THRESHOLD) {
+                        for (let d = 0; d < OPT_CORNER_DWELL; d++) result.push({ ...currPoint });
+                    }
+                }
+            }
+
+            result.push(currPoint);
+            prevPoint = currPoint;
+        }
+
+        // 4. Frame-Closure Optimization (Retrace to start)
+        const lastPoint = prevPoint;
+        const dx = firstPoint.x - lastPoint.x;
+        const dy = firstPoint.y - lastPoint.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // Final dwell at the end of frame
+        for (let d = 0; d < OPT_PATH_DWELL; d++) {
+            result.push({ ...lastPoint, r: 0, g: 0, b: 0, blanking: true });
+        }
+
+        // Interpolate back to start if far away
+        if (dist > OPT_MAX_DIST) {
+            const steps = Math.floor(dist / OPT_MAX_DIST);
+            for (let s = 1; s < steps; s++) {
+                const t = s / steps;
+                result.push({
+                    x: lastPoint.x + dx * t,
+                    y: lastPoint.y + dy * t,
+                    r: 0, g: 0, b: 0,
+                    blanking: true
+                });
+            }
+        }
+
+        // Ensure final point matches first point for seamless looping
+        result.push({ ...firstPoint, r: 0, g: 0, b: 0, blanking: true });
+
+        // Clip total points to prevent massive buffer overflow
+        if (result.length > 4000) {
+            return result.slice(0, 4000);
+        }
+
+        return result;
+    }
+
     async sendDataBatch() {
         const MAX_CAPACITY = 1750;
         const TARGET_FILL = 1600;
@@ -483,7 +612,14 @@ class EtherDreamConnection {
 
     enqueueFrame(frame) {
         if (!this.connected) return;
-        this.frameQueue.push(frame);
+        
+        // Apply Point Optimization (Interpolation, Corner Dwell, Path Dwell)
+        const optimizedPoints = this.optimizePoints(frame.points, this.isPointsTyped(frame.points));
+        
+        // Enqueue the optimized frame
+        // Note: optimizePoints returns an array of objects, so we set isTyped to false for next processing steps.
+        this.frameQueue.push({ points: optimizedPoints });
+        
         if (this.frameQueue.length > 30) this.frameQueue.shift();
     }
 }

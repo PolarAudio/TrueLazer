@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld(
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
                 getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
                 saveMidiMappings: (mappings) => ipcRenderer.invoke('save-midi-mappings', mappings),
+                getKeyboardMappings: () => ipcRenderer.invoke('get-keyboard-mappings'),
+                saveKeyboardMappings: (mappings) => ipcRenderer.invoke('save-keyboard-mappings', mappings),
 	            	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
 	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
 	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),

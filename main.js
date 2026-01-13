@@ -77,6 +77,7 @@ const schema = {
   thumbnailRenderMode: { type: 'string', default: 'still' },
   midiMappings: { type: 'object', default: {} },
   artnetMappings: { type: 'object', default: {} },
+  keyboardMappings: { type: 'object', default: {} },
   selectedMidiInputId: { type: 'string', default: '' },
   shortcutsState: {
     type: 'object',
@@ -357,6 +358,15 @@ ipcMain.handle('get-midi-mappings', () => {
 
 ipcMain.handle('save-midi-mappings', (event, mappings) => {
   store.set('midiMappings', mappings);
+  return { success: true };
+});
+
+ipcMain.handle('get-keyboard-mappings', () => {
+  return store.get('keyboardMappings') || {};
+});
+
+ipcMain.handle('save-keyboard-mappings', (event, mappings) => {
+  store.set('keyboardMappings', mappings);
   return { success: true };
 });
 

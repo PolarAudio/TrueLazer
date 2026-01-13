@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
+import { useKeyboard } from '../contexts/KeyboardContext';
 import { initializeArtnet, getArtnetUniverses, sendArtnetData, closeArtnet } from '../utils/artnet';
 import { initializeOsc, sendOscMessage, addOscMessageListener, closeOsc } from '../utils/osc';
 
@@ -22,6 +23,13 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
       stopMapping: stopArtnetMapping,
       learningId: artnetLearningId
   } = useArtnet() || {};
+
+  const {
+    isMapping: isKeyboardMapping,
+    startMapping: startKeyboardMapping,
+    stopMapping: stopKeyboardMapping,
+    learningId: keyboardLearningId
+  } = useKeyboard() || {};
 
   const [artnetInitialized, setArtnetInitialized] = useState(false);
   const [artnetUniverses, setArtnetUniverses] = useState([]);
@@ -125,6 +133,14 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
         stopArtnetMapping();
     } else {
         startArtnetMapping();
+    }
+  };
+
+  const toggleKeyboardLearnMode = () => {
+    if (isKeyboardMapping) {
+        stopKeyboardMapping();
+    } else {
+        startKeyboardMapping();
     }
   };
 
@@ -282,6 +298,23 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
               )}
             </div>
           )}
+        </div>
+        )}
+
+        {enabledShortcuts.keyboard && (
+        <div className="shortcuts-section">
+          <h3>Keyboard</h3>
+          <div>
+            <button onClick={toggleKeyboardLearnMode} style={{ backgroundColor: isKeyboardMapping ? 'var(--theme-color)' : '' }}>
+              {isKeyboardMapping ? 'Stop Mapping' : 'Start Mapping'}
+            </button>
+            {isKeyboardMapping && (
+                <p style={{color: 'var(--theme-color)'}}>Keyboard Mapping Mode Active: Click a control to assign.</p>
+            )}
+            {keyboardLearningId && (
+                <p style={{color: 'yellow'}}>Waiting for keyboard input for selected control...</p>
+            )}
+          </div>
         </div>
         )}
 

@@ -26,6 +26,7 @@ import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
 import { useAudioOutput } from './hooks/useAudioOutput'; // Add this
 import { MidiProvider, useMidi } from './contexts/MidiContext'; // Add this
 import { ArtnetProvider, useArtnet } from './contexts/ArtnetContext'; // Add this
+import { KeyboardProvider, useKeyboard } from './contexts/KeyboardContext'; // Add this
 import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
 import { applyEffects, applyOutputProcessing } from './utils/effects';
@@ -3779,6 +3780,7 @@ function App() {
   return (
     <MidiProvider onMidiCommand={handleMidiCommand}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
+    <KeyboardProvider onCommand={handleMidiCommand} enabled={enabledShortcuts.keyboard}>
     <MidiFeedbackHandler
         isPlaying={isPlaying}
         globalBlackout={globalBlackout}
@@ -4040,6 +4042,7 @@ function App() {
 			<SettingsPanel
               enabledShortcuts={enabledShortcuts}
               onOpenOutputSettings={() => setShowOutputSettingsWindow(true)}
+              onOpenShortcutsSettings={() => setShowShortcutsWindow(true)}
               quickAssigns={state.quickAssigns}
               onUpdateKnob={(i, v) => {
                   // If this knob links to clip/effect params, signal update
@@ -4074,6 +4077,7 @@ function App() {
         </div>
       </ErrorBoundary>
     </div>
+    </KeyboardProvider>
     </ArtnetProvider>
     </MidiProvider>
   );
