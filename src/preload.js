@@ -88,9 +88,9 @@ contextBridge.exposeInMainWorld(
 	                                          ipcRenderer.on('update-audio-device-id', subscription);
 	                                          return () => ipcRenderer.removeListener('update-audio-device-id', subscription);
 	                                        },
-                                            saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
-                                            deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),
-                                            // ArtNet
+                                              saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
+                                              saveIldaFile: (arrayBuffer, defaultName) => ipcRenderer.invoke('save-ilda-file', arrayBuffer, defaultName),
+                                              deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),                                            // ArtNet
                                             initializeArtnet: () => ipcRenderer.invoke('initialize-artnet'),
                                             getArtnetUniverses: () => ipcRenderer.invoke('get-artnet-universes'),
                                             sendArtnetData: (universe, channel, value) => ipcRenderer.send('send-artnet-data', universe, channel, value),

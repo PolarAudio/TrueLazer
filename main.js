@@ -795,6 +795,7 @@ function createWindow() {
     console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}, style: ${currentTriggerStyle}`); 
     const clipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
+      { label: 'Export as ILDA', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'export-ilda', layerIndex, colIndex); } },
       { type: 'separator' },
       {
         label: 'Trigger Style',
@@ -1024,6 +1025,27 @@ function createWindow() {
     } catch (error) {
       console.error('Failed to save thumbnail:', error);
       throw error;
+    }
+  });
+
+  ipcMain.handle('save-ilda-file', async (event, arrayBuffer, defaultName = 'export.ild') => {
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export ILDA File',
+      defaultPath: defaultName,
+      filters: [{ name: 'ILDA Files', extensions: ['ild'] }]
+    });
+
+    if (canceled || !filePath) {
+      return { success: false, canceled: true };
+    }
+
+    try {
+      const buffer = Buffer.from(arrayBuffer);
+      await fs.promises.writeFile(filePath, buffer);
+      return { success: true, filePath };
+    } catch (error) {
+      console.error('Failed to save ILDA file:', error);
+      return { success: false, error: error.message };
     }
   });
 

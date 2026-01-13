@@ -74,6 +74,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
   };
 
   const handleDragStart = (e, dac, channelId) => {
+    e.stopPropagation();
     const dacWithChannel = { ...dac, channel: channelId };
     e.dataTransfer.setData('application/json', JSON.stringify(dacWithChannel));
   };
@@ -85,6 +86,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
   };
 
   const handleGroupDragStart = (e, dac) => {
+    e.stopPropagation();
     // When dragging the group, we pass all channels
     const dacWithAllChannels = { ...dac, allChannels: true };
     e.dataTransfer.setData('application/json', JSON.stringify(dacWithAllChannels));

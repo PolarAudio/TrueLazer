@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import EffectEditor from './EffectEditor';
 
@@ -7,10 +7,27 @@ const LayerSettingsPanel = ({
     autopilotMode, 
     onAutopilotChange,
     layerEffects,
+    assignedDacs = [],
+    onToggleDacMirror,
+    onRemoveDac,
     onAddEffect,
     onRemoveEffect,
     onParamChange 
 }) => {
+    const [dacStatuses, setDacStatuses] = useState({});
+
+    useEffect(() => {
+        if (window.electronAPI && window.electronAPI.onDacStatus) {
+            const unsubscribe = window.electronAPI.onDacStatus((data) => {
+                setDacStatuses(prev => ({
+                    ...prev,
+                    [data.ip]: data.status
+                }));
+            });
+            return unsubscribe;
+        }
+    }, []);
+
     if (selectedLayerIndex === null) return (
         <div className="settings-panel-base">
             <div className="settings-card-header"><h4>Layer Settings</h4></div>
@@ -39,6 +56,44 @@ const LayerSettingsPanel = ({
     return (
         <div className="settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
              <h3>Layer Settings</h3>
+
+             {/* Assigned DACs Section */}
+             {assignedDacs && assignedDacs.length > 0 && (
+                <CollapsiblePanel title="Assigned DACs">
+                    <ul className="assigned-dacs-list">
+                    {assignedDacs.map((dac, index) => {
+                        const status = dacStatuses[dac.ip];
+                        return (
+                        <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
+                        <div className="dac-info-block">
+                            <span className="dac-name-tiny">{dac.hostName || dac.ip} - Ch {dac.channel}</span>
+                            {status && (
+                                <div className="dac-status-tiny" style={{fontSize: '9px', color: '#888'}}>
+                                    State: {status.playback_state === 2 ? 'PLAYING' : status.playback_state === 1 ? 'PREPARED' : 'IDLE'} | 
+                                    Buf: {status.buffer_fullness}{status.buffer_capacity ? `/${status.buffer_capacity}` : ''} | 
+                                    PPS: {status.point_rate}
+                                </div>
+                            )}
+                        </div>
+                        <div className="dac-mirror-controls">
+                            <button 
+                                className={`mirror-btn ${dac.mirrorX ? 'active' : ''}`}
+                                onClick={() => onToggleDacMirror(selectedLayerIndex, index, 'x')}
+                                title="Mirror X Axis"
+                            >X</button>
+                            <button 
+                                className={`mirror-btn ${dac.mirrorY ? 'active' : ''}`}
+                                onClick={() => onToggleDacMirror(selectedLayerIndex, index, 'y')}
+                                title="Mirror Y Axis"
+                            >Y</button>
+                        </div>
+                        <button className="remove-dac-btn" onClick={() => onRemoveDac(selectedLayerIndex, index)}>×</button>
+                        </li>
+                    )})}
+                    </ul>
+                </CollapsiblePanel>
+             )}
+
              {/* Autopilot Section */}
              <CollapsiblePanel title={`Layer ${selectedLayerIndex + 1} Autopilot`}>
                  <div className="param-editor">

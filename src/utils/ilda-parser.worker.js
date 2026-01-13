@@ -330,5 +330,30 @@ self.onmessage = function(e) {
     
 
     self.postMessage({ success: true, frame, type: 'get-frame', workerId, frameIndex, isStillFrame, layerIndex, colIndex });
+  } else if (type === 'get-all-frames') {
+    const ildaData = ildaDataStore.get(workerId);
+    if (!ildaData) {
+      self.postMessage({ success: false, error: 'ILDA data not found', type: 'get-all-frames', workerId });
+      return;
+    }
+
+    const { ildaFileBuffer, framesMetadata, colorPalette } = ildaData;
+    const allFrames = [];
+
+    try {
+        for (let i = 0; i < framesMetadata.length; i++) {
+            const frameMeta = framesMetadata[i];
+            let points = frameMeta.cachedPoints;
+            if (!points) {
+                const pointDataBuffer = ildaFileBuffer.slice(frameMeta.pointDataOffset, frameMeta.pointDataOffset + frameMeta.pointDataSize);
+                points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, colorPalette);
+                frameMeta.cachedPoints = points;
+            }
+            allFrames.push({ ...frameMeta, points });
+        }
+        self.postMessage({ success: true, frames: allFrames, type: 'get-all-frames', workerId, layerIndex, colIndex });
+    } catch (e) {
+        self.postMessage({ success: false, error: e.message, type: 'get-all-frames', workerId });
+    }
   }
 };

@@ -16,6 +16,7 @@ const ClipSettingsPanel = ({
   onToggleDacMirror,
   onRemoveDac,
   onRemoveEffect,
+  onAddEffect,
   onParameterChange,
   onGeneratorParameterChange,
   progressRef
@@ -42,6 +43,24 @@ const ClipSettingsPanel = ({
       </div>
     );
   }
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const effectData = JSON.parse(e.dataTransfer.getData('application/json'));
+      if (effectData && effectData.type && onAddEffect) {
+        onAddEffect(effectData);
+      }
+    } catch (err) {
+      console.error("Failed to drop effect in ClipSettingsPanel:", err);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
 
   const {
     effects = [],
@@ -70,7 +89,7 @@ const ClipSettingsPanel = ({
     : 0;
 
   return (
-    <div className="clip-settings-panel settings-panel-base">
+    <div className="clip-settings-panel settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
 	  <div className="settings-card-header"><h4>Clip Settings</h4></div>
       
       <CollapsiblePanel title="Audio">
@@ -106,8 +125,8 @@ const ClipSettingsPanel = ({
                       <span className="dac-name-tiny">{dac.hostName || dac.ip} - Ch {dac.channel}</span>
                       {status && (
                           <div className="dac-status-tiny" style={{fontSize: '9px', color: '#888'}}>
-                              State: {status.state === 2 ? 'PLAYING' : status.state === 1 ? 'PREPARED' : 'IDLE'} | 
-                              Buf: {status.buffer_fullness}/{status.buffer_capacity} | 
+                              State: {status.playback_state === 2 ? 'PLAYING' : status.playback_state === 1 ? 'PREPARED' : 'IDLE'} | 
+                              Buf: {status.buffer_fullness}{status.buffer_capacity ? `/${status.buffer_capacity}` : ''} | 
                               PPS: {status.point_rate}
                           </div>
                       )}
@@ -146,26 +165,32 @@ const ClipSettingsPanel = ({
         />
       )}
 
-      {hasEffects && effects.map((effect, effectIndex) => (
-        <EffectEditor
-          key={effect.id + effectIndex}
-          effect={effect}
-          assignedDacs={assignedDacs}
-          syncSettings={syncSettings}
-          onSetParamSync={onSetParamSync}
-          context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect', workerId }}
-          onParamChange={(paramId, paramValue) => 
-            onParameterChange(selectedLayerIndex, selectedColIndex, effectIndex, paramId, paramValue)
-          }
-          onRemove={() => onRemoveEffect(selectedLayerIndex, selectedColIndex, effectIndex)}
-          progressRef={progressRef}
-          clipDuration={clipDuration}
-        />
-      ))}
-
-      {!hasGenerator && !hasEffects && (
-        <p className="info-text">No generators or effects applied.</p>
-      )}
+      <CollapsiblePanel title="Clip Effects">
+        <div className="clip-effects-list" style={{ minHeight: '50px' }}>
+          {hasEffects ? (
+            effects.map((effect, effectIndex) => (
+              <EffectEditor
+                key={effect.id + effectIndex}
+                effect={effect}
+                assignedDacs={assignedDacs}
+                syncSettings={syncSettings}
+                onSetParamSync={onSetParamSync}
+                context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect', workerId }}
+                onParamChange={(paramId, paramValue) => 
+                  onParameterChange(selectedLayerIndex, selectedColIndex, effectIndex, paramId, paramValue)
+                }
+                onRemove={() => onRemoveEffect(selectedLayerIndex, selectedColIndex, effectIndex)}
+                progressRef={progressRef}
+                clipDuration={clipDuration}
+              />
+            ))
+          ) : (
+            <div className="info-text" style={{padding: '20px', border: '1px dashed #444', borderRadius: '5px'}}>
+              Drag Effects Here
+            </div>
+          )}
+        </div>
+      </CollapsiblePanel>
     </div>
   );
 };
