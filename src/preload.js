@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld(
 	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
 	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),
 	                                        showAudioFileDialog: () => ipcRenderer.invoke('show-audio-file-dialog'),
+                                            showOpenDialog: (options) => ipcRenderer.invoke('show-open-dialog', options),
 	                                        showFontFileDialog: () => ipcRenderer.invoke('show-font-file-dialog'),
 	                                        setAudioDevices: (devices) => ipcRenderer.send('set-audio-devices', devices),
 	                                        onUpdateAudioDeviceId: (callback) => {

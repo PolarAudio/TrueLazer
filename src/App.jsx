@@ -860,6 +860,30 @@ function reducer(state, action) {
         }
         return newState;
     }
+    case 'UPDATE_CLIP_FILE_PATH': {
+        const { oldPath, newPath } = action.payload;
+        const newClipContents = state.clipContents.map(layer => 
+            layer.map(clip => {
+                if (clip && clip.filePath === oldPath) {
+                    return { ...clip, filePath: newPath, parsingFailed: false }; // Reset failed status if path updated
+                }
+                return clip;
+            })
+        );
+        return { ...state, clipContents: newClipContents };
+    }
+    case 'SET_CLIP_PARSING_FAILED': {
+        const { layerIndex, colIndex, failed } = action.payload;
+        const newClipContents = [...state.clipContents];
+        if (newClipContents[layerIndex]) {
+            newClipContents[layerIndex] = [...newClipContents[layerIndex]];
+            const existingClip = newClipContents[layerIndex][colIndex];
+            if (existingClip) {
+                newClipContents[layerIndex][colIndex] = { ...existingClip, parsingFailed: failed };
+            }
+        }
+        return { ...state, clipContents: newClipContents };
+    }
     default: 
 	return state;
   }
@@ -2777,15 +2801,53 @@ function App() {
           }, [arrayBuffer]); // Transferrable
         } catch (error) {
           console.error(`Renderer: Failed to read file for worker: ${filePath}`, error);
-          ildaParserWorker.postMessage({
-            type: 'file-content-response',
-            requestId,
-            error: error.message,
-          });
+          
+          let solved = false;
+          // Attempt to resolve missing file via user prompt
+          try {
+              if (window.electronAPI && window.electronAPI.showOpenDialog) {
+                  const fileName = filePath.split(/[/\\]/).pop();
+                  const response = await window.electronAPI.showOpenDialog({
+                      title: `Locate missing file: ${fileName}`,
+                      defaultPath: filePath, // Helps if parent dir exists
+                      filters: [{ name: 'ILDA Files', extensions: ['ild'] }, { name: 'All Files', extensions: ['*'] }],
+                      properties: ['openFile']
+                  });
+
+                  if (response) {
+                      const newPath = response;
+                      // Update all clips with this path
+                      dispatch({ type: 'UPDATE_CLIP_FILE_PATH', payload: { oldPath: filePath, newPath } });
+                      
+                      // Retry reading
+                      const newArrayBuffer = await window.electronAPI.readFileForWorker(newPath);
+                      ildaParserWorker.postMessage({
+                          type: 'file-content-response',
+                          requestId,
+                          arrayBuffer: newArrayBuffer,
+                      }, [newArrayBuffer]);
+                      solved = true;
+                  }
+              }
+          } catch (retryError) {
+              console.error("Retry/Locate failed:", retryError);
+          }
+
+          if (!solved) {
+              ildaParserWorker.postMessage({
+                type: 'file-content-response',
+                requestId,
+                error: error.message,
+              });
+          }
         }
       } else if (e.data.type === 'parsing-status') {
         const { layerIndex, colIndex, status } = e.data;
         dispatch({ type: 'SET_CLIP_PARSING_STATUS', payload: { layerIndex, colIndex, status } });
+        if (!status) {
+            // Mark as failed so we don't retry endlessly
+            dispatch({ type: 'SET_CLIP_PARSING_FAILED', payload: { layerIndex, colIndex, failed: true } });
+        }
       }
     };
 
@@ -2802,7 +2864,7 @@ function App() {
       const clipsToParse = [];
       clipContents.forEach((layer, layerIndex) => {
           layer.forEach((clip, colIndex) => {
-              if (clip && clip.type === 'ilda' && clip.filePath && !clip.workerId && !clip.parsing) {
+              if (clip && clip.type === 'ilda' && clip.filePath && !clip.workerId && !clip.parsing && !clip.parsingFailed) {
                   clipsToParse.push({ layerIndex, colIndex, fileName: clip.fileName, filePath: clip.filePath });
               }
           });
