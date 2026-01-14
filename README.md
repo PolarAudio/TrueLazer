@@ -96,16 +96,20 @@
   
   ☒   Showbridge DAC communication protocol has been analyzed.
   
+  ☒   EtherDream DAC communication protocol is beeing re-written to JavaScript and need further adjustments.
+  
+  ☑   IDN communication protocol is re-written in JavaScript and working great with the LaserVR test application.
+  
   ## Next Steps
 
   Our immediate roadmap focuses on building out the core functionalities:
 
   1.  UI Development:
       
-      ☒   Implement the full clip deck with layers, columns, and associated controls (Clear Clips, Blackout,
+      ☑   Implement the full clip deck with layers, columns, and associated controls (Clear Clips, Blackout,
   Solo, Blend-mode, Intensity Sliders).
       
-      ☒   Develop the Composition Label, Master Intensity Slider, and Laser On/Off Button.
+      ☑   Develop the Composition Label, Master Intensity Slider, and Laser On/Off Button.
       
       ☑   Create the "Selected Clip Preview" and "World Preview" windows.
       
@@ -117,22 +121,23 @@
   Shortcuts, View).
 
   2.  Generative Content System:
-      ☒   Develop a simple set of shape generators (dots, lines, circles, text) as base layers.
+      ☑   Develop a simple set of shape generators (dots, lines, circles, text) as base layers.
       
   3.  Effects System:
 
-      ☒   Implement core effects like transform (XYZ), rotation (XYZ), wave (XYZ), and color palette
+      ☑   Implement core effects like transform (XYZ), rotation (XYZ), wave (XYZ), and color palette
   manipulation.
 
       ☑   Design the drag-and-drop mechanism for applying effects to clips and layers.
       
   4.  Control Integration:
      
-      ☒   Begin integrating MIDI, DMX/Artnet, and OSC control via a "shortcuts" window.
+      ☑   Begin integrating MIDI, DMX/Artnet, and OSC control via a "shortcuts" window.
       
   5.  DAC Communication:
      
-      ☒	  Implement the ILDA Standard IDN Communication Protocol.
+      ☑	  Implement the ILDA Standard IDN Communication Protocol.
+	  
       ☑   Develop drag-and-drop functionality for assigning DAC channels to clips/layers.
 	  
 	  ☐   Showbridge DAC implementation to openIDN is planned for the future.
@@ -144,42 +149,44 @@
 	
 		☐ "Speed"  			(select speed source (BPM, manual, midi-clock)
 	
-		☐ "Render-preview"	(Icons inside the Preview to switch and access settings)
+		☑ "Render-preview"	(Icons inside the Preview to switch and access settings)
 	
 	Add:
 	
-		☐ "Clip atributes"	Play Style (Once Repeat)
-							Trigger (Normal Flash Toggle)
-							Transport (Timeline BPM-Sync)
-							Beat Snap (None 8 4 2 1 1/2 1/4 1/8)
-							Audio-Track (For Audio playback with file)
+		☑ "Clip atributes"	
+						☑	Play Style (Once Repeat)
+						☑	Trigger (Normal Flash Toggle)
+						☑	Transport (Timeline BPM-Sync)
+						☑	Beat Snap (None 8 4 2 1 1/2 1/4 1/8)
+						☑	Audio-Track (For Audio playback with file)
 	
-		☐ "Effects Panel"	Position Effects
-							Translation Effects
-							Color Effects
-							Effect presets
+		☑ "Effects Panel"
+						☑	Position Effects
+						☑	Translation Effects
+						☑	Color Effects
+						☐	Effect presets
 					
 		☐ "Timeline Mode"
 	
 		☐ "Show Editor view"
 	
-		☐ "Generator Panel"	(NDI-Source, Clock/Countdown/Timer)
+		☒ "Generator Panel"	(NDI-Source, Clock/Countdown/Timer)
 	
 		☐ "Generator Designer" (Pencil, Shapes, Curves, Lines, Color)(Grid, Background-Image, Snapping)
 	
 		☐ "DAC Brand Selector" (multiple selection)
 	
-		☐ "HotKeys-Mapping" (with highlite toggle option)
+		☒ "HotKeys-Mapping" (with highlite toggle option)
 	
-		☐ "MIDI-Mapping"	(Pre-made & custom)
+		☑ "MIDI-Mapping"	(Pre-made & custom)
 	
-		☐ "DMX/ArtNet Mapping"
+		☒ "DMX/ArtNet Mapping"
 	
-		☐ "Projector Setup" (Info Rendering Color-Balance Safety-Zones, Test-Image) (For each channel/DAC)
+		☒ "Projector Setup" (Info Rendering Color-Balance Safety-Zones, Test-Image) (For each channel/DAC)
 	
 		☐ "Audio Settings" (Input and Output)
 	
-		☐ "General Settings" (Save, Load, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
+		☒ "General Settings" (Save, Load, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS,Ilda Scan safety)
 	
 		☐ "Reset Functions" (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.)
 	
@@ -212,7 +219,7 @@
   3.  Run the Development Server:
       TrueLazer uses Vite for a fast development experience.
       `
-      npm start
+      npm run start
       `
       This will start the development server and opens the development version of the application with dev console.
 	  In most Cases this is already fully functional and Support full UI interaction.
@@ -226,6 +233,7 @@
   *   src/: Contains all the frontend source code, including React components, contexts, and utilities.
   *   sdk/: Houses information about DACs, software, and documentation, including the C++ SDK for Showbridge.
   *   src/ILDA-FILE-FORMAT-FILES/: A collection of default ILDA files for testing and development.
+		the ild source files are now unpacked with the installation to the choosen install location.
 
   ### How to Contribute
 
