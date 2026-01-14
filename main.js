@@ -984,6 +984,14 @@ function createWindow() {
     return filePaths[0];
   });
 
+  ipcMain.handle('show-open-dialog', async (event, options) => {
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, options);
+      if (canceled || filePaths.length === 0) {
+          return null;
+      }
+      return filePaths[0];
+  });
+
   ipcMain.handle('fetch-url-as-arraybuffer', async (event, url) => {
     try {
       const buffer = await new Promise((resolve, reject) => {
