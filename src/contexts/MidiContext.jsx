@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote } from '../utils/midi';
+import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote, listenToStateChange } from '../utils/midi';
 
 const MidiContext = createContext(null);
 
@@ -32,6 +32,12 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         setMidiInitialized(true);
         const inputs = getMidiInputs();
         setMidiInputs(inputs);
+        
+        // Listen for connection changes
+        listenToStateChange(() => {
+            console.log("MIDI Device change detected, refreshing inputs...");
+            setMidiInputs(getMidiInputs());
+        });
         
         if (window.electronAPI && window.electronAPI.getSelectedMidiInput) {
             const savedInputId = await window.electronAPI.getSelectedMidiInput();

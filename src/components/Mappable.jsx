@@ -1,12 +1,14 @@
 import React from 'react';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
+import { useKeyboard } from '../contexts/KeyboardContext';
 
 const Mappable = ({ id, children }) => {
-  const { isMapping: isMidiMapping, setLearningId: setMidiLearningId, removeMapping } = useMidi();
-  const { isMapping: isArtnetMapping, setLearningId: setArtnetLearningId } = useArtnet() || {};
+  const { isMapping: isMidiMapping, setLearningId: setMidiLearningId, removeMapping: removeMidiMapping } = useMidi();
+  const { isMapping: isArtnetMapping, setLearningId: setArtnetLearningId, removeMapping: removeArtnetMapping } = useArtnet() || {};
+  const { isMapping: isKeyboardMapping, setLearningId: setKeyboardLearningId, removeMapping: removeKeyboardMapping } = useKeyboard() || {};
 
-  const isMapping = isMidiMapping || isArtnetMapping;
+  const isMapping = isMidiMapping || isArtnetMapping || isKeyboardMapping;
 
   const handleClickCapture = (e) => {
     if (isMapping) {
@@ -14,14 +16,17 @@ const Mappable = ({ id, children }) => {
       e.stopPropagation();
       if (isMidiMapping) setMidiLearningId(id);
       if (isArtnetMapping) setArtnetLearningId(id);
+      if (isKeyboardMapping) setKeyboardLearningId(id);
     }
   };
 
   const handleContextMenu = (e) => {
-      if (isMapping && isMidiMapping) {
+      if (isMapping) {
           e.preventDefault();
           e.stopPropagation();
-          removeMapping(id);
+          if (isMidiMapping) removeMidiMapping(id);
+          if (isArtnetMapping) removeArtnetMapping(id);
+          if (isKeyboardMapping) removeKeyboardMapping(id);
       }
   };
 

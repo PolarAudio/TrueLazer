@@ -26,6 +26,7 @@ import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
 import { useAudioOutput } from './hooks/useAudioOutput'; // Add this
 import { MidiProvider, useMidi } from './contexts/MidiContext'; // Add this
 import { ArtnetProvider, useArtnet } from './contexts/ArtnetContext'; // Add this
+import { KeyboardProvider, useKeyboard } from './contexts/KeyboardContext'; // Add this
 import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
 import { applyEffects, applyOutputProcessing } from './utils/effects';
@@ -98,6 +99,7 @@ const getInitialState = (initialSettings) => ({
   clipNames: ensureArrayStructure(initialSettings?.clipNames, 5, 8, (r, c) => `Clip ${r + 1}-${c + 1}`),
   thumbnailFrameIndexes: Array(5).fill(null).map(() => Array(8).fill(0)),
   layerEffects: Array(5).fill([]),
+  layerAssignedDacs: initialSettings?.layerAssignedDacs ?? Array(5).fill([]),
   layerIntensities: Array(5).fill(1), // Add this
   layerAutopilots: Array(5).fill('off'), // Add layer autopilots
   layerBlackouts: Array(5).fill(false), // Add layer blackouts
@@ -118,7 +120,9 @@ const getInitialState = (initialSettings) => ({
   fadeAlpha: initialSettings?.renderSettings?.fadeAlpha ?? 0.13,
   playbackFps: initialSettings?.renderSettings?.playbackFps ?? 60,
   previewScanRate: initialSettings?.renderSettings?.previewScanRate ?? 1,
-  beamRenderMode: initialSettings?.renderSettings?.beamRenderMode ?? 'points',
+  beamRenderMode: initialSettings?.renderSettings?.beamRenderMode ?? 'both',
+  worldShowBeamEffect: initialSettings?.renderSettings?.worldShowBeamEffect ?? true,
+  worldBeamRenderMode: initialSettings?.renderSettings?.worldBeamRenderMode ?? 'both',
   activeClipIndexes: Array(5).fill(null),
   isPlaying: false,
   isStopped: true, // Add this
@@ -424,7 +428,6 @@ function reducer(state, action) {
       return { ...state, clipClipboard: action.payload };
 	}
     case 'SET_CLIP_DAC': {
-      console.log('App.jsx Reducer: SET_CLIP_DAC payload.dac:', action.payload.dac);
       const newClipContentsWithDac = [...state.clipContents];
       // Ensure the layer array exists and create a new copy of it
       if (!newClipContentsWithDac[action.payload.layerIndex]) {
@@ -436,18 +439,64 @@ function reducer(state, action) {
       // Get the existing clip, create a new copy of it, and then modify its dac
       const existingClip = newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] || {};
 
-      const currentAssignedDacs = existingClip.assignedDacs || [];
-      // Check for duplicates
-      if (currentAssignedDacs.some(d => d.ip === action.payload.dac.ip && d.channel === action.payload.dac.channel)) {
-          return state;
+      let currentAssignedDacs = existingClip.assignedDacs || [];
+      
+      const dacsToAdd = [];
+      const cleanDac = (d) => {
+          const { channels, allChannels, ...rest } = d;
+          return rest;
+      };
+
+      if (action.payload.dac.allChannels && action.payload.dac.channels) {
+          action.payload.dac.channels.forEach(ch => {
+              if (!currentAssignedDacs.some(d => d.ip === action.payload.dac.ip && d.channel === ch.serviceID)) {
+                  dacsToAdd.push({ ...cleanDac(action.payload.dac), channel: ch.serviceID, mirrorX: false, mirrorY: false });
+              }
+          });
+      } else {
+          const targetChannel = action.payload.dac.channel;
+          if (targetChannel !== undefined && !currentAssignedDacs.some(d => d.ip === action.payload.dac.ip && d.channel === targetChannel)) {
+              dacsToAdd.push({ ...cleanDac(action.payload.dac), channel: targetChannel, mirrorX: false, mirrorY: false });
+          }
       }
+
+      if (dacsToAdd.length === 0) return state;
 
       const updatedClip = {
           ...existingClip,
-          assignedDacs: [...currentAssignedDacs, { ...action.payload.dac, mirrorX: false, mirrorY: false }],
+          assignedDacs: [...currentAssignedDacs, ...dacsToAdd],
       };
       newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] = updatedClip;
       return { ...state, clipContents: newClipContentsWithDac };
+    }
+    case 'SET_LAYER_DAC': {
+        const { layerIndex, dac } = action.payload;
+        const newLayerAssignedDacs = [...state.layerAssignedDacs];
+        const currentDacs = newLayerAssignedDacs[layerIndex] || [];
+        
+        let dacsToAdd = [];
+        const cleanDac = (d) => {
+            const { channels, allChannels, ...rest } = d;
+            return rest;
+        };
+  
+        if (dac.allChannels && dac.channels) {
+            dac.channels.forEach(ch => {
+                if (!currentDacs.some(d => d.ip === dac.ip && d.channel === ch.serviceID)) {
+                    dacsToAdd.push({ ...cleanDac(dac), channel: ch.serviceID, mirrorX: false, mirrorY: false });
+                }
+            });
+        } else {
+            const targetChannel = dac.channel;
+            if (targetChannel !== undefined && !currentDacs.some(d => d.ip === dac.ip && d.channel === targetChannel)) {
+                dacsToAdd.push({ ...cleanDac(dac), channel: targetChannel, mirrorX: false, mirrorY: false });
+            }
+        }
+  
+        if (dacsToAdd.length === 0) return state;
+  
+        newLayerAssignedDacs[layerIndex] = [...currentDacs, ...dacsToAdd];
+        return { ...state, layerAssignedDacs: newLayerAssignedDacs };
     }
     case 'TOGGLE_CLIP_DAC_MIRROR': {
         const { layerIndex, colIndex, dacIndex, axis } = action.payload;
@@ -479,6 +528,32 @@ function reducer(state, action) {
                 assignedDacs: newAssignedDacs
             };
             return { ...state, clipContents: newClipContents };
+        }
+        return state;
+    }
+    case 'TOGGLE_LAYER_DAC_MIRROR': {
+        const { layerIndex, dacIndex, axis } = action.payload;
+        const newLayerAssignedDacs = [...state.layerAssignedDacs];
+        const layerDacs = newLayerAssignedDacs[layerIndex] ? [...newLayerAssignedDacs[layerIndex]] : [];
+        
+        if (layerDacs[dacIndex]) {
+            const targetDac = { ...layerDacs[dacIndex] };
+            if (axis === 'x') targetDac.mirrorX = !targetDac.mirrorX;
+            if (axis === 'y') targetDac.mirrorY = !targetDac.mirrorY;
+            layerDacs[dacIndex] = targetDac;
+            newLayerAssignedDacs[layerIndex] = layerDacs;
+            return { ...state, layerAssignedDacs: newLayerAssignedDacs };
+        }
+        return state;
+    }
+    case 'REMOVE_LAYER_DAC': {
+        const { layerIndex, dacIndex } = action.payload;
+        const newLayerAssignedDacs = [...state.layerAssignedDacs];
+        if (newLayerAssignedDacs[layerIndex]) {
+            const layerDacs = [...newLayerAssignedDacs[layerIndex]];
+            layerDacs.splice(dacIndex, 1);
+            newLayerAssignedDacs[layerIndex] = layerDacs;
+            return { ...state, layerAssignedDacs: newLayerAssignedDacs };
         }
         return state;
     }
@@ -704,12 +779,10 @@ function reducer(state, action) {
         const currentVal = state.quickAssigns.buttons[index].value;
         const newValue = !currentVal;
         
-        // Reuse logic by calling reducer recursively? No, that's bad practice/hard here.
-        // We just duplicate the logic for now, or cleaner: create the action payload and fall through?
-        // Switch statements don't easily allow fallthrough with changed payload variables.
-        // We'll just copy the logic, it's safer.
-        
-        const newAssigns = { ...state.quickAssigns };
+        const newAssigns = { 
+            ...state.quickAssigns,
+            buttons: [...state.quickAssigns.buttons] // Create copy of array
+        };
         newAssigns.buttons[index] = {
             ...newAssigns.buttons[index],
             value: newValue
@@ -721,26 +794,68 @@ function reducer(state, action) {
         if (control.link) {
             const { layerIndex, colIndex, effectIndex, paramName, targetType } = control.link;
             
-            const updatedClipContents = [...newState.clipContents];
-            if (updatedClipContents[layerIndex]) {
-                 updatedClipContents[layerIndex] = [...updatedClipContents[layerIndex]];
-                 const clip = updatedClipContents[layerIndex][colIndex];
-                 
-                 if (clip) {
-                    if (targetType === 'effect' && clip.effects && clip.effects[effectIndex]) {
-                         const newEffects = [...clip.effects];
-                         const effect = { ...newEffects[effectIndex] };
-                         effect.params = { ...effect.params, [paramName]: newValue };
-                         newEffects[effectIndex] = effect;
-                         updatedClipContents[layerIndex][colIndex] = { ...clip, effects: newEffects };
-                    } else if (targetType === 'generator') {
-                         updatedClipContents[layerIndex][colIndex] = {
-                             ...clip,
-                             currentParams: { ...clip.currentParams, [paramName]: newValue }
-                         };
+            if (targetType === 'layer') {
+                if (paramName === 'blackout') {
+                    const newLayerBlackouts = [...newState.layerBlackouts];
+                    newLayerBlackouts[layerIndex] = newValue;
+                    newState = { ...newState, layerBlackouts: newLayerBlackouts };
+                } else if (paramName === 'solo') {
+                    const newLayerSolos = [...newState.layerSolos];
+                    if (newValue) {
+                        newLayerSolos.fill(false);
+                        newLayerSolos[layerIndex] = true;
+                    } else {
+                        newLayerSolos[layerIndex] = false;
                     }
-                 }
-                 newState.clipContents = updatedClipContents;
+                    newState = { ...newState, layerSolos: newLayerSolos };
+                } else if (paramName === 'clear') {
+                    // 'clear' is usually an action, not a state.
+                    // But if it's a toggle button, what does 'on' mean?
+                    // Clear is usually momentary.
+                    // If we assigned it to a button, we probably want it to trigger on True?
+                    if (newValue) {
+                       // We can't easily trigger side-effect here (clearing clips) because it involves complex state changes
+                       // But we can call CLEAR_CLIP or DEACTIVATE_LAYER_CLIPS logic directly?
+                       // Since we are in reducer, we can modify state.
+                       const deactivatedActiveClipIndexes = [...newState.activeClipIndexes];
+                       deactivatedActiveClipIndexes[layerIndex] = null;
+                       newState = { ...newState, activeClipIndexes: deactivatedActiveClipIndexes };
+                       
+                       // Reset button to false immediately for momentary effect?
+                       newAssigns.buttons[index].value = false;
+                       newState.quickAssigns = newAssigns;
+                    }
+                } else if (paramName === 'autopilot') {
+                    // Assuming value maps to some autopilot mode? Or just toggle on/off?
+                    // Autopilot is 'off', 'forward', 'random'.
+                    // Toggle could cycle or switch between off/forward.
+                    // For now, let's assume it switches off <-> forward
+                    const newLayerAutopilots = [...newState.layerAutopilots];
+                    newLayerAutopilots[layerIndex] = newValue ? 'forward' : 'off';
+                    newState = { ...newState, layerAutopilots: newLayerAutopilots };
+                }
+            } else {
+                const updatedClipContents = [...newState.clipContents];
+                if (updatedClipContents[layerIndex]) {
+                     updatedClipContents[layerIndex] = [...updatedClipContents[layerIndex]];
+                     const clip = updatedClipContents[layerIndex][colIndex];
+                     
+                     if (clip) {
+                        if (targetType === 'effect' && clip.effects && clip.effects[effectIndex]) {
+                             const newEffects = [...clip.effects];
+                             const effect = { ...newEffects[effectIndex] };
+                             effect.params = { ...effect.params, [paramName]: newValue };
+                             newEffects[effectIndex] = effect;
+                             updatedClipContents[layerIndex][colIndex] = { ...clip, effects: newEffects };
+                        } else if (targetType === 'generator') {
+                             updatedClipContents[layerIndex][colIndex] = {
+                                 ...clip,
+                                 currentParams: { ...clip.currentParams, [paramName]: newValue }
+                             };
+                        }
+                     }
+                     newState.clipContents = updatedClipContents;
+                }
             }
         }
         return newState;
@@ -970,7 +1085,80 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex) => {
 
 function App() {
   const ildaParserWorker = useIldaParserWorker();
-  const generatorWorker = useGeneratorWorker();
+    const generatorWorker = useGeneratorWorker();
+    const uiGeneratorWorkerRef = useRef(null);
+
+    useEffect(() => {
+        const worker = new Worker(new URL('./utils/ui-generators.worker.js', import.meta.url), { type: 'module' });
+        uiGeneratorWorkerRef.current = worker;
+
+        const handleUiMessage = (e) => {
+            // Handle processing queue
+            if (e.data.layerIndex !== undefined && e.data.colIndex !== undefined) {
+                const clipKey = `${e.data.layerIndex}-${e.data.colIndex}`;
+                generatorProcessingMap.current.set(clipKey, false); // Mark free
+                
+                // Check for pending
+                if (generatorPendingMap.current.has(clipKey)) {
+                    const { message, transferables } = generatorPendingMap.current.get(clipKey);
+                    generatorPendingMap.current.delete(clipKey);
+                    
+                    // Send pending request
+                    console.log(`[App.jsx] UI Generator ${clipKey} free, processing pending seq ${message.seq}`);
+                    generatorProcessingMap.current.set(clipKey, true);
+                    worker.postMessage(message, transferables);
+                }
+            }
+
+            if (e.data.success) {
+                const { layerIndex, colIndex, frames, generatorDefinition, currentParams, isLive, seq } = e.data;
+
+                // Discard out-of-order responses for non-live updates
+                if (seq !== undefined) {
+                    if (seq < latestProcessedSeqRef.current) return;
+                    latestProcessedSeqRef.current = seq;
+                }
+
+                // Update liveFrames ref
+                const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
+                liveFramesRef.current[generatorWorkerId] = frames[0];
+
+                // Only dispatch to state if it's NOT a live frame update (i.e., it's a parameter change)
+                if (!isLive) {
+                    const newClipContent = {
+                        type: 'generator',
+                        generatorDefinition,
+                        frames,
+                        currentParams,
+                        playbackSettings: {
+                            mode: 'fps',
+                            duration: frames.length / 60,
+                            beats: 8,
+                            speedMultiplier: 1
+                        },
+                    };
+                    
+                    dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
+
+                    const currentName = clipNamesRef.current[layerIndex][colIndex];
+                    const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
+                    if (currentName === defaultPattern) {
+                        dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
+                    }
+                }
+            } else {
+                showNotification(`UI Generator error: ${e.data.error}`);
+            }
+        };
+
+        worker.addEventListener('message', handleUiMessage);
+
+        return () => {
+            worker.removeEventListener('message', handleUiMessage);
+            worker.terminate();
+        };
+    }, []);
+  
   const {
     devices: audioDevices,
     selectedDeviceId,
@@ -1012,6 +1200,7 @@ function App() {
     clipNames,
     thumbnailFrameIndexes,
     layerEffects,
+    layerAssignedDacs,
     layerIntensities,
     layerAutopilots, // Add layer autopilots
     layerBlackouts, // Add this
@@ -1032,6 +1221,8 @@ function App() {
     playbackFps,
     previewScanRate,
     beamRenderMode,
+    worldShowBeamEffect,
+    worldBeamRenderMode,
     activeClipIndexes,
     isPlaying,
     isWorldOutputActive,
@@ -1064,6 +1255,8 @@ function App() {
                     ildaFormat: clip.ildaFormat || 0,
                     stillFrame,
                     layerIndex,
+                    syncSettings: clip.syncSettings || {},
+                    fps: clip.fps || null
                 };
             } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
                 workerId = `generator-${layerIndex}-${activeColIndex}`;
@@ -1078,6 +1271,8 @@ function App() {
                     ildaFormat: 0,
                     stillFrame,
                     layerIndex,
+                    syncSettings: clip.syncSettings || {},
+                    fps: clip.fps || null
                 };
             }
         }
@@ -1085,43 +1280,260 @@ function App() {
     return null;
   }).filter(Boolean), [layers, activeClipIndexes, clipContents]);
 
-  // Refs for real-time access in animation loop
-  const layerIntensitiesRef = useRef(layerIntensities);
-  const layerAutopilotsRef = useRef(layerAutopilots);
-  const layerEffectsRef = useRef(layerEffects); // Add this
-  const masterIntensityRef = useRef(masterIntensity);
-  const layerBlackoutsRef = useRef(layerBlackouts);
-  const layerSolosRef = useRef(layerSolos);
-  const globalBlackoutRef = useRef(globalBlackout);
-  const dacOutputSettingsRef = useRef(dacOutputSettings);
-  const dacsRef = useRef(dacs);
-  const activeClipsDataRef = useRef([]);
-  const clipContentsRef = useRef(clipContents);
-  const activeClipIndexesRef = useRef(activeClipIndexes);
-  const clipNamesRef = useRef(clipNames);
-  const selectedIldaWorkerIdRef = useRef(selectedIldaWorkerId);
-  const selectedIldaTotalFramesRef = useRef(selectedIldaTotalFrames);
-  const previousProgressRef = useRef({});
-  const prevGeneratorParamsRef = useRef(new Map());
-  const prevWorkerIdsRef = useRef(new Map()); // Add this
+      const clipContentsRef = useRef(clipContents);
 
-  useEffect(() => {
-    layerIntensitiesRef.current = layerIntensities;
-    layerAutopilotsRef.current = layerAutopilots;
-    layerEffectsRef.current = layerEffects; // Update this
-    masterIntensityRef.current = masterIntensity;
-    layerBlackoutsRef.current = layerBlackouts;
-    layerSolosRef.current = layerSolos;
-    globalBlackoutRef.current = globalBlackout;
-    dacOutputSettingsRef.current = dacOutputSettings;
-    dacsRef.current = dacs;
-    activeClipsDataRef.current = activeClipsData;
-    clipContentsRef.current = clipContents;
-    activeClipIndexesRef.current = activeClipIndexes;
-    clipNamesRef.current = clipNames;
-    selectedIldaWorkerIdRef.current = selectedIldaWorkerId;
-    selectedIldaTotalFramesRef.current = selectedIldaTotalFrames;
-  }, [layerIntensities, layerAutopilots, layerEffects, masterIntensity, layerBlackouts, layerSolos, globalBlackout, dacOutputSettings, dacs, activeClipsData, clipContents, activeClipIndexes, clipNames, selectedIldaWorkerId, selectedIldaTotalFrames]);
+      const liveClipContentsRef = useRef(null); 
+
+      const hasPendingClipUpdate = useRef(false); // Flag to prevent overwriting live ref with stale state during interaction
+
+    
+
+      const liveDacOutputSettingsRef = useRef(null);
+
+      const hasPendingDacUpdate = useRef(false);
+
+    
+
+      useEffect(() => {
+
+          if (clipContents) {
+
+              liveClipContentsRef.current = structuredClone(clipContents);
+
+          }
+
+      }, []); // Only on mount, subsequent updates handled by specific effect
+
+    
+
+      useEffect(() => {
+
+          if (dacOutputSettings) {
+
+              liveDacOutputSettingsRef.current = structuredClone(dacOutputSettings);
+
+          }
+
+      }, []); // Only on mount
+
+    
+
+      // Refs for real-time access in animation loop
+
+      const layerIntensitiesRef = useRef(layerIntensities);
+
+    const layerAutopilotsRef = useRef(layerAutopilots);
+
+    const layerEffectsRef = useRef(layerEffects); // Update this
+
+    const masterIntensityRef = useRef(masterIntensity);
+
+    const layerBlackoutsRef = useRef(layerBlackouts);
+
+    const layerSolosRef = useRef(layerSolos);
+
+    const globalBlackoutRef = useRef(globalBlackout);
+
+    const dacOutputSettingsRef = useRef(dacOutputSettings);
+
+    const dacsRef = useRef(dacs);
+
+    const activeClipsDataRef = useRef([]);
+
+    // const clipContentsRef = useRef(clipContents); // Removed, handled above with live logic
+
+    const activeClipIndexesRef = useRef(activeClipIndexes);
+    const layerAssignedDacsRef = useRef(layerAssignedDacs);
+
+    const clipNamesRef = useRef(clipNames);
+
+    const selectedIldaWorkerIdRef = useRef(selectedIldaWorkerId);
+
+    const selectedIldaTotalFramesRef = useRef(selectedIldaTotalFrames);
+
+    const previousProgressRef = useRef({});
+
+    const prevGeneratorParamsRef = useRef(new Map());
+
+    const prevWorkerIdsRef = useRef(new Map()); // Add this
+
+        const lastNdiSourceNameRef = useRef(null); // Ref to track NDI source name across renders
+    
+        const accumulatedTimeRef = useRef({}); // Add accumulatedTimeRef
+        
+        const hoveredClipRef = useRef(null); // { layerIndex, colIndex } or null
+    
+        const generatorRequestSeqRef = useRef(0); // Track latest request ID
+            const latestProcessedSeqRef = useRef(0); // Track latest processed response ID        
+            const generatorProcessingMap = useRef(new Map()); // key: "layer-col", val: boolean
+            const generatorPendingMap = useRef(new Map()); // key: "layer-col", val: { message, transferables }
+        
+            const previewTimeRef = useRef(performance.now());
+        
+          
+        
+            useEffect(() => {  
+
+          // If we have a pending local update, it means the Ref is already ahead of (or equal to) the State.
+
+  
+
+          // We skip overwriting the Ref with potentially stale State to prevent "jumping back".
+
+  
+
+          if (hasPendingClipUpdate.current) {
+
+  
+
+              hasPendingClipUpdate.current = false;
+
+  
+
+              return;
+
+  
+
+          }
+
+  
+
+          if (clipContents) {
+
+  
+
+              liveClipContentsRef.current = structuredClone(clipContents);
+
+  
+
+          }
+
+  
+
+      }, [clipContents]);
+
+  
+
+    
+
+  
+
+      useEffect(() => {
+
+  
+
+          if (hasPendingDacUpdate.current) {
+
+  
+
+              hasPendingDacUpdate.current = false;
+
+  
+
+              return;
+
+  
+
+          }
+
+  
+
+          if (dacOutputSettings) {
+
+  
+
+              liveDacOutputSettingsRef.current = structuredClone(dacOutputSettings);
+
+  
+
+          }
+
+  
+
+      }, [dacOutputSettings]);
+
+  
+
+    
+
+  
+
+      useEffect(() => {
+
+  
+
+        layerIntensitiesRef.current = layerIntensities;
+
+  
+
+        layerAutopilotsRef.current = layerAutopilots;
+
+  
+
+        layerEffectsRef.current = layerEffects; // Update this
+
+  
+
+        masterIntensityRef.current = masterIntensity;
+
+  
+
+        layerBlackoutsRef.current = layerBlackouts;
+
+  
+
+        layerSolosRef.current = layerSolos;
+
+  
+
+        globalBlackoutRef.current = globalBlackout;
+
+  
+
+        // dacOutputSettingsRef.current = dacOutputSettings; // Removed, using liveDacOutputSettingsRef
+
+  
+
+        dacsRef.current = dacs;
+
+  
+
+                activeClipsDataRef.current = activeClipsData;
+
+  
+
+        
+
+  
+
+                clipContentsRef.current = clipContents; // We use liveClipContentsRef now but keep this synced for event handlers
+
+  
+
+        
+
+  
+
+                activeClipIndexesRef.current = activeClipIndexes;
+                layerAssignedDacsRef.current = layerAssignedDacs;
+
+  
+
+        clipNamesRef.current = clipNames;
+
+  
+
+        selectedIldaWorkerIdRef.current = selectedIldaWorkerId;
+
+  
+
+        selectedIldaTotalFramesRef.current = selectedIldaTotalFrames;
+
+  
+
+      }, [layerIntensities, layerAssignedDacs, layerAutopilots, layerEffects, masterIntensity, layerBlackouts, layerSolos, globalBlackout, dacOutputSettings, dacs, activeClipsData, clipContents, activeClipIndexes, clipNames, selectedIldaWorkerId, selectedIldaTotalFrames]);
+
+  
 
   const generateTestLineFrame = useCallback((yPos) => {
       // yPos: 0 (top) to 1 (bottom). ILDA: 1 to -1.
@@ -1136,6 +1548,12 @@ function App() {
   }, []);
 
   const handleUpdateDacSettings = useCallback((dacId, settings) => {
+    // 1. Direct Mutation
+    if (liveDacOutputSettingsRef.current) {
+        liveDacOutputSettingsRef.current[dacId] = settings;
+        hasPendingDacUpdate.current = true;
+    }
+    // 2. Dispatch
     dispatch({ type: 'SET_DAC_OUTPUT_SETTINGS', payload: { id: dacId, settings } });
   }, []);
 
@@ -1175,13 +1593,20 @@ function App() {
     const r = parseInt(color.slice(1, 3), 16);
     const g = parseInt(color.slice(3, 5), 16);
     const b = parseInt(color.slice(5, 7), 16);
-    document.documentElement.style.setProperty('--theme-color-transparent', `rgba(${r}, ${g}, ${b}, 0.2)`);
+    document.documentElement.style.setProperty('--theme-color-transparent', `rgba(${r}, ${g}, ${b}, 0.3)`);
 
     // Save theme to global settings
     if (window.electronAPI && window.electronAPI.setTheme) {
         window.electronAPI.setTheme(theme);
     }
   }, [theme]);
+
+  // Sync selected DAC to main process
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.setSelectedDac) {
+        window.electronAPI.setSelectedDac(selectedDac);
+    }
+  }, [selectedDac]);
 
   const workerIdsToFetch = useMemo(() => {
     const ids = new Set();
@@ -1206,9 +1631,31 @@ function App() {
           
           // Generate Thumbnail
           let thumbnailPath = null;
-          const currentClip = clipContentsRef.current[layerIndex]?.[colIndex];
+          // Use live ref if available for latest data, else ref.current
+          const clipSource = liveClipContentsRef.current ? liveClipContentsRef.current : clipContentsRef.current;
+          const currentClip = clipSource?.[layerIndex]?.[colIndex];
           const effects = currentClip?.effects || [];
-          thumbnailPath = await generateThumbnail(frame, effects, layerIndex, colIndex);
+          
+          // Determine settings for thumbnail: use first assigned DAC or selected DAC
+          let settingsForThumbnail = null;
+          const assignedDacs = currentClip?.assignedDacs || [];
+          if (assignedDacs.length > 0) {
+              const dac = assignedDacs[0];
+              const dacKey = `${dac.ip}:${dac.channel}`;
+              settingsForThumbnail = dacOutputSettingsRef.current[dacKey];
+          } else if (selectedDac) {
+              const dacKey = `${selectedDac.ip}:${selectedDac.channel}`;
+              settingsForThumbnail = dacOutputSettingsRef.current[dacKey];
+          }
+
+          let frameToProcess = frame;
+          if (settingsForThumbnail) {
+              // Apply output processing (Zones, Crop, Flip) to the frame *before* thumbnail generation
+              // applyOutputProcessing expects a frame object
+              frameToProcess = applyOutputProcessing(frame, settingsForThumbnail);
+          }
+
+          thumbnailPath = await generateThumbnail(frameToProcess, effects, layerIndex, colIndex);
 
           // Update stillFrame and set parsing status to false
           dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false, thumbnailPath, thumbnailVersion: Date.now() } } });
@@ -1244,6 +1691,22 @@ function App() {
         
         // Removed redundant get-frame call to prevent duplicate thumbnail generation
         // The useEffect watching workerBecameValid will trigger it
+      } else if (e.data.type === 'get-all-frames' && e.data.success) {
+          console.log('Received get-all-frames response:', e.data);
+          const { frames, workerId, layerIndex, colIndex } = e.data;
+          // Use dynamic import for writer
+          import('./utils/ilda-writer.js').then(({ framesToIlda }) => {
+              const buffer = framesToIlda(frames);
+              const clip = clipContentsRef.current[layerIndex][colIndex];
+              const defaultName = clip.fileName || 'export.ild';
+              
+              if (window.electronAPI && window.electronAPI.saveIldaFile) {
+                  window.electronAPI.saveIldaFile(buffer, defaultName).then(res => {
+                      if (res.success) showNotification(`Exported to ${res.filePath}`);
+                      else if (res.error) showNotification(`Export failed: ${res.error}`);
+                  });
+              }
+          }).catch(err => console.error('Failed to load ilda-writer in response:', err));
       } else if (e.data.success === false) {
         showNotification(`Worker error: ${e.data.error}`);
         const { layerIndex, colIndex } = e.data; // Get layerIndex and colIndex from error message
@@ -1374,16 +1837,36 @@ function App() {
           // 1. Process Clip Content
           activeClipsDataRef.current.forEach(clip => {
             if (clip && liveFramesRef.current[clip.workerId]) {
-              const dacList = (clip.assignedDacs && clip.assignedDacs.length > 0)
-                ? clip.assignedDacs
-                : (selectedDac ? [selectedDac] : []);
+              const layerDacs = layerAssignedDacsRef.current[clip.layerIndex] || [];
+              const clipDacs = clip.assignedDacs || [];
+              
+              let combinedDacs = [...layerDacs, ...clipDacs];
+              if (combinedDacs.length === 0 && selectedDac) {
+                  combinedDacs = [selectedDac];
+              }
+
+              const dacList = [];
+              const seen = new Set();
+              combinedDacs.forEach(d => {
+                  const ch = d.channel !== undefined ? d.channel : (d.channels && d.channels.length > 0 ? d.channels[0].serviceID : 0);
+                  const key = `${d.ip}:${ch}`;
+                  if (!seen.has(key)) {
+                      seen.add(key);
+                      dacList.push({ ...d, channel: ch });
+                  }
+              });
 
               if (dacList.length === 0) return;
+
+              // Use Live Ref for Effects to prevent jitter
+              const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+              const liveClip = clipSource[clip.layerIndex][activeClipIndexesRef.current[clip.layerIndex]];
+              const liveEffects = liveClip ? (liveClip.effects || []) : (clip.effects || []);
 
               // Merge clip effects with layer effects
               const layerIdx = clip.layerIndex;
               const currentLayerEffects = layerEffectsRef.current[layerIdx] || [];
-              const effects = [...(clip.effects || []), ...currentLayerEffects];
+              const effects = [...liveEffects, ...currentLayerEffects];
               
               const frame = liveFramesRef.current[clip.workerId];
 
@@ -1441,59 +1924,20 @@ function App() {
                   intensityAdjustedFrame.points = newPts;
               }
 
-              // Apply sync overrides to effects
-              const syncedEffects = effects.map(eff => {
-                  const newParams = { ...eff.params };
-                  const definition = effectDefinitions.find(d => d.id === eff.id);
-                  if (definition) {
-                      definition.paramControls.forEach(ctrl => {
-                          const syncKey = `${eff.id}.${ctrl.id}`;
-                          const rawSettings = syncSettings[syncKey];
-                          
-                          // Handle both legacy (string) and new (object) formats
-                          const settings = typeof rawSettings === 'string' 
-                              ? { syncMode: rawSettings, range: [ctrl.min, ctrl.max], direction: 'forward', style: 'loop' }
-                              : rawSettings;
+              // Calculate clip duration in seconds
+              // Use playbackFps as fallback if clip doesn't have its own rate
+              const clipFps = clip.fps || playbackFps || 30;
+              const clipDuration = (clip.totalFrames || 30) / clipFps;
 
-                          if (settings && settings.syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
-                              let progress = 0;
-                              
-                              // 1. Calculate Base Progress
-                              if (settings.syncMode === 'fps') {
-                                  // Default roughly 1Hz cycle
-                                  progress = (currentTime * 0.001) % 1.0;
-                              } else if (settings.syncMode === 'timeline' || settings.syncMode === 'bpm') {
-                                  // Use clip progress (bpm logic handled in frame fetcher, both map to 0-1)
-                                  progress = clipProgress;
-                              }
-
-                              // 2. Apply Direction
-                              if (settings.direction === 'backward') {
-                                  progress = 1.0 - progress;
-                              } else if (settings.direction === 'pause') {
-                                  progress = 0; // Or hold last frame? For now 0 or middle
-                              }
-
-                              // 3. Apply Style (Loop is default 0-1)
-                              if (settings.style === 'bounce') {
-                                  // 0 -> 1 -> 0
-                                  progress = progress < 0.5 ? progress * 2 : 2 - (progress * 2);
-                              } else if (settings.style === 'once') {
-                                  progress = Math.min(progress, 1);
-                              }
-
-                              // 4. Map to Range
-                              const min = settings.range ? settings.range[0] : ctrl.min;
-                              const max = settings.range ? settings.range[1] : ctrl.max;
-                              
-                              newParams[ctrl.id] = min + (max - min) * progress;
-                          }
-                      });
-                  }
-                  return { ...eff, params: newParams };
+              const modifiedFrame = applyEffects(intensityAdjustedFrame, effects, { 
+                  progress: clipProgress, 
+                  time: currentTime, 
+                  effectStates: effectStatesRef.current, 
+                  assignedDacs: clip.assignedDacs,
+                  syncSettings: clip.syncSettings || {},
+                  bpm: state.bpm,
+                  clipDuration: clipDuration
               });
-
-              const modifiedFrame = applyEffects(intensityAdjustedFrame, syncedEffects, { progress: clipProgress, time: currentTime, effectStates: effectStatesRef.current, assignedDacs: clip.assignedDacs });
 
               dacList.forEach((targetDac, dacIndex) => {
                 const ip = targetDac.ip;
@@ -1502,7 +1946,7 @@ function App() {
                 if (channel !== undefined) { // Check undefined instead of 0 to allow channel 0
                   const key = `${ip}:${channel}`;
                   if (!dacGroups.has(key)) {
-                    dacGroups.set(key, { ip, channel, frames: [] });
+                    dacGroups.set(key, { ip, channel, type: targetDac.type, frames: [] });
                   }
 
                   // Apply channel-level mirroring if specified
@@ -1553,11 +1997,11 @@ function App() {
               const channels = (dac.channels && dac.channels.length > 0) ? dac.channels.map(c => c.serviceID) : [0];
               channels.forEach(ch => {
                   const id = `${dac.ip}:${ch}`;
-                  const settings = dacOutputSettingsRef.current[id];
+                  const settings = liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[id] : dacOutputSettingsRef.current[id];
                   
                   if (settings) {
                       if (!dacGroups.has(id)) {
-                          dacGroups.set(id, { ip: dac.ip, channel: ch, frames: [] });
+                          dacGroups.set(id, { ip: dac.ip, channel: ch, type: dac.type, frames: [] });
                       }
                       
                       const group = dacGroups.get(id);
@@ -1575,7 +2019,7 @@ function App() {
             let mergedFrame = mergeFrames(group.frames);
             
             const id = `${group.ip}:${group.channel}`;
-            const settings = dacOutputSettingsRef.current[id];
+            const settings = liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[id] : dacOutputSettingsRef.current[id];
             
             if (mergedFrame && settings) {
                 // Apply Dimmer
@@ -1601,7 +2045,7 @@ function App() {
             }
 
             if (mergedFrame) {
-              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame, OUTPUT_FPS);
+              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame, OUTPUT_FPS, group.type);
             }
           });
         }
@@ -1623,8 +2067,23 @@ function App() {
           if (!lastFrameFetchTimeRef.current[workerId]) {
               lastFrameFetchTimeRef.current[workerId] = timestamp;
           }
+          
+          // Calculate time since last frame
+          let dt = timestamp - lastFrameFetchTimeRef.current[workerId];
+          
+          // Sanity check for huge jumps (e.g. tab inactive)
+          if (dt > 1000) dt = currentFrameInterval;
+          
+          // Only advance time if playing
+          if (isPlaying) {
+              if (accumulatedTimeRef.current[workerId] === undefined) {
+                  accumulatedTimeRef.current[workerId] = 0;
+              }
+              accumulatedTimeRef.current[workerId] += dt;
+          }
+          
+          const totalElapsed = accumulatedTimeRef.current[workerId] || 0;
 
-          const delta = timestamp - lastFrameFetchTimeRef.current[workerId];
           // We only use audio sync if it's an active clip (not a preview only)
           const audioInfo = activeClipIndexesRef.current[layerIndex] !== null ? getAudioInfo(layerIndex) : null;
 
@@ -1638,26 +2097,37 @@ function App() {
               targetIndex = Math.floor(currentProgress * totalFrames);
           } else if (pSettings.mode === 'timeline') {
               const totalDurationMs = (pSettings.duration * 1000) / (pSettings.speedMultiplier || 1);
-              if (isPlaying && totalDurationMs > 0) {
-                  currentProgress = (delta / totalDurationMs) % 1.0;
+              if (totalDurationMs > 0) {
+                  currentProgress = (totalElapsed / totalDurationMs) % 1.0;
                   targetIndex = Math.floor(currentProgress * totalFrames);
               }
           } else if (pSettings.mode === 'bpm') {
               const oneBeatMs = 60000 / currentBpm;
               const totalDurationMs = (pSettings.beats * oneBeatMs) / (pSettings.speedMultiplier || 1);
-              if (isPlaying && totalDurationMs > 0) {
-                  currentProgress = (delta / totalDurationMs) % 1.0;
+              if (totalDurationMs > 0) {
+                  currentProgress = (totalElapsed / totalDurationMs) % 1.0;
                   targetIndex = Math.floor(currentProgress * totalFrames);
               }
-          } else if (delta >= currentFrameInterval) {
-              const framesToAdvance = Math.floor(delta / currentFrameInterval);
-              lastFrameFetchTimeRef.current[workerId] = timestamp - (delta % currentFrameInterval);
+          } else if (dt >= currentFrameInterval) {
+              const framesToAdvance = Math.floor(dt / currentFrameInterval);
+              // Update lastFrameFetchTimeRef only when we advance frames in FPS mode
+              // Actually, we should update it every loop iteration at the end, but here we do it to sync with frame grid
               if (isPlaying) {
+                  lastFrameFetchTimeRef.current[workerId] = timestamp - (dt % currentFrameInterval);
                   targetIndex = (targetIndex + framesToAdvance);
+              } else {
+                  lastFrameFetchTimeRef.current[workerId] = timestamp;
               }
+              
               currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
           } else {
+              // Not enough time passed for FPS mode frame advance
               return; 
+          }
+          
+          // For non-FPS modes, we update lastFrameFetchTimeRef every loop to keep dt correct
+          if (pSettings.mode !== 'fps') {
+              lastFrameFetchTimeRef.current[workerId] = timestamp;
           }
 
           if (isNaN(targetIndex)) targetIndex = 0;
@@ -1665,8 +2135,6 @@ function App() {
 
           const prevProgress = previousProgressRef.current[workerId] || 0;
           // Check for loop/completion
-          // Only trigger if playing and progress wrapped around (e.g. 0.9 -> 0.1)
-          // We use a threshold to avoid jitter, e.g., prev was > 0.9 and current < 0.1
           const didLoop = (prevProgress > 0.9 && currentProgress < 0.1);
 
           previousProgressRef.current[workerId] = currentProgress;
@@ -1723,8 +2191,16 @@ function App() {
               if (clip.type === 'ilda') {
                   ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: targetIndex });
               } else if (clip.type === 'generator') {
-                  if (clip.frames && clip.frames[targetIndex % clip.frames.length]) {
-                      liveFramesRef.current[workerId] = clip.frames[targetIndex % clip.frames.length];
+                  // Only overwrite from clip.frames if it's an animation (multi-frame)
+                  // For single-frame generators, the worker updates liveFramesRef directly
+                  // and we avoid overwriting with potentially stale frames from state.
+                  if (clip.frames && clip.frames.length > 1) {
+                      if (clip.frames[targetIndex % clip.frames.length]) {
+                          liveFramesRef.current[workerId] = clip.frames[targetIndex % clip.frames.length];
+                      }
+                  } else if (!liveFramesRef.current[workerId] && clip.frames && clip.frames.length > 0) {
+                      // Initial load
+                      liveFramesRef.current[workerId] = clip.frames[0];
                   }
               }
           }
@@ -1734,7 +2210,9 @@ function App() {
       layers.forEach((_, layerIndex) => {
           const activeColIndex = activeClipIndexesRef.current[layerIndex];
           if (activeColIndex === null) return;
-          const clip = clipContentsRef.current[layerIndex][activeColIndex];
+          // Use live content ref for latest params
+          const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+          const clip = clipSource[layerIndex][activeColIndex];
           if (!clip) return;
 
           let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${layerIndex}-${activeColIndex}` : null);
@@ -1749,10 +2227,32 @@ function App() {
           const lIdx = selectedLayerIndex; // We use these from closure as they change rarely and loop restart is OK then
           const cIdx = selectedColIndex;
           if (lIdx !== null && cIdx !== null) {
-              const clip = clipContentsRef.current[lIdx][cIdx];
+              const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+              const clip = clipSource[lIdx][cIdx];
               if (clip) {
                   processClip(clip, lIdx, selWorkerId);
               }
+          }
+      }
+
+      // 3. Process hovered clip (for hover preview)
+      if (hoveredClipRef.current) {
+          const { layerIndex, colIndex } = hoveredClipRef.current;
+          // Avoid double processing if it's already active or selected
+          const isActive = activeClipIndexesRef.current[layerIndex] === colIndex;
+          const isSelected = selectedLayerIndex === layerIndex && selectedColIndex === colIndex;
+          const selWorkerId = selectedIldaWorkerIdRef.current;
+          
+          if (!isActive) {
+               const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+               const clip = clipSource[layerIndex]?.[colIndex];
+               if (clip) {
+                   let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${layerIndex}-${colIndex}` : null);
+                   // Also check if this workerId is the selected one (handled in step 2), to avoid duplicate
+                   if (workerId && workerId !== selWorkerId) {
+                        processClip(clip, layerIndex, workerId);
+                   }
+               }
           }
       }
 
@@ -1761,6 +2261,7 @@ function App() {
 
     const previewLoop = (timestamp) => {
       if (timestamp - lastPreviewTime > previewInterval) {
+        previewTimeRef.current = performance.now();
         setFrameTick(t => t + 1); // Trigger UI preview re-renders
         lastPreviewTime = timestamp;
       }
@@ -1778,6 +2279,7 @@ function App() {
     }
 
 
+    // Cleanup on unmount
     return () => {
       ildaParserWorker.removeEventListener('message', handleMessage);
       cancelAnimationFrame(animationFrameId);
@@ -1793,7 +2295,123 @@ function App() {
       if (window.electronAPI) {
           unsubClip = window.electronAPI.onClipContextMenuCommand((command, layerIndex, colIndex) => {
               console.log(`Clip context menu command received: ${command} for ${layerIndex}-${colIndex}`);
-              if (command === 'update-thumbnail') {
+              if (command === 'export-ilda') {
+                  const clipToExport = clipContentsRef.current[layerIndex][colIndex];
+                  console.log('Exporting clip:', clipToExport);
+                  if (clipToExport) {
+                      if (clipToExport.type === 'ilda' && clipToExport.workerId && ildaParserWorker) {
+                          showNotification('Preparing ILDA export...');
+                          console.log('Requesting frames from worker:', clipToExport.workerId);
+                          ildaParserWorker.postMessage({
+                              type: 'get-all-frames',
+                              workerId: clipToExport.workerId,
+                              layerIndex,
+                              colIndex,
+                          });
+                      } else if (clipToExport.type === 'generator' && clipToExport.frames) {
+                          console.log('Exporting generator frames with effects...');
+                          import('./utils/ilda-writer.js').then(({ framesToIlda }) => {
+                              const fps = playbackFps || 60;
+                              let duration = 2.0; // Default 2s
+                              
+                              if (clipToExport.playbackSettings) {
+                                  if (clipToExport.playbackSettings.mode === 'timeline' && clipToExport.playbackSettings.duration) {
+                                      duration = clipToExport.playbackSettings.duration;
+                                  } else if (clipToExport.playbackSettings.mode === 'bpm' && clipToExport.playbackSettings.beats) {
+                                      const bpm = state.bpm || 120;
+                                      duration = (clipToExport.playbackSettings.beats / bpm) * 60;
+                                  } else if (clipToExport.playbackSettings.mode === 'fps' && clipToExport.frames.length > 1) {
+                                      duration = clipToExport.frames.length / fps;
+                                  }
+                              }
+
+                              const totalExportFrames = Math.ceil(duration * fps);
+                              const bakedFrames = [];
+                              
+                              // We need a clean effect state for the export
+                              const exportEffectStates = new Map();
+
+                              for (let i = 0; i < totalExportFrames; i++) {
+                                  const time = i * (1000 / fps);
+                                  const progress = i / totalExportFrames;
+                                  
+                                  // Select base frame from generator (looping)
+                                  const baseFrameIdx = Math.floor(progress * clipToExport.frames.length) % clipToExport.frames.length;
+                                  const baseFrame = clipToExport.frames[baseFrameIdx];
+                                  
+                                  if (baseFrame) {
+                                      // Clone frame to avoid mutating original
+                                      const frameClone = { ...baseFrame }; 
+                                      
+                                      // Apply Effects
+                                      const processedFrame = applyEffects(frameClone, clipToExport.effects, {
+                                          time: time,
+                                          progress: progress,
+                                          effectStates: exportEffectStates,
+                                          syncSettings: clipToExport.syncSettings || {},
+                                          bpm: state.bpm,
+                                          clipDuration: duration,
+                                          assignedDacs: clipToExport.assignedDacs || []
+                                      });
+                                      
+                                      // Convert TypedArray back to points structure if needed by writer?
+                                      // ilda-writer.js handles {x,y,r,g,b...} objects. 
+                                      // applyEffects returns TypedArray in `processedFrame.points` (format X,Y,Z,R,G,B,BLK,LAST)
+                                      // We need to convert this back to object array for `ilda-writer.js` OR update `ilda-writer.js` to handle typed arrays.
+                                      // `ilda-writer.js` ALREADY handles objects.
+                                      // Let's check `ilda-writer.js` if it handles TypedArrays.
+                                      // I wrote it recently. Let me check.
+                                      
+                                      // Checking ilda-writer.js logic:
+                                      // It iterates: const p = points[i]; let x = p.x ...
+                                      // It expects OBJECTS.
+                                      // applyEffects returns TypedArray.
+                                      // So we MUST convert TypedArray back to Objects for the writer.
+                                      
+                                      const pts = processedFrame.points;
+                                      const numPts = pts.length / 8;
+                                      const objectPoints = [];
+                                      for(let k=0; k<numPts; k++) {
+                                          objectPoints.push({
+                                              x: pts[k*8],
+                                              y: pts[k*8+1],
+                                              z: pts[k*8+2],
+                                              r: pts[k*8+3],
+                                              g: pts[k*8+4],
+                                              b: pts[k*8+5],
+                                              blanking: pts[k*8+6] > 0.5,
+                                              lastPoint: pts[k*8+7] > 0.5
+                                          });
+                                      }
+                                      
+                                      bakedFrames.push({
+                                          ...processedFrame,
+                                          points: objectPoints,
+                                          frameName: `Frame ${i}`,
+                                          companyName: 'TrueLazer'
+                                      });
+                                  }
+                              }
+
+                              const buffer = framesToIlda(bakedFrames);
+                              const defaultName = `${clipToExport.generatorDefinition?.name || 'generator'}_export.ild`;
+                              if (window.electronAPI && window.electronAPI.saveIldaFile) {
+                                  window.electronAPI.saveIldaFile(buffer, defaultName).then(res => {
+                                      if (res.success) showNotification(`Exported to ${res.filePath}`);
+                                      else if (res.error) showNotification(`Export failed: ${res.error}`);
+                                  });
+                              }
+                          }).catch(err => console.error('Failed to export generator:', err));
+                      } else {
+                          console.warn('Clip type not supported for export or missing data:', clipToExport.type, clipToExport);
+                          if (clipToExport.type === 'ilda' && !clipToExport.workerId) {
+                              showNotification('Clip data not loaded. Please play the clip to load it.');
+                          } else if (clipToExport.type === 'generator' && !clipToExport.frames) {
+                               showNotification('Generator not rendered yet.');
+                          }
+                      }
+                  }
+              } else if (command === 'update-thumbnail') {
                   const clipToUpdate = clipContents[layerIndex][colIndex];
                   if (clipToUpdate) {
                       if (clipToUpdate.type === 'ilda' && clipToUpdate.workerId && ildaParserWorker) {
@@ -1857,7 +2475,12 @@ function App() {
                       setTimeout(() => {
                           const newClip = contentToPaste;
                           if (newClip.type === 'generator' && newClip.generatorDefinition) {
-                              regenerateGeneratorClip(layerIndex, colIndex, newClip.generatorDefinition, newClip.currentParams);
+                              const key = `${layerIndex}-${colIndex}`;
+                              const completeParams = { ...newClip.generatorDefinition.defaultParams, ...newClip.currentParams };
+                              prevGeneratorParamsRef.current.set(key, JSON.stringify(completeParams));
+
+                              const seq = ++generatorRequestSeqRef.current;
+                              regenerateGeneratorClip(layerIndex, colIndex, newClip.generatorDefinition, newClip.currentParams, seq);
                           }
                       }, 100);
 
@@ -1994,6 +2617,9 @@ function App() {
     clipContents.forEach((layer, layerIndex) => {
       layer.forEach((clip, colIndex) => {
         if (clip && clip.type === 'generator' && clip.generatorDefinition) {
+          // Skip NDI source here as it's handled by the NDI frame loop
+          if (clip.generatorDefinition.id === 'ndi-source') return;
+
           const key = `${layerIndex}-${colIndex}`;
           // Merge defaults for a stable comparison
           const completeParams = { ...clip.generatorDefinition.defaultParams, ...(clip.currentParams || {}) };
@@ -2002,7 +2628,8 @@ function App() {
           if (prevGeneratorParamsRef.current.get(key) !== currentParamsJson) {
             // Parameters changed (via MIDI, Quick Assign, or UI)
             console.log(`[App.jsx] Generator ${key} params changed, regenerating...`);
-            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams);
+            const seq = ++generatorRequestSeqRef.current;
+            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams, seq);
             prevGeneratorParamsRef.current.set(key, currentParamsJson);
           }
         }
@@ -2030,12 +2657,32 @@ function App() {
             });
           } else if (clip.type === 'generator' && clip.generatorDefinition) {
             console.log(`Regenerating generator clip ${layerIndex}-${colIndex} on project load`);
-            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams);
+            const seq = ++generatorRequestSeqRef.current;
+            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams, seq);
           }
         }
       });
     });
   }, [state.projectLoadTimestamp, ildaParserWorker, generatorWorker]);
+
+  // Listen for thumbnail mode updates from Main Process (Menu)
+  useEffect(() => {
+      if (window.electronAPI && window.electronAPI.onUpdateThumbnailRenderMode) {
+          const unsubscribe = window.electronAPI.onUpdateThumbnailRenderMode((mode) => {
+              console.log('App.jsx: Received thumbnail mode update:', mode);
+              dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: mode });
+          });
+          return () => unsubscribe();
+      }
+  }, []);
+
+  const handleThumbnailModeChange = (e) => {
+      const mode = e.target.value;
+      dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: mode });
+      if (window.electronAPI && window.electronAPI.sendRendererThumbnailModeChanged) {
+          window.electronAPI.sendRendererThumbnailModeChanged(mode);
+      }
+  };
 
   // Listen for project management commands
   useEffect(() => {
@@ -2182,13 +2829,38 @@ function App() {
       }
   }, [clipContents, ildaParserWorker]);
 
-  const selectedClipEffects = useMemo(() => {
-    return selectedLayerIndex !== null && selectedColIndex !== null
-      ? clipContents[selectedLayerIndex][selectedColIndex]?.effects || []
-      : [];
-  }, [selectedLayerIndex, selectedColIndex, clipContents]);
+  // Calculate directly on render to ensure live params are used (driven by frameTick re-renders)
+  const source = liveClipContentsRef.current || clipContents;
+  let selectedClipEffects = [];
+
+  if (selectedLayerIndex !== null) {
+      const lEffects = layerEffects[selectedLayerIndex] || [];
+      
+      if (selectedColIndex !== null) {
+          const clipEffects = source[selectedLayerIndex][selectedColIndex]?.effects || [];
+          selectedClipEffects = [...clipEffects, ...lEffects];
+      } else {
+           // Layer Mode: Use active clip effects
+           const activeCol = activeClipIndexes[selectedLayerIndex];
+           if (activeCol !== null) {
+               const clipEffects = source[selectedLayerIndex][activeCol]?.effects || [];
+               selectedClipEffects = [...clipEffects, ...lEffects];
+           } else {
+               selectedClipEffects = lEffects;
+           }
+      }
+  }
 
   const handleEffectParameterChange = useCallback((layerIndex, colIndex, effectIndex, paramName, newValue) => {
+    // 1. Direct Mutation for Instant Preview
+    if (liveClipContentsRef.current && liveClipContentsRef.current[layerIndex] && liveClipContentsRef.current[layerIndex][colIndex]) {
+        const clip = liveClipContentsRef.current[layerIndex][colIndex];
+        if (clip && clip.effects && clip.effects[effectIndex]) {
+            clip.effects[effectIndex].params[paramName] = newValue;
+            hasPendingClipUpdate.current = true; // Signal that we have a local update
+        }
+    }
+    // 2. Dispatch for State Persistence
     dispatch({ type: 'UPDATE_EFFECT_PARAMETER', payload: { layerIndex, colIndex, effectIndex, paramName, newValue } });
   }, []);
 
@@ -2199,33 +2871,72 @@ function App() {
     if (!generatorWorker) return;
 
     const handleMessage = (e) => {
+        // Handle processing queue
+        if (e.data.layerIndex !== undefined && e.data.colIndex !== undefined) {
+            const clipKey = `${e.data.layerIndex}-${e.data.colIndex}`;
+            generatorProcessingMap.current.set(clipKey, false); // Mark free
+            
+            // Check for pending
+            if (generatorPendingMap.current.has(clipKey)) {
+                const { message, transferables } = generatorPendingMap.current.get(clipKey);
+                generatorPendingMap.current.delete(clipKey);
+                
+                // Send pending request
+                console.log(`[App.jsx] Generator ${clipKey} free, processing pending seq ${message.seq}`);
+                generatorProcessingMap.current.set(clipKey, true);
+                generatorWorker.postMessage(message, transferables);
+            }
+        }
+
         if (e.data.success) {
-            const { layerIndex, colIndex, frames, generatorDefinition, currentParams } = e.data;
+            const { layerIndex, colIndex, frames, generatorDefinition, currentParams, isLive, seq } = e.data;
 
-            const newClipContent = {
-                type: 'generator',
-                generatorDefinition,
-                frames,
-                currentParams,
-                playbackSettings: {
-                    mode: 'fps',
-                    duration: frames.length / 60,
-                    beats: 8,
-                    speedMultiplier: 1
-                },
-            };
-            dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
-
-            // Only update the clip name if it's currently the default name
-            const currentName = clipNamesRef.current[layerIndex][colIndex];
-            const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
-            if (currentName === defaultPattern) {
-                dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
+            // Discard out-of-order responses for non-live updates
+            if (seq !== undefined) {
+                if (seq < latestProcessedSeqRef.current) return;
+                latestProcessedSeqRef.current = seq;
             }
 
-            // **NEW**: Also update liveFrames for this generated clip's workerId
+            // Update liveFrames ref regardless of whether it's a live update or param change
             const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
-            liveFramesRef.current[generatorWorkerId] = frames[0]; // Assuming frames[0] is the primary frame
+            liveFramesRef.current[generatorWorkerId] = frames[0];
+
+            // Only dispatch to state if it's NOT a live frame update (i.e., it's a parameter change)
+            // AND if it matches the latest requested sequence (prevent overwriting live ref with stale intermediate state)
+            if (!isLive && seq === generatorRequestSeqRef.current) {
+                const newClipContent = {
+                    type: 'generator',
+                    generatorDefinition,
+                    frames,
+                    stillFrame: frames[0], // Update still frame for thumbnail
+                    currentParams,
+                    playbackSettings: {
+                        mode: 'fps',
+                        duration: frames.length / 60,
+                        beats: 8,
+                        speedMultiplier: 1
+                    },
+                };
+                
+                // Debounce state updates to prevent UI lag during rapid slider movement?
+                // The reducer is somewhat heavy (deep clone array).
+                // But we need to save the result.
+                // We'll rely on the sequence check to at least prevent jumping back.
+                
+                dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
+
+                // Only update the clip name if it's currently the default name
+                const currentName = clipNamesRef.current[layerIndex][colIndex];
+                const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
+                if (currentName === defaultPattern) {
+                    dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
+                }
+            } else {
+                // If it's a live frame update, signal ready for the next one
+                if (window.electronAPI && window.electronAPI.ndiSignalReady) {
+                    window.electronAPI.ndiSignalReady();
+                }
+            }
         } else {
             showNotification(`Error generating frames: ${e.data.error}`);
         }
@@ -2239,16 +2950,22 @@ function App() {
   }, [generatorWorker, state.clipContents]); // Add state.clipContents to dependency array to get the latest version
 
   const handleDropGenerator = useCallback((layerIndex, colIndex, generatorDefinition) => {
-    console.log('[App.jsx] handleDropGenerator - Received generatorDefinition:', generatorDefinition); // DEBUG LOG
     if (generatorWorker) {
-        console.log('[App.jsx] handleDropGenerator - Using new regenerateGeneratorClip function'); // DEBUG LOG
-        regenerateGeneratorClip(layerIndex, colIndex, generatorDefinition, generatorDefinition.defaultParams);
+        
+        // Initialize prev params to avoid immediate double-regen or diff issues
+        const key = `${layerIndex}-${colIndex}`;
+        const completeParams = { ...generatorDefinition.defaultParams };
+        prevGeneratorParamsRef.current.set(key, JSON.stringify(completeParams));
+
+        const seq = ++generatorRequestSeqRef.current;
+        regenerateGeneratorClip(layerIndex, colIndex, generatorDefinition, generatorDefinition.defaultParams, seq);
     }
   }, [generatorWorker]);
 
-  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params) => {
+  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params, seq) => {
     // Create a complete params object to ensure stability
     const completeParams = { ...generatorDefinition.defaultParams, ...params };
+    const clipKey = `${layerIndex}-${colIndex}`;
 
     let fontBuffer = null;
     if (['text', 'ndi-source', 'spout-receiver'].includes(generatorDefinition.id)) {
@@ -2292,12 +3009,22 @@ function App() {
       generator: generatorDefinition,
       params: completeParams, // Pass the complete params
       fontBuffer,
+      seq // Pass sequence number
     };
+    
+    const transferables = fontBuffer ? [fontBuffer] : [];
 
-    if (fontBuffer) {
-      generatorWorker.postMessage(message, [fontBuffer]);
+    // Throttling Logic
+    if (generatorProcessingMap.current.get(clipKey)) {
+        // Worker is busy for this clip, queue this request (replacing any previous pending)
+        console.log(`[App.jsx] Generator ${clipKey} busy, queuing seq ${seq}`);
+        generatorPendingMap.current.set(clipKey, { message, transferables });
     } else {
-      generatorWorker.postMessage(message);
+        // Worker is free, send immediately
+        generatorProcessingMap.current.set(clipKey, true);
+        if (uiGeneratorWorkerRef.current) {
+            uiGeneratorWorkerRef.current.postMessage(message, transferables);
+        }
     }
   };
 
@@ -2352,12 +3079,22 @@ function App() {
       } else if (clip && clip.type === 'generator') {
           const generatorWorkerId = `generator-${layerIndex}-${colIndex}`; // Generate a workerId
           dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
-          console.log(`[App.jsx] handleClipPreview - Dispatched SET_SELECTED_ILDA_DATA for generator. workerId: ${generatorWorkerId}`); // DEBUG LOG
       } else {
         // Clip is empty, clear the selection data
         dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: null, generatorParams: {} } });
       }
   }, [clipContents]);
+
+  const handleClipHover = useCallback((layerIndex, colIndex, isHovering) => {
+      if (isHovering) {
+          hoveredClipRef.current = { layerIndex, colIndex };
+      } else {
+          // Only clear if it matches the current one (prevent clearing if moved quickly to another)
+          if (hoveredClipRef.current && hoveredClipRef.current.layerIndex === layerIndex && hoveredClipRef.current.colIndex === colIndex) {
+              hoveredClipRef.current = null;
+          }
+      }
+  }, []);
 
   const handleActivateClick = useCallback((layerIndex, colIndex, isPress = true) => {
     const clip = clipContents[layerIndex][colIndex];
@@ -2430,12 +3167,26 @@ function App() {
   }, [clipContents, activeClipIndexes, handleDeactivateLayerClips, playAudio, isPlaying, stopAudio, handleClipPreview]);
 	
   const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectData) => {
+      hasPendingClipUpdate.current = true;
       dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex, colIndex, effect: effectData } });
   }, []);
 
+  const handleDropEffectOnLayer = useCallback((layerIndex, effectId) => {
+    // Find effect definition
+    const effectData = effectDefinitions.find(e => (e.id || e.name) === effectId);
+    if (effectData) {
+        hasPendingClipUpdate.current = true;
+        dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex, effect: effectData } });
+    }
+  }, []);
+
   const handleDropDac = useCallback((layerIndex, colIndex, dacData) => {
-    console.trace('App.jsx: handleDropDac received dacData:', dacData);
+      hasPendingClipUpdate.current = true;
       dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
+  }, []);
+
+  const handleDropDacOnLayer = useCallback((layerIndex, dacData) => {
+    dispatch({ type: 'SET_LAYER_DAC', payload: { layerIndex, dac: dacData } });
   }, []);
 
   const handleShowLayerFullContextMenu = (layerIndex) => {
@@ -2471,14 +3222,31 @@ function App() {
 
   const handleGeneratorParameterChange = (paramName, newValue) => {
     if (selectedLayerIndex !== null && selectedColIndex !== null) {
-      // Get the current clip and its definition
-      const clip = clipContents[selectedLayerIndex][selectedColIndex];
-      if (!clip || !clip.generatorDefinition) return;
+      let currentClip = null;
+      let paramsSource = {};
 
-      // Create the next version of the parameters object
-      const nextParams = { ...clip.currentParams, [paramName]: newValue };
+      // 1. Direct Mutation for Instant Preview & Source of Truth
+      if (liveClipContentsRef.current && liveClipContentsRef.current[selectedLayerIndex] && liveClipContentsRef.current[selectedLayerIndex][selectedColIndex]) {
+          const liveClip = liveClipContentsRef.current[selectedLayerIndex][selectedColIndex];
+          if (liveClip && liveClip.currentParams) {
+              liveClip.currentParams[paramName] = newValue;
+              hasPendingClipUpdate.current = true;
+              currentClip = liveClip;
+              paramsSource = liveClip.currentParams;
+          }
+      }
 
-      // Dispatch the state update
+      // Fallback to state if live ref failed (unlikely)
+      if (!currentClip) {
+          currentClip = clipContents[selectedLayerIndex][selectedColIndex];
+          if (currentClip && currentClip.currentParams) {
+             paramsSource = { ...currentClip.currentParams, [paramName]: newValue };
+          }
+      }
+
+      if (!currentClip || !currentClip.generatorDefinition) return;
+
+      // Dispatch the state update (Persistence)
       dispatch({
           type: 'UPDATE_GENERATOR_PARAM',
           payload: {
@@ -2489,8 +3257,15 @@ function App() {
           },
       });
 
+      // Update the previous params ref to prevent the useEffect from triggering a double regeneration
+      const key = `${selectedLayerIndex}-${selectedColIndex}`;
+      const completeParams = { ...currentClip.generatorDefinition.defaultParams, ...paramsSource };
+      prevGeneratorParamsRef.current.set(key, JSON.stringify(completeParams));
+
       // Immediately trigger regeneration with the new parameters
-      regenerateGeneratorClip(selectedLayerIndex, selectedColIndex, clip.generatorDefinition, nextParams);
+      // Use paramsSource which contains the accumulated latest state
+      const seq = ++generatorRequestSeqRef.current;
+      regenerateGeneratorClip(selectedLayerIndex, selectedColIndex, currentClip.generatorDefinition, paramsSource, seq);
     }
   };
 
@@ -2498,14 +3273,133 @@ function App() {
     ? clipContents[selectedLayerIndex][selectedColIndex]
     : null;
 
+  // NDI Lifecycle Management
+  useEffect(() => {
+      if (!window.electronAPI || !generatorWorker) return;
+
+      const checkNdiClips = async () => {
+          // Find any active NDI clip
+          let activeNdiClip = null;
+          layers.forEach((_, layerIndex) => {
+              const activeColIndex = activeClipIndexes[layerIndex];
+              if (activeColIndex !== null) {
+                  const clip = clipContents[layerIndex][activeColIndex];
+                  if (clip && clip.type === 'generator' && clip.generatorDefinition?.id === 'ndi-source') {
+                      activeNdiClip = clip;
+                  }
+              }
+          });
+
+          // Also check selected clip for preview
+          if (!activeNdiClip && selectedClip?.type === 'generator' && selectedClip?.generatorDefinition?.id === 'ndi-source') {
+              activeNdiClip = selectedClip;
+          }
+
+          const currentSourceName = activeNdiClip?.currentParams?.sourceName;
+
+          if (currentSourceName && currentSourceName !== 'No Source') {
+              if (currentSourceName !== lastNdiSourceNameRef.current) {
+                  console.log(`[NDI] Switching to source: ${currentSourceName}`);
+                  await window.electronAPI.ndiCreateReceiver(currentSourceName);
+                  lastNdiSourceNameRef.current = currentSourceName;
+              }
+          } else if (lastNdiSourceNameRef.current) {
+              console.log(`[NDI] Destroying receiver`);
+              await window.electronAPI.ndiDestroyReceiver();
+              lastNdiSourceNameRef.current = null;
+          }
+      };
+
+      checkNdiClips();
+  }, [activeClipIndexes, clipContents, selectedClip, layers]);
+
+  // Sync NDI Settings (Resolution)
+  useEffect(() => {
+      const activeNdiClip = [...activeClipsData, selectedClip].find(c => c?.type === 'generator' && c?.generatorDefinition?.id === 'ndi-source');
+      if (activeNdiClip && window.electronAPI?.ndiUpdateSettings) {
+          const { captureWidth, captureHeight } = activeNdiClip.currentParams || {};
+          if (captureWidth && captureHeight) {
+              window.electronAPI.ndiUpdateSettings({ width: captureWidth, height: captureHeight });
+          }
+      }
+  }, [activeClipsData, selectedClip]);
+
+  // NDI Frame Handling
+  useEffect(() => {
+      if (!window.electronAPI || !generatorWorker) return;
+
+      const unsubscribe = window.electronAPI.onNdiFrame((frame) => {
+          // Forward frame to generator worker for processing
+          // Use refs for high-frequency loop to avoid closure staleness and overhead
+          activeClipIndexesRef.current.forEach((activeColIndex, layerIndex) => {
+              if (activeColIndex === null) return;
+              const clip = clipContentsRef.current[layerIndex][activeColIndex];
+              if (clip && clip.type === 'generator' && clip.generatorDefinition?.id === 'ndi-source') {
+                  generatorWorker.postMessage({
+                      type: 'generate',
+                      layerIndex,
+                      colIndex: activeColIndex,
+                      generator: clip.generatorDefinition,
+                      params: { ...clip.generatorDefinition.defaultParams, ...clip.currentParams },
+                      ndiFrame: frame, // Pass the raw frame data
+                      isLive: true // Flag to indicate this is a live frame update
+                  });
+              }
+          });
+
+          // Also handle selected clip preview
+          if (selectedClip?.type === 'generator' && selectedClip?.generatorDefinition?.id === 'ndi-source') {
+              generatorWorker.postMessage({
+                  type: 'generate',
+                  layerIndex: selectedLayerIndex,
+                  colIndex: selectedColIndex,
+                  generator: selectedClip.generatorDefinition,
+                  params: { ...selectedClip.generatorDefinition.defaultParams, ...selectedClip.currentParams },
+                  ndiFrame: frame,
+                  isLive: true
+              });
+          }
+      });
+
+      return () => unsubscribe();
+  }, [activeClipIndexes, clipContents, selectedClip, selectedLayerIndex, selectedColIndex, layers, generatorWorker]);
+
   const selectedClipLayerIndex = selectedClip ? selectedLayerIndex : null;
   const selectedClipLayerIntensity = selectedClipLayerIndex !== null ? layerIntensities[selectedClipLayerIndex] : 1;
   const selectedClipFinalIntensity = selectedClipLayerIntensity * masterIntensity;
 
   const selectedClipFrame = useMemo(() => {
-    const frame = liveFramesRef.current[selectedIldaWorkerId] || null;
+    let targetWorkerId = selectedIldaWorkerId;
+
+    // Handle Layer Selection Mode (fallback to active clip)
+    if (selectedLayerIndex !== null && selectedColIndex === null) {
+        const activeCol = activeClipIndexes[selectedLayerIndex];
+        if (activeCol !== null) {
+             const clip = clipContents[selectedLayerIndex][activeCol];
+             if (clip) {
+                 if (clip.type === 'ilda') targetWorkerId = clip.workerId;
+                 else if (clip.type === 'generator') targetWorkerId = `generator-${selectedLayerIndex}-${activeCol}`;
+             }
+        }
+    }
+
+    const frame = liveFramesRef.current[targetWorkerId] || null;
+    const progress = progressRef.current[targetWorkerId] || 0; // Get progress
+
     if (frame && selectedClipFinalIntensity < 0.999) {
       const isTyped = frame.isTypedArray || frame.points instanceof Float32Array;
+      // ... intensity logic ...
+      // Attach progress to frame for renderer? 
+      // No, renderer accepts 'progress' argument.
+      // But selectedClipFrame is just the frame data passed to IldaPlayer.
+      // IldaPlayer props: frame={selectedClipFrame} ...
+      // We should return an object or attach it?
+      // Or update IldaPlayer to accept 'progress' prop.
+      // Current IldaPlayer accepts 'syncSettings', 'bpm'.
+      // It does NOT accept 'progress'.
+      
+      // Let's modify IldaPlayer to accept 'progress'.
+      // And return pure frame here.
       if (isTyped) {
           const pts = frame.points;
           const numPts = pts.length / 8;
@@ -2529,23 +3423,54 @@ function App() {
       }
     }
     return frame;
-  }, [frameTick, selectedIldaWorkerId, selectedClipFinalIntensity]);
+  }, [frameTick, selectedIldaWorkerId, selectedClipFinalIntensity, selectedLayerIndex, selectedColIndex, activeClipIndexes, clipContents]);
+
+  // Determine target worker ID for preview (Clip or Layer mode)
+  let targetPreviewWorkerId = selectedIldaWorkerId;
+  if (selectedLayerIndex !== null && selectedColIndex === null) {
+      const activeCol = activeClipIndexes[selectedLayerIndex];
+      if (activeCol !== null) {
+           const clip = clipContents[selectedLayerIndex][activeCol];
+           if (clip) {
+               if (clip.type === 'ilda') targetPreviewWorkerId = clip.workerId;
+               else if (clip.type === 'generator') targetPreviewWorkerId = `generator-${selectedLayerIndex}-${activeCol}`;
+           }
+      }
+  }
+  const selectedClipProgress = progressRef.current[targetPreviewWorkerId] || 0;
 
   const worldFrames = useMemo(() => {
     const frames = {};
-    activeClipsData.forEach(clip => {
-      if (clip && clip.workerId && liveFramesRef.current[clip.workerId]) {
-        const currentLayerEffects = layerEffects[clip.layerIndex] || [];
-        const mergedEffects = [...(clip.effects || []), ...currentLayerEffects];
-        frames[clip.workerId] = {
-          frame: liveFramesRef.current[clip.workerId],
-          effects: mergedEffects,
-          layerIndex: clip.layerIndex, 
-        };
+    // Use live content ref for latest params/effects to stay in sync with SelectedPreview
+    const clipSource = liveClipContentsRef.current || clipContents;
+    
+    activeClipIndexes.forEach((colIndex, layerIndex) => {
+      if (colIndex !== null) {
+        const clip = clipSource[layerIndex][colIndex];
+        if (clip) {
+          let workerId;
+          if (clip.type === 'ilda') workerId = clip.workerId;
+          else if (clip.type === 'generator') workerId = `generator-${layerIndex}-${colIndex}`;
+
+          if (workerId && liveFramesRef.current[workerId]) {
+            const clipEffects = clip.effects || [];
+            const lEffects = layerEffects[layerIndex] || [];
+            
+            frames[workerId] = {
+              frame: liveFramesRef.current[workerId],
+              effects: [...clipEffects, ...lEffects], // Merge effects
+              layerIndex,
+              syncSettings: clip.syncSettings || {},
+              bpm: state.bpm,
+              clipDuration: (clip.totalFrames || 30) / (clip.fps || playbackFps || 30),
+              progress: progressRef.current[workerId] || 0 // Add progress
+            };
+          }
+        }
       }
     });
     return frames;
-  }, [activeClipsData, frameTick, layerEffects]);
+  }, [activeClipIndexes, clipContents, frameTick, state.bpm, layerEffects]);
 
   const effectiveLayerIntensities = useMemo(() => {
       const isAnySolo = layerSolos.some(s => s);
@@ -2720,9 +3645,142 @@ function App() {
     }
   }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, handleClipPreview, handleActivateClick, handleColumnTrigger, clipContents, selectedLayerIndex, selectedColIndex, dacOutputSettings]);
 
+  const handleToggleBeamEffect = useCallback((target) => {
+      // target: 'clip' (default/legacy) or 'world'
+      if (target === 'world') {
+          // World Preview Logic
+          // We need a new state property for world beam effect if we want it separate.
+          // Currently state only has showBeamEffect.
+          // Let's assume we added worldShowBeamEffect to state (we haven't yet, let's fix that)
+          // Wait, I need to add state properties first.
+          // But I can't easily add state properties without modifying getInitialState and reducer.
+          // Let's modify the handler to assume the reducer handles 'SET_RENDER_SETTING' dynamically or add specific case.
+          // `SET_RENDER_SETTING` is dynamic: `[action.payload.setting]: action.payload.value`.
+          // So I can just dispatch 'worldShowBeamEffect'.
+          
+          // However, I need to READ the current value.
+          // I don't have `worldShowBeamEffect` in destructured state variables yet.
+          // I will access it via `state.worldShowBeamEffect` if I had `state` here, but `state` is available in the component scope?
+          // No, `state` is returned by useReducer. I have `showBeamEffect` destructured.
+          // I need to destructure `worldShowBeamEffect` and `worldBeamRenderMode` from state in the main body.
+          
+          // Let's assume I will add them to destructuring in next step.
+          // For now, let's implement the logic assuming they exist.
+          // I'll use `state.worldShowBeamEffect` directly if I didn't destructure, but I should destructure.
+          
+          // Since I can't see the destructuring line in this small context window, I will assume I will fix it.
+          // Actually, I can just use `state.worldShowBeamEffect`.
+          
+          const currentVal = state.worldShowBeamEffect ?? true; // Default to true if undefined
+          const newValue = !currentVal;
+          
+          dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'worldShowBeamEffect', value: newValue } });
+          
+          if (window.electronAPI && window.electronAPI.setRenderSettings) {
+              const newSettings = {
+                  ...state.renderSettings, // We don't have state.renderSettings, we have individual keys.
+                  // We need to construct the object.
+                  // Let's fetch current settings first to be safe or reconstruct.
+                  // Reconstruct:
+                  showBeamEffect: state.showBeamEffect,
+                  beamRenderMode: state.beamRenderMode,
+                  previewScanRate: state.previewScanRate,
+                  beamAlpha: state.beamAlpha,
+                  fadeAlpha: state.fadeAlpha,
+                  worldShowBeamEffect: newValue,
+                  worldBeamRenderMode: state.worldBeamRenderMode ?? 'both'
+              };
+              window.electronAPI.setRenderSettings(newSettings);
+          }
+      } else {
+          // Clip Preview (Legacy/Default)
+          const newValue = !showBeamEffect;
+          dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'showBeamEffect', value: newValue } });
+          
+          if (window.electronAPI && window.electronAPI.setRenderSettings) {
+              const newSettings = {
+                  showBeamEffect: newValue,
+                  beamRenderMode,
+                  previewScanRate,
+                  beamAlpha,
+                  fadeAlpha,
+                  worldShowBeamEffect: state.worldShowBeamEffect ?? true,
+                  worldBeamRenderMode: state.worldBeamRenderMode ?? 'both'
+              };
+              window.electronAPI.setRenderSettings(newSettings);
+          }
+      }
+  }, [showBeamEffect, beamRenderMode, previewScanRate, beamAlpha, fadeAlpha, state.worldShowBeamEffect, state.worldBeamRenderMode]);
+
+  const handleCycleDisplayMode = useCallback((target) => {
+      if (target === 'world') {
+          const currentMode = state.worldBeamRenderMode ?? 'both';
+          let nextMode = 'points';
+          if (currentMode === 'both') nextMode = 'points';
+          else if (currentMode === 'points') nextMode = 'lines';
+          else if (currentMode === 'lines') nextMode = 'both';
+          
+          dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'worldBeamRenderMode', value: nextMode } });
+          
+          if (window.electronAPI && window.electronAPI.setRenderSettings) {
+              const newSettings = {
+                  showBeamEffect,
+                  beamRenderMode,
+                  previewScanRate,
+                  beamAlpha,
+                  fadeAlpha,
+                  worldShowBeamEffect: state.worldShowBeamEffect ?? true,
+                  worldBeamRenderMode: nextMode
+              };
+              window.electronAPI.setRenderSettings(newSettings);
+          }
+      } else {
+          let nextMode = 'points';
+          if (beamRenderMode === 'both') nextMode = 'points';
+          else if (beamRenderMode === 'points') nextMode = 'lines';
+          else if (beamRenderMode === 'lines') nextMode = 'both';
+          
+          dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: 'beamRenderMode', value: nextMode } });
+          
+          if (window.electronAPI && window.electronAPI.setRenderSettings) {
+              const newSettings = {
+                  showBeamEffect,
+                  beamRenderMode: nextMode,
+                  previewScanRate,
+                  beamAlpha,
+                  fadeAlpha,
+                  worldShowBeamEffect: state.worldShowBeamEffect ?? true,
+                  worldBeamRenderMode: state.worldBeamRenderMode ?? 'both'
+              };
+              window.electronAPI.setRenderSettings(newSettings);
+          }
+      }
+  }, [showBeamEffect, beamRenderMode, previewScanRate, beamAlpha, fadeAlpha, state.worldShowBeamEffect, state.worldBeamRenderMode]);
+
+  const handleToggleWorldOutput = useCallback(() => {
+    const nextActive = !isWorldOutputActive;
+    dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: nextActive });
+    
+    if (window.electronAPI) {
+        if (nextActive) {
+            // Trigger handshake for all available DACs
+            // We use the dacs list from state
+            state.dacs.forEach(dac => {
+                window.electronAPI.startDacOutput(dac.ip, dac.type);
+            });
+        } else {
+            // Stop output for all DACs
+            state.dacs.forEach(dac => {
+                window.electronAPI.stopDacOutput(dac.ip, dac.type);
+            });
+        }
+    }
+  }, [isWorldOutputActive, state.dacs]);
+
   return (
     <MidiProvider onMidiCommand={handleMidiCommand}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
+    <KeyboardProvider onCommand={handleMidiCommand} enabled={enabledShortcuts.keyboard}>
     <MidiFeedbackHandler
         isPlaying={isPlaying}
         globalBlackout={globalBlackout}
@@ -2764,7 +3822,7 @@ function App() {
               />
               <LaserOnOffButton
                 isWorldOutputActive={isWorldOutputActive}
-                onToggleWorldOutput={() => dispatch({ type: 'TOGGLE_WORLD_OUTPUT_ACTIVE' })}
+                onToggleWorldOutput={handleToggleWorldOutput}
               />
             </div>
 		<div className="layer-controls-container">
@@ -2792,6 +3850,8 @@ function App() {
                   key={layerIndex}
                   layerName={layerName}
                   index={layerIndex}
+                  onDropEffect={(effectId) => handleDropEffectOnLayer(layerIndex, effectId)}
+                  onDropDac={(layerIndex, dacData) => handleDropDacOnLayer(layerIndex, dacData)}
                   layerEffects={layerEffects[layerIndex]}
                   activeClipData={activeClipDataForLayer}
                   liveFrame={liveFrameForLayer}
@@ -2854,12 +3914,12 @@ function App() {
                         onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)}
                         onDropGenerator={handleDropGenerator}
                         onDropDac={(passedLayerIndex, passedColIndex, dacDataFromClip) => {
-                            console.log('App.jsx: Lambda dacData from Clip:', dacDataFromClip);
                             handleDropDac(passedLayerIndex, passedColIndex, dacDataFromClip);
                         }}
                         onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
                         isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                         ildaParserWorker={ildaParserWorker}
+                        onClipHover={handleClipHover}
                       />
                     );
                   })}
@@ -2868,17 +3928,6 @@ function App() {
             </div>
           </div>
           <div className="side-panel">
-            <div className="thumbnail-render-mode-selector">
-                <label htmlFor="thumbnailRenderMode">Thumbnail Mode:</label>
-                <select
-                    id="thumbnailRenderMode"
-                    value={thumbnailRenderMode}
-                    onChange={(e) => dispatch({ type: 'SET_THUMBNAIL_RENDER_MODE', payload: e.target.value })}
-                >
-                    <option value="still">Still Frame</option>
-                    <option value="active">Live Render</option>
-                </select>
-            </div>
 			<IldaPlayer
               frame={selectedClipFrame}
               effects={selectedClipEffects}
@@ -2888,17 +3937,27 @@ function App() {
               previewScanRate={previewScanRate}
               beamRenderMode={beamRenderMode}
               intensity={selectedClipFinalIntensity}
+              syncSettings={selectedClip?.syncSettings}
+              bpm={state.bpm}
+              clipDuration={(selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30)}
+              progress={selectedClipProgress} // Add progress
+              previewTime={previewTimeRef.current} // Add master time
+              onToggleBeamEffect={() => handleToggleBeamEffect('clip')}
+              onCycleDisplayMode={() => handleCycleDisplayMode('clip')}
             />
             <WorldPreview
               activeFrames={worldFrames}
-              showBeamEffect={showBeamEffect}
+              showBeamEffect={worldShowBeamEffect}
               beamAlpha={beamAlpha}
               fadeAlpha={fadeAlpha}
               previewScanRate={previewScanRate}
-              beamRenderMode={beamRenderMode}
+              beamRenderMode={worldBeamRenderMode}
               layerIntensities={effectiveLayerIntensities}
               masterIntensity={masterIntensity}
-              dacSettings={selectedDac ? dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`] : null}
+              dacSettings={selectedDac ? (liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[`${selectedDac.ip}:${selectedDac.channel}`] : dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`]) : null}
+              previewTime={previewTimeRef.current} // Add master time
+              onToggleBeamEffect={() => handleToggleBeamEffect('world')}
+              onCycleDisplayMode={() => handleCycleDisplayMode('world')}
             />
 
           </div>
@@ -2948,6 +4007,9 @@ function App() {
                 autopilotMode={selectedLayerIndex !== null ? state.layerAutopilots[selectedLayerIndex] : 'off'}
                 onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
                 layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
+                assignedDacs={selectedLayerIndex !== null && state.layerAssignedDacs ? state.layerAssignedDacs[selectedLayerIndex] : []}
+                onToggleDacMirror={(layerIndex, dacIndex, axis) => dispatch({ type: 'TOGGLE_LAYER_DAC_MIRROR', payload: { layerIndex, dacIndex, axis } })}
+                onRemoveDac={(layerIndex, dacIndex) => dispatch({ type: 'REMOVE_LAYER_DAC', payload: { layerIndex, dacIndex } })}
                 onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
                 onRemoveEffect={(index) => selectedLayerIndex !== null && dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex: index } })}
                 onParamChange={(effectIndex, paramName, val) => selectedLayerIndex !== null && dispatch({ type: 'UPDATE_LAYER_EFFECT_PARAMETER', payload: { layerIndex: selectedLayerIndex, effectIndex, paramName, newValue: val } })}
@@ -2971,15 +4033,25 @@ function App() {
               onToggleDacMirror={(lIdx, cIdx, dIdx, axis) => dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex: dIdx, axis } })}
               onRemoveDac={(dacIndex) => dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } })}
               onRemoveEffect={(lIdx, cIdx, eIdx) => dispatch({ type: 'REMOVE_CLIP_EFFECT', payload: { layerIndex: lIdx, colIndex: cIdx, effectIndex: eIdx } })}
+              onAddEffect={(effect) => dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effect } })}
               onParameterChange={handleEffectParameterChange}
               onGeneratorParameterChange={handleGeneratorParameterChange}
+              progressRef={progressRef}
             />
 
 			<SettingsPanel
               enabledShortcuts={enabledShortcuts}
               onOpenOutputSettings={() => setShowOutputSettingsWindow(true)}
+              onOpenShortcutsSettings={() => setShowShortcutsWindow(true)}
               quickAssigns={state.quickAssigns}
-              onUpdateKnob={(i, v) => dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'knob', index: i, value: v } })}
+              onUpdateKnob={(i, v) => {
+                  // If this knob links to clip/effect params, signal update
+                  const knob = state.quickAssigns.knobs[i];
+                  if (knob && knob.link && (knob.link.targetType === 'effect' || knob.link.targetType === 'generator' || knob.link.targetType === 'layerEffect')) {
+                      hasPendingClipUpdate.current = true;
+                  }
+                  dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'knob', index: i, value: v } });
+              }}
               onToggleButton={(i) => {
                   const btn = state.quickAssigns.buttons[i];
                   const link = btn.link;
@@ -2992,6 +4064,9 @@ function App() {
                           if (link.paramName === 'blackout') dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
                           else if (link.paramName === 'laser_output') dispatch({ type: 'TOGGLE_WORLD_OUTPUT_ACTIVE' });
                           else if (link.paramName === 'clear') handleClearAllActive();
+                      } else {
+                          // For effect/generator updates, signal pending update to avoid race condition
+                          hasPendingClipUpdate.current = true;
                       }
                   }
                   dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'button', index: i, value: !btn.value } });
@@ -3002,6 +4077,7 @@ function App() {
         </div>
       </ErrorBoundary>
     </div>
+    </KeyboardProvider>
     </ArtnetProvider>
     </MidiProvider>
   );

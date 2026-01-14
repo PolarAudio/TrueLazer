@@ -67,14 +67,18 @@
   structure and are actively working on the core UI components and defining the architecture for DAC
   communication and content management.
 
-  ### NDI Integration (On Hold)
+  ### NDI Integration
 
-  The integration of NDI (Network Device Interface) for both sending and receiving video streams is currently on hold.
-  Our investigation into available Node.js libraries for NDI revealed that the most promising options, such as `grandiose`, are not actively maintained and fail to compile with modern Node.js and C++ build environments.
-  The necessary native addons are incompatible with the current project setup, and our search for viable, up-to-date forks or alternative libraries has been unsuccessful.
-  As soon time allows we will either Contribute to grandiose for modern node compiling or integrate NDI Directly via there SDK option.
+  NDI (Network Device Interface) is integrated via a custom native wrapper linking against the NDI 6 SDK.
+  To keep the repository size manageable and comply with licensing, only the essential build files from the NDI 6 SDK are included in the `sdk/NDI 6 SDK/` directory:
+  - Headers in `Include/`
+  - Linker library in `Libv6/x64/`
+  - Runtime DLL in `Bin/x64/`
 
-  We believe that NDI integration would be a powerful feature for TrueLazer, and we may revisit this in the future.
+  Discovered NDI sources can be dragged from the Generator Panel onto the clip grid for real-time laser rendering.
+	The Current implementation of NDI has a big performance impact on the application.
+	So if you consider using NDI within these early Builds you should use a Workstation with Great Compute power. 
+	I will investigate the NDI Integration further in the future to gain more performance.
   
   ☐ - Not yet done
   

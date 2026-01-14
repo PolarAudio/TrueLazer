@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
+import { useKeyboard } from '../contexts/KeyboardContext';
 import GlobalQuickAssigns from './GlobalQuickAssigns';
 import CollapsiblePanel from './CollapsiblePanel';
 
@@ -39,6 +40,16 @@ const SettingsPanel = ({
     importMappings: importArtnetMappings,
     lastDmxEvent
   } = useArtnet() || {};
+
+  const {
+    isMapping: isKeyboardMapping,
+    startMapping: startKeyboardMapping,
+    stopMapping: stopKeyboardMapping,
+    setMappings: setKeyboardMappings,
+    saveMappings: saveKeyboardMappings,
+    exportMappings: exportKeyboardMappings,
+    importMappings: importKeyboardMappings
+  } = useKeyboard() || {};
 
   const [artnetUniverses, setArtnetUniverses] = useState([]);
   const [selectedArtnetUniverseId, setSelectedArtnetUniverseId] = useState('');
@@ -97,6 +108,7 @@ const SettingsPanel = ({
   const handleMidiInputChange = (e) => setSelectedMidiInputId(e.target.value);
   const toggleMidiLearnMode = () => isMapping ? stopMapping() : startMapping();
   const toggleArtnetLearnMode = () => isArtnetMapping ? stopArtnetMapping() : startArtnetMapping();
+  const toggleKeyboardLearnMode = () => isKeyboardMapping ? stopKeyboardMapping() : startKeyboardMapping();
 
   return (
     <div className="settings-panel settings-panel-base">
@@ -120,8 +132,30 @@ const SettingsPanel = ({
       </CollapsiblePanel>
 
       {/* Shortcuts Settings Section */}
-      {(enabledShortcuts.midi || enabledShortcuts.artnet || enabledShortcuts.osc) && (
+      {(enabledShortcuts.midi || enabledShortcuts.artnet || enabledShortcuts.osc || enabledShortcuts.keyboard) && (
         <div className="shortcuts-settings-panel">
+          {enabledShortcuts.keyboard && (
+            <CollapsiblePanel title="Keyboard Shortcuts">
+                <div className="keyboard-config">
+                    <div className="button-grid">
+                      <button 
+                          className={`mapping-btn ${isKeyboardMapping ? 'active' : ''}`} 
+                          onClick={toggleKeyboardLearnMode}
+                          style={{ backgroundColor: isKeyboardMapping ? 'var(--theme-color)' : '', gridColumn: 'span 2' }}
+                      >
+                          {isKeyboardMapping ? 'Stop Mapping' : 'Start Mapping'}
+                      </button>
+                      <button className="small-btn" onClick={saveKeyboardMappings}>Save Default</button>
+                      <button className="small-btn" onClick={exportKeyboardMappings}>Export</button>
+                      <button className="small-btn" onClick={importKeyboardMappings}>Import</button>
+                      <button className="small-btn clear" onClick={() => setKeyboardMappings({})}>Clear</button>
+                    </div>
+                    <p className="info-text" style={{fontSize: '9px', color: '#666', marginTop: '5px'}}>
+                        Assign keys to buttons/sliders by activating "Start Mapping" and clicking a control.
+                    </p>
+                </div>
+            </CollapsiblePanel>
+          )}
           {enabledShortcuts.midi && (
             <CollapsiblePanel title="MIDI Shortcuts">
                 {!midiInitialized ? (

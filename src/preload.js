@@ -3,8 +3,15 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld(
   'electronAPI', {
     discoverDacs: (timeout, networkInterfaceIp) => ipcRenderer.invoke('discover-dacs', timeout, networkInterfaceIp),
-    getDacServices: (ip, localIp) => ipcRenderer.invoke('get-dac-services', ip, localIp),
-    sendFrame: (ip, channel, frame, fps) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps),
+    getDacServices: (ip, localIp, type) => ipcRenderer.invoke('get-dac-services', ip, localIp, type),
+    sendFrame: (ip, channel, frame, fps, type) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps, type),
+    startDacOutput: (ip, type) => ipcRenderer.invoke('start-dac-output', ip, type),
+    stopDacOutput: (ip, type) => ipcRenderer.invoke('stop-dac-output', ip, type),
+    onDacStatus: (callback) => {
+        const listener = (event, data) => callback(data);
+        ipcRenderer.on('dac-status', listener);
+        return () => ipcRenderer.removeListener('dac-status', listener);
+    },
     getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     send: (channel, data) => ipcRenderer.send(channel, data),
     on: (channel, callback) => {
@@ -70,6 +77,8 @@ contextBridge.exposeInMainWorld(
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
                 getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
                 saveMidiMappings: (mappings) => ipcRenderer.invoke('save-midi-mappings', mappings),
+                getKeyboardMappings: () => ipcRenderer.invoke('get-keyboard-mappings'),
+                saveKeyboardMappings: (mappings) => ipcRenderer.invoke('save-keyboard-mappings', mappings),
 	            	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
 	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
 	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),
@@ -81,9 +90,9 @@ contextBridge.exposeInMainWorld(
 	                                          ipcRenderer.on('update-audio-device-id', subscription);
 	                                          return () => ipcRenderer.removeListener('update-audio-device-id', subscription);
 	                                        },
-                                            saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
-                                            deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),
-                                            // ArtNet
+                                              saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
+                                              saveIldaFile: (arrayBuffer, defaultName) => ipcRenderer.invoke('save-ilda-file', arrayBuffer, defaultName),
+                                              deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),                                            // ArtNet
                                             initializeArtnet: () => ipcRenderer.invoke('initialize-artnet'),
                                             getArtnetUniverses: () => ipcRenderer.invoke('get-artnet-universes'),
                                             sendArtnetData: (universe, channel, value) => ipcRenderer.send('send-artnet-data', universe, channel, value),
@@ -113,5 +122,17 @@ contextBridge.exposeInMainWorld(
                                                 const listener = (event, message) => callback(message);
                                                 ipcRenderer.on('osc-message-received', listener);
                                                 return () => ipcRenderer.removeListener('osc-message-received', listener);
+                                            },
+                                            // NDI
+                                            ndiFindSources: () => ipcRenderer.invoke('ndi-find-sources'),
+                                            ndiUpdateSettings: (settings) => ipcRenderer.invoke('ndi-update-settings', settings),
+                                            ndiCreateReceiver: (sourceName) => ipcRenderer.invoke('ndi-create-receiver', sourceName),
+                                            ndiCaptureVideo: () => ipcRenderer.invoke('ndi-capture-video'),
+                                            ndiDestroyReceiver: () => ipcRenderer.invoke('ndi-destroy-receiver'),
+                                            ndiSignalReady: () => ipcRenderer.send('ndi-renderer-ready'),
+                                            onNdiFrame: (callback) => {
+                                                const listener = (event, frame) => callback(frame);
+                                                ipcRenderer.on('ndi-frame', listener);
+                                                return () => ipcRenderer.removeListener('ndi-frame', listener);
                                             },
 	                          	          }	        );

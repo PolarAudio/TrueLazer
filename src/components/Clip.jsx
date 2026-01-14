@@ -19,14 +19,16 @@ const Clip = ({
   onDropDac, // New prop for handling DAC drops
   thumbnailRenderMode,
   liveFrame,
-  stillFrame
+  stillFrame,
+  onClipHover
 }) => {
+  const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   // Determine the display name for the clip
   const displayName = clipName;
 
-  const frameForThumbnail = thumbnailRenderMode === 'active' ? liveFrame : stillFrame;
+  const shouldShowLive = (thumbnailRenderMode === 'active') || (thumbnailRenderMode === 'hover' && isHovered);
   
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -41,6 +43,17 @@ const Clip = ({
     if (!e.currentTarget.contains(e.relatedTarget)) {
       setIsDragging(false);
     }
+  };
+
+  const handleMouseEnter = () => {
+      setIsHovered(true);
+      if (onClipHover) onClipHover(layerIndex, colIndex, true);
+  };
+
+  const handleMouseLeave = () => {
+      setIsHovered(false);
+      onActivateClick(false); // Reuse existing logic
+      if (onClipHover) onClipHover(layerIndex, colIndex, false);
   };
 
   const handleFileDrop = async (file) => {
@@ -119,14 +132,14 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onLabelClick(); // Select the clip to show its new settings
             return;
           }
+        } else if (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels)) { // Check if this is DAC data - CHECK THIS BEFORE GENERATOR
+          if (onDropDac) {
+            onDropDac(layerIndex, colIndex, parsedData);
+            return;
+          }
         } else if (parsedData.name) {
           if (onDropGenerator) {
             onDropGenerator(layerIndex, colIndex, parsedData);
-            return;
-          }
-        } else if (parsedData.ip && typeof parsedData.channel === 'number') { // Check if this is DAC data
-          if (onDropDac) {
-            onDropDac(layerIndex, colIndex, parsedData);
             return;
           }
         }
@@ -171,7 +184,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
             className="clip-thumbnail" 
             onMouseDown={() => onActivateClick(true)}
             onMouseUp={() => onActivateClick(false)}
-            onMouseLeave={() => onActivateClick(false)}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
             style={{ overflow: 'hidden' }} // Ensure image fits
         >
             {clipContent && clipContent.parsing ? (
@@ -179,22 +193,21 @@ const handleFilePathDrop = async (filePath, fileName) => {
             ) : (
                 <>
                     {/* Render Mode Logic */}
-                    {thumbnailRenderMode === 'active' && clipContent ? (
-                        /* Live Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
-                        /* Only render if clipContent exists to prevent blank box */
+                    {shouldShowLive && clipContent ? (
+                        /* Live/Hover Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
                         <IldaThumbnail frame={liveFrame || stillFrame} effects={clipContent?.effects} />
                     ) : (
                         /* Still Frame Mode */
                         /* If we have a generated thumbnail path, use it for efficiency */
                         (clipContent?.thumbnailPath && !isActive) ? (
                             <img 
-                                src={`file://${clipContent.thumbnailPath}?v=${clipContent.thumbnailVersion || 0}`} // Add version timestamp to force reload if updated
+                                src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
                                 alt="thumbnail" 
                                 style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
                             />
                         ) : (
                             /* Fallback to WebGL rendering of still frame if no image yet, or if we want to show it */
-                            frameForThumbnail && <IldaThumbnail frame={frameForThumbnail} effects={clipContent?.effects} />
+                            stillFrame && <IldaThumbnail frame={stillFrame} effects={clipContent?.effects} />
                         )
                     )}
 

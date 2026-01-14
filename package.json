@@ -1,11 +1,13 @@
 {
   "name": "TrueLazer",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "first development build",
   "main": "main.js",
   "scripts": {
     "start-renderer": "vite",
     "start": "concurrently --kill-others \"npm run start-renderer\" \"cross-env NODE_ENV=development electron .\"",
+    "build-native": "node-gyp rebuild --directory native",
+    "postinstall": "npm run build-native",
     "build": "vite build && electron-builder",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -21,12 +23,29 @@
       "main.js",
       "main/**/*",
       "preload.js",
-      "src/trueLazer.ico",
+      "src/favicon.ico",
       "src/**/*",
-      "dist/**/*"
+      "dist/**/*",
+      "native/build/Release/ndi_wrapper.node",
+      "native/build/Release/Processing.NDI.Lib.x64.dll"
+    ],
+    "extraResources": [
+      {
+        "from": "src/ILDA-FILE-FORMAT-FILES",
+        "to": "ILDA-FILE-FORMAT-FILES"
+      },
+      {
+        "from": "src/*.json",
+        "to": ".",
+        "filter": ["*Mappings.json"]
+      }
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "**/*.dll"
     ],
     "win": {
-      "icon": "src/trueLazer.ico",
+      "icon": "src/favicon.ico",
       "target": [
         "nsis"
       ]
@@ -38,8 +57,8 @@
     }
   },
   "keywords": [],
-  "author": "MAXQON",
-  "license": "GNU GPL",
+  "author": "Kevin Bahr (MAXQON)",
+  "license": "Source Available",
   "type": "module",
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.2",
@@ -53,9 +72,11 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^7.3.2",
+    "bindings": "^1.5.0",
     "bootstrap-icons": "^1.13.1",
     "dmxnet": "^0.9.0",
     "electron-store": "^11.0.2",
+    "node-addon-api": "^8.5.0",
     "opentype.js": "^1.3.4",
     "osc": "^2.4.5",
     "react": "^19.1.1",

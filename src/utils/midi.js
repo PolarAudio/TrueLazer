@@ -71,6 +71,21 @@ export const listenToMidiInput = (inputId, callback) => {
   return () => {};
 };
 
+export const listenToStateChange = (callback) => {
+    if (WebMidi.enabled) {
+        const listener = (e) => {
+            callback(e);
+        };
+        WebMidi.addListener('connected', listener);
+        WebMidi.addListener('disconnected', listener);
+        return () => {
+            WebMidi.removeListener('connected', listener);
+            WebMidi.removeListener('disconnected', listener);
+        };
+    }
+    return () => {};
+};
+
 export const stopListeningToMidiInput = (inputId) => {
   if (WebMidi.enabled) {
     const input = WebMidi.getInputById(inputId);

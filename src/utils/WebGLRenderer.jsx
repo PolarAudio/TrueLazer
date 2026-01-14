@@ -12,7 +12,7 @@ export class WebGLRenderer {
     this.showBeamEffect = false; // Default value
     this.beamAlpha = 0.5; // Default value
     this.fadeAlpha = 0.13; // Default value
-    this.beamRenderMode = 'lines'; // Default value
+    this.beamRenderMode = 'both'; // Default value
 
     this.positionBuffer = null;
     this.colorBuffer = null;
@@ -175,14 +175,14 @@ export class WebGLRenderer {
     }
 
     if (this.type === 'world') {
-      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings);
+      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings, data.previewTime);
     }
     else {
-      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings);
+      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings, data.bpm, data.clipDuration, data.progress, data.previewTime);
     }
   }
 
-  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}) {
+  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}, bpm = 120, clipDuration = 1, progressOverride = null, previewTime = null) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -195,10 +195,11 @@ export class WebGLRenderer {
 
     const frameIndex = this.frameIndexes[0] % ildaFrames.length;
     const frame = ildaFrames[frameIndex];
-    const progress = frameIndex / ildaFrames.length;
-    const time = performance.now();
+    // Use override if provided (from App.jsx), otherwise calc local (always 0 for single frame)
+    const progress = progressOverride !== null ? progressOverride : (frameIndex / ildaFrames.length);
+    const time = previewTime !== null ? previewTime : performance.now();
 
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings);
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -206,14 +207,14 @@ export class WebGLRenderer {
     }
   }
 
-  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings) {
+  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings, previewTime = null) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
     // Instead of full clear, draw a semi-transparent black quad for fade effect
     this.drawFadeQuad();
 
-    const time = performance.now();
+    const time = previewTime !== null ? previewTime : performance.now();
 
     worldData.forEach((clip) => {
       if (clip && clip.frames && clip.frames.length > 0) {
@@ -221,6 +222,7 @@ export class WebGLRenderer {
         if (frame) {
             const layerIndex = clip.layerIndex || 0;
             const syncSettings = clip.syncSettings || {};
+            const bpm = clip.bpm || 120; // Assuming clip object might carry bpm or use global if passed
             // Ensure arrays are large enough
             if (layerIndex >= this.frameIndexes.length) {
                 const newSize = layerIndex + 5;
@@ -235,7 +237,8 @@ export class WebGLRenderer {
             
             // Skip rendering if intensity is effectively zero
             if (finalIntensity > 0.001) {
-                const progress = (this.frameIndexes[layerIndex] % clip.frames.length) / clip.frames.length;
+                const progress = clip.progress !== undefined ? clip.progress : (this.frameIndexes[layerIndex] % clip.frames.length) / clip.frames.length;
+                const { syncSettings = {}, bpm = 120, clipDuration = 1 } = clip;
                 
                 // If dacSettings provided, we apply them.
                 // In exact copy mode, we might want to apply settings after merge, but here we apply per layer for simplicity if we don't want to refactor the draw loop.
@@ -267,7 +270,7 @@ export class WebGLRenderer {
                 }
 
                 // Pass layerIndex, progress and time to draw
-                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings);
+                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration);
             }
         }
       }
@@ -312,34 +315,26 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1) {
     const gl = this.gl;
     if (!frame || !frame.points) return;
 
     // Apply sync overrides to effects for the preview
-    const syncedEffects = (effects || []).map(eff => {
-        const newParams = { ...eff.params };
-        const definition = effectDefinitions.find(d => d.id === eff.id);
-        if (definition) {
-            definition.paramControls.forEach(ctrl => {
-                const syncKey = `${eff.id}.${ctrl.id}`;
-                const syncMode = syncSettings[syncKey];
-                if (syncMode && (ctrl.type === 'range' || ctrl.type === 'number')) {
-                    let syncProgress = 0;
-                    if (syncMode === 'fps') {
-                        syncProgress = (time * 0.001) % 1.0;
-                    } else if (syncMode === 'timeline' || syncMode === 'bpm') {
-                        syncProgress = progress;
-                    }
-                    newParams[ctrl.id] = ctrl.min + (ctrl.max - ctrl.min) * syncProgress;
-                }
-            });
-        }
-        return { ...eff, params: newParams };
-    });
-
+    // Note: applyEffects now handles parameter resolution internally if syncSettings is passed in context.
+    // However, we also have logic here that manually modifies params before calling applyEffects.
+    // Ideally, we should unify this. 
+    // `applyEffects` has been updated to use `resolveParam` internally if `syncSettings` is in context.
+    // So we can simplify this and just pass `syncSettings` and `bpm` in context.
+    
+    // BUT, the existing manual mapping here (lines 323-338 in original) handles only range/number types
+    // and calculates `newParams`.
+    // If we remove it, we rely entirely on `applyEffects`.
+    // Let's rely on `applyEffects` which we just updated to be robust.
+    // So we pass original `effects` and let `applyEffects` do the work.
+    
     // Apply effects before drawing
-    const modifiedFrame = applyEffects(frame, syncedEffects, { progress, time });
+    // We pass syncSettings and bpm in the context
+    const modifiedFrame = applyEffects(frame, effects, { progress, time, syncSettings, bpm, clipDuration });
     const points = modifiedFrame.points;
     const isTyped = modifiedFrame.isTypedArray;
     const numPoints = isTyped ? (points.length / 8) : points.length;
@@ -378,6 +373,10 @@ export class WebGLRenderer {
 
     // --- Helper function to draw normal frame segments ---
     const drawNormalFrame = () => {
+      // Modes: 'points' (dots), 'lines' (strip), 'both' (strip + dots)
+      const drawPoints = beamRenderMode === 'points' || beamRenderMode === 'both';
+      const drawLines = beamRenderMode === 'lines' || beamRenderMode === 'both';
+      
       let currentSegmentPositions = [];
       let currentSegmentColors = [];
       
@@ -385,7 +384,8 @@ export class WebGLRenderer {
         const point = getPointData(i);
         if (point.blanking) {
           if (currentSegmentPositions.length > 0) {
-            this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2);
+            if (drawLines) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
+            if (drawPoints) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, true);
             currentSegmentPositions = [];
             currentSegmentColors = [];
           }
@@ -395,7 +395,8 @@ export class WebGLRenderer {
         currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
       }
       if (currentSegmentPositions.length > 0) {
-        this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2);
+        if (drawLines) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
+        if (drawPoints) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, true);
       }
     };
 
@@ -415,7 +416,7 @@ export class WebGLRenderer {
         this._drawLines(new Float32Array(beamPositions), new Float32Array(beamColors), beamAlpha, beamPositions.length / 2);
       }
     };
-
+    
     // --- Helper function for 'lines' mode (volumetric cone) ---
     const drawLinesEffect = () => {
       const trianglePositions = [];
@@ -426,10 +427,19 @@ export class WebGLRenderer {
         const point = getPointData(i);
         if (!prevPoint.blanking && !point.blanking) {
           trianglePositions.push(0, 0, prevPoint.x, prevPoint.y, point.x, point.y);
+          
           const color1 = [prevPoint.r / 255 * intensity, prevPoint.g / 255 * intensity, prevPoint.b / 255 * intensity];
           const color2 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
+          
+          // Center is average of full intensity colors
           const centerColor = [(color1[0] + color2[0]) / 2, (color1[1] + color2[1]) / 2, (color1[2] + color2[2]) / 2];
-          triangleColors.push(...centerColor, ...color1, ...color2);
+          
+          // Fade edges to simulate density drop-off (Halo effect)
+          const edgeFade = 0.3;
+          const fadedColor1 = [color1[0] * edgeFade, color1[1] * edgeFade, color1[2] * edgeFade];
+          const fadedColor2 = [color2[0] * edgeFade, color2[1] * edgeFade, color2[2] * edgeFade];
+
+          triangleColors.push(...centerColor, ...fadedColor1, ...fadedColor2);
         }
         prevPoint = point;
       }
@@ -455,7 +465,7 @@ export class WebGLRenderer {
     this.pointIndexes[layerIndex] = (startIndex + pointsToDraw) % numPoints;
   }
 
-  _drawSegment(positions, colors, alpha, numPoints) {
+  _drawSegment(positions, colors, alpha, numPoints, usePoints = false) {
     const gl = this.gl;
 
     gl.useProgram(this.program);
@@ -479,7 +489,7 @@ export class WebGLRenderer {
     gl.enableVertexAttribArray(this.alphaAttributeLocation);
     gl.vertexAttribPointer(this.alphaAttributeLocation, 1, gl.FLOAT, false, 0, 0);
 
-    gl.drawArrays(gl.LINE_STRIP, 0, numPoints);
+    gl.drawArrays(usePoints ? gl.POINTS : gl.LINE_STRIP, 0, numPoints);
   }
 
   _drawLines(positions, colors, alpha, numPoints) {

@@ -26,15 +26,19 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
       scanInProgressRef.current = true;
       console.log('Starting DAC scan on:', selectedNetworkInterface?.address);
       if (window.electronAPI) {
-        window.electronAPI.discoverDacs(2000, selectedNetworkInterface?.address)
+          window.electronAPI.discoverDacs(2000, selectedNetworkInterface?.address)
           .then(async (discoveredDacs) => {
             console.log('DACs discovered:', discoveredDacs);
             const dacsWithServices = await Promise.all(
               discoveredDacs.map(async (dac) => {
                 try {
-                  const services = await window.electronAPI.getDacServices(dac.ip, selectedNetworkInterface?.address);
+                  const services = await window.electronAPI.getDacServices(dac.ip, selectedNetworkInterface?.address, dac.type);
                   // Filter for valid services (e.g., serviceType for laser graphics)
-                  const laserServices = services.filter(s => s.serviceID !== 0); // Assuming serviceID 0 is not a usable channel
+                  // For IDN, serviceID 0 is often a management service, so we filter it out.
+                  // For EtherDream, we typically only have one service at ID 0.
+                  const laserServices = (dac.type && dac.type.toLowerCase() === 'etherdream') 
+                    ? services 
+                    : services.filter(s => s.serviceID !== 0);
                   return { ...dac, channels: laserServices };
                 } catch (error) {
                   console.error(`Error fetching services for DAC ${dac.ip}:`, error);
@@ -70,6 +74,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
   };
 
   const handleDragStart = (e, dac, channelId) => {
+    e.stopPropagation();
     const dacWithChannel = { ...dac, channel: channelId };
     e.dataTransfer.setData('application/json', JSON.stringify(dacWithChannel));
   };
@@ -80,34 +85,62 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
     setSelectedNetworkInterface(iface);
   };
 
+  const handleGroupDragStart = (e, dac) => {
+    e.stopPropagation();
+    // When dragging the group, we pass all channels
+    const dacWithAllChannels = { ...dac, allChannels: true };
+    e.dataTransfer.setData('application/json', JSON.stringify(dacWithAllChannels));
+  };
+
   return (
     <div className="dac-panel">
       <div className="settings-card-header"><h4>DACs</h4></div>
-      <div className="network-interface-selector">
-        <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''}>
-          {networkInterfaces.map(iface => (
-            <option key={iface.address} value={iface.address}>
-              {iface.name} ({iface.address})
-            </option>
-          ))}
-        </select>
-        <label>
-          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} disabled={isScanning} />
-          Scan
+      <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px'}}>
+        <div style={{flex:1, display:'flex'}}>
+            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', marginBottom: 2}}>
+              {networkInterfaces.map(iface => (
+                <option key={iface.address} value={iface.address}>
+                  {iface.name} ({iface.address})
+                </option>
+              ))}
+            </select>
+            <button 
+                onClick={() => {
+                     if (window.electronAPI) {
+                        window.electronAPI.getNetworkInterfaces().then(interfaces => {
+                            setNetworkInterfaces(interfaces);
+                            if (interfaces.length > 0 && !selectedNetworkInterface) {
+                                setSelectedNetworkInterface(interfaces[0]);
+                            }
+                        });
+                     }
+                }}
+                style={{fontSize: '9px', padding: '2px', background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', borderRadius: '5px'}}
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+					<path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
+					<path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
+				</svg>
+            </button>
+        </div>
+        <label style={{display:'flex', alignItems:'center', fontSize: '10px'}}>
+          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} disabled={isScanning} style={{ height: '100%'}} />
         </label>
       </div>
       <div className="dac-list">
         {dacs.map((dac) => (
           <div key={dac.unitID || dac.ip}
             className={`dac-group`}
+            draggable
+            onDragStart={(e) => handleGroupDragStart(e, dac)}
           >
             <div className="dac-ip">{dac.hostName || dac.ip} ({dac.ip})</div>
             <div className="dac-channels">
               {dac.channels && dac.channels.length > 0 ? (
                 dac.channels.map((channel) => (
                   <div
-                    key={`${dac.unitID}-${channel.serviceID}`}
-                    className={`dac-channel-item ${selectedDac && selectedDac.unitID === dac.unitID && selectedDac.channel === channel.serviceID ? 'selected' : ''}`}
+                    key={`${dac.unitID || dac.ip}-${channel.serviceID}`}
+                    className={`dac-channel-item ${selectedDac && (selectedDac.unitID === dac.unitID || selectedDac.ip === dac.ip) && selectedDac.channel === channel.serviceID ? 'selected' : ''}`}
                     onClick={() => handleDacClick(dac, channel.serviceID)}
                     draggable
                     onDragStart={(e) => handleDragStart(e, dac, channel.serviceID)}

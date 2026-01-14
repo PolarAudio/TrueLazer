@@ -4,18 +4,52 @@ import path, { dirname } from 'path';
 import fs from 'fs';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
-import * as dacCommunication from './main/dac-communication.cjs';
-const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll } = dacCommunication;
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
+// ES module equivalent of __dirname and __filename
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+import dacCommunication from './main/dac-communication.cjs';
+const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
+
+// Setup DAC Status Listener
+setDacStatusCallback((ip, status) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('dac-status', { ip, status });
+    }
+});
+
+// Load Native NDI Wrapper
+let ndi;
+try {
+    const nativeModulePath = app.isPackaged 
+        ? path.join(process.resourcesPath, 'app.asar.unpacked', 'native', 'build', 'Release')
+        : path.join(__dirname, 'native', 'build', 'Release');
+
+    // On Windows, we need to ensure the DLL is in the search path
+    if (process.platform === 'win32') {
+        process.env.PATH = nativeModulePath + path.delimiter + process.env.PATH;
+    }
+
+    const ndiModule = require(path.join(nativeModulePath, 'ndi_wrapper.node'));
+    ndi = new ndiModule.NdiWrapper();
+    console.log('NDI Wrapper loaded successfully from:', nativeModulePath);
+    if (ndi.initialize()) {
+        console.log('NDI initialized');
+    } else {
+        console.error('Failed to initialize NDI');
+    }
+} catch (e) {
+    console.error('Failed to load NDI wrapper:', e);
+}
 
 // Fix for "Unable to move the cache: Zugriff verweigert (0x5)"
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-http-cache');
 // Suppress Autofill.enable and Autofill.setAddresses errors in console
 app.commandLine.appendSwitch('disable-autofill');
-
-// ES module equivalent of __dirname and __filename
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -30,7 +64,9 @@ const schema = {
     type: 'object',
     properties: {
       showBeamEffect: { type: 'boolean', default: true },
-      beamRenderMode: { type: 'string', default: 'points' },
+      beamRenderMode: { type: 'string', default: 'both' },
+      worldShowBeamEffect: { type: 'boolean', default: true },
+      worldBeamRenderMode: { type: 'string', default: 'both' },
       previewScanRate: { type: 'number', default: 1 },
       fadeAlpha: { type: 'number', default: 0.1 },
       beamAlpha: { type: 'number', default: 0.1 }
@@ -41,6 +77,7 @@ const schema = {
   thumbnailRenderMode: { type: 'string', default: 'still' },
   midiMappings: { type: 'object', default: {} },
   artnetMappings: { type: 'object', default: {} },
+  keyboardMappings: { type: 'object', default: {} },
   selectedMidiInputId: { type: 'string', default: '' },
   shortcutsState: {
     type: 'object',
@@ -310,6 +347,9 @@ ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
 
 ipcMain.handle('set-selected-dac', (event, dac) => {
   store.set('selectedDac', dac);
+  if (dac && dac.ip) {
+    dacCommunication.connectDac(dac.ip, dac.type);
+  }
 });
 
 ipcMain.handle('get-midi-mappings', () => {
@@ -318,6 +358,15 @@ ipcMain.handle('get-midi-mappings', () => {
 
 ipcMain.handle('save-midi-mappings', (event, mappings) => {
   store.set('midiMappings', mappings);
+  return { success: true };
+});
+
+ipcMain.handle('get-keyboard-mappings', () => {
+  return store.get('keyboardMappings') || {};
+});
+
+ipcMain.handle('save-keyboard-mappings', (event, mappings) => {
+  store.set('keyboardMappings', mappings);
   return { success: true };
 });
 
@@ -581,15 +630,16 @@ function buildApplicationMenu(mode) {
             // New thumbnail render mode options
             { label: 'Thumbnail Still Frame', type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
             { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
+            { label: 'Thumbnail Hover Render', type: 'radio', checked: mode === 'hover', click: () => { sendThumbnailModeToRenderer('hover'); } },
             { type: 'separator' },
             { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
             { type: 'separator' },
             {
-              label: 'Effect Mode',
+              label: 'Display Mode',
               submenu: [
-                { label: 'Points', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
+                { label: 'Points', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
                 { label: 'Lines', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
-                { label: 'Points & Lines', type: 'radio', click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
+                { label: 'Points & Lines', type: 'radio', checked: true, click: () => { if(mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
               ]
             },
             { type: 'separator' },
@@ -624,6 +674,7 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: true,
       webSecurity: false, // Ensure this is false to allow file:// protocol for media
+      backgroundThrottling: false, // Keep animations and timers running in background
     },
     frame: true, // Set to false to remove the default window frame and title bar
   });
@@ -676,12 +727,20 @@ function createWindow() {
     return await discoverDacs(timeout, networkInterfaceIp);
   });
 
-  ipcMain.handle('get-dac-services', async (event, ip, localIp) => {
-    return await getDacServices(ip, localIp);
+  ipcMain.handle('get-dac-services', async (event, ip, localIp, type) => {
+    return await getDacServices(ip, localIp, 1000, type);
   });
 
-  ipcMain.handle('send-frame', async (event, ip, channel, frame, fps) => {
-    sendFrame(ip, channel, frame, fps);
+  ipcMain.handle('send-frame', async (event, ip, channel, frame, fps, type) => {
+    sendFrame(ip, channel, frame, fps, type);
+  });
+
+  ipcMain.handle('start-dac-output', async (event, ip, type) => {
+    dacCommunication.startOutput(ip, type);
+  });
+
+  ipcMain.handle('stop-dac-output', async (event, ip, type) => {
+    stopSending(ip, type);
   });
 
   ipcMain.handle('get-network-interfaces', async () => {
@@ -746,6 +805,7 @@ function createWindow() {
     console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}, style: ${currentTriggerStyle}`); 
     const clipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
+      { label: 'Export as ILDA', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'export-ilda', layerIndex, colIndex); } },
       { type: 'separator' },
       {
         label: 'Trigger Style',
@@ -848,7 +908,8 @@ function createWindow() {
 
   ipcMain.handle('read-file-content', async (event, filePath) => {
     try {
-      const content = await fs.promises.readFile(filePath);
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      const content = await fs.promises.readFile(fullPath);
       return content;
     } catch (error) {
       console.error('Failed to read file content:', error);
@@ -858,7 +919,8 @@ function createWindow() {
 
   ipcMain.handle('read-ild-files', async (event, directoryPath) => {
     try {
-      const files = await fs.promises.readdir(directoryPath);
+      const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
+      const files = await fs.promises.readdir(fullPath);
       const ildFiles = files
         .filter(file => file.toLowerCase().endsWith('.ild'))
         .map(file => path.join(directoryPath, file));
@@ -870,7 +932,8 @@ function createWindow() {
   });
   ipcMain.handle('read-file-as-binary', async (event, filePath) => {
   try {
-    const buffer = await fs.promises.readFile(filePath);
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+    const buffer = await fs.promises.readFile(fullPath);
     return buffer;
   } catch (error) {
     console.error('Error reading file:', error);
@@ -880,7 +943,8 @@ function createWindow() {
 
   ipcMain.handle('read-file-for-worker', async (event, filePath) => {
     try {
-      const buffer = await fs.promises.readFile(filePath);
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      const buffer = await fs.promises.readFile(fullPath);
       // Convert Node.js Buffer to ArrayBuffer for transfer to worker
       const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
       return arrayBuffer;
@@ -974,6 +1038,27 @@ function createWindow() {
     }
   });
 
+  ipcMain.handle('save-ilda-file', async (event, arrayBuffer, defaultName = 'export.ild') => {
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export ILDA File',
+      defaultPath: defaultName,
+      filters: [{ name: 'ILDA Files', extensions: ['ild'] }]
+    });
+
+    if (canceled || !filePath) {
+      return { success: false, canceled: true };
+    }
+
+    try {
+      const buffer = Buffer.from(arrayBuffer);
+      await fs.promises.writeFile(filePath, buffer);
+      return { success: true, filePath };
+    } catch (error) {
+      console.error('Failed to save ILDA file:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('delete-thumbnail', async (event, filePath) => {
       try {
           if (!filePath) return { success: false };
@@ -995,6 +1080,69 @@ function createWindow() {
           return { success: false, error: error.message };
       }
   });
+
+  // NDI IPC Handlers
+  let ndiCaptureSettings = { width: 1280, height: 720 };
+
+  ipcMain.handle('ndi-update-settings', (event, settings) => {
+      if (settings.width) ndiCaptureSettings.width = settings.width;
+      if (settings.height) ndiCaptureSettings.height = settings.height;
+      return true;
+  });
+
+  ipcMain.handle('ndi-find-sources', async () => {
+      if (!ndi) return [];
+      return ndi.findSources();
+  });
+
+  ipcMain.handle('ndi-create-receiver', async (event, sourceName) => {
+      if (!ndi) return false;
+      return ndi.createReceiver(sourceName);
+  });
+
+  ipcMain.handle('ndi-capture-video', async () => {
+      if (!ndi) return null;
+      return ndi.captureVideo();
+  });
+
+  ipcMain.handle('ndi-destroy-receiver', async () => {
+      if (!ndi) return;
+      ndi.destroyReceiver();
+      isRendererReadyForNdi = true; // Reset flow control
+  });
+
+  // Flow control for NDI frames to prevent IPC backlog
+  let isRendererReadyForNdi = true;
+  ipcMain.on('ndi-renderer-ready', () => {
+      isRendererReadyForNdi = true;
+  });
+
+  // Background NDI Capture Loop
+  const ndiCaptureLoop = async () => {
+      if (ndi && mainWindow && !mainWindow.isDestroyed() && isRendererReadyForNdi) {
+          // Use dynamic capture resolution
+          let frame = null;
+          let latestFrame = null;
+          let drainCount = 0;
+          const maxDrain = 5;
+
+          // Drain queue to get the latest frame
+          do {
+            frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
+            if (frame) {
+                latestFrame = frame;
+                drainCount++;
+            }
+          } while (frame && drainCount < maxDrain);
+
+          if (latestFrame) {
+              isRendererReadyForNdi = false; // Wait for renderer to process
+              mainWindow.webContents.send('ndi-frame', latestFrame);
+          }
+      }
+      setTimeout(ndiCaptureLoop, 33); // Poll at ~30fps
+  };
+  ndiCaptureLoop();
 }
 
 app.whenReady().then(() => {
@@ -1008,6 +1156,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  if (ndi) {
+      ndi.destroyReceiver();
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }
