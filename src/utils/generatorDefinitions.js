@@ -79,21 +79,21 @@ export const generatorDefinitions = [
     defaultParams: {
       text: 'TrueLazer',
       x: 0,
-      y: 0,
+      y: 0.3,
       fontSize: 72,
       numPoints: 200, // Target number of points
-      fontUrl: 'src/fonts/arial.ttf', // Default to internal Arial font
+      fontUrl: 'src/fonts/Geometr415 Blk BT Black.ttf', // Default to internal font
       r: 255,
       g: 255,
       b: 255,
     },
     paramControls: [
       { id: 'text', label: 'Text Content', type: 'text' },
+      { id: 'fontUrl', label: 'Fonts', type: 'text' }, // New param control
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'fontSize', label: 'Font Size', type: 'range', min: 10, max: 200, step: 1 },
       { id: 'numPoints', label: 'Target Points', type: 'range', min: 10, max: 1000, step: 1 },
-      { id: 'fontUrl', label: 'Font URL', type: 'text' }, // New param control
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },

@@ -3031,7 +3031,7 @@ function App() {
 
     let fontBuffer = null;
     if (['text', 'ndi-source', 'spout-receiver'].includes(generatorDefinition.id)) {
-      const defaultFontUrl = 'src/fonts/arial.ttf';
+      const defaultFontUrl = 'src/fonts/Geometr415 Blk BT Black.ttf';
       let fontUrl = completeParams.fontUrl || defaultFontUrl;
 
       // Migration for old projects with dead URLs

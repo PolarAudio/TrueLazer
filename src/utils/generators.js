@@ -12,7 +12,7 @@ export async function generateText(params, fontBuffer) {
     const { text, x, y, r, g, b, fontSize, numPoints } = withDefaults(params, {
       text: 'TrueLazer',
       x: 0,
-      y: 0,
+      y: 0.3,
       r: 255,
       g: 255,
       b: 255,

@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld(
 	                                        showAudioFileDialog: () => ipcRenderer.invoke('show-audio-file-dialog'),
                                             showOpenDialog: (options) => ipcRenderer.invoke('show-open-dialog', options),
 	                                        showFontFileDialog: () => ipcRenderer.invoke('show-font-file-dialog'),
+	                                        getSystemFonts: () => ipcRenderer.invoke('get-system-fonts'),
+                                            getProjectFonts: () => ipcRenderer.invoke('get-project-fonts'),
 	                                        setAudioDevices: (devices) => ipcRenderer.send('set-audio-devices', devices),
 	                                        onUpdateAudioDeviceId: (callback) => {
 	                                          const subscription = (event, deviceId) => callback(deviceId);

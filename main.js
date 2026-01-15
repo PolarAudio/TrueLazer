@@ -4,6 +4,7 @@ import path, { dirname } from 'path';
 import fs from 'fs';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
+import getSystemFonts from 'get-system-fonts';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
@@ -953,6 +954,44 @@ function createWindow() {
       throw error;
     }
   });
+
+ipcMain.handle('get-system-fonts', async () => {
+  try {
+    const fonts = await getSystemFonts();
+    return fonts;
+  } catch (error) {
+    console.error('Failed to get system fonts:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('get-project-fonts', async () => {
+  const fontsDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'fonts')
+    : path.join(__dirname, 'src', 'fonts');
+
+  try {
+    // Check if directory exists
+    try {
+      await fs.promises.access(fontsDir);
+    } catch {
+      console.warn(`Project fonts directory not found at: ${fontsDir}`);
+      return [];
+    }
+
+    const files = await fs.promises.readdir(fontsDir);
+    const fontFiles = files
+      .filter(file => /\.(ttf|otf|ttc)$/i.test(file))
+      .map(file => ({
+        name: file,
+        path: path.join(fontsDir, file)
+      }));
+    return fontFiles;
+  } catch (error) {
+    console.error('Failed to get project fonts:', error);
+    return [];
+  }
+});
 
   ipcMain.handle('show-font-file-dialog', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
