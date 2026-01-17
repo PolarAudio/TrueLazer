@@ -182,8 +182,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
       <Mappable id={`clip_${layerIndex}_${colIndex}`}>
         <div 
             className="clip-thumbnail" 
-            onMouseDown={() => onActivateClick(true)}
-            onMouseUp={() => onActivateClick(false)}
+            onMouseDown={(e) => { if (e.button === 0) onActivateClick(true); }}
+            onMouseUp={(e) => { if (e.button === 0) onActivateClick(false); }}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
             style={{ overflow: 'hidden' }} // Ensure image fits

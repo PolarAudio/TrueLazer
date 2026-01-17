@@ -175,14 +175,14 @@ export class WebGLRenderer {
     }
 
     if (this.type === 'world') {
-      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings, data.previewTime);
+      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings, data.previewTime, data.fftLevels);
     }
     else {
-      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings, data.bpm, data.clipDuration, data.progress, data.previewTime);
+      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings, data.bpm, data.clipDuration, data.progress, data.previewTime, data.fftLevels);
     }
   }
 
-  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}, bpm = 120, clipDuration = 1, progressOverride = null, previewTime = null) {
+  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}, bpm = 120, clipDuration = 1, progressOverride = null, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -199,7 +199,7 @@ export class WebGLRenderer {
     const progress = progressOverride !== null ? progressOverride : (frameIndex / ildaFrames.length);
     const time = previewTime !== null ? previewTime : performance.now();
 
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration);
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -207,7 +207,7 @@ export class WebGLRenderer {
     }
   }
 
-  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings, previewTime = null) {
+  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -270,7 +270,7 @@ export class WebGLRenderer {
                 }
 
                 // Pass layerIndex, progress and time to draw
-                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration);
+                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels);
             }
         }
       }
@@ -315,7 +315,7 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }) {
     const gl = this.gl;
     if (!frame || !frame.points) return;
 
@@ -334,7 +334,7 @@ export class WebGLRenderer {
     
     // Apply effects before drawing
     // We pass syncSettings and bpm in the context
-    const modifiedFrame = applyEffects(frame, effects, { progress, time, syncSettings, bpm, clipDuration });
+    const modifiedFrame = applyEffects(frame, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels });
     const points = modifiedFrame.points;
     const isTyped = modifiedFrame.isTypedArray;
     const numPoints = isTyped ? (points.length / 8) : points.length;

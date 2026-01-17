@@ -29,22 +29,24 @@
       "native/build/Release/ndi_wrapper.node",
       "native/build/Release/Processing.NDI.Lib.x64.dll"
     ],
-	"extraFiles": [
-	 {
-		"from": "src/",
-		"to": "Mappings",
-		"filter": ["*Mappings.json"]
-	 }
-	],
+    "extraFiles": [
+      {
+        "from": "src/",
+        "to": "Mappings",
+        "filter": [
+          "*Mappings.json"
+        ]
+      }
+    ],
     "extraResources": [
       {
         "from": "src/ILDA-FILE-FORMAT-FILES",
         "to": "ILDA-FILES"
       },
-	  {
-		"from": "src/fonts",
-		"to": "fonts"
-	  }
+      {
+        "from": "src/fonts",
+        "to": "fonts"
+      }
     ],
     "asarUnpack": [
       "**/*.node",

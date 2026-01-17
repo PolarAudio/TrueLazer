@@ -13,11 +13,12 @@ export function resolveParam(key, baseValue, animSettings, context) {
     
     if (!settings.syncMode) return baseValue;
 
-    const { time, progress = 0, bpm = 120, clipDuration = 0 } = context;
+    const { time, progress = 0, bpm = 120, clipDuration = 0, fftLevels = { low: 0, mid: 0, high: 0 } } = context;
     let rawProgress = 0;
 
     // 1. Calculate Raw Progress (Unwrapped, 0..infinity)
     const speedMult = settings.speedMultiplier || 1.0;
+    const style = settings.style || 'loop';
 
     if (settings.syncMode === 'fps') {
         // FPS Mode: Free running based on Time * Speed
@@ -31,13 +32,9 @@ export function resolveParam(key, baseValue, animSettings, context) {
         
         // If we have clip duration, we can map clip progress to parameter cycles
         if (clipDuration > 0) {
-            // How many parameter cycles fit in the current clip position?
-            // clipTime = progress * clipDuration
-            // paramCycles = clipTime / paramDur
             const clipTime = progress * clipDuration;
             rawProgress = (clipTime / paramDur) * speedMult;
         } else {
-            // Fallback if no clip duration (shouldn't happen for active clips)
             rawProgress = 0;
         }
 
@@ -53,53 +50,36 @@ export function resolveParam(key, baseValue, animSettings, context) {
         } else {
             rawProgress = 0;
         }
+    } else if (settings.syncMode === 'fft') {
+        const range = settings.fftRange || 'low';
+        const level = fftLevels[range] || 0;
+        return resolveFftValue(level, baseValue, settings);
     }
 
-    // 2. Apply Direction (Inverse logic for raw progress is tricky without bounds)
-    // We apply direction to the final phase 0..1
+    // Adjust rawProgress for Bounce style so a full cycle (up+down) fits in the duration
+    if (style === 'bounce') {
+        rawProgress *= 2;
+    }
+
+    // 2. Apply Direction
     const direction = settings.direction || 'forward';
     if (direction === 'pause') {
         return baseValue; 
     }
 
     // 3. Apply Style (Loop, Bounce, Once)
-    const style = settings.style || 'loop';
     let animPhase = 0;
 
     if (style === 'once') {
-        // Clamp at 1.0
         animPhase = Math.min(rawProgress, 1.0);
-        if (direction === 'backward') {
-             // For 'once' + 'backward', strictly it should go 1 -> 0 and hold 0?
-             // Or just invert the phase? 1 - clamp(prog).
-             animPhase = 1.0 - animPhase;
-        }
+        if (direction === 'backward') animPhase = 1.0 - animPhase;
     } else if (style === 'bounce') {
-        // 0 -> 1 -> 0
-        // We look at the integer part of rawProgress to know which "lap" we are in
-        // Lap 0: 0->1. Lap 1: 1->0. Lap 2: 0->1.
-        // Even laps: forward. Odd laps: backward.
-        // But we also need to account for 'direction' setting reversing the whole thing?
-        // Let's apply direction first? No, bounce handles direction implicitly.
-        
-        // If direction is backward, we just shift the time? 
-        // Standard behavior: 'backward' just inverts the result.
-        
         let localPhase = rawProgress % 1.0;
         const lap = Math.floor(rawProgress);
-        
-        if (lap % 2 === 1) {
-            // Odd lap: 1 -> 0
-            animPhase = 1.0 - localPhase;
-        } else {
-            // Even lap: 0 -> 1
-            animPhase = localPhase;
-        }
-        
+        if (lap % 2 === 1) animPhase = 1.0 - localPhase;
+        else animPhase = localPhase;
         if (direction === 'backward') animPhase = 1.0 - animPhase;
-
     } else {
-        // Loop (Default)
         animPhase = rawProgress % 1.0;
         if (direction === 'backward') animPhase = 1.0 - animPhase;
     }
@@ -107,7 +87,6 @@ export function resolveParam(key, baseValue, animSettings, context) {
     // 4. Map to Range
     const range = settings.range; 
     let min = 0, max = 1;
-
     if (range && Array.isArray(range) && range.length === 2) {
         min = range[0];
         max = range[1];
@@ -118,15 +97,19 @@ export function resolveParam(key, baseValue, animSettings, context) {
     return min + (max - min) * animPhase;
 }
 
-/**
- * Optimized applyEffects that minimizes object creation and GC.
- */
+function resolveFftValue(level, baseValue, settings) {
+    const range = settings.range;
+    if (range && Array.isArray(range) && range.length === 2) {
+        return range[0] + (range[1] - range[0]) * level;
+    }
+    return baseValue;
+}
+
 export function applyEffects(frame, effects, context = {}) {
-  const { progress = 0, time = performance.now(), effectStates, syncSettings = {} } = context;
+  const { progress = 0, time = performance.now(), effectStates, syncSettings = {}, fftLevels } = context;
 
   if (!effects || effects.length === 0) return frame;
 
-  // Conversion to TypedArray
   let pointsData;
   if (Array.isArray(frame.points)) {
       pointsData = new Float32Array(frame.points.length * 8);
@@ -150,18 +133,14 @@ export function applyEffects(frame, effects, context = {}) {
   const numPoints = () => currentPoints.length / 8;
 
   for (const effect of effects) {
+    if (effect.params.enabled === false) continue;
+
     const definition = effectDefinitions.find(def => def.id === effect.id);
     if (!definition) continue;
 
-    // Resolve Animated Parameters
     const resolvedParams = { ...effect.params };
-    
-    // Iterate over all keys in params and resolve them if sync settings exist
     for (const key of Object.keys(resolvedParams)) {
         const paramKey = `${effect.id}.${key}`;
-        // syncSettings key format might vary. 
-        // In EffectEditor: `${effect.id}.${control.id}`
-        // We check syncSettings passed in context.
         if (syncSettings[paramKey]) {
              resolvedParams[key] = resolveParam(key, resolvedParams[key], syncSettings[paramKey], context);
         }
@@ -202,7 +181,6 @@ export function applyEffects(frame, effects, context = {}) {
         applyMove(currentPoints, numPoints(), resolvedParams, time);
         break;
       case 'delay':
-        // Delay can change point count
         if (effectStates && effect.instanceId) {
             currentPoints = applyDelay(currentPoints, numPoints(), resolvedParams, effectStates, effect.instanceId, context);
         }
@@ -218,7 +196,6 @@ export function applyEffects(frame, effects, context = {}) {
   return { ...frame, points: currentPoints, isTypedArray: true };
 }
 
-// ... (Keep existing simple functions: rotate, scale, translate, color, wave, blanking, strobe)
 function applyRotate(points, numPoints, params, progress, time) {
   const { angle, speed, direction } = withDefaults(params, effectDefinitions.find(def => def.id === 'rotate').defaultParams);
   const dirMult = direction === 'CCW' ? -1 : 1;
@@ -344,10 +321,11 @@ function applyWave(points, numPoints, params, time) {
 }
 
 function applyBlanking(points, numPoints, params) {
-  const { blankingInterval } = withDefaults(params, effectDefinitions.find(def => def.id === 'blanking').defaultParams);
+  const { blankingInterval, spacing = 0 } = withDefaults(params, effectDefinitions.find(def => def.id === 'blanking').defaultParams);
   if (blankingInterval <= 0) return;
+  const step = blankingInterval + 1 + spacing;
   for (let i = 0; i < numPoints; i++) {
-    if ((i % (blankingInterval + 1)) === blankingInterval) {
+    if ((i % step) >= blankingInterval) {
         points[i * 8 + 6] = 1;
     }
   }
@@ -363,36 +341,19 @@ function applyStrobe(points, numPoints, params, time) {
   }
 }
 
-// Updated applyMirror for Symmetry/Folding
 function applyMirror(points, numPoints, params) {
   const { mode } = withDefaults(params, effectDefinitions.find(def => def.id === 'mirror').defaultParams);
   if (mode === 'none') return points;
-
-  // We are creating a NEW set of points (doubling the count)
-  // New size = numPoints * 2? 
-  // Wait, we only want to mirror the "Source" side. 
-  // If we assume "Source" is half the screen, we double that half.
-  // The points array contains points from the whole screen.
-  // We should FILTER then duplicate.
-  
   let sourcePoints = [];
-  
   for (let i = 0; i < numPoints; i++) {
       const offset = i * 8;
       const x = points[offset];
       const y = points[offset + 1];
-      
       let keep = false;
-      if (mode === 'x-') { // Keep Left
-          if (x <= 0) keep = true;
-      } else if (mode === 'x+') { // Keep Right
-          if (x >= 0) keep = true;
-      } else if (mode === 'y-') { // Keep Bottom
-          if (y <= 0) keep = true;
-      } else if (mode === 'y+') { // Keep Top
-          if (y >= 0) keep = true;
-      }
-      
+      if (mode === 'x-') if (x <= 0) keep = true;
+      else if (mode === 'x+') if (x >= 0) keep = true;
+      else if (mode === 'y-') if (y <= 0) keep = true;
+      else if (mode === 'y+') if (y >= 0) keep = true;
       if (keep) {
           sourcePoints.push({
               x: points[offset], y: points[offset+1], z: points[offset+2],
@@ -401,41 +362,20 @@ function applyMirror(points, numPoints, params) {
           });
       }
   }
-
-  // Now create the new buffer. Size = sourcePoints.length * 2
   const newNumPoints = sourcePoints.length * 2;
   const newBuffer = new Float32Array(newNumPoints * 8);
-  
   let ptr = 0;
-  
-  // Write Original (Source)
   for (const p of sourcePoints) {
-      newBuffer[ptr++] = p.x;
-      newBuffer[ptr++] = p.y;
-      newBuffer[ptr++] = p.z;
-      newBuffer[ptr++] = p.r;
-      newBuffer[ptr++] = p.g;
-      newBuffer[ptr++] = p.b;
-      newBuffer[ptr++] = p.blk;
-      newBuffer[ptr++] = p.last;
+      newBuffer[ptr++] = p.x; newBuffer[ptr++] = p.y; newBuffer[ptr++] = p.z;
+      newBuffer[ptr++] = p.r; newBuffer[ptr++] = p.g; newBuffer[ptr++] = p.b;
+      newBuffer[ptr++] = p.blk; newBuffer[ptr++] = p.last;
   }
-  
-  // Write Mirrored (Reflection)
   for (const p of sourcePoints) {
-      if (mode === 'x-' || mode === 'x+') newBuffer[ptr++] = -p.x;
-      else newBuffer[ptr++] = p.x;
-      
-      if (mode === 'y-' || mode === 'y+') newBuffer[ptr++] = -p.y;
-      else newBuffer[ptr++] = p.y;
-      
-      newBuffer[ptr++] = p.z;
-      newBuffer[ptr++] = p.r;
-      newBuffer[ptr++] = p.g;
-      newBuffer[ptr++] = p.b;
-      newBuffer[ptr++] = p.blk;
-      newBuffer[ptr++] = p.last;
+      if (mode === 'x-' || mode === 'x+') newBuffer[ptr++] = -p.x; else newBuffer[ptr++] = p.x;
+      if (mode === 'y-' || mode === 'y+') newBuffer[ptr++] = -p.y; else newBuffer[ptr++] = p.y;
+      newBuffer[ptr++] = p.z; newBuffer[ptr++] = p.r; newBuffer[ptr++] = p.g; newBuffer[ptr++] = p.b;
+      newBuffer[ptr++] = p.blk; newBuffer[ptr++] = p.last;
   }
-  
   return newBuffer;
 }
 
@@ -444,9 +384,7 @@ function applyWarp(points, numPoints, params, time) {
     const t = time * 0.001 * speed;
     for(let i=0; i<numPoints; i++) {
         const off = i*8;
-        const x = points[off];
-        const y = points[off+1];
-        
+        const x = points[off]; const y = points[off+1];
         const symY = Math.abs(y);
         points[off] += Math.sin(symY * 10 * (1+chaos) + t) * amount * Math.cos(t * chaos);
         points[off+1] += Math.cos(Math.abs(x) * 10 * (1+chaos) + t) * amount * Math.sin(t * chaos);
@@ -483,343 +421,173 @@ function applyMove(points, numPoints, params, time) {
         if (valY < 0) valY += cycle;
         if (valY > 2) valY = 4 - valY;
         y = valY - 1;
-        points[off] = x;
-        points[off+1] = y;
+        points[off] = x; points[off+1] = y;
     }
 }
 
-// Updated applyDelay for Channel/Custom Order logic
 function applyDelay(points, numPoints, params, effectStates, instanceId, context) {
-    const defaults = effectDefinitions.find(def => def.id === 'delay').defaultParams;
-    const { 
-        delayAmount, decay, 
-        useCustomOrder, delayDirection, customOrder 
-    } = withDefaults(params, defaults);
-    
-    // Legacy support for 'delayMode' if passed
-    const isCustomOrder = useCustomOrder || params.delayMode === 'channel' || params.delayMode === true;
-
-    if (!effectStates.has(instanceId)) {
-        effectStates.set(instanceId, []);
-    }
-    
+    const { mode = 'frame', delayAmount, decay, delayDirection, useCustomOrder, customOrder } = withDefaults(params, effectDefinitions.find(def => def.id === 'delay').defaultParams);
+    if (!effectStates.has(instanceId)) effectStates.set(instanceId, []);
     const history = effectStates.get(instanceId);
-    
-    // 1. Save current frame snapshot (Clone)
-    const currentSnapshot = new Float32Array(points);
-    history.unshift(currentSnapshot);
-    
-    const { assignedDacs } = context || {}; // Get assignedDacs from context if available
+    history.unshift(new Float32Array(points));
 
-    // Determine Channel Delay Map (DAC Index -> Delay Step)
-    let channelDelayMap = new Map();
-    let maxStep = 0;
-
-    if (isCustomOrder) {
-        let list = [];
-        if (customOrder && Array.isArray(customOrder) && customOrder.length > 0) {
-            // customOrder items contain {originalIndex}
-            list = customOrder.map(item => (item.originalIndex !== undefined ? item.originalIndex : 0));
-        } else if (assignedDacs) {
-            // Fallback to auto if custom is empty but mode is custom
-            list = assignedDacs.map((_, i) => i);
-        } else {
-            list = [0];
-        }
-        
-        // In Custom Mode, the order in the list DEFINES the step.
-        // Index 0 in list = Step 0. Index 1 = Step 1.
-        list.forEach((dacIdx, step) => {
-            channelDelayMap.set(dacIdx, step);
-            maxStep = Math.max(maxStep, step);
-        });
-
-    } else {
-        // Auto Directional Mode
-        const dacs = assignedDacs || [];
-        const N = dacs.length || 1; 
-        
-        // Calculate Delay Step for each physical index i (0..N-1)
-        for(let i=0; i<N; i++) {
+    if (mode === 'frame') {
+        const steps = 10;
+        const maxHistory = delayAmount * steps + 1;
+        if (history.length > maxHistory) history.length = maxHistory;
+        const newPoints = new Float32Array(points.length);
+        for (let i = 0; i < numPoints; i++) {
             let step = 0;
-            if (delayDirection === 'right_to_left') {
-                step = N - 1 - i;
-            } else if (delayDirection === 'center_to_out') {
-                // Center = Step 0, Out = Max Step
-                // Logic: Distance from center
-                step = Math.floor(Math.abs(i - (N - 1) / 2));
-            } else if (delayDirection === 'out_to_center') {
-                // Out = Step 0, Center = Max Step
-                // Logic: Distance from edge (min of dist to start or end)
-                step = Math.min(i, N - 1 - i);
+            const norm = i / numPoints;
+            if (delayDirection === 'left_to_right') step = Math.floor(norm * (steps - 1));
+            else if (delayDirection === 'right_to_left') step = Math.floor((1 - norm) * (steps - 1));
+            else if (delayDirection === 'center_to_out') step = Math.floor(Math.abs(norm - 0.5) * 2 * (steps - 1));
+            else if (delayDirection === 'out_to_center') step = Math.floor((1 - Math.abs(norm - 0.5) * 2) * (steps - 1));
+            const idx = step * delayAmount;
+            const echo = (idx < history.length) ? history[idx] : null;
+            const factor = Math.pow(decay, step);
+            const off = i * 8;
+            if (echo && echo.length === points.length) {
+                newPoints[off] = echo[off]; newPoints[off+1] = echo[off+1]; newPoints[off+2] = echo[off+2];
+                newPoints[off+3] = echo[off+3] * factor; newPoints[off+4] = echo[off+4] * factor; newPoints[off+5] = echo[off+5] * factor;
+                newPoints[off+6] = echo[off+6]; newPoints[off+7] = echo[off+7];
             } else {
-                // left_to_right
-                step = i;
+                newPoints.set(points.subarray(off, off+8), off);
+                newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0; newPoints[off+6] = 1;
             }
-            
-            channelDelayMap.set(i, step);
-            maxStep = Math.max(maxStep, step);
         }
-        
-        // If no assigned DACs, default map for preview (0->0)
-        if (N === 0) {
-            channelDelayMap.set(0, 0);
-        }
-    }
-    
-    // 2. Generate Echoes based on maxStep
-    const numEchoes = maxStep + 1;
-
-    // Limit history size
-    const maxHistory = delayAmount * numEchoes + 1;
-    if (history.length > maxHistory) {
-        history.length = maxHistory;
-    }
-    
-    const echoes = [];
-    
-    for(let k=0; k<numEchoes; k++) {
-        const index = k * delayAmount;
-        let echoPoints = null; // Default to null (Blank) if history missing
-        
-        if (index === 0) {
-            echoPoints = points; // Current frame
-        } else if (index < history.length) {
-            echoPoints = history[index];
-        }
-        
-        const factor = Math.pow(decay, k);
-        
-        // We push even if null, to maintain channel slot
-        echoes.push({ points: echoPoints, factor, index: k });
-    }
-    
-    if (echoes.length === 0) return points;
-    
-    // Create new buffer
-    const totalPoints = numPoints + echoes.reduce((sum, e) => sum + (e.points ? e.points.length / 8 : points.length / 8), 0);
-    const newBuffer = new Float32Array(totalPoints * 8);
-    
-    let offset = 0;
-    const echoOffsets = new Array(echoes.length);
-
-    // Write Echoes
-    for (let k = 0; k < echoes.length; k++) {
-        const echo = echoes[k];
-        const ePoints = echo.points;
-        const eNum = ePoints ? ePoints.length / 8 : points.length / 8;
-        const factor = echo.factor;
-        
-        echoOffsets[k] = offset; 
-
-        // Copy and Modify
-        for(let i=0; i<eNum; i++) {
-            const srcOff = i*8;
-            const dstOff = offset + i*8;
-            
-            let srcX=0, srcY=0, srcZ=0, srcR=0, srcG=0, srcB=0, srcBlk=1, srcLast=0;
-
-            if (ePoints) {
-                // Source Data (Past Frame)
-                srcX = ePoints[srcOff];
-                srcY = ePoints[srcOff+1];
-                srcZ = ePoints[srcOff+2];
-                srcR = ePoints[srcOff+3];
-                srcG = ePoints[srcOff+4];
-                srcB = ePoints[srcOff+5];
-                srcBlk = ePoints[srcOff+6];
-                srcLast = ePoints[srcOff+7];
-            } else {
-                // Blank Frame (Before Start)
-                srcBlk = 1;
+        return newPoints;
+    } else {
+        const { assignedDacs } = context || {};
+        let channelDelayMap = new Map();
+        let maxStep = 0;
+        const isCustom = useCustomOrder || params.delayMode === 'channel';
+        if (isCustom) {
+            const list = (customOrder && customOrder.length > 0) ? customOrder.map(item => item.originalIndex) : (assignedDacs ? assignedDacs.map((_, i) => i) : [0]);
+            list.forEach((dacIdx, step) => { channelDelayMap.set(dacIdx, step); maxStep = Math.max(maxStep, step); });
+        } else {
+            const dacs = assignedDacs || [];
+            const N = dacs.length || 1;
+            for(let i=0; i<N; i++) {
+                let step = i;
+                if (delayDirection === 'right_to_left') step = N - 1 - i;
+                else if (delayDirection === 'center_to_out') step = Math.floor(Math.abs(i - (N - 1) / 2));
+                else if (delayDirection === 'out_to_center') step = Math.min(i, N - 1 - i);
+                channelDelayMap.set(i, step); maxStep = Math.max(maxStep, step);
             }
-
-            newBuffer[dstOff] = srcX;
-            newBuffer[dstOff+1] = srcY;
-            newBuffer[dstOff+2] = srcZ; 
-
-            newBuffer[dstOff+3] = srcR * factor;
-            newBuffer[dstOff+4] = srcG * factor;
-            newBuffer[dstOff+5] = srcB * factor;
-            
-            newBuffer[dstOff+6] = srcBlk; 
-            newBuffer[dstOff+7] = srcLast; 
         }
-        offset += eNum * 8;
+        const numEchoes = maxStep + 1;
+        const maxHistory = delayAmount * numEchoes + 1;
+        if (history.length > maxHistory) history.length = maxHistory;
+        const echoes = [];
+        for(let k=0; k<numEchoes; k++) {
+            const index = k * delayAmount;
+            echoes.push({ points: (index < history.length) ? history[index] : null, factor: Math.pow(decay, k), index: k });
+        }
+        const totalPoints = echoes.reduce((sum, e) => sum + (e.points ? e.points.length / 8 : points.length / 8), 0);
+        const newBuffer = new Float32Array(totalPoints * 8);
+        let offset = 0;
+        const echoOffsets = new Array(echoes.length);
+        for (let k = 0; k < echoes.length; k++) {
+            const echo = echoes[k]; const ePoints = echo.points; const eNum = ePoints ? ePoints.length / 8 : points.length / 8;
+            echoOffsets[k] = offset;
+            for(let i=0; i<eNum; i++) {
+                const srcOff = i*8; const dstOff = offset + i*8;
+                if (ePoints) {
+                    newBuffer[dstOff] = ePoints[srcOff]; newBuffer[dstOff+1] = ePoints[srcOff+1]; newBuffer[dstOff+2] = ePoints[srcOff+2];
+                    newBuffer[dstOff+3] = ePoints[srcOff+3] * echo.factor; newBuffer[dstOff+4] = ePoints[srcOff+4] * echo.factor; newBuffer[dstOff+5] = ePoints[srcOff+5] * echo.factor;
+                    newBuffer[dstOff+6] = ePoints[srcOff+6]; newBuffer[dstOff+7] = ePoints[srcOff+7];
+                } else {
+                    newBuffer[dstOff+6] = 1;
+                }
+            }
+            offset += eNum * 8;
+        }
+        const distributions = new Map();
+        channelDelayMap.forEach((step, dacIndex) => {
+            if (step < echoes.length) distributions.set(dacIndex, { start: echoOffsets[step], length: echoes[step].points ? echoes[step].points.length : points.length });
+        });
+        newBuffer._channelDistributions = distributions;
+        return newBuffer;
     }
-
-    // Construct Distribution Map
-    // Map: DAC Index -> Buffer Segment using channelDelayMap
-    const distributions = new Map();
-    
-    channelDelayMap.forEach((step, dacIndex) => {
-        if (step < echoes.length) {
-            const start = echoOffsets[step];
-            // Length depends on if it was null or real
-            const length = echoes[step].points ? echoes[step].points.length : points.length;
-            distributions.set(dacIndex, { start, length });
-        }
-    });
-    
-    newBuffer._channelDistributions = distributions;
-
-    return newBuffer;
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
-    numPoints = Math.floor(numPoints);
-    const { steps, decay, speed, overlap, direction, useCustomOrder, customOrder } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
-    
-    // Chase now operates on CHANNEL Intensity, not point geometry, if mapped to channels.
-    // However, effects.js processes "Frame Data".
-    // "Intensity output for each channel".
-    // If the frame is broadcast to multiple channels, this effect should MODIFY the intensity 
-    // SPECIFICALLY for the channel it is being rendered for.
-    // BUT `applyEffects` is usually called once per frame, NOT once per channel.
-    // Wait. `IldaPlayer` renders ONE frame. 
-    // If we want different output per channel, we need to know WHICH channel we are rendering for.
-    // The `context` passed to `applyEffects` might need to contain `targetChannel` or similar?
-    // In `App.jsx`, `animate` loops over `dacs`.
-    // It calls `applyEffects` for EACH dac if `delay` or `chase` needs it?
-    // Actually, `App.jsx` calls `applyEffects` ONCE globally for the clip.
-    // Then it sends the result to all DACs.
-    // UNLESS the effect is `delay` (which returns a buffer with `_channelDistributions`).
-    // If `chase` is like `delay`, it should probably return a buffer that `App.jsx` or `idn-communication` understands.
-    // `applyDelay` logic splits the frame into "Channel Distributions".
-    // If `chase` works similarly, it should create separate intensity maps?
-    // BUT `chase` logic described: "first channel is on while all other are off".
-    // This implies `Chase` is a Multi-Channel effect like `Delay`.
-    // So `applyChase` should likely behave like `applyDelay`:
-    // It receives the points, and it needs to assign them to channels with modified intensity.
-    // Actually, `applyDelay` creates echo frames.
-    // `Chase` just needs to modulate brightness based on the assigned channel index.
-    
-    // We need to know:
-    // 1. Total assigned channels (N).
-    // 2. Which channel is "active" at time T.
-    // 3. For each channel i, calculate intensity.
-    // 4. Return a structure that tells the renderer/sender what to send to each channel.
-    // `applyDelay` returns `newBuffer._channelDistributions`.
-    // We can use the same mechanism!
-    // We can create N copies of the frame (one for each channel).
-    // Modulate intensity for each copy.
-    // Combine them into one big buffer and set `_channelDistributions`.
-    
-    const { assignedDacs } = context || {};
-    // Determine channel mapping (like Delay)
-    let channelStepMap = new Map();
-    let numChannels = 0;
+    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
+    const { progress = 0, clipDuration = 1 } = context;
 
-    if (useCustomOrder) {
-        let list = [];
-        if (customOrder && Array.isArray(customOrder) && customOrder.length > 0) {
-            list = customOrder.map(item => (item.originalIndex !== undefined ? item.originalIndex : 0));
-        } else if (assignedDacs) {
-            list = assignedDacs.map((_, i) => i);
-        } else {
-            list = [0];
-        }
-        
-        list.forEach((dacIdx, stepIndex) => {
-            channelStepMap.set(dacIdx, stepIndex); // Map DAC Index -> Logical Step Index
-            numChannels++;
-        });
-    } else {
-        const dacs = assignedDacs || [];
-        numChannels = dacs.length || 1;
-        for(let i=0; i<numChannels; i++) {
-            let stepIndex = i; // Default linear
-             if (direction === 'right_to_left') {
-                stepIndex = numChannels - 1 - i;
-            } else if (direction === 'center_to_out') {
-                stepIndex = Math.floor(Math.abs(i - (numChannels - 1) / 2));
-            } else if (direction === 'out_to_center') {
-                stepIndex = Math.min(i, numChannels - 1 - i);
-            }
-            channelStepMap.set(i, stepIndex);
-        }
-    }
-    
-    // If no channels, treat as single
-    if (numChannels === 0) numChannels = 1;
+    // Use synced time if progress is provided, otherwise fallback to absolute time
+    // syncedSeconds goes 0 -> clipDuration over the clip loop
+    const syncedSeconds = (progress * clipDuration);
+    const effectiveTime = (progress !== undefined && clipDuration > 0) ? syncedSeconds : (time * 0.001);
 
-    // Time-based Chase Position
-    // Cycle length = numChannels (or maxStep?)
-    // Actually, let's say cycle covers all channels.
-    const cycleLength = numChannels;
-    const t = (time * 0.001 * speed) % cycleLength;
-    
-    // Create big buffer
-    const pointsPerChannel = numPoints; 
-    const totalPoints = pointsPerChannel * numChannels; // We create a copy for EACH channel
-    const newBuffer = new Float32Array(totalPoints * 8);
-    
-    const distributions = new Map();
-    let offset = 0;
-    
-    // Iterate over PHYSICALLY ASSIGNED DACs (or 0..N-1 if simple)
-    // We need to iterate 0..N-1 to create the buffer segments.
-    // And map them to DACs.
-    
-    // Wait, channelStepMap keys are DAC indices.
-    // We should iterate over the Map entries.
-    
-    // If assignedDacs is missing, we simulate 1 channel?
-    const dacIndices = Array.from(channelStepMap.keys());
-    if (dacIndices.length === 0) dacIndices.push(0);
-    
-    for (const dacIndex of dacIndices) {
-        const stepIndex = channelStepMap.get(dacIndex) || 0;
-        
-        // Calculate Intensity for this channel
-        // Distance between 't' (active head) and 'stepIndex'.
-        // Circular distance? "Chase" usually loops.
-        
-        let dist = Math.abs(t - stepIndex);
-        // Handle wrap-around for loop
-        if (dist > cycleLength / 2) dist = cycleLength - dist;
-        
-        // Overlap Logic
-        // If dist < overlap/2 ?
-        // Let's say overlap=1 means only 1 active. overlap=2 means neighbors active.
-        // We use a bell curve or linear falloff.
-        // Intensity = 1 at dist=0. 0 at dist=overlap.
-        
-        let intensity = 0;
-        if (dist < overlap) {
-             intensity = 1.0 - (dist / overlap);
-             intensity = Math.max(0, intensity);
-             // Apply decay curve?
-             if (decay > 0) intensity = Math.pow(intensity, 1 - decay); // Modify curve
-        }
-        
-        // Copy points and Apply Intensity
-        const startOffset = offset;
+    if (mode === 'frame') {
+        const steps = paramSteps;
+        const t = (effectiveTime * speed) % steps;
+        const newPoints = new Float32Array(points.length);
         for (let i = 0; i < numPoints; i++) {
-             const srcOff = i * 8;
-             const dstOff = offset + i * 8;
-             
-             newBuffer[dstOff] = points[srcOff];
-             newBuffer[dstOff+1] = points[srcOff+1];
-             newBuffer[dstOff+2] = points[srcOff+2] || 0;
-             
-             newBuffer[dstOff+3] = points[srcOff+3] * intensity;
-             newBuffer[dstOff+4] = points[srcOff+4] * intensity;
-             newBuffer[dstOff+5] = points[srcOff+5] * intensity;
-             
-             // Blanking: If intensity is near zero, force blank?
-             // Or keep color but dark?
-             // If very dark, maybe blank to save galvos?
-             newBuffer[dstOff+6] = (intensity < 0.05) ? 1 : (points[srcOff+6]);
-             newBuffer[dstOff+7] = points[srcOff+7];
+            const norm = i / numPoints;
+            let stepIndex = 0;
+            if (direction === 'left_to_right') stepIndex = Math.floor(norm * (steps - 1));
+            else if (direction === 'right_to_left') stepIndex = Math.floor((1 - norm) * (steps - 1));
+            else if (direction === 'center_to_out') stepIndex = Math.floor(Math.abs(norm - 0.5) * 2 * (steps - 1));
+            else if (direction === 'out_to_center') stepIndex = Math.floor((1 - Math.abs(norm - 0.5) * 2) * (steps - 1));
+
+            let dist = Math.abs(t - stepIndex);
+            if (dist > steps / 2) dist = steps - dist;
+            let intensity = (dist < overlap) ? (1.0 - (dist / overlap)) : 0;
+            if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
+            
+            const off = i * 8;
+            newPoints.set(points.subarray(off, off + 8), off);
+            newPoints[off+3] *= intensity; newPoints[off+4] *= intensity; newPoints[off+5] *= intensity;
+            if (intensity < 0.05) newPoints[off+6] = 1;
         }
-        
-        distributions.set(dacIndex, { start: startOffset, length: numPoints });
-        offset += numPoints * 8;
+        return newPoints;
+    } else {
+        const { assignedDacs } = context || {};
+        let channelStepMap = new Map();
+        let numChannels = 0;
+        if (useCustomOrder) {
+            const list = (customOrder && customOrder.length > 0) ? customOrder.map(item => item.originalIndex) : (assignedDacs ? assignedDacs.map((_, i) => i) : [0]);
+            list.forEach((dacIdx, stepIndex) => { channelStepMap.set(dacIdx, stepIndex); numChannels++; });
+        } else {
+            numChannels = (assignedDacs ? assignedDacs.length : 1) || 1;
+            for(let i=0; i<numChannels; i++) {
+                let step = i;
+                if (direction === 'right_to_left') step = numChannels - 1 - i;
+                else if (direction === 'center_to_out') step = Math.floor(Math.abs(i - (numChannels - 1) / 2));
+                else if (direction === 'out_to_center') step = Math.min(i, numChannels - 1 - i);
+                channelStepMap.set(i, step);
+            }
+        }
+        const cycleLength = numChannels;
+        const t = (effectiveTime * speed) % cycleLength;
+        const totalPoints = numPoints * numChannels;
+        const newBuffer = new Float32Array(totalPoints * 8);
+        const distributions = new Map();
+        let offset = 0;
+        const dacIndices = Array.from(channelStepMap.keys());
+        if (dacIndices.length === 0) dacIndices.push(0);
+        for (const dacIndex of dacIndices) {
+            const stepIndex = channelStepMap.get(dacIndex) || 0;
+            let dist = Math.abs(t - stepIndex);
+            if (dist > cycleLength / 2) dist = cycleLength - dist;
+            let intensity = (dist < overlap) ? (1.0 - (dist / overlap)) : 0;
+            if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
+            const startOffset = offset;
+            for (let i = 0; i < numPoints; i++) {
+                const srcOff = i * 8; const dstOff = offset + i * 8;
+                newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
+                newBuffer[dstOff+3] *= intensity; newBuffer[dstOff+4] *= intensity; newBuffer[dstOff+5] *= intensity;
+                if (intensity < 0.05) newBuffer[dstOff+6] = 1;
+            }
+            distributions.set(dacIndex, { start: startOffset, length: numPoints * 8 });
+            offset += numPoints * 8;
+        }
+        newBuffer._channelDistributions = distributions;
+        return newBuffer;
     }
-    
-    newBuffer._channelDistributions = distributions;
-    return newBuffer;
 }
 
 export function applyOutputProcessing(frame, settings) {
@@ -828,80 +596,23 @@ export function applyOutputProcessing(frame, settings) {
     let points = frame.points;
     const isTyped = frame.isTypedArray || points instanceof Float32Array;
     const numPoints = isTyped ? (points.length / 8) : points.length;
-    
-    let newPoints;
-    if (isTyped) {
-        newPoints = new Float32Array(points);
-    } else {
-        newPoints = points.map(p => ({ ...p }));
-    }
-
+    let newPoints = isTyped ? new Float32Array(points) : points.map(p => ({ ...p }));
     for (let i = 0; i < numPoints; i++) {
         let x, y, r, g, b, blanking;
-        if (isTyped) {
-            x = newPoints[i*8];
-            y = newPoints[i*8+1];
-            r = newPoints[i*8+3];
-            g = newPoints[i*8+4];
-            b = newPoints[i*8+5];
-            blanking = newPoints[i*8+6];
-        } else {
-            x = newPoints[i].x;
-            y = newPoints[i].y;
-            r = newPoints[i].r;
-            g = newPoints[i].g;
-            b = newPoints[i].b;
-            blanking = newPoints[i].blanking ? 1 : 0;
-        }
-
-        // Apply Mirroring (Projector Correction)
-        if (flipX) x = -x;
-        if (flipY) y = -y;
-
+        if (isTyped) { x = newPoints[i*8]; y = newPoints[i*8+1]; r = newPoints[i*8+3]; g = newPoints[i*8+4]; b = newPoints[i*8+5]; blanking = newPoints[i*8+6]; }
+        else { x = newPoints[i].x; y = newPoints[i].y; r = newPoints[i].r; g = newPoints[i].g; b = newPoints[i].b; blanking = newPoints[i].blanking ? 1 : 0; }
+        if (flipX) x = -x; if (flipY) y = -y;
         if (transformationEnabled && outputArea) {
-            let u = (x + 1) / 2;
-            let v = (1 - y) / 2; 
-            if (transformationMode === 'crop') {
-                if (u < outputArea.x || u > outputArea.x + outputArea.w || 
-                    v < outputArea.y || v > outputArea.y + outputArea.h) {
-                    r = 0; g = 0; b = 0; blanking = 1;
-                }
-            } else if (transformationMode === 'scale') {
-                u = outputArea.x + (u * outputArea.w);
-                v = outputArea.y + (v * outputArea.h);
-                x = u * 2 - 1;
-                y = 1 - (v * 2);
-            }
+            let u = (x + 1) / 2; let v = (1 - y) / 2; 
+            if (transformationMode === 'crop') { if (u < outputArea.x || u > outputArea.x + outputArea.w || v < outputArea.y || v > outputArea.y + outputArea.h) { r = 0; g = 0; b = 0; blanking = 1; } }
+            else if (transformationMode === 'scale') { u = outputArea.x + (u * outputArea.w); v = outputArea.y + (v * outputArea.h); x = u * 2 - 1; y = 1 - (v * 2); }
         }
-
         if (safetyZones && safetyZones.length > 0) {
-            let u = (x + 1) / 2;
-            let v = (1 - y) / 2;
-            for (const zone of safetyZones) {
-                if (u >= zone.x && u <= zone.x + zone.w &&
-                    v >= zone.y && v <= zone.y + zone.h) {
-                    r = 0; g = 0; b = 0; blanking = 1;
-                    break;
-                }
-            }
+            let u = (x + 1) / 2; let v = (1 - y) / 2;
+            for (const zone of safetyZones) { if (u >= zone.x && u <= zone.x + zone.w && v >= zone.y && v <= zone.y + zone.h) { r = 0; g = 0; b = 0; blanking = 1; break; } }
         }
-
-        if (isTyped) {
-            newPoints[i*8] = x;
-            newPoints[i*8+1] = y;
-            newPoints[i*8+3] = r;
-            newPoints[i*8+4] = g;
-            newPoints[i*8+5] = b;
-            newPoints[i*8+6] = blanking;
-        } else {
-            newPoints[i].x = x;
-            newPoints[i].y = y;
-            newPoints[i].r = r;
-            newPoints[i].g = g;
-            newPoints[i].b = b;
-            newPoints[i].blanking = blanking > 0.5;
-        }
+        if (isTyped) { newPoints[i*8] = x; newPoints[i*8+1] = y; newPoints[i*8+3] = r; newPoints[i*8+4] = g; newPoints[i*8+5] = b; newPoints[i*8+6] = blanking; }
+        else { newPoints[i].x = x; newPoints[i].y = y; newPoints[i].r = r; newPoints[i].g = g; newPoints[i].b = b; newPoints[i].blanking = blanking > 0.5; }
     }
-    
     return { ...frame, points: newPoints, isTypedArray: isTyped };
 }

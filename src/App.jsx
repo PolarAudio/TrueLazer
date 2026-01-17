@@ -19,11 +19,13 @@ import GeneratorSettingsPanel from './components/GeneratorSettingsPanel';
 import ShortcutsWindow from './components/ShortcutsWindow';
 import RenameModal from './components/RenameModal';
 import OutputSettingsWindow from './components/OutputSettingsWindow';
+import AudioSettingsWindow from './components/AudioSettingsWindow';
 import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
 import { useAudioOutput } from './hooks/useAudioOutput'; // Add this
+import { useAudio } from './contexts/AudioContext.jsx'; // Add this
 import { MidiProvider, useMidi } from './contexts/MidiContext'; // Add this
 import { ArtnetProvider, useArtnet } from './contexts/ArtnetContext'; // Add this
 import { KeyboardProvider, useKeyboard } from './contexts/KeyboardContext'; // Add this
@@ -317,6 +319,20 @@ function reducer(state, action) {
         }
         return { ...state, clipContents: updatedClipContents };
     }
+    case 'REORDER_CLIP_EFFECTS': {
+        const { layerIndex, colIndex, oldIndex, newIndex } = action.payload;
+        const updatedClipContents = [...state.clipContents];
+        updatedClipContents[layerIndex] = [...updatedClipContents[layerIndex]];
+        const clipToUpdate = { ...updatedClipContents[layerIndex][colIndex] };
+        if (clipToUpdate && clipToUpdate.effects) {
+            const newEffects = [...clipToUpdate.effects];
+            const [movedEffect] = newEffects.splice(oldIndex, 1);
+            newEffects.splice(newIndex, 0, movedEffect);
+            clipToUpdate.effects = newEffects;
+            updatedClipContents[layerIndex][colIndex] = clipToUpdate;
+        }
+        return { ...state, clipContents: updatedClipContents };
+    }
     case 'REMOVE_LAYER_EFFECT': {
         const newLayerEffects = [...state.layerEffects];
         if (newLayerEffects[action.payload.layerIndex]) {
@@ -565,7 +581,22 @@ function reducer(state, action) {
         if (existingClip) {
             newClipContents[layerIndex][colIndex] = {
                 ...existingClip,
-                audioFile
+                audioFile,
+                audioVolume: existingClip.audioVolume !== undefined ? existingClip.audioVolume : 1.0
+            };
+            return { ...state, clipContents: newClipContents };
+        }
+        return state;
+    }
+    case 'SET_CLIP_AUDIO_VOLUME': {
+        const newClipContents = [...state.clipContents];
+        const { layerIndex, colIndex, volume } = action.payload;
+        newClipContents[layerIndex] = [...newClipContents[layerIndex]];
+        const existingClip = newClipContents[layerIndex][colIndex];
+        if (existingClip) {
+            newClipContents[layerIndex][colIndex] = {
+                ...existingClip,
+                audioVolume: volume
             };
             return { ...state, clipContents: newClipContents };
         }
@@ -1111,6 +1142,7 @@ function App() {
   const ildaParserWorker = useIldaParserWorker();
     const generatorWorker = useGeneratorWorker();
     const uiGeneratorWorkerRef = useRef(null);
+    const { fftLevels, getFftLevels } = useAudio() || {};
 
     useEffect(() => {
         const worker = new Worker(new URL('./utils/ui-generators.worker.js', import.meta.url), { type: 'module' });
@@ -1155,8 +1187,8 @@ function App() {
                         frames,
                         currentParams,
                         playbackSettings: {
-                            mode: 'fps',
-                            duration: frames.length / 60,
+                            mode: 'timeline',
+                            duration: 5,
                             beats: 8,
                             speedMultiplier: 1
                         },
@@ -1194,7 +1226,8 @@ function App() {
     setPlaybackRate,
     resetAllAudio,
     stopAllAudio,
-    getAudioInfo
+    getAudioInfo,
+    setClipVolume
   } = useAudioOutput(); // Initialize hook
   const initializedChannels = useRef(new Set());
   const ildaPlayerCurrentFrameIndex = useRef(0);
@@ -1213,6 +1246,8 @@ function App() {
   const [enabledShortcuts, setEnabledShortcuts] = useState({ midi: false, artnet: false, osc: false, keyboard: false });
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showOutputSettingsWindow, setShowOutputSettingsWindow] = useState(false);
+  const [showAudioSettingsWindow, setShowAudioSettingsWindow] = useState(false);
+  const [showFftSettingsWindow, setShowFftSettingsWindow] = useState(false);
   const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => {} });
   const [activeBottomTab, setActiveBottomTab] = useState('files');
 
@@ -1390,174 +1425,50 @@ function App() {
         const generatorRequestSeqRef = useRef(0); // Track latest request ID
             const latestProcessedSeqRef = useRef(0); // Track latest processed response ID        
             const generatorProcessingMap = useRef(new Map()); // key: "layer-col", val: boolean
-            const generatorPendingMap = useRef(new Map()); // key: "layer-col", val: { message, transferables }
-        
+            const generatorPendingMap = useRef(new Map()); // key: "layer-col", val: { message, transferables }        
             const previewTimeRef = useRef(performance.now());
-        
-          
-        
+      
             useEffect(() => {  
-
           // If we have a pending local update, it means the Ref is already ahead of (or equal to) the State.
-
-  
-
           // We skip overwriting the Ref with potentially stale State to prevent "jumping back".
-
-  
-
           if (hasPendingClipUpdate.current) {
-
-  
-
               hasPendingClipUpdate.current = false;
-
-  
-
               return;
-
-  
-
           }
-
-  
-
           if (clipContents) {
-
-  
-
               liveClipContentsRef.current = structuredClone(clipContents);
-
-  
-
           }
-
-  
-
       }, [clipContents]);
 
-  
-
-    
-
-  
-
       useEffect(() => {
-
-  
-
           if (hasPendingDacUpdate.current) {
-
-  
-
               hasPendingDacUpdate.current = false;
-
-  
-
               return;
-
-  
-
           }
-
-  
-
           if (dacOutputSettings) {
-
-  
-
               liveDacOutputSettingsRef.current = structuredClone(dacOutputSettings);
-
-  
-
           }
-
-  
-
       }, [dacOutputSettings]);
 
-  
-
-    
-
-  
-
       useEffect(() => {
-
-  
-
         layerIntensitiesRef.current = layerIntensities;
-
-  
-
         layerAutopilotsRef.current = layerAutopilots;
-
-  
-
         layerEffectsRef.current = layerEffects; // Update this
-
-  
-
         masterIntensityRef.current = masterIntensity;
-
-  
-
         layerBlackoutsRef.current = layerBlackouts;
-
-  
-
         layerSolosRef.current = layerSolos;
-
-  
-
         globalBlackoutRef.current = globalBlackout;
-
-  
-
         // dacOutputSettingsRef.current = dacOutputSettings; // Removed, using liveDacOutputSettingsRef
-
-  
-
         dacsRef.current = dacs;
-
-  
-
                 activeClipsDataRef.current = activeClipsData;
-
-  
-
-        
-
-  
-
                 clipContentsRef.current = clipContents; // We use liveClipContentsRef now but keep this synced for event handlers
-
-  
-
-        
-
-  
-
                 activeClipIndexesRef.current = activeClipIndexes;
                 layerAssignedDacsRef.current = layerAssignedDacs;
 
-  
-
         clipNamesRef.current = clipNames;
-
-  
-
         selectedIldaWorkerIdRef.current = selectedIldaWorkerId;
-
-  
-
         selectedIldaTotalFramesRef.current = selectedIldaTotalFrames;
-
-  
-
       }, [layerIntensities, layerAssignedDacs, layerAutopilots, layerEffects, masterIntensity, layerBlackouts, layerSolos, globalBlackout, dacOutputSettings, dacs, activeClipsData, clipContents, activeClipIndexes, clipNames, selectedIldaWorkerId, selectedIldaTotalFrames]);
-
-  
 
   const generateTestLineFrame = useCallback((yPos) => {
       // yPos: 0 (top) to 1 (bottom). ILDA: 1 to -1.
@@ -1949,9 +1860,32 @@ function App() {
               }
 
               // Calculate clip duration in seconds
-              // Use playbackFps as fallback if clip doesn't have its own rate
-              const clipFps = clip.fps || playbackFps || 30;
-              const clipDuration = (clip.totalFrames || 30) / clipFps;
+              const playbackSettings = liveClip ? liveClip.playbackSettings : (clip.playbackSettings || {});
+              let clipDuration = 1;
+
+              if (playbackSettings.mode === 'timeline') {
+                  clipDuration = playbackSettings.duration || 1;
+              } else if (playbackSettings.mode === 'bpm') {
+                  const bpm = state.bpm || 120;
+                  const beats = playbackSettings.beats || 8;
+                  clipDuration = (beats * 60) / bpm;
+              } else {
+                  // FPS Mode
+                  const clipFps = playbackSettings.fps || clip.fps || playbackFps || 30;
+                  const totalFrames = clip.totalFrames || 30;
+                  clipDuration = totalFrames / clipFps;
+              }
+              // Adjust for speed multiplier if needed, but usually resolveParam handles speed separately?
+              // resolveParam uses clipDuration to map progress (0..1) to Time.
+              // If speedMultiplier affects playback speed (how fast progress moves 0..1), 
+              // then clipDuration (Real Time duration of 0..1) changes.
+              // So yes, we should probably account for speedMultiplier.
+              // BUT, frameFetcherLoop handles the progress advancement speed using speedMultiplier.
+              // So 'progress' is already speed-adjusted.
+              // If we want 'clipTime' to be "Real World Time elapsed within the clip", 
+              // we should use the "Nominal Duration" / Speed.
+              const speedMult = playbackSettings.speedMultiplier || 1;
+              if (speedMult !== 0) clipDuration /= speedMult;
 
               const modifiedFrame = applyEffects(intensityAdjustedFrame, effects, { 
                   progress: clipProgress, 
@@ -1960,7 +1894,8 @@ function App() {
                   assignedDacs: clip.assignedDacs,
                   syncSettings: clip.syncSettings || {},
                   bpm: state.bpm,
-                  clipDuration: clipDuration
+                  clipDuration: clipDuration,
+                  fftLevels: getFftLevels ? getFftLevels() : fftLevels // Use helper for fresh data
               });
 
               dacList.forEach((targetDac, dacIndex) => {
@@ -2132,21 +2067,23 @@ function App() {
                   currentProgress = (totalElapsed / totalDurationMs) % 1.0;
                   targetIndex = Math.floor(currentProgress * totalFrames);
               }
-          } else if (dt >= currentFrameInterval) {
-              const framesToAdvance = Math.floor(dt / currentFrameInterval);
-              // Update lastFrameFetchTimeRef only when we advance frames in FPS mode
-              // Actually, we should update it every loop iteration at the end, but here we do it to sync with frame grid
-              if (isPlaying) {
-                  lastFrameFetchTimeRef.current[workerId] = timestamp - (dt % currentFrameInterval);
-                  targetIndex = (targetIndex + framesToAdvance);
-              } else {
-                  lastFrameFetchTimeRef.current[workerId] = timestamp;
-              }
-              
-              currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
           } else {
-              // Not enough time passed for FPS mode frame advance
-              return; 
+              // FPS Mode (Default)
+              const clipFps = pSettings.fps || 60;
+              const clipFrameInterval = 1000 / (clipFps * (pSettings.speedMultiplier || 1));
+              
+              if (dt >= clipFrameInterval) {
+                  const framesToAdvance = Math.floor(dt / clipFrameInterval);
+                  if (isPlaying) {
+                      lastFrameFetchTimeRef.current[workerId] = timestamp - (dt % clipFrameInterval);
+                      targetIndex = (targetIndex + framesToAdvance);
+                  } else {
+                      lastFrameFetchTimeRef.current[workerId] = timestamp;
+                  }
+                  currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
+              } else {
+                  return; // Not enough time passed
+              }
           }
           
           // For non-FPS modes, we update lastFrameFetchTimeRef every loop to keep dt correct
@@ -2755,6 +2692,10 @@ function App() {
         console.log("Menu action received:", action);
         if (action === 'output-settings') {
           setShowOutputSettingsWindow(true);
+        } else if (action === 'settings-audio-output') {
+          setShowAudioSettingsWindow(true);
+        } else if (action === 'settings-audio-fft') {
+          setShowFftSettingsWindow(true);
         } else if (action.startsWith('set-theme-')) {
           const themeColor = action.split('set-theme-')[1];
           dispatch({ type: 'SET_THEME', payload: themeColor });
@@ -3110,7 +3051,7 @@ function App() {
         if (activeColIndex !== null) {
             const clip = clipContents[layerIndex][activeColIndex];
             if (clip && clip.audioFile && !getAudioInfo(layerIndex)) {
-                playAudio(layerIndex, clip.audioFile.path, true);
+                playAudio(layerIndex, clip.audioFile.path, clip.audioVolume ?? 1.0, true);
             }
         }
     });
@@ -3206,7 +3147,7 @@ function App() {
 
     // Manage associated audio: load/cue it regardless of playback state, but only play if `isPlaying`
     if (clip && clip.audioFile) {
-        playAudio(layerIndex, clip.audioFile.path, isPlaying);
+        playAudio(layerIndex, clip.audioFile.path, clip.audioVolume ?? 1.0, isPlaying);
     } else {
         stopAudio(layerIndex);
     }
@@ -3524,7 +3465,12 @@ function App() {
               layerIndex,
               syncSettings: clip.syncSettings || {},
               bpm: state.bpm,
-              clipDuration: (clip.totalFrames || 30) / (clip.fps || playbackFps || 30),
+              clipDuration: (() => {
+                  const pb = clip.playbackSettings || {};
+                  if (pb.mode === 'timeline') return pb.duration || 1;
+                  if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (state.bpm || 120);
+                  return (clip.totalFrames || 30) / (clip.fps || playbackFps || 30);
+              })(),
               progress: progressRef.current[workerId] || 0 // Add progress
             };
           }
@@ -3866,6 +3812,11 @@ function App() {
             dacSettings={dacOutputSettings}
             onUpdateDacSettings={handleUpdateDacSettings}
         />
+        <AudioSettingsWindow
+            show={showAudioSettingsWindow || showFftSettingsWindow}
+            onClose={() => { setShowAudioSettingsWindow(false); setShowFftSettingsWindow(false); }}
+            initialTab={showFftSettingsWindow ? 'fft' : 'output'}
+        />
         <RenameModal
             show={showRenameModal}
             title={renameModalConfig.title}
@@ -4001,9 +3952,15 @@ function App() {
               intensity={selectedClipFinalIntensity}
               syncSettings={selectedClip?.syncSettings}
               bpm={state.bpm}
-              clipDuration={(selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30)}
+              clipDuration={(() => {
+                  const pb = selectedClip?.playbackSettings || {};
+                  if (pb.mode === 'timeline') return pb.duration || 1;
+                  if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (state.bpm || 120);
+                  return (selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30);
+              })()}
               progress={selectedClipProgress} // Add progress
               previewTime={previewTimeRef.current} // Add master time
+              fftLevels={getFftLevels ? getFftLevels() : fftLevels}
               onToggleBeamEffect={() => handleToggleBeamEffect('clip')}
               onCycleDisplayMode={() => handleCycleDisplayMode('clip')}
             />
@@ -4018,6 +3975,7 @@ function App() {
               masterIntensity={masterIntensity}
               dacSettings={selectedDac ? (liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[`${selectedDac.ip}:${selectedDac.channel}`] : dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`]) : null}
               previewTime={previewTimeRef.current} // Add master time
+              fftLevels={getFftLevels ? getFftLevels() : fftLevels}
               onToggleBeamEffect={() => handleToggleBeamEffect('world')}
               onCycleDisplayMode={() => handleCycleDisplayMode('world')}
             />
@@ -4082,6 +4040,8 @@ function App() {
               selectedColIndex={selectedColIndex}
               clip={selectedClip}
               audioInfo={getAudioInfo(selectedLayerIndex)}
+              bpm={state.bpm}
+              getFftLevels={getFftLevels}
               onAssignAudio={async () => {
                 const filePath = await window.electronAPI.showAudioFileDialog();
                 if (filePath) {
@@ -4089,12 +4049,20 @@ function App() {
                     dispatch({ type: 'SET_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, audioFile: { path: filePath, name: fileName } } });
                 }
               }}
-              onRemoveAudio={() => dispatch({ type: 'REMOVE_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex } })}
+              onRemoveAudio={() => {
+                  stopAudio(selectedLayerIndex);
+                  dispatch({ type: 'REMOVE_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex } });
+              }}
+              onUpdateAudioVolume={(lIdx, cIdx, volume) => {
+                  dispatch({ type: 'SET_CLIP_AUDIO_VOLUME', payload: { layerIndex: lIdx, colIndex: cIdx, volume } });
+                  setClipVolume(lIdx, volume);
+              }}
               onUpdatePlaybackSettings={(lIdx, cIdx, settings) => dispatch({ type: 'UPDATE_CLIP_PLAYBACK_SETTINGS', payload: { layerIndex: lIdx, colIndex: cIdx, settings } })}
               onSetParamSync={(paramId, syncMode) => dispatch({ type: 'SET_CLIP_PARAM_SYNC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, paramId, syncMode } })}
               onToggleDacMirror={(lIdx, cIdx, dIdx, axis) => dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex: dIdx, axis } })}
               onRemoveDac={(dacIndex) => dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } })}
               onRemoveEffect={(lIdx, cIdx, eIdx) => dispatch({ type: 'REMOVE_CLIP_EFFECT', payload: { layerIndex: lIdx, colIndex: cIdx, effectIndex: eIdx } })}
+              onReorderEffects={(lIdx, cIdx, oldIdx, newIdx) => dispatch({ type: 'REORDER_CLIP_EFFECTS', payload: { layerIndex: lIdx, colIndex: cIdx, oldIndex: oldIdx, newIndex: newIdx } })}
               onAddEffect={(effect) => dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effect } })}
               onParameterChange={handleEffectParameterChange}
               onGeneratorParameterChange={handleGeneratorParameterChange}

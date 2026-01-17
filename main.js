@@ -487,18 +487,28 @@ function buildApplicationMenu(mode) {
       submenu: [
         { label: 'General', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
         {
-          label: 'Audio Output',
-          submenu: audioDevices.length > 0 
-            ? audioDevices.map(device => ({
-                label: device.label || `Device ${device.deviceId.slice(0, 5)}`,
-                type: 'radio',
-                checked: currentAudioDeviceId === device.deviceId,
-                click: () => {
-                  currentAudioDeviceId = device.deviceId;
-                  if(mainWindow) mainWindow.webContents.send('update-audio-device-id', device.deviceId);
-                }
-              }))
-            : [{ label: 'No devices found', enabled: false }]
+          label: 'Audio Settings',
+          submenu: [
+            {
+              label: 'Audio Output',
+              submenu: audioDevices.length > 0 
+                ? [
+                    ...audioDevices.map(device => ({
+                        label: device.label || `Device ${device.deviceId.slice(0, 5)}`,
+                        type: 'radio',
+                        checked: currentAudioDeviceId === device.deviceId,
+                        click: () => {
+                          currentAudioDeviceId = device.deviceId;
+                          if(mainWindow) mainWindow.webContents.send('update-audio-device-id', device.deviceId);
+                        }
+                    })),
+                    { type: 'separator' },
+                    { label: 'Audio Output Settings...', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-output'); } }
+                  ]
+                : [{ label: 'No devices found', enabled: false }]
+            },
+            { label: 'FFT Settings...', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-fft'); } }
+          ]
         }
       ],
     },

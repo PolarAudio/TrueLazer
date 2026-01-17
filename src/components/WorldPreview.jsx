@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime = 0, onToggleBeamEffect, onCycleDisplayMode }) => {
+const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime = 0, fftLevels = { low: 0, mid: 0, high: 0 }, onToggleBeamEffect, onCycleDisplayMode }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`world-preview-${Math.random()}`);
@@ -18,7 +18,7 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
         id: canvasId.current,
         canvas: offscreen,
         type: 'world',
-        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, previewTime }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, previewTime, fftLevels }
       }
     }, [offscreen]);
 
@@ -46,10 +46,10 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime }
+        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels }
       }
     });
-  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime]);
+  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels]);
 
   return (
     <div className="world-preview">

@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { resolveParam } from '../utils/effects';
 
-const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChange, showRange = false, disabled = false, animSettings, progressRef, workerId, clipDuration }) => {
+const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChange, showRange = false, disabled = false, animSettings, progressRef, workerId, clipDuration, bpm, getFftLevels }) => {
     const trackRef = useRef(null);
     const valueHandleRef = useRef(null);
     const valueFillRef = useRef(null);
@@ -45,7 +45,9 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                 const context = {
                     progress: currentProgress,
                     time: performance.now(),
-                    clipDuration: clipDuration || 1
+                    clipDuration: clipDuration || 1,
+                    bpm: bpm || 120,
+                    fftLevels: getFftLevels ? getFftLevels() : { low: 0, mid: 0, high: 0 }
                 };
 
                 displayValue = resolveParam(null, currentValue, animSettings, context);
@@ -66,7 +68,7 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
         animationFrameId = requestAnimationFrame(updateVisuals);
 
         return () => cancelAnimationFrame(animationFrameId);
-    }, [animSettings, progressRef, workerId, currentValue, dragging, safeMin, safeMax]);
+    }, [animSettings, progressRef, workerId, currentValue, dragging, safeMin, safeMax, bpm, getFftLevels, clipDuration]);
 
     const handleMouseDown = (e, handle) => {
         if (disabled) return;

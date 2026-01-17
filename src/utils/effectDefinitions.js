@@ -137,18 +137,21 @@ export const effectDefinitions = [
     id: 'delay',
     name: 'Delay',
     type: 'effect',
-    description: 'Channel-based delay effect.',
+    description: 'Frame or Channel based delay effect.',
     defaultParams: {
-      useCustomOrder: false, // false = Auto (Linear/Directional), true = Custom
+      mode: 'frame', // 'frame' or 'channel'
+      playstyle: 'repeat', // 'once', 'repeat', 'bounce'
+      useCustomOrder: false, 
       delayDirection: 'left_to_right', 
       delayAmount: 5,
       decay: 0.8,
-      customOrder: [], // Array of assigned channel indices
+      customOrder: [], 
+      enabled: true,
     },
     paramControls: [
-      // Custom Order and Mode UI will be handled in EffectEditor.jsx
-      // We list generic controls here that don't need special UI logic, or can be overridden
-      { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+      { id: 'mode', label: 'Mode', type: 'select', options: ['frame', 'channel'] },
+      { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat', 'bounce'] },
+      { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox', showIf: { mode: 'channel' } },
       { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
       { id: 'delayAmount', label: 'Delay Time', type: 'range', min: 1, max: 60, step: 1 },
       { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
@@ -158,8 +161,10 @@ export const effectDefinitions = [
     id: 'chase',
     name: 'Chase',
     type: 'effect',
-    description: 'Step-based chase effect.',
+    description: 'Frame or Channel based chase effect.',
     defaultParams: {
+        mode: 'frame',
+        playstyle: 'repeat',
         steps: 4,
         decay: 0.8,
         speed: 1.0,
@@ -167,13 +172,16 @@ export const effectDefinitions = [
         direction: 'left_to_right',
         useCustomOrder: false,
         customOrder: [],
+        enabled: true,
     },
     paramControls: [
-        { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1 },
+        { id: 'mode', label: 'Mode', type: 'select', options: ['frame', 'channel'] },
+        { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat', 'bounce'] },
+        { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1, showIf: { mode: 'frame' } },
         { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
         { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 5.0, step: 0.1 },
         { id: 'overlap', label: 'Overlap', type: 'range', min: 1, max: 4, step: 1 },
-        { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+        { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox', showIf: { mode: 'channel' } },
         { id: 'direction', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
     ]
   },
@@ -184,9 +192,11 @@ export const effectDefinitions = [
     description: 'Controls the blanking of the laser output.',
     defaultParams: {
       blankingInterval: 0, 
+      spacing: 0,
     },
     paramControls: [
       { id: 'blankingInterval', label: 'Blanking Interval', type: 'range', min: 0, max: 10, step: 1 },
+      { id: 'spacing', label: 'Spacing', type: 'range', min: 0, max: 20, step: 1 },
     ],
   },
   {

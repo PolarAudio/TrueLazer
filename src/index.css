@@ -1119,7 +1119,7 @@ input[type="checkbox"]:checked:before {
 }
 
 .assigned-audio-info {
-    background-color: #3a3f47;
+    background-color: #2a2a2a;
     padding: 10px;
     border-radius: 5px;
     display: flex;
@@ -1380,7 +1380,7 @@ input[type="checkbox"]:checked:before {
 .remove-effect-btn {
   background: none;
   border: none;
-  color: #555;
+  color: var(--theme-color);
   font-size: 16px;
   cursor: pointer;
   line-height: 1;
@@ -1414,7 +1414,7 @@ input[type="checkbox"]:checked:before {
 
 .audio-file-name {
   font-size: 10px;
-  color: var(--theme-color);
+  color: #aaa !important;
   font-weight: bold;
 }
 

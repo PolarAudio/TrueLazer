@@ -5,7 +5,7 @@ import RangeSlider from './RangeSlider';
 import CollapsiblePanel from './CollapsiblePanel';
 import AnimationControls from './AnimationControls';
 
-const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration }) => {
+const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration, bpm, getFftLevels }) => {
     const [expanded, setExpanded] = useState(false);
     const [hovered, setHovered] = useState(false);
 
@@ -47,7 +47,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                 gap: '2px'
             }}
         >
-             {/* Row 1: Label (Span 3 if we were using a 3-column grid for outer, but here we nest) */}
+             {/* Row 1: Label */}
              <div className="param-row-label" style={{ width: '100%' }}>
                 <label className="param-label" draggable onDragStart={handleDragStart} style={{fontSize: '11px', color: '#aaa'}}>{control.label}</label>
              </div>
@@ -77,13 +77,15 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                                 step={control.step}
                                 value={value}
                                 rangeValue={currentRange}
-                                onChange={onChange} // Update Main Value
-                                onRangeChange={handleRangeChange} // Update Animation Range
-                                showRange={expanded} // Show Min/Max handles only when expanded
+                                onChange={onChange} 
+                                onRangeChange={handleRangeChange} 
+                                showRange={expanded} 
                                 animSettings={animSettings}
                                 progressRef={progressRef}
                                 workerId={workerId}
                                 clipDuration={clipDuration}
+                                bpm={bpm}
+                                getFftLevels={getFftLevels}
                             />
                         </Mappable>
                     ) : control.type === 'text' ? (
@@ -112,7 +114,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                  )}
              </div>
 
-             {/* Row 3: Animation Settings (Unfolded) - Spans full width */}
+             {/* Row 3: Animation Settings (Unfolded) */}
              {expanded && (control.type === 'range') && (
                  <div className="param-anim-settings" style={{ marginTop: '5px', padding: '5px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
                     <AnimationControls 
@@ -125,34 +127,11 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
     );
 };
 
-// Custom Order Editor Component
 const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) => {
-    // If customOrder is empty, populate with assignedDacs indices initially?
-    // Or just show assignedDacs and let user "Enable/Reorder"?
-    // User said: "list the avialebale Channels... change the order... used for calculating delay".
-    // We should probably show a list of items.
-    
-    // State to manage list if we want drag/drop without commit every frame?
-    // Actually, we commit to parent onChange.
-
-    // available items: assignedDacs (which have name/ip/channel).
-    // The "customOrder" array probably stores indices of assignedDacs? 
-    // Or maybe it stores unique IDs of channels?
-    // Let's store the INDEX into assignedDacs for simplicity, assuming assignedDacs doesn't change often.
-    // Or better: Store { ip, channel } objects.
-
-    // Logic:
-    // 1. If customOrder is empty, initialize it with assignedDacs (default order).
-    // 2. Render list.
-    
     const [draggedItem, setDraggedItem] = useState(null);
-
     const items = (customOrder && customOrder.length > 0) 
         ? customOrder 
         : assignedDacs.map((d, i) => ({ ip: d.ip, channel: d.channel, label: `Ch ${d.channel} (${d.hostName || d.ip})`, originalIndex: i }));
-
-    // If items are just objects, we need to ensure they match assignedDacs to display labels if we stored only IDs.
-    // For now, let's assume we store full object or at least enough info.
 
     const handleDragStart = (e, index) => {
         setDraggedItem(items[index]);
@@ -162,15 +141,10 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) =>
         e.preventDefault();
         const draggedOverItem = items[index];
         if (draggedItem === draggedOverItem) return;
-
         const newItems = items.filter(item => item !== draggedItem);
         newItems.splice(index, 0, draggedItem);
         onChange(newItems);
     };
-    
-    // Ensure we trigger onChange if we initialized from default
-    // (This might cause infinite loop if not careful. Only if customOrder was empty).
-    // We'll let the user explicitly interact to save.
 
     return (
         <div className="custom-order-editor" style={{ marginBottom: '10px', padding: '5px', background: '#222', borderRadius: '4px' }}>
@@ -202,26 +176,68 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) =>
     );
 };
 
-const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration }) => {
+const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels }) => {
   if (!effect) return null;
-
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
-
   if (!effectDefinition) return null;
 
   const isDelay = effect.id === 'delay';
+  const isChase = effect.id === 'chase';
+  const isEnabled = effect.params.enabled !== false;
+  const isChannelMode = effect.params.mode === 'channel';
+
+  const handleBlackoutDragStart = (e) => {
+    e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
+        type: 'toggle',
+        paramName: 'enabled',
+        label: `${effect.name} ON`,
+        ...context
+    }));
+  };
 
   return (
     <CollapsiblePanel 
         title={effect.name} 
         headerActions={
-            <button className="remove-effect-btn" onClick={onRemove}>×</button>
+            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                {(isDelay || isChase) && (
+                    <button 
+                        className="mode-toggle-btn" 
+                        onClick={() => onParamChange('mode', isChannelMode ? 'frame' : 'channel')}
+                        style={{ 
+                            fontSize: '9px', 
+                            padding: '2px 5px', 
+                            background: isChannelMode ? '#444' : 'var(--theme-color)', 
+                            border: 'none', 
+                            color: 'white', 
+                            borderRadius: '3px',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {isChannelMode ? 'CHANNEL' : 'FRAME'}
+                    </button>
+                )}
+                <Mappable id={`${effect.id}_blackout`}>
+                    <button 
+                        className={`layer-control-button ${!isEnabled ? 'active' : ''}`} 
+                        onClick={() => onParamChange('enabled', !isEnabled)}
+                        draggable
+                        onDragStart={handleBlackoutDragStart}
+                        style={{ padding: '2px', background: !isEnabled ? 'red' : 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex' }}
+                        title="Toggle Effect"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="m10.79 12.912-1.614-1.615a3.5 3.5 0 0 1-4.474-4.474l-2.06-2.06C.938 6.278 0 8 0 8s3 5.5 8 5.5a7 7 0 0 0 2.79-.588M5.21 3.088A7 7 0 0 1 8 2.5c5 0 8 5.5 8 5.5s-.939 1.721-2.641 3.238l-2.062-2.062a3.5 3.5 0 0 0-4.474-4.474z"/>
+                            <path d="M5.525 7.646a2.5 2.5 0 0 0 2.829 2.829zm4.95.708-2.829-2.83a2.5 2.5 0 0 1 2.829 2.829zm3.171 6-12-12 .708-.708 12 12z"/>
+                        </svg>
+                    </button>
+                </Mappable>
+                <button className="remove-effect-btn" onClick={onRemove}>×</button>
+            </div>
         }
     >
-        {/* Special UI for Delay Effect */}
         {isDelay && (
             <>
-                {/* Custom Order UI if Custom Order Mode is enabled */}
                 {effect.params.useCustomOrder && (
                     <CustomOrderEditor 
                         customOrder={effect.params.customOrder} 
@@ -233,16 +249,13 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
         )}
 
         {effectDefinition.paramControls.map(control => {
-          // Filter out params we handled manually
           if (isDelay && (['customOrder'].includes(control.id))) return null;
-          
           if (control.showIf) {
             const shouldShow = Object.entries(control.showIf).every(([key, value]) => {
               return effect.params[key] === value;
             });
             if (!shouldShow) return null;
           }
-
           const paramKey = `${effect.id}.${control.id}`;
           const currentAnimSettings = typeof syncSettings[paramKey] === 'object' 
                 ? syncSettings[paramKey] 
@@ -261,6 +274,8 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                 progressRef={progressRef}
                 workerId={context.workerId}
                 clipDuration={clipDuration}
+                bpm={bpm}
+                getFftLevels={getFftLevels}
             />
           );
         })}
