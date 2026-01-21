@@ -1,10 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import IldaThumbnail from './IldaThumbnail';
 
 const FileBrowser = () => {
   const [selectedDirectory, setSelectedDirectory] = useState('');
   const [ildFiles, setIldFiles] = useState([]);
+
+  useEffect(() => {
+    const loadDefaultDir = async () => {
+      if (window.electronAPI && window.electronAPI.getUserIldaPath) {
+        const defaultDir = await window.electronAPI.getUserIldaPath();
+        if (defaultDir) {
+          setSelectedDirectory(defaultDir);
+          const files = await window.electronAPI.readIldFiles(defaultDir);
+          setIldFiles(files);
+        }
+      }
+    };
+    loadDefaultDir();
+  }, []);
 
   const handleOpenExplorer = async () => {
     if (window.electronAPI) {

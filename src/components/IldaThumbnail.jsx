@@ -15,7 +15,7 @@ const IldaThumbnail = ({ frame, effects, width = 100, height = 100 }) => {
     // Cleanup on unmount
     return () => {
         if (rendererRef.current) {
-            // rendererRef.current.destroy(); // If destroy method exists
+            rendererRef.current.destroy();
             rendererRef.current = null;
         }
     };

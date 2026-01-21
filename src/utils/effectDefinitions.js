@@ -150,7 +150,7 @@ export const effectDefinitions = [
     },
     paramControls: [
       { id: 'mode', label: 'Mode', type: 'select', options: ['frame', 'channel'] },
-      { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat', 'bounce'] },
+      { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat'] },
       { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox', showIf: { mode: 'channel' } },
       { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
       { id: 'delayAmount', label: 'Delay Time', type: 'range', min: 1, max: 60, step: 1 },

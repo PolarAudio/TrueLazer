@@ -2,6 +2,9 @@ import { app, BrowserWindow, Menu, ipcMain, dialog } from 'electron';
 import url, { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import fs from 'fs';
+import os from 'os';
+import pidusage from 'pidusage';
+import psTree from 'ps-tree';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
 import getSystemFonts from 'get-system-fonts';
@@ -400,16 +403,68 @@ async function getDefaultProjectPath() {
   }
 }
 
+async function initializeUserData() {
+  const documentsPath = app.getPath('documents');
+  const userDataPath = path.join(documentsPath, 'TrueLazer');
+  const userIldaPath = path.join(userDataPath, 'ILDA-FILES');
+  
+  try {
+      await fs.promises.mkdir(userDataPath, { recursive: true });
+      await fs.promises.mkdir(userIldaPath, { recursive: true });
+
+      // Copy default assets
+      const resourcePath = app.isPackaged 
+          ? path.join(process.resourcesPath, 'ILDA-FILES')
+          : path.join(__dirname, 'src', 'ILDA-FILE-FORMAT-FILES');
+
+      const sourceFiles = await fs.promises.readdir(resourcePath);
+      for (const file of sourceFiles) {
+          const srcFile = path.join(resourcePath, file);
+          const destFile = path.join(userIldaPath, file);
+          
+          try {
+              await fs.promises.access(destFile);
+          } catch {
+              const stat = await fs.promises.stat(srcFile);
+              if (stat.isFile()) {
+                  await fs.promises.copyFile(srcFile, destFile);
+              }
+          }
+      }
+      return userIldaPath;
+  } catch (e) {
+      console.warn("Could not copy default ILDA files:", e);
+      return userIldaPath; // Return path anyway even if copy failed
+  }
+}
+
 // IPC handler to expose the default project path to the renderer
 ipcMain.handle('get-default-project-path', async () => {
   return await getDefaultProjectPath();
 });
 
+ipcMain.handle('get-user-ilda-path', async () => {
+    const documentsPath = app.getPath('documents');
+    return path.join(documentsPath, 'TrueLazer', 'ILDA-FILES');
+});
+
 let currentProjectpath = null;
+
+function updateWindowTitle() {
+  if (!mainWindow) return;
+  const baseTitle = 'TrueLazer';
+  if (currentProjectpath) {
+    const projectName = path.basename(currentProjectpath, '.tlp');
+    mainWindow.setTitle(`${baseTitle} - ${projectName}`);
+  } else {
+    mainWindow.setTitle(`${baseTitle} - New Project`);
+  }
+}
 
 // IPC handlers for project management
 ipcMain.on('new-project', (event) => {
   currentProjectpath = null;
+  updateWindowTitle();
   if(mainWindow) mainWindow.webContents.send('new-project');
 });
 
@@ -422,6 +477,7 @@ ipcMain.on('open-project', async (event) => {
   });
   if (!canceled && filePaths.length > 0) {
     currentProjectpath = filePaths[0];
+    updateWindowTitle();
     try {
       const data = await fs.promises.readFile(currentProjectpath, 'utf-8');
       if(mainWindow) mainWindow.webContents.send('load-project-data', JSON.parse(data));
@@ -435,6 +491,7 @@ ipcMain.on('save-project', async (event, projectData) => {
   if (currentProjectpath) {
     try {
       await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
+      updateWindowTitle();
     } catch (error) {
       console.error('Failed to save project file:', error);
     }
@@ -452,6 +509,7 @@ ipcMain.on('save-project-as', async (event, projectData) => {
   });
   if (!canceled && filePath) {
     currentProjectpath = filePath;
+    updateWindowTitle();
     try {
       await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
     } catch (error) {
@@ -928,6 +986,16 @@ function createWindow() {
     }
   });
 
+  ipcMain.handle('check-file-exists', async (event, filePath) => {
+    try {
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      await fs.promises.access(fullPath, fs.constants.F_OK);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  });
+
   ipcMain.handle('read-ild-files', async (event, directoryPath) => {
     try {
       const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
@@ -1096,9 +1164,12 @@ ipcMain.handle('get-project-fonts', async () => {
   });
 
   ipcMain.handle('save-ilda-file', async (event, arrayBuffer, defaultName = 'export.ild') => {
+    const documentsPath = app.getPath('documents');
+    const userIldaPath = path.join(documentsPath, 'TrueLazer', 'ILDA-FILES');
+    
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Export ILDA File',
-      defaultPath: defaultName,
+      defaultPath: path.join(userIldaPath, defaultName),
       filters: [{ name: 'ILDA Files', extensions: ['ild'] }]
     });
 
@@ -1174,7 +1245,98 @@ ipcMain.handle('get-project-fonts', async () => {
       isRendererReadyForNdi = true;
   });
 
-  // Background NDI Capture Loop
+  // Background System Stats Loop
+  let lastScaleFactor = 1; // Stateful scaling factor for stability
+
+  const sendSystemStats = async () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+          try {
+              // 1. Get Native Main CPU (The "Truth Anchor")
+              const nativeUsage = process.getCPUUsage();
+              let nativeMainCpu = (nativeUsage && typeof nativeUsage.percentCPU === 'number') 
+                  ? nativeUsage.percentCPU 
+                  : 0;
+              if (isNaN(nativeMainCpu)) nativeMainCpu = 0;
+
+              // 2. Get RAM (Private Bytes)
+              const electronMetrics = app.getAppMetrics();
+              let totalMemKB = 0;
+              electronMetrics.forEach(m => {
+                  const mem = m.memory?.privateBytes;
+                  if (typeof mem === 'number') totalMemKB += mem;
+              });
+
+              // 3. Get Child PIDs
+              psTree(process.pid, (err, children) => {
+                  // Strictly filter PIDs to ensure they are numbers
+                  const childPids = err ? [] : children
+                      .map(p => parseInt(p.PID))
+                      .filter(pid => !isNaN(pid) && pid > 0);
+                  
+                  // 4. pidusage on Main + Children
+                  pidusage([process.pid, ...childPids], (err, stats) => {
+                      if (err) return;
+
+                      const numCores = os.cpus().length || 1;
+                      
+                      // Calculate Main CPU according to pidusage
+                      const mainStat = stats[process.pid];
+                      let pidusageMainNormalized = 0;
+                      if (mainStat && typeof mainStat.cpu === 'number' && !isNaN(mainStat.cpu)) {
+                          pidusageMainNormalized = mainStat.cpu / numCores;
+                      }
+
+                      // 5. Calculate Scaling Factor (Calibration)
+                      let currentFactor = lastScaleFactor;
+                      if (nativeMainCpu > 1.0 && pidusageMainNormalized > 0.1) {
+                          const calculatedFactor = nativeMainCpu / pidusageMainNormalized;
+                          if (Number.isFinite(calculatedFactor) && !isNaN(calculatedFactor)) {
+                              currentFactor = Math.max(0.8, Math.min(4.0, calculatedFactor));
+                              lastScaleFactor = (lastScaleFactor * 0.7) + (currentFactor * 0.3);
+                          }
+                      }
+                      
+                      // Safety: Ensure lastScaleFactor is valid
+                      if (!Number.isFinite(lastScaleFactor) || isNaN(lastScaleFactor)) {
+                          lastScaleFactor = 1;
+                      }
+
+                      // 6. Calculate Child CPU Usage
+                      let childrenCpuRaw = 0;
+                      childPids.forEach(pid => {
+                          const s = stats[pid];
+                          if (s && typeof s.cpu === 'number' && !isNaN(s.cpu)) {
+                              childrenCpuRaw += s.cpu;
+                          }
+                      });
+                      
+                      const childrenCpuNormalized = (childrenCpuRaw / numCores) * lastScaleFactor;
+
+                      // 7. Total System CPU
+                      let totalCpu = nativeMainCpu + childrenCpuNormalized;
+
+                      // Final Safety Check
+                      if (isNaN(totalCpu) || !Number.isFinite(totalCpu)) {
+                          console.warn("Total CPU was NaN/Infinite, resetting to 0. Components:", { nativeMainCpu, childrenCpuNormalized, lastScaleFactor });
+                          totalCpu = 0;
+                      }
+
+                      if (mainWindow && !mainWindow.isDestroyed()) {
+                          mainWindow.webContents.send('system-stats', {
+                              cpu: totalCpu.toFixed(1),
+                              ram: (totalMemKB / 1024).toFixed(0)
+                          });
+                      }
+                  });
+              });
+          } catch (e) {
+              console.error("Error in system stats:", e);
+          }
+      }
+  };
+  setInterval(sendSystemStats, 1000); 
+  process.getCPUUsage(); // Prime native tracker
+
   const ndiCaptureLoop = async () => {
       if (ndi && mainWindow && !mainWindow.isDestroyed() && isRendererReadyForNdi) {
           // Use dynamic capture resolution
@@ -1202,7 +1364,8 @@ ipcMain.handle('get-project-fonts', async () => {
   ndiCaptureLoop();
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await initializeUserData();
   createWindow();
 
   app.on('activate', () => {

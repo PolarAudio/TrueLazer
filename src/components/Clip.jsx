@@ -20,7 +20,8 @@ const Clip = ({
   thumbnailRenderMode,
   liveFrame,
   stillFrame,
-  onClipHover
+  onClipHover,
+  onThumbnailError
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -203,6 +204,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
                             <img 
                                 src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
                                 alt="thumbnail" 
+                                onError={() => onThumbnailError && onThumbnailError(layerIndex, colIndex)}
                                 style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
                             />
                         ) : (

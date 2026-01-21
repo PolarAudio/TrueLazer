@@ -13,14 +13,35 @@ export function resolveParam(key, baseValue, animSettings, context) {
     
     if (!settings.syncMode) return baseValue;
 
-    const { time, progress = 0, bpm = 120, clipDuration = 0, fftLevels = { low: 0, mid: 0, high: 0 } } = context;
+    const { time, progress = 0, bpm = 120, clipDuration = 0, fftLevels = { low: 0, mid: 0, high: 0 }, activationTime = 0 } = context;
     let rawProgress = 0;
 
     // 1. Calculate Raw Progress (Unwrapped, 0..infinity)
     const speedMult = settings.speedMultiplier || 1.0;
     const style = settings.style || 'loop';
 
-    if (settings.syncMode === 'fps') {
+    if (style === 'once' && activationTime > 0) {
+        // Special case for 'once': use absolute time since activation
+        const elapsed = (time - activationTime) * 0.001; // seconds
+        // Map elapsed to progress using duration logic
+        let duration = 1.0;
+        if (settings.syncMode === 'timeline') {
+            duration = Math.max(0.01, settings.duration || 1.0);
+        } else if (settings.syncMode === 'bpm') {
+            const paramBeats = Math.max(0.1, settings.beats || 4);
+            const bps = bpm / 60;
+            duration = paramBeats / (bps || 2);
+        } else if (settings.syncMode === 'fps') {
+            // For FPS mode, rawProgress was (time * speed)
+            // Here we want (elapsed * speed)
+            rawProgress = elapsed * speedMult;
+            return calculateAnimPhase(rawProgress, settings, baseValue); // Helper to avoid duplicate logic
+        }
+        
+        rawProgress = (elapsed / duration) * speedMult;
+        // Don't return yet, let it flow to animPhase logic, but ensure syncMode logic doesn't overwrite it?
+        // Actually, the block below overwrites rawProgress. We need to restructure.
+    } else if (settings.syncMode === 'fps') {
         // FPS Mode: Free running based on Time * Speed
         // Base rate: 1 cycle per second
         rawProgress = (time * 0.001 * speedMult);
@@ -140,7 +161,7 @@ export function applyEffects(frame, effects, context = {}) {
 
     const resolvedParams = { ...effect.params };
     for (const key of Object.keys(resolvedParams)) {
-        const paramKey = `${effect.id}.${key}`;
+        const paramKey = effect.instanceId ? `${effect.instanceId}.${key}` : `${effect.id}.${key}`;
         if (syncSettings[paramKey]) {
              resolvedParams[key] = resolveParam(key, resolvedParams[key], syncSettings[paramKey], context);
         }
@@ -513,7 +534,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
-    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
+    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playStyle = 'loop' } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
     const { progress = 0, clipDuration = 1 } = context;
 
     // Use synced time if progress is provided, otherwise fallback to absolute time
@@ -523,7 +544,18 @@ export function applyChase(points, numPoints, params, time, context = {}) {
 
     if (mode === 'frame') {
         const steps = paramSteps;
-        const t = (effectiveTime * speed) % steps;
+        let t = (effectiveTime * speed);
+
+        if (playStyle === 'bounce') {
+             const range = steps;
+             const cycle = t % (range * 2);
+             t = cycle > range ? (range * 2) - cycle : cycle;
+        } else if (playStyle === 'once') {
+             t = Math.min(t, steps);
+        } else {
+             t = t % steps;
+        }
+        
         const newPoints = new Float32Array(points.length);
         for (let i = 0; i < numPoints; i++) {
             const norm = i / numPoints;
@@ -562,7 +594,18 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             }
         }
         const cycleLength = numChannels;
-        const t = (effectiveTime * speed) % cycleLength;
+        let t = (effectiveTime * speed);
+        
+        if (playStyle === 'bounce') {
+             const range = cycleLength;
+             const cycle = t % (range * 2);
+             t = cycle > range ? (range * 2) - cycle : cycle;
+        } else if (playStyle === 'once') {
+             t = Math.min(t, cycleLength);
+        } else {
+             t = t % cycleLength;
+        }
+
         const totalPoints = numPoints * numChannels;
         const newBuffer = new Float32Array(totalPoints * 8);
         const distributions = new Map();

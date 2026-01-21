@@ -96,6 +96,15 @@ export const AudioProvider = ({ children }) => {
 
         if (!filePath) return;
 
+        if (window.electronAPI && window.electronAPI.checkFileExists) {
+            const exists = await window.electronAPI.checkFileExists(filePath);
+            if (!exists) {
+                // If we know it doesn't exist, stop here and let caller handle it (via try/catch)
+                // We need to reject to trigger the caller's catch block.
+                throw new Error(`Audio file not found: ${filePath}`);
+            }
+        }
+
         const audio = new Audio(`file://${filePath}`);
         audio.crossOrigin = "anonymous";
         audio.volume = volume * globalVolume;
@@ -120,6 +129,7 @@ export const AudioProvider = ({ children }) => {
                 await audio.play();
             } catch (error) {
                 console.error('Error playing audio:', error);
+                throw error; // Re-throw to allow caller to handle missing file
             }
         }
 

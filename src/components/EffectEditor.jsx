@@ -256,7 +256,7 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
             });
             if (!shouldShow) return null;
           }
-          const paramKey = `${effect.id}.${control.id}`;
+          const paramKey = `${effect.instanceId || effect.id}.${control.id}`;
           const currentAnimSettings = typeof syncSettings[paramKey] === 'object' 
                 ? syncSettings[paramKey] 
                 : { syncMode: syncSettings[paramKey] };

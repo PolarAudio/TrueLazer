@@ -88,6 +88,7 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, ...
                 <div className="knob-indicator" style={{ transform: `rotate(${rotation}deg)` }}></div>
             </div>
             {label && <div className="knob-label" title={label}>{label}</div>}
+            <div className="knob-value" style={{ fontSize: '9px', color: '#888', marginTop: '2px' }}>{Math.round(value * 100)}%</div>
         </div>
     );
 };

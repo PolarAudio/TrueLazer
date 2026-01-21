@@ -2,7 +2,7 @@ import '../index.css';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useAudio } from '../contexts/AudioContext';
 
-const WavePlayer = ({ audioFile, layerIndex, onSeek }) => {
+const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
     const { audioCtx, getAudioInfo } = useAudio();
@@ -39,8 +39,16 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek }) => {
         
         const loadAudio = async () => {
             try {
+                if (window.electronAPI && window.electronAPI.checkFileExists) {
+                    const exists = await window.electronAPI.checkFileExists(audioFile.path);
+                    if (!exists) {
+                        throw new Error(`File not found: ${audioFile.path}`);
+                    }
+                }
+
                 // Fetch local file
                 const response = await fetch(`file://${audioFile.path}`);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const arrayBuffer = await response.arrayBuffer();
                 
                 if (!active) return;
@@ -52,7 +60,9 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek }) => {
                     setAudioBuffer(decodedBuffer);
                 }
             } catch (err) {
+                if (!active) return;
                 console.error("Failed to load/decode audio for waveform:", err);
+                if (onLoadError) onLoadError(err);
             }
         };
 
@@ -60,7 +70,7 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek }) => {
         loadAudio();
 
         return () => { active = false; };
-    }, [audioFile, audioCtx]);
+    }, [audioFile, audioCtx, onLoadError]);
 
     // 3. Draw Waveform Helper
     const drawWaveform = useCallback((ctx, width, height, buffer, progress) => {

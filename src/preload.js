@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld(
         ipcRenderer.on('dac-status', listener);
         return () => ipcRenderer.removeListener('dac-status', listener);
     },
+    onSystemStats: (callback) => {
+        const listener = (event, data) => callback(data);
+        ipcRenderer.on('system-stats', listener);
+        return () => ipcRenderer.removeListener('system-stats', listener);
+    },
     getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     send: (channel, data) => ipcRenderer.send(channel, data),
     on: (channel, callback) => {
@@ -55,6 +60,7 @@ contextBridge.exposeInMainWorld(
     },
     openFileExplorer: () => ipcRenderer.invoke('open-file-explorer'),
     readIldFiles: (directoryPath) => ipcRenderer.invoke('read-ild-files', directoryPath),
+    checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
 	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
 	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
@@ -75,6 +81,7 @@ contextBridge.exposeInMainWorld(
 	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+                getUserIldaPath: () => ipcRenderer.invoke('get-user-ilda-path'),
                 getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
                 saveMidiMappings: (mappings) => ipcRenderer.invoke('save-midi-mappings', mappings),
                 getKeyboardMappings: () => ipcRenderer.invoke('get-keyboard-mappings'),

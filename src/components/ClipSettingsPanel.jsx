@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import EffectEditor from './EffectEditor';
 import GeneratorSettingsPanel from './GeneratorSettingsPanel';
 import ClipPlaybackSettings from './ClipPlaybackSettings';
@@ -26,11 +26,17 @@ const ClipSettingsPanel = ({
   onAddEffect,
   onParameterChange,
   onGeneratorParameterChange,
-  progressRef
+  progressRef,
+  onAudioError
 }) => {
   const [dacStatuses, setDacStatuses] = useState({});
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
   const { seekAudio } = useAudio();
+  const lastReorderTimeRef = useRef(0);
+
+  const handleWavePlayerError = React.useCallback((err) => {
+      if (onAudioError) onAudioError(selectedLayerIndex, selectedColIndex);
+  }, [onAudioError, selectedLayerIndex, selectedColIndex]);
 
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onDacStatus) {
@@ -57,7 +63,9 @@ const ClipSettingsPanel = ({
     e.preventDefault();
     e.stopPropagation();
     try {
-      const effectData = JSON.parse(e.dataTransfer.getData('application/json'));
+      const rawData = e.dataTransfer.getData('application/json');
+      if (!rawData) return;
+      const effectData = JSON.parse(rawData);
       if (effectData && effectData.type && onAddEffect) {
         onAddEffect(effectData);
       }
@@ -79,6 +87,10 @@ const ClipSettingsPanel = ({
     e.preventDefault();
     if (draggedEffectIndex === null || draggedEffectIndex === index) return;
     
+    const now = Date.now();
+    if (now - lastReorderTimeRef.current < 200) return;
+    lastReorderTimeRef.current = now;
+
     if (onReorderEffects) {
         onReorderEffects(selectedLayerIndex, selectedColIndex, draggedEffectIndex, index);
         setDraggedEffectIndex(index);
@@ -114,8 +126,8 @@ const ClipSettingsPanel = ({
       const currentBpm = bpm || 120; 
       clipDuration = ((playbackSettings.beats || 8) * 60) / currentBpm;
   } else {
-      const clipFps = playbackSettings.fps || clip.fps || 30;
-      const totalFrames = clip.totalFrames || 30;
+      const clipFps = playbackSettings.fps || clip?.fps || 30;
+      const totalFrames = clip?.totalFrames || 30;
       clipDuration = totalFrames / clipFps;
   }
 
@@ -144,7 +156,8 @@ const ClipSettingsPanel = ({
                         audioFile={audioFile} 
                         audioInfo={audioInfo} 
                         layerIndex={selectedLayerIndex}
-                        onSeek={(time) => seekAudio(selectedLayerIndex, time)} 
+                        onSeek={(time) => seekAudio(selectedLayerIndex, time)}
+                        onLoadError={handleWavePlayerError}
                     />
 
                     <div className="audio-volume-control" style={{ marginTop: '10px' }}>
@@ -154,6 +167,7 @@ const ClipSettingsPanel = ({
                             min="0" max="1" step="0.01" 
                             value={audioVolume} 
                             onChange={(e) => onUpdateAudioVolume(selectedLayerIndex, selectedColIndex, parseFloat(e.target.value))}
+                            className="slider_hor"
                             style={{ width: '100%', height: '4px' }}
                         />
                     </div>

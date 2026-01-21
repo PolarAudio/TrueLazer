@@ -31,7 +31,7 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
   useEffect(() => {
     if (!worker) return;
 
-    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects, layerIndex, syncSettings, bpm, clipDuration, progress }]) => ({
+    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects, layerIndex, syncSettings, bpm, clipDuration, progress, effectStates }]) => ({
       frames: [frame],
       effects: effects,
       workerId: workerId,
@@ -39,7 +39,8 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
       syncSettings,
       bpm,
       clipDuration,
-      progress // Pass progress
+      progress, // Pass progress
+      effectStates // Pass effectStates
     }));
 
     worker.postMessage({

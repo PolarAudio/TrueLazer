@@ -20,6 +20,7 @@ import ShortcutsWindow from './components/ShortcutsWindow';
 import RenameModal from './components/RenameModal';
 import OutputSettingsWindow from './components/OutputSettingsWindow';
 import AudioSettingsWindow from './components/AudioSettingsWindow';
+import RelocateModal from './components/RelocateModal';
 import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
@@ -893,12 +894,20 @@ function reducer(state, action) {
     }
     case 'UPDATE_CLIP_FILE_PATH': {
         const { oldPath, newPath } = action.payload;
+        console.log(`Reducer: Updating clip path from ${oldPath} to ${newPath}`);
         const newClipContents = state.clipContents.map(layer => 
             layer.map(clip => {
+                let updatedClip = clip;
                 if (clip && clip.filePath === oldPath) {
-                    return { ...clip, filePath: newPath, parsingFailed: false }; // Reset failed status if path updated
+                    updatedClip = { ...updatedClip, filePath: newPath, parsingFailed: false };
                 }
-                return clip;
+                if (clip && clip.audioFile && clip.audioFile.path === oldPath) {
+                    updatedClip = { 
+                        ...updatedClip, 
+                        audioFile: { ...clip.audioFile, path: newPath } 
+                    };
+                }
+                return updatedClip;
             })
         );
         return { ...state, clipContents: newClipContents };
@@ -1138,6 +1147,223 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex) => {
     return null;
 };
 
+const StatsDisplay = React.memo(({ type, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef }) => {
+    const [stats, setStats] = useState({ cpu: '0.0', ram: '0', fps: 0, pps: 0, avgPps: 0 });
+
+    useEffect(() => {
+        // IPC Listener for System Stats (CPU/RAM)
+        const unsub = window.electronAPI?.onSystemStats((systemData) => {
+            setStats(prev => ({ ...prev, ...systemData }));
+        });
+
+        // ONLY the performance instance calculates FPS/PPS and resets counters.
+        // If we had two intervals resetting the same refs, they would fight and show 0.
+        let interval;
+        if (type === 'performance' && lastStatUpdateTimeRef && previewFrameCountRef && totalPointsSentRef && activeChannelsCountRef) {
+            interval = setInterval(() => {
+                const now = performance.now();
+                const elapsed = (now - (lastStatUpdateTimeRef.current || 0)) / 1000;
+                
+                if (elapsed > 0) {
+                    const currentFps = Math.round((previewFrameCountRef.current || 0) / elapsed);
+                    const totalPps = Math.round((totalPointsSentRef.current || 0) / elapsed);
+                    const avgPps = (activeChannelsCountRef.current || 0) > 0 ? Math.round(totalPps / activeChannelsCountRef.current) : 0;
+                    
+                    setStats(prev => ({ ...prev, fps: currentFps, pps: totalPps, avgPps: avgPps }));
+                    
+                    // Reset shared counters for the next second
+                    previewFrameCountRef.current = 0;
+                    totalPointsSentRef.current = 0;
+                    lastStatUpdateTimeRef.current = now;
+                }
+            }, 1000);
+        }
+
+        return () => {
+            if (unsub) unsub();
+            if (interval) clearInterval(interval);
+        };
+    }, [type, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef]);
+
+    if (type === 'system') {
+        return (
+            <div className="systemStats">
+                <p>CPU: {stats.cpu}%</p><p>RAM: {stats.ram}MB</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="performanceStats">
+            <p>FPS: {stats.fps}</p><p>AnimPPS: {stats.avgPps} (Avg)</p>
+        </div>
+    );
+});
+
+const SidePanelContainer = React.memo(({ 
+    clipContents, activeClipIndexes, layerEffects, bpm, playbackFps, 
+    selectedLayerIndex, selectedColIndex, liveFramesRef, progressRef, 
+    selectedDac, liveDacOutputSettingsRef, dacOutputSettings, 
+    getAudioInfo, fftLevels, getFftLevels, effectStatesRef, clipActivationTimesRef,
+    showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode,
+    worldShowBeamEffect, worldBeamRenderMode, masterIntensity, layerIntensities, globalBlackout, layerSolos, layerBlackouts,
+    handleToggleBeamEffect, handleCycleDisplayMode,
+    previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef
+}) => {
+    const [tick, setTick] = useState(0);
+    const lastPreviewTimeRef = useRef(0);
+    const previewTimeRef = useRef(performance.now());
+    const previewInterval = 1000 / 70; // Target >60Hz to reliably catch every 60Hz VSync frame
+
+    useEffect(() => {
+        let rafId;
+        const loop = (timestamp) => {
+            if (timestamp - lastPreviewTimeRef.current > previewInterval) {
+                previewFrameCountRef.current++;
+                previewTimeRef.current = performance.now();
+                setTick(t => t + 1);
+                lastPreviewTimeRef.current = timestamp;
+            }
+            rafId = requestAnimationFrame(loop);
+        };
+        rafId = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(rafId);
+    }, [previewInterval, previewFrameCountRef]);
+
+    // DERIVED PREVIEW DATA
+    const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null ? clipContents[selectedLayerIndex][selectedColIndex] : null;
+    const targetPreviewWorkerId = selectedColIndex !== null 
+        ? (selectedClip?.type === 'ilda' ? selectedClip?.workerId : `generator-${selectedLayerIndex}-${selectedColIndex}`)
+        : (selectedLayerIndex !== null ? (activeClipIndexes[selectedLayerIndex] !== null ? (clipContents[selectedLayerIndex][activeClipIndexes[selectedLayerIndex]]?.type === 'ilda' ? clipContents[selectedLayerIndex][activeClipIndexes[selectedLayerIndex]]?.workerId : `generator-${selectedLayerIndex}-${activeClipIndexes[selectedLayerIndex]}`) : null) : null);
+
+    const selectedClipFrame = targetPreviewWorkerId ? liveFramesRef.current[targetPreviewWorkerId] : null;
+    const selectedClipProgress = targetPreviewWorkerId ? (progressRef.current[targetPreviewWorkerId] || 0) : 0;
+
+    let selectedClipEffects = [];
+    let selectedClipFinalIntensity = 1;
+
+    if (selectedLayerIndex !== null) {
+        const lEffects = layerEffects[selectedLayerIndex] || [];
+        if (selectedColIndex !== null) {
+            const clipEffects = selectedClip?.effects || [];
+            selectedClipEffects = [...clipEffects, ...lEffects];
+        } else {
+             const activeCol = activeClipIndexes[selectedLayerIndex];
+             if (activeCol !== null) {
+                 const clipEffects = clipContents[selectedLayerIndex][activeCol]?.effects || [];
+                 selectedClipEffects = [...clipEffects, ...lEffects];
+             } else {
+                 selectedClipEffects = lEffects;
+             }
+        }
+
+        const isAnySolo = layerSolos.some(s => s);
+        let effIntensity = layerIntensities[selectedLayerIndex];
+        if (globalBlackout) effIntensity = 0;
+        else if (isAnySolo) effIntensity = layerSolos[selectedLayerIndex] ? (layerBlackouts[selectedLayerIndex] ? 0 : effIntensity) : 0;
+        else if (layerBlackouts[selectedLayerIndex]) effIntensity = 0;
+        selectedClipFinalIntensity = effIntensity * masterIntensity;
+    }
+
+    const worldFrames = useMemo(() => {
+        const frames = {};
+        activeClipIndexes.forEach((colIndex, layerIndex) => {
+          if (colIndex !== null) {
+            const clip = clipContents[layerIndex][colIndex];
+            if (clip) {
+              let workerId = clip.type === 'ilda' ? clip.workerId : `generator-${layerIndex}-${colIndex}`;
+              if (workerId && liveFramesRef.current[workerId]) {
+                frames[workerId] = {
+                  frame: liveFramesRef.current[workerId],
+                  effects: [...(clip.effects || []), ...(layerEffects[layerIndex] || [])],
+                  layerIndex,
+                  syncSettings: clip.syncSettings || {},
+                  bpm: bpm,
+                  clipDuration: (() => {
+                      const pb = clip.playbackSettings || {};
+                      if (pb.mode === 'timeline') return pb.duration || 1;
+                      if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (bpm || 120);
+                      return (clip.totalFrames || 30) / (clip.fps || playbackFps || 30);
+                  })(),
+                  progress: progressRef.current[workerId] || 0,
+                  effectStates: effectStatesRef.current,
+                  clipActivationTime: clipActivationTimesRef.current[layerIndex] || 0
+                };
+              }
+            }
+          }
+        });
+        return frames;
+    }, [activeClipIndexes, clipContents, tick, bpm, layerEffects, playbackFps, liveFramesRef, progressRef, effectStatesRef, clipActivationTimesRef]);
+
+    const effectiveLayerIntensities = useMemo(() => {
+        const isAnySolo = layerSolos.some(s => s);
+        return layerIntensities.map((intensity, index) => {
+            if (globalBlackout) return 0;
+            if (isAnySolo) return layerSolos[index] ? (layerBlackouts[index] ? 0 : intensity) : 0;
+            return layerBlackouts[index] ? 0 : intensity;
+        });
+    }, [layerIntensities, layerBlackouts, layerSolos, globalBlackout]);
+
+    return (
+                  <div className="side-panel">
+        			<StatsDisplay 
+                        type="system" 
+                        previewFrameCountRef={previewFrameCountRef}
+                        totalPointsSentRef={totalPointsSentRef}
+                        activeChannelsCountRef={activeChannelsCountRef}
+                        lastStatUpdateTimeRef={lastStatUpdateTimeRef}
+                    />
+        			<IldaPlayer
+                      frame={selectedClipFrame}
+                      effects={selectedClipEffects}
+                      showBeamEffect={showBeamEffect}
+                      beamAlpha={beamAlpha}
+                      fadeAlpha={fadeAlpha}
+                      previewScanRate={previewScanRate}
+                      beamRenderMode={beamRenderMode}
+                      intensity={selectedClipFinalIntensity}
+                      syncSettings={selectedClip?.syncSettings}
+                      bpm={bpm}
+                      clipDuration={(() => {
+                          const pb = selectedClip?.playbackSettings || {};
+                          if (pb.mode === 'timeline') return pb.duration || 1;
+                          if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (bpm || 120);
+                          return (selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30);
+                      })()}
+                      progress={selectedClipProgress}
+                      previewTime={previewTimeRef.current}
+                      fftLevels={getFftLevels ? getFftLevels() : fftLevels}
+                      effectStates={effectStatesRef.current}
+                      clipActivationTime={selectedLayerIndex !== null ? (clipActivationTimesRef.current[selectedLayerIndex] || 0) : 0}
+                      onToggleBeamEffect={() => handleToggleBeamEffect('clip')}
+                      onCycleDisplayMode={() => handleCycleDisplayMode('clip')}
+                    />
+                    <WorldPreview
+                      activeFrames={worldFrames}
+                      showBeamEffect={worldShowBeamEffect}
+                      beamAlpha={beamAlpha}
+                      fadeAlpha={fadeAlpha}
+                      previewScanRate={previewScanRate}
+                      beamRenderMode={worldBeamRenderMode}
+                      layerIntensities={effectiveLayerIntensities}
+                      masterIntensity={masterIntensity}
+                      dacSettings={selectedDac ? (liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[`${selectedDac.ip}:${selectedDac.channel}`] : dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`]) : null}
+                      previewTime={previewTimeRef.current}
+                      fftLevels={getFftLevels ? getFftLevels() : fftLevels}
+                      onToggleBeamEffect={() => handleToggleBeamEffect('world')}
+                      onCycleDisplayMode={() => handleCycleDisplayMode('world')}
+                    />
+        			<StatsDisplay 
+                        type="performance" 
+                        previewFrameCountRef={previewFrameCountRef}
+                        totalPointsSentRef={totalPointsSentRef}
+                        activeChannelsCountRef={activeChannelsCountRef}
+                        lastStatUpdateTimeRef={lastStatUpdateTimeRef}
+                    />
+                  </div>    );
+});
+
 function App() {
   const ildaParserWorker = useIldaParserWorker();
     const generatorWorker = useGeneratorWorker();
@@ -1235,7 +1461,7 @@ function App() {
   const liveFramesRef = useRef({});
   const effectStatesRef = useRef(new Map()); // Add effectStatesRef
   const progressRef = useRef({}); // New ref for fine-grained progress
-  const [frameTick, setFrameTick] = useState(0);
+  const clipActivationTimesRef = useRef({});
 
   const lastFrameFetchTimeRef = useRef({});
   const frameIndexesRef = useRef({});
@@ -1250,6 +1476,13 @@ function App() {
   const [showFftSettingsWindow, setShowFftSettingsWindow] = useState(false);
   const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => {} });
   const [activeBottomTab, setActiveBottomTab] = useState('files');
+  const [missingFiles, setMissingFiles] = useState([]);
+
+  // Refs for performance tracking
+  const previewFrameCountRef = useRef(0);
+  const totalPointsSentRef = useRef(0);
+  const activeChannelsCountRef = useRef(0);
+  const lastStatUpdateTimeRef = useRef(performance.now());
 
   const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
   const {
@@ -1654,13 +1887,9 @@ function App() {
 
     let animationFrameId;
     let dacRefreshAnimationFrameId;
-    let previewRefreshAnimationFrameId;
     let lastFrameTime = 0;
-    let lastPreviewTime = 0;
     const OUTPUT_FPS = 60;
     const dacFrameInterval = 1000 / OUTPUT_FPS;
-    const PREVIEW_FPS = 30;
-    const previewInterval = 1000 / PREVIEW_FPS;
 
     // Helper to merge multiple frames into one for a single DAC channel
     const mergeFrames = (frames) => {
@@ -1974,6 +2203,7 @@ function App() {
           });
 
           // Send merged frames to each DAC channel
+          let activeCount = 0;
           dacGroups.forEach(group => {
             let mergedFrame = mergeFrames(group.frames);
             
@@ -1981,7 +2211,7 @@ function App() {
             const settings = liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[id] : dacOutputSettingsRef.current[id];
             
             if (mergedFrame && settings) {
-                // Apply Dimmer
+                // ... dimmer logic ...
                 if (settings.dimmer !== undefined && settings.dimmer < 1) {
                      const dim = settings.dimmer;
                      const pts = mergedFrame.points;
@@ -2004,9 +2234,13 @@ function App() {
             }
 
             if (mergedFrame) {
+              activeCount++;
+              const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
+              totalPointsSentRef.current += numPts;
               window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame, OUTPUT_FPS, group.type);
             }
           });
+          activeChannelsCountRef.current = activeCount;
         }
         lastFrameTime = currentTime;
       }
@@ -2220,17 +2454,7 @@ function App() {
       animationFrameId = requestAnimationFrame(frameFetcherLoop);
     };
 
-    const previewLoop = (timestamp) => {
-      if (timestamp - lastPreviewTime > previewInterval) {
-        previewTimeRef.current = performance.now();
-        setFrameTick(t => t + 1); // Trigger UI preview re-renders
-        lastPreviewTime = timestamp;
-      }
-      previewRefreshAnimationFrameId = requestAnimationFrame(previewLoop);
-    }
-
     animationFrameId = requestAnimationFrame(frameFetcherLoop);
-    previewRefreshAnimationFrameId = requestAnimationFrame(previewLoop);
 
     // Start DAC animation if world output is active
     if (isWorldOutputActive) {
@@ -2245,7 +2469,6 @@ function App() {
       ildaParserWorker.removeEventListener('message', handleMessage);
       cancelAnimationFrame(animationFrameId);
       cancelAnimationFrame(dacRefreshAnimationFrameId); // Clean up DAC animation frame
-      cancelAnimationFrame(previewRefreshAnimationFrameId);
     };
   }, [ildaParserWorker, playbackFps, isPlaying, isWorldOutputActive, selectedDac, getAudioInfo, state.bpm, selectedLayerIndex, selectedColIndex]);
 
@@ -2305,7 +2528,15 @@ function App() {
                                       const frameClone = { ...baseFrame }; 
                                       
                                       // Apply Effects
-                                      const processedFrame = applyEffects(frameClone, clipToExport.effects, {
+                                      // Filter effects for export (ignore Delay/Chase in channel mode)
+                                  const effectsToApply = (clipToExport.effects || []).filter(eff => {
+                                      if ((eff.id === 'delay' || eff.id === 'chase') && eff.params?.mode === 'channel') {
+                                          return false;
+                                      }
+                                      return true;
+                                  });
+
+                                  const processedFrame = applyEffects(frameClone, effectsToApply, {
                                           time: time,
                                           progress: progress,
                                           effectStates: exportEffectStates,
@@ -2604,6 +2835,8 @@ function App() {
 
     console.log("Project loaded, regenerating content...");
 
+    const audioChecks = [];
+
     clipContents.forEach((layer, layerIndex) => {
       layer.forEach((clip, colIndex) => {
         if (clip) {
@@ -2620,6 +2853,26 @@ function App() {
             console.log(`Regenerating generator clip ${layerIndex}-${colIndex} on project load`);
             const seq = ++generatorRequestSeqRef.current;
             regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams, seq);
+          }
+
+          // Check for missing audio files
+          if (clip.audioFile && clip.audioFile.path && window.electronAPI && window.electronAPI.checkFileExists) {
+              audioChecks.push(
+                  window.electronAPI.checkFileExists(clip.audioFile.path).then(exists => {
+                      if (!exists) {
+                          setMissingFiles(prev => {
+                              const reqId = `audio-${layerIndex}-${colIndex}`;
+                              if (prev.some(f => f.requestId === reqId)) return prev;
+                              return [...prev, { 
+                                  filePath: clip.audioFile.path, 
+                                  fileName: clip.audioFile.name || clip.audioFile.path.split(/[/\\]/).pop(), 
+                                  requestId: reqId,
+                                  type: 'audio' 
+                              }];
+                          });
+                      }
+                  })
+              );
           }
         }
       });
@@ -2646,14 +2899,29 @@ function App() {
   };
 
   // Listen for project management commands
+  // Ref to hold the latest state for event listeners
+  const stateRef = useRef(state);
+  useEffect(() => {
+      stateRef.current = state;
+  }, [state]);
+
   useEffect(() => {
     let unlistenNew, unlistenOpen, unlistenSave, unlistenSaveAs, unlistenLoad;
 
     if (window.electronAPI) {
       unlistenNew = window.electronAPI.on('new-project', () => dispatch({ type: 'RESET_STATE' }));
       unlistenOpen = window.electronAPI.on('open-project', () => { /* This is handled in main.js */ });
-      unlistenSave = window.electronAPI.on('save-project', () => window.electronAPI.send('save-project', state));
-      unlistenSaveAs = window.electronAPI.on('save-project-as', () => window.electronAPI.send('save-project-as', state));
+      
+      // Use ref to access latest state without re-binding listeners
+      unlistenSave = window.electronAPI.on('save-project', () => {
+          console.log("Saving project with state:", stateRef.current);
+          window.electronAPI.send('save-project', stateRef.current);
+      });
+      unlistenSaveAs = window.electronAPI.on('save-project-as', () => {
+          console.log("Saving project AS with state:", stateRef.current);
+          window.electronAPI.send('save-project-as', stateRef.current);
+      });
+      
       unlistenLoad = window.electronAPI.on('load-project-data', (data) => {
         dispatch({ type: 'LOAD_PROJECT', payload: data });
       });
@@ -2667,7 +2935,7 @@ function App() {
       if (unlistenSaveAs) unlistenSaveAs();
       if (unlistenLoad) unlistenLoad();
     };
-  }, [state]);
+  }, []); // Run once on mount
 
   // Listen for menu actions for theme and render settings
   useEffect(() => {
@@ -2734,6 +3002,13 @@ function App() {
       if (e.data.type === 'request-file-content') {
         const { filePath, requestId } = e.data;
         try {
+          if (window.electronAPI && window.electronAPI.checkFileExists) {
+              const exists = await window.electronAPI.checkFileExists(filePath);
+              if (!exists) {
+                  throw new Error(`File not found: ${filePath}`);
+              }
+          }
+
           const arrayBuffer = await window.electronAPI.readFileForWorker(filePath);
           ildaParserWorker.postMessage({
             type: 'file-content-response',
@@ -2741,46 +3016,15 @@ function App() {
             arrayBuffer,
           }, [arrayBuffer]); // Transferrable
         } catch (error) {
-          console.error(`Renderer: Failed to read file for worker: ${filePath}`, error);
+          console.warn(`File missing or read error: ${filePath}`, error.message);
           
-          let solved = false;
-          // Attempt to resolve missing file via user prompt
-          try {
-              if (window.electronAPI && window.electronAPI.showOpenDialog) {
-                  const fileName = filePath.split(/[/\\]/).pop();
-                  const response = await window.electronAPI.showOpenDialog({
-                      title: `Locate missing file: ${fileName}`,
-                      defaultPath: filePath, // Helps if parent dir exists
-                      filters: [{ name: 'ILDA Files', extensions: ['ild'] }, { name: 'All Files', extensions: ['*'] }],
-                      properties: ['openFile']
-                  });
-
-                  if (response) {
-                      const newPath = response;
-                      // Update all clips with this path
-                      dispatch({ type: 'UPDATE_CLIP_FILE_PATH', payload: { oldPath: filePath, newPath } });
-                      
-                      // Retry reading
-                      const newArrayBuffer = await window.electronAPI.readFileForWorker(newPath);
-                      ildaParserWorker.postMessage({
-                          type: 'file-content-response',
-                          requestId,
-                          arrayBuffer: newArrayBuffer,
-                      }, [newArrayBuffer]);
-                      solved = true;
-                  }
-              }
-          } catch (retryError) {
-              console.error("Retry/Locate failed:", retryError);
-          }
-
-          if (!solved) {
-              ildaParserWorker.postMessage({
-                type: 'file-content-response',
-                requestId,
-                error: error.message,
-              });
-          }
+          // Instead of immediate prompt, add to missing files list
+          const fileName = filePath.split(/[/\\]/).pop();
+          setMissingFiles(prev => {
+              // Avoid duplicates
+              if (prev.some(f => f.requestId === requestId)) return prev;
+              return [...prev, { filePath, fileName, requestId }];
+          });
         }
       } else if (e.data.type === 'parsing-status') {
         const { layerIndex, colIndex, status } = e.data;
@@ -2832,7 +3076,7 @@ function App() {
       }
   }, [clipContents, ildaParserWorker]);
 
-  // Calculate directly on render to ensure live params are used (driven by frameTick re-renders)
+  // Calculate directly on render to ensure live params are used
   const source = liveClipContentsRef.current || clipContents;
   let selectedClipEffects = [];
 
@@ -3147,10 +3391,27 @@ function App() {
 
     // Manage associated audio: load/cue it regardless of playback state, but only play if `isPlaying`
     if (clip && clip.audioFile) {
-        playAudio(layerIndex, clip.audioFile.path, clip.audioVolume ?? 1.0, isPlaying);
+        playAudio(layerIndex, clip.audioFile.path, clip.audioVolume ?? 1.0, isPlaying).catch(err => {
+            console.warn(`Failed to play audio for clip ${layerIndex}-${colIndex}:`, err);
+            // Add to missing files if it's a "NotSupportedError" or similar (usually indicates file issues)
+            // Note: error.code might be useful.
+            setMissingFiles(prev => {
+                const reqId = `audio-${layerIndex}-${colIndex}`;
+                if (prev.some(f => f.requestId === reqId)) return prev;
+                return [...prev, { 
+                    filePath: clip.audioFile.path, 
+                    fileName: clip.audioFile.name || clip.audioFile.path.split(/[/\\]/).pop(), 
+                    requestId: reqId,
+                    type: 'audio' 
+                }];
+            });
+        });
     } else {
         stopAudio(layerIndex);
     }
+
+    // Record activation time
+    clipActivationTimesRef.current[layerIndex] = performance.now();
 
     dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } });
 
@@ -3170,7 +3431,21 @@ function App() {
   }, [clipContents, activeClipIndexes, handleDeactivateLayerClips, playAudio, isPlaying, stopAudio, handleClipPreview]);
 	
   const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectData) => {
-      hasPendingClipUpdate.current = true;
+      // 1. Direct Mutation for Instant Preview
+      if (liveClipContentsRef.current && liveClipContentsRef.current[layerIndex] && liveClipContentsRef.current[layerIndex][colIndex]) {
+          // Ensure layer array is cloned if we were strictly immutable, but for ref we just need to ensure the object structure exists
+          const clip = liveClipContentsRef.current[layerIndex][colIndex];
+          if (clip) {
+              const newEffectInstance = {
+                  ...effectData,
+                  instanceId: generateId(),
+                  params: { ...effectData.defaultParams }
+              };
+              clip.effects = [...(clip.effects || []), newEffectInstance];
+              hasPendingClipUpdate.current = true;
+          }
+      }
+      
       dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex, colIndex, effect: effectData } });
   }, []);
 
@@ -3178,7 +3453,20 @@ function App() {
     // Find effect definition
     const effectData = effectDefinitions.find(e => (e.id || e.name) === effectId);
     if (effectData) {
-        hasPendingClipUpdate.current = true;
+        // 1. Direct Mutation for Instant Preview
+        if (layerEffectsRef.current && layerEffectsRef.current[layerIndex]) {
+             const newEffectInstance = {
+                  ...effectData,
+                  instanceId: generateId(),
+                  params: { ...effectData.defaultParams }
+             };
+             // We can push directly to the ref's array
+             layerEffectsRef.current[layerIndex].push(newEffectInstance);
+             // No hasPendingClipUpdate needed for layer effects as they are separate refs, 
+             // but we might want to force a frame tick? 
+             // The loop reads layerEffectsRef.current every frame, so it should pick it up.
+        }
+
         dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex, effect: effectData } });
     }
   }, []);
@@ -3366,134 +3654,6 @@ function App() {
 
       return () => unsubscribe();
   }, [activeClipIndexes, clipContents, selectedClip, selectedLayerIndex, selectedColIndex, layers, generatorWorker]);
-
-  const selectedClipLayerIndex = selectedClip ? selectedLayerIndex : null;
-  const selectedClipLayerIntensity = selectedClipLayerIndex !== null ? layerIntensities[selectedClipLayerIndex] : 1;
-  const selectedClipFinalIntensity = selectedClipLayerIntensity * masterIntensity;
-
-  const selectedClipFrame = useMemo(() => {
-    let targetWorkerId = selectedIldaWorkerId;
-
-    // Handle Layer Selection Mode (fallback to active clip)
-    if (selectedLayerIndex !== null && selectedColIndex === null) {
-        const activeCol = activeClipIndexes[selectedLayerIndex];
-        if (activeCol !== null) {
-             const clip = clipContents[selectedLayerIndex][activeCol];
-             if (clip) {
-                 if (clip.type === 'ilda') targetWorkerId = clip.workerId;
-                 else if (clip.type === 'generator') targetWorkerId = `generator-${selectedLayerIndex}-${activeCol}`;
-             }
-        }
-    }
-
-    const frame = liveFramesRef.current[targetWorkerId] || null;
-    const progress = progressRef.current[targetWorkerId] || 0; // Get progress
-
-    if (frame && selectedClipFinalIntensity < 0.999) {
-      const isTyped = frame.isTypedArray || frame.points instanceof Float32Array;
-      // ... intensity logic ...
-      // Attach progress to frame for renderer? 
-      // No, renderer accepts 'progress' argument.
-      // But selectedClipFrame is just the frame data passed to IldaPlayer.
-      // IldaPlayer props: frame={selectedClipFrame} ...
-      // We should return an object or attach it?
-      // Or update IldaPlayer to accept 'progress' prop.
-      // Current IldaPlayer accepts 'syncSettings', 'bpm'.
-      // It does NOT accept 'progress'.
-      
-      // Let's modify IldaPlayer to accept 'progress'.
-      // And return pure frame here.
-      if (isTyped) {
-          const pts = frame.points;
-          const numPts = pts.length / 8;
-          const newPts = new Float32Array(pts);
-          for (let i = 0; i < numPts; i++) {
-              newPts[i*8+3] *= selectedClipFinalIntensity;
-              newPts[i*8+4] *= selectedClipFinalIntensity;
-              newPts[i*8+5] *= selectedClipFinalIntensity;
-          }
-          return { ...frame, points: newPts, isTypedArray: true };
-      } else {
-          return {
-            ...frame,
-            points: frame.points.map(p => ({
-              ...p,
-              r: Math.round(p.r * selectedClipFinalIntensity),
-              g: Math.round(p.g * selectedClipFinalIntensity),
-              b: Math.round(p.b * selectedClipFinalIntensity),
-            })),
-          };
-      }
-    }
-    return frame;
-  }, [frameTick, selectedIldaWorkerId, selectedClipFinalIntensity, selectedLayerIndex, selectedColIndex, activeClipIndexes, clipContents]);
-
-  // Determine target worker ID for preview (Clip or Layer mode)
-  let targetPreviewWorkerId = selectedIldaWorkerId;
-  if (selectedLayerIndex !== null && selectedColIndex === null) {
-      const activeCol = activeClipIndexes[selectedLayerIndex];
-      if (activeCol !== null) {
-           const clip = clipContents[selectedLayerIndex][activeCol];
-           if (clip) {
-               if (clip.type === 'ilda') targetPreviewWorkerId = clip.workerId;
-               else if (clip.type === 'generator') targetPreviewWorkerId = `generator-${selectedLayerIndex}-${activeCol}`;
-           }
-      }
-  }
-  const selectedClipProgress = progressRef.current[targetPreviewWorkerId] || 0;
-
-  const worldFrames = useMemo(() => {
-    const frames = {};
-    // Use live content ref for latest params/effects to stay in sync with SelectedPreview
-    const clipSource = liveClipContentsRef.current || clipContents;
-    
-    activeClipIndexes.forEach((colIndex, layerIndex) => {
-      if (colIndex !== null) {
-        const clip = clipSource[layerIndex][colIndex];
-        if (clip) {
-          let workerId;
-          if (clip.type === 'ilda') workerId = clip.workerId;
-          else if (clip.type === 'generator') workerId = `generator-${layerIndex}-${colIndex}`;
-
-          if (workerId && liveFramesRef.current[workerId]) {
-            const clipEffects = clip.effects || [];
-            const lEffects = layerEffects[layerIndex] || [];
-            
-            frames[workerId] = {
-              frame: liveFramesRef.current[workerId],
-              effects: [...clipEffects, ...lEffects], // Merge effects
-              layerIndex,
-              syncSettings: clip.syncSettings || {},
-              bpm: state.bpm,
-              clipDuration: (() => {
-                  const pb = clip.playbackSettings || {};
-                  if (pb.mode === 'timeline') return pb.duration || 1;
-                  if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (state.bpm || 120);
-                  return (clip.totalFrames || 30) / (clip.fps || playbackFps || 30);
-              })(),
-              progress: progressRef.current[workerId] || 0 // Add progress
-            };
-          }
-        }
-      }
-    });
-    return frames;
-  }, [activeClipIndexes, clipContents, frameTick, state.bpm, layerEffects]);
-
-  const effectiveLayerIntensities = useMemo(() => {
-      const isAnySolo = layerSolos.some(s => s);
-      return layerIntensities.map((intensity, index) => {
-          if (globalBlackout) return 0;
-          if (isAnySolo) {
-              if (!layerSolos[index]) return 0;
-              // If self is solo, but self is blackout? Blackout takes precedence usually
-              if (layerBlackouts[index]) return 0;
-          } else {
-              if (layerBlackouts[index]) return 0;
-          }
-          return intensity;
-      });
-  }, [layerIntensities, layerBlackouts, layerSolos, globalBlackout]);
 
   const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon') => {
     // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
@@ -3785,6 +3945,149 @@ function App() {
     }
   }, [isWorldOutputActive, state.dacs]);
 
+  const handleRelocate = async (fileEntry) => {
+      if (!window.electronAPI || !window.electronAPI.showOpenDialog) return;
+
+      try {
+          const response = await window.electronAPI.showOpenDialog({
+              title: `Locate missing file: ${fileEntry.fileName}`,
+              defaultPath: fileEntry.filePath,
+              filters: [{ name: 'ILDA Files', extensions: ['ild'] }, { name: 'All Files', extensions: ['*'] }],
+              properties: ['openFile']
+          });
+
+          if (response) {
+              const newPath = response;
+              const sep = window.electronAPI.pathSeparator || (newPath.includes('/') ? '/' : '\\');
+              
+              // 1. Resolve the specifically selected file
+              dispatch({ type: 'UPDATE_CLIP_FILE_PATH', payload: { oldPath: fileEntry.filePath, newPath } });
+              
+              if (fileEntry.type !== 'audio') {
+                  const newArrayBuffer = await window.electronAPI.readFileForWorker(newPath);
+                  if (ildaParserWorker) {
+                      ildaParserWorker.postMessage({
+                          type: 'file-content-response',
+                          requestId: fileEntry.requestId,
+                          arrayBuffer: newArrayBuffer,
+                      }, [newArrayBuffer]);
+                  }
+              }
+
+              // Remove from missing list
+              setMissingFiles(prev => prev.filter(f => f.requestId !== fileEntry.requestId));
+
+              // 2. Auto-resolve others by scanning ALL clips
+              // We infer the old directory from the fileEntry
+              const getDir = (p) => p.substring(0, p.lastIndexOf(sep));
+              const getFile = (p) => p.substring(p.lastIndexOf(sep) + 1);
+              
+              const oldDirectory = getDir(fileEntry.filePath);
+              const newDirectory = getDir(newPath);
+              
+              console.log(`[Relocate] Scanning for other files moving from [${oldDirectory}] to [${newDirectory}]`);
+
+              // Flatten all clips to iterate easily
+              const allClips = stateRef.current.clipContents.flat().filter(c => c);
+              const processedOldPaths = new Set([fileEntry.filePath]);
+
+              for (const clip of allClips) {
+                  // Check ILDA File
+                  if (clip.type === 'ilda' && clip.filePath && !processedOldPaths.has(clip.filePath)) {
+                       // Check if this file was in the old directory
+                       if (getDir(clip.filePath) === oldDirectory) {
+                           const fileName = getFile(clip.filePath);
+                           const potentialPath = `${newDirectory}${sep}${fileName}`;
+                           
+                           // Avoid redundant checks if path is unchanged (unlikely here but safe)
+                           if (clip.filePath !== potentialPath) {
+                               const exists = await window.electronAPI.checkFileExists(potentialPath);
+                               if (exists) {
+                                   console.log(`[Relocate] Auto-resolving ILDA: ${fileName}`);
+                                   dispatch({ type: 'UPDATE_CLIP_FILE_PATH', payload: { oldPath: clip.filePath, newPath: potentialPath } });
+                                   processedOldPaths.add(clip.filePath);
+                                   
+                                   // Try to satisfy worker if it was waiting
+                                   if (ildaParserWorker) {
+                                       // We don't have the requestId easily here unless we look at missingFiles
+                                       // But updating the path prevents future errors. 
+                                       // If it was already missing, we should remove it from missingFiles
+                                       setMissingFiles(prev => prev.filter(f => f.filePath !== clip.filePath));
+                                   }
+                               }
+                           }
+                       }
+                  }
+
+                  // Check Audio File
+                  if (clip.audioFile && clip.audioFile.path && !processedOldPaths.has(clip.audioFile.path)) {
+                       if (getDir(clip.audioFile.path) === oldDirectory) {
+                           const fileName = getFile(clip.audioFile.path);
+                           const potentialPath = `${newDirectory}${sep}${fileName}`;
+                           
+                           if (clip.audioFile.path !== potentialPath) {
+                               const exists = await window.electronAPI.checkFileExists(potentialPath);
+                               if (exists) {
+                                   console.log(`[Relocate] Auto-resolving Audio: ${fileName}`);
+                                   dispatch({ type: 'UPDATE_CLIP_FILE_PATH', payload: { oldPath: clip.audioFile.path, newPath: potentialPath } });
+                                   processedOldPaths.add(clip.audioFile.path);
+                                   setMissingFiles(prev => prev.filter(f => f.filePath !== clip.audioFile.path));
+                               }
+                           }
+                       }
+                  }
+              }
+          }
+      } catch (error) {
+          console.error("Relocation failed:", error);
+          showNotification(`Relocation failed: ${error.message}`);
+      }
+  };
+
+  const handleThumbnailError = useCallback((layerIndex, colIndex) => {
+      console.log(`Thumbnail load error for ${layerIndex}-${colIndex}, requesting regeneration...`);
+      // Use live ref to get latest clip data if possible
+      const clip = clipContentsRef.current[layerIndex][colIndex];
+      
+      if (clip) {
+          if (clip.type === 'ilda' && clip.workerId && ildaParserWorker) {
+              const frameIndex = thumbnailFrameIndexes[layerIndex][colIndex] || 0;
+              ildaParserWorker.postMessage({
+                  type: 'get-frame',
+                  workerId: clip.workerId,
+                  frameIndex: frameIndex,
+                  isStillFrame: true,
+                  layerIndex,
+                  colIndex,
+              });
+          } else if (clip.type === 'generator' && clip.stillFrame) {
+               generateThumbnail(clip.stillFrame, clip.effects, layerIndex, colIndex).then(path => {
+                   if (path) {
+                       dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { thumbnailPath: path, thumbnailVersion: Date.now() } } });
+                   }
+               });
+          }
+      }
+  }, [clipContentsRef, thumbnailFrameIndexes, ildaParserWorker]);
+
+  const handleAudioError = useCallback((layerIndex, colIndex) => {
+      // Use live ref to get latest clip data if possible
+      const clip = clipContentsRef.current[layerIndex][colIndex];
+      
+      if (clip && clip.audioFile) {
+          setMissingFiles(prev => {
+                const reqId = `audio-${layerIndex}-${colIndex}`;
+                if (prev.some(f => f.requestId === reqId)) return prev;
+                return [...prev, { 
+                    filePath: clip.audioFile.path, 
+                    fileName: clip.audioFile.name || clip.audioFile.path.split(/[/\\]/).pop(), 
+                    requestId: reqId,
+                    type: 'audio' 
+                }];
+            });
+      }
+  }, [clipContentsRef]);
+
   return (
     <MidiProvider onMidiCommand={handleMidiCommand}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
@@ -3823,6 +4126,11 @@ function App() {
             initialValue={renameModalConfig.initialValue}
             onSave={renameModalConfig.onSave}
             onClose={() => setShowShortcutsWindow(false) || setShowRenameModal(false)}
+        />
+        <RelocateModal 
+            missingFiles={missingFiles}
+            onRelocate={handleRelocate}
+            onClose={() => setMissingFiles([])}
         />
         <div className="main-content">
             <div className="top-bar-left-area">
@@ -3933,6 +4241,7 @@ function App() {
                         isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                         ildaParserWorker={ildaParserWorker}
                         onClipHover={handleClipHover}
+                        onThumbnailError={handleThumbnailError}
                       />
                     );
                   })}
@@ -3940,47 +4249,43 @@ function App() {
               ))}
             </div>
           </div>
-          <div className="side-panel">
-			<IldaPlayer
-              frame={selectedClipFrame}
-              effects={selectedClipEffects}
-              showBeamEffect={showBeamEffect}
-              beamAlpha={beamAlpha}
-              fadeAlpha={fadeAlpha}
-              previewScanRate={previewScanRate}
-              beamRenderMode={beamRenderMode}
-              intensity={selectedClipFinalIntensity}
-              syncSettings={selectedClip?.syncSettings}
-              bpm={state.bpm}
-              clipDuration={(() => {
-                  const pb = selectedClip?.playbackSettings || {};
-                  if (pb.mode === 'timeline') return pb.duration || 1;
-                  if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (state.bpm || 120);
-                  return (selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30);
-              })()}
-              progress={selectedClipProgress} // Add progress
-              previewTime={previewTimeRef.current} // Add master time
-              fftLevels={getFftLevels ? getFftLevels() : fftLevels}
-              onToggleBeamEffect={() => handleToggleBeamEffect('clip')}
-              onCycleDisplayMode={() => handleCycleDisplayMode('clip')}
+			<SidePanelContainer 
+                clipContents={clipContents}
+                activeClipIndexes={activeClipIndexes}
+                layerEffects={layerEffects}
+                bpm={state.bpm}
+                playbackFps={playbackFps}
+                selectedLayerIndex={selectedLayerIndex}
+                selectedColIndex={selectedColIndex}
+                liveFramesRef={liveFramesRef}
+                progressRef={progressRef}
+                selectedDac={selectedDac}
+                liveDacOutputSettingsRef={liveDacOutputSettingsRef}
+                dacOutputSettings={dacOutputSettings}
+                getAudioInfo={getAudioInfo}
+                fftLevels={fftLevels}
+                getFftLevels={getFftLevels}
+                effectStatesRef={effectStatesRef}
+                clipActivationTimesRef={clipActivationTimesRef}
+                showBeamEffect={showBeamEffect}
+                beamAlpha={beamAlpha}
+                fadeAlpha={fadeAlpha}
+                previewScanRate={previewScanRate}
+                beamRenderMode={beamRenderMode}
+                worldShowBeamEffect={worldShowBeamEffect}
+                worldBeamRenderMode={worldBeamRenderMode}
+                masterIntensity={masterIntensity}
+                layerIntensities={layerIntensities}
+                globalBlackout={globalBlackout}
+                layerSolos={layerSolos}
+                layerBlackouts={layerBlackouts}
+                handleToggleBeamEffect={handleToggleBeamEffect}
+                handleCycleDisplayMode={handleCycleDisplayMode}
+                previewFrameCountRef={previewFrameCountRef}
+                totalPointsSentRef={totalPointsSentRef}
+                activeChannelsCountRef={activeChannelsCountRef}
+                lastStatUpdateTimeRef={lastStatUpdateTimeRef}
             />
-            <WorldPreview
-              activeFrames={worldFrames}
-              showBeamEffect={worldShowBeamEffect}
-              beamAlpha={beamAlpha}
-              fadeAlpha={fadeAlpha}
-              previewScanRate={previewScanRate}
-              beamRenderMode={worldBeamRenderMode}
-              layerIntensities={effectiveLayerIntensities}
-              masterIntensity={masterIntensity}
-              dacSettings={selectedDac ? (liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[`${selectedDac.ip}:${selectedDac.channel}`] : dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`]) : null}
-              previewTime={previewTimeRef.current} // Add master time
-              fftLevels={getFftLevels ? getFftLevels() : fftLevels}
-              onToggleBeamEffect={() => handleToggleBeamEffect('world')}
-              onCycleDisplayMode={() => handleCycleDisplayMode('world')}
-            />
-
-          </div>
                     <div className="middle-bar">
                       <div className="middle-bar-left-area">
                         <BPMControls
@@ -4067,6 +4372,7 @@ function App() {
               onParameterChange={handleEffectParameterChange}
               onGeneratorParameterChange={handleGeneratorParameterChange}
               progressRef={progressRef}
+              onAudioError={handleAudioError}
             />
 
 			<SettingsPanel

@@ -1,5 +1,5 @@
 const idn = require('./idn-communication.cjs');
-const etherdream = require('./etherdream-communication.jsx');
+const etherdream = require('./etherdream-communication.cjs');
 
 let globalStatusCallback = null;
 
