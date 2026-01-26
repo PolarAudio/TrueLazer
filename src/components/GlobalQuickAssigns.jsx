@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import Mappable from './Mappable';
 import RadialKnob from './RadialKnob';
 
-const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, ...props }) => {
+const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, className: extraClassName, ...props }) => {
     const handleDragOver = (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'link';
@@ -28,11 +28,17 @@ const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, ...props }) =
     };
 
     return (
-        <div className={`quick-assign-button ${value ? 'active' : ''} ${!isAssigned ? 'unassigned' : ''}`}
-             onClick={isAssigned ? onToggle : undefined}
+        <div className={`quick-assign-button ${value ? 'active' : ''} ${!isAssigned ? 'unassigned' : ''} ${extraClassName || ''}`.trim()}
+             style={{
+				cursor: isAssigned ? 'pointer' : 'default', 
+				userSelect: 'none',
+				width: '90%',
+				opacity: isAssigned ? 1 : 0.5,
+				}}
              onDragOver={handleDragOver} 
              onDrop={handleDrop}
              {...props}
+			 onClick={isAssigned ? onToggle : (e) => e.preventDefault()}
         >
             <div className="button-label" title={label || "Empty"}>{label || "Assign"}</div>
         </div>

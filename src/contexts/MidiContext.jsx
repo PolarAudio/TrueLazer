@@ -30,25 +30,13 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       try {
         await initializeMidi();
         setMidiInitialized(true);
-        const inputs = getMidiInputs();
-        setMidiInputs(inputs);
+        setMidiInputs(getMidiInputs());
         
-        // Listen for connection changes
+        // Listen for connection changes (hotplugging)
         listenToStateChange(() => {
             console.log("MIDI Device change detected, refreshing inputs...");
             setMidiInputs(getMidiInputs());
         });
-        
-        if (window.electronAPI && window.electronAPI.getSelectedMidiInput) {
-            const savedInputId = await window.electronAPI.getSelectedMidiInput();
-            if (savedInputId && inputs.some(i => i.id === savedInputId)) {
-                setSelectedMidiInputId(savedInputId);
-            } else if (inputs.length > 0) {
-                if (!selectedMidiInputId) setSelectedMidiInputId(inputs[0].id);
-            }
-        } else if (inputs.length > 0) {
-           if (!selectedMidiInputId) setSelectedMidiInputId(inputs[0].id);
-        }
 
         // Load saved mappings from store
         if (window.electronAPI && window.electronAPI.getMidiMappings) {
@@ -64,6 +52,34 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     };
     init();
   }, []);
+
+  // Reactive Auto-Selection for MIDI Inputs
+  useEffect(() => {
+      const autoSelect = async () => {
+          if (!midiInitialized || midiInputs.length === 0) return;
+          
+          let targetId = selectedMidiInputId;
+          
+          // 1. If none selected, try to load saved preference
+          if (!targetId && window.electronAPI?.getSelectedMidiInput) {
+              const savedId = await window.electronAPI.getSelectedMidiInput();
+              if (savedId && midiInputs.some(i => i.id === savedId)) {
+                  targetId = savedId;
+              }
+          }
+          
+          // 2. If still none, or the current selected is missing from hardware, pick first available
+          if (!targetId || !midiInputs.some(i => i.id === targetId)) {
+              targetId = midiInputs[0].id;
+          }
+          
+          if (targetId !== selectedMidiInputId) {
+              console.log(`MIDI: Auto-selecting input: ${targetId}`);
+              setSelectedMidiInputId(targetId);
+          }
+      };
+      autoSelect();
+  }, [midiInitialized, midiInputs, selectedMidiInputId]);
 
   const saveMappings = async () => {
       if (window.electronAPI && window.electronAPI.saveMidiMappings) {
@@ -133,6 +149,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   useEffect(() => {
     let cleanup = () => {};
     if (selectedMidiInputId) {
+      console.log(`(Re)binding MIDI listener for: ${selectedMidiInputId}`);
       cleanup = listenToMidiInput(selectedMidiInputId, (event) => {
         if (isMappingRef.current) {
             setLastMidiEvent(event);
@@ -141,7 +158,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       });
     }
     return cleanup;
-  }, [selectedMidiInputId, isMapping, learningId, mappings]); // Re-bind listener if key state changes
+  }, [selectedMidiInputId, isMapping, learningId, mappings, midiInputs]); // Added midiInputs to ensure re-binding on hotplug
 
   // Keep a ref of isMapping for the listener
   const isMappingRef = useRef(isMapping);

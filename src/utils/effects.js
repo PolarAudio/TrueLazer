@@ -447,7 +447,7 @@ function applyMove(points, numPoints, params, time) {
 }
 
 function applyDelay(points, numPoints, params, effectStates, instanceId, context) {
-    const { mode = 'frame', delayAmount, decay, delayDirection, useCustomOrder, customOrder } = withDefaults(params, effectDefinitions.find(def => def.id === 'delay').defaultParams);
+    const { mode = 'frame', delayAmount, decay, delayDirection, useCustomOrder, customOrder, playstyle = 'repeat' } = withDefaults(params, effectDefinitions.find(def => def.id === 'delay').defaultParams);
     if (!effectStates.has(instanceId)) effectStates.set(instanceId, []);
     const history = effectStates.get(instanceId);
     history.unshift(new Float32Array(points));
@@ -534,23 +534,20 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
-    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playStyle = 'loop' } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
+    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playstyle = 'loop' } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
     const { progress = 0, clipDuration = 1 } = context;
-
-    // Use synced time if progress is provided, otherwise fallback to absolute time
-    // syncedSeconds goes 0 -> clipDuration over the clip loop
-    const syncedSeconds = (progress * clipDuration);
-    const effectiveTime = (progress !== undefined && clipDuration > 0) ? syncedSeconds : (time * 0.001);
+    const useSync = (progress !== undefined && clipDuration > 0);
 
     if (mode === 'frame') {
         const steps = paramSteps;
-        let t = (effectiveTime * speed);
+        // If synced, map 0..1 progress to 0..steps. If free, map 1s to 1 step.
+        let t = (useSync ? (progress * steps) : (time * 0.001)) * speed;
 
-        if (playStyle === 'bounce') {
+        if (playstyle === 'bounce') {
              const range = steps;
              const cycle = t % (range * 2);
              t = cycle > range ? (range * 2) - cycle : cycle;
-        } else if (playStyle === 'once') {
+        } else if (playstyle === 'once') {
              t = Math.min(t, steps);
         } else {
              t = t % steps;
@@ -560,10 +557,10 @@ export function applyChase(points, numPoints, params, time, context = {}) {
         for (let i = 0; i < numPoints; i++) {
             const norm = i / numPoints;
             let stepIndex = 0;
-            if (direction === 'left_to_right') stepIndex = Math.floor(norm * (steps - 1));
-            else if (direction === 'right_to_left') stepIndex = Math.floor((1 - norm) * (steps - 1));
-            else if (direction === 'center_to_out') stepIndex = Math.floor(Math.abs(norm - 0.5) * 2 * (steps - 1));
-            else if (direction === 'out_to_center') stepIndex = Math.floor((1 - Math.abs(norm - 0.5) * 2) * (steps - 1));
+            if (direction === 'left_to_right') stepIndex = Math.min(steps - 1, Math.floor(norm * steps));
+            else if (direction === 'right_to_left') stepIndex = Math.min(steps - 1, Math.floor((1 - norm) * steps));
+            else if (direction === 'center_to_out') stepIndex = Math.min(steps - 1, Math.floor(Math.abs(norm - 0.5) * 2 * steps));
+            else if (direction === 'out_to_center') stepIndex = Math.min(steps - 1, Math.floor((1 - Math.abs(norm - 0.5) * 2) * steps));
 
             let dist = Math.abs(t - stepIndex);
             if (dist > steps / 2) dist = steps - dist;
@@ -594,13 +591,14 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             }
         }
         const cycleLength = numChannels;
-        let t = (effectiveTime * speed);
+        // If synced, map 0..1 progress to 0..numChannels. If free, map 1s to 1 step.
+        let t = (useSync ? (progress * cycleLength) : (time * 0.001)) * speed;
         
-        if (playStyle === 'bounce') {
+        if (playstyle === 'bounce') {
              const range = cycleLength;
              const cycle = t % (range * 2);
              t = cycle > range ? (range * 2) - cycle : cycle;
-        } else if (playStyle === 'once') {
+        } else if (playstyle === 'once') {
              t = Math.min(t, cycleLength);
         } else {
              t = t % cycleLength;
@@ -640,22 +638,64 @@ export function applyOutputProcessing(frame, settings) {
     const isTyped = frame.isTypedArray || points instanceof Float32Array;
     const numPoints = isTyped ? (points.length / 8) : points.length;
     let newPoints = isTyped ? new Float32Array(points) : points.map(p => ({ ...p }));
+
     for (let i = 0; i < numPoints; i++) {
         let x, y, r, g, b, blanking;
-        if (isTyped) { x = newPoints[i*8]; y = newPoints[i*8+1]; r = newPoints[i*8+3]; g = newPoints[i*8+4]; b = newPoints[i*8+5]; blanking = newPoints[i*8+6]; }
-        else { x = newPoints[i].x; y = newPoints[i].y; r = newPoints[i].r; g = newPoints[i].g; b = newPoints[i].b; blanking = newPoints[i].blanking ? 1 : 0; }
-        if (flipX) x = -x; if (flipY) y = -y;
+        if (isTyped) { 
+            x = newPoints[i*8]; y = newPoints[i*8+1]; 
+            r = newPoints[i*8+3]; g = newPoints[i*8+4]; b = newPoints[i*8+5]; 
+            blanking = newPoints[i*8+6]; 
+        } else { 
+            x = newPoints[i].x; y = newPoints[i].y; 
+            r = newPoints[i].r; g = newPoints[i].g; b = newPoints[i].b; 
+            blanking = newPoints[i].blanking ? 1 : 0; 
+        }
+
+        // 1. Apply Transformation (Scale/Crop)
         if (transformationEnabled && outputArea) {
-            let u = (x + 1) / 2; let v = (1 - y) / 2; 
-            if (transformationMode === 'crop') { if (u < outputArea.x || u > outputArea.x + outputArea.w || v < outputArea.y || v > outputArea.y + outputArea.h) { r = 0; g = 0; b = 0; blanking = 1; } }
-            else if (transformationMode === 'scale') { u = outputArea.x + (u * outputArea.w); v = outputArea.y + (v * outputArea.h); x = u * 2 - 1; y = 1 - (v * 2); }
+            let u = (x + 1) / 2; 
+            let v = (1 - y) / 2; // Flip Y for V coordinate (0 at top)
+            
+            if (transformationMode === 'crop') { 
+                if (u < outputArea.x || u > outputArea.x + outputArea.w || v < outputArea.y || v > outputArea.y + outputArea.h) { 
+                    r = 0; g = 0; b = 0; blanking = 1; 
+                } 
+            } else if (transformationMode === 'scale') { 
+                u = outputArea.x + (u * outputArea.w); 
+                v = outputArea.y + (v * outputArea.h); 
+                x = u * 2 - 1; 
+                y = 1 - (v * 2); 
+            }
         }
+
+        // 2. Apply Safety Zones (Check against TRANSFORMED coordinates)
         if (safetyZones && safetyZones.length > 0) {
-            let u = (x + 1) / 2; let v = (1 - y) / 2;
-            for (const zone of safetyZones) { if (u >= zone.x && u <= zone.x + zone.w && v >= zone.y && v <= zone.y + zone.h) { r = 0; g = 0; b = 0; blanking = 1; break; } }
+            let u = (x + 1) / 2; 
+            let v = (1 - y) / 2;
+            for (const zone of safetyZones) { 
+                if (u >= zone.x && u <= zone.x + zone.w && v >= zone.y && v <= zone.y + zone.h) { 
+                    r = 0; g = 0; b = 0; blanking = 1; break; 
+                } 
+            }
         }
-        if (isTyped) { newPoints[i*8] = x; newPoints[i*8+1] = y; newPoints[i*8+3] = r; newPoints[i*8+4] = g; newPoints[i*8+5] = b; newPoints[i*8+6] = blanking; }
-        else { newPoints[i].x = x; newPoints[i].y = y; newPoints[i].r = r; newPoints[i].g = g; newPoints[i].b = b; newPoints[i].blanking = blanking > 0.5; }
+
+        // 3. Hardware Correction (Flip) - MUST BE LAST
+        if (flipX) x = -x; 
+        if (flipY) y = -y;
+
+        // 4. Clamping - Prevent hardware wraparound/halo effects
+        x = Math.max(-1, Math.min(1, x));
+        y = Math.max(-1, Math.min(1, y));
+
+        if (isTyped) { 
+            newPoints[i*8] = x; newPoints[i*8+1] = y; 
+            newPoints[i*8+3] = r; newPoints[i*8+4] = g; newPoints[i*8+5] = b; 
+            newPoints[i*8+6] = blanking; 
+        } else { 
+            newPoints[i].x = x; newPoints[i].y = y; 
+            newPoints[i].r = r; newPoints[i].g = g; newPoints[i].b = b; 
+            newPoints[i].blanking = blanking > 0.5; 
+        }
     }
     return { ...frame, points: newPoints, isTypedArray: isTyped };
 }

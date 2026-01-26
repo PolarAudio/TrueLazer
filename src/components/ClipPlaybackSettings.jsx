@@ -23,15 +23,15 @@ const ClipPlaybackSettings = ({ settings, onUpdate }) => {
     <CollapsiblePanel title="Clip Playback">
         <div className="playback-mode-selector">
           <button 
-              className={mode === 'fps' ? 'active' : ''} 
+              className={mode === 'fps' ? 'active' : 'button_inactive'} 
               onClick={() => handleModeChange('fps')}
           >FPS</button>
           <button 
-              className={mode === 'timeline' ? 'active' : ''} 
+              className={mode === 'timeline' ? 'active' : 'button_inactive'} 
               onClick={() => handleModeChange('timeline')}
           >Timeline</button>
           <button 
-              className={mode === 'bpm' ? 'active' : ''} 
+              className={mode === 'bpm' ? 'active' : 'button_inactive'}
               onClick={() => handleModeChange('bpm')}
           >BPM Sync</button>
         </div>

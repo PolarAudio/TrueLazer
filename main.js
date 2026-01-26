@@ -195,33 +195,41 @@ ipcMain.handle('save-artnet-mappings', (event, mappings) => {
 });
 
 ipcMain.handle('export-mappings', async (event, mappings, type) => {
-  const defaultPath = path.join(app.getPath('documents'), `TrueLazer_${type}_Mappings.json`);
-  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-    defaultPath,
-    filters: [{ name: 'JSON Files', extensions: ['json'] }],
-    title: `Export ${type.toUpperCase()} Mappings`
-  });
+    const documentsPath = app.getPath('documents');
+    const userMappingsPath = path.join(documentsPath, 'TrueLazer', 'Mappings');
+    const defaultPath = path.join(userMappingsPath, `TrueLazer_${type}_Mappings.json`);
+    
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: `Export ${type.toUpperCase()} Mappings`,
+      defaultPath,
+      filters: [{ name: 'JSON Files', extensions: ['json'] }]
+    });
 
-  if (!canceled && filePath) {
+    if (canceled || !filePath) return false;
+
     try {
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
       await fs.promises.writeFile(filePath, JSON.stringify(mappings, null, 2));
-      return { success: true };
+      return true;
     } catch (error) {
       console.error(`Failed to export ${type} mappings:`, error);
-      return { success: false, error: error.message };
+      return false;
     }
-  }
-  return { success: false, canceled: true };
-});
-
-ipcMain.handle('import-mappings', async (event, type) => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-    filters: [{ name: 'JSON Files', extensions: ['json'] }],
-    properties: ['openFile'],
-    title: `Import ${type.toUpperCase()} Mappings`
   });
 
-  if (!canceled && filePaths.length > 0) {
+  ipcMain.handle('import-mappings', async (event, type) => {
+    const documentsPath = app.getPath('documents');
+    const userMappingsPath = path.join(documentsPath, 'TrueLazer', 'Mappings');
+    
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: `Import ${type.toUpperCase()} Mappings`,
+      defaultPath: userMappingsPath,
+      filters: [{ name: 'JSON Files', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+
+    if (canceled || filePaths.length === 0) return { success: false };
+
     try {
       const data = await fs.promises.readFile(filePaths[0], 'utf-8');
       const mappings = JSON.parse(data);
@@ -230,9 +238,7 @@ ipcMain.handle('import-mappings', async (event, type) => {
       console.error(`Failed to import ${type} mappings:`, error);
       return { success: false, error: error.message };
     }
-  }
-  return { success: false, canceled: true };
-});
+  });
 
 // Commented out to avoid issues with schema
 
@@ -407,34 +413,64 @@ async function initializeUserData() {
   const documentsPath = app.getPath('documents');
   const userDataPath = path.join(documentsPath, 'TrueLazer');
   const userIldaPath = path.join(userDataPath, 'ILDA-FILES');
+  const userMappingsPath = path.join(userDataPath, 'Mappings');
   
   try {
       await fs.promises.mkdir(userDataPath, { recursive: true });
       await fs.promises.mkdir(userIldaPath, { recursive: true });
+      await fs.promises.mkdir(userMappingsPath, { recursive: true });
 
-      // Copy default assets
+      // 1. Copy default ILDA assets
       const resourcePath = app.isPackaged 
           ? path.join(process.resourcesPath, 'ILDA-FILES')
           : path.join(__dirname, 'src', 'ILDA-FILE-FORMAT-FILES');
 
-      const sourceFiles = await fs.promises.readdir(resourcePath);
-      for (const file of sourceFiles) {
-          const srcFile = path.join(resourcePath, file);
-          const destFile = path.join(userIldaPath, file);
-          
-          try {
-              await fs.promises.access(destFile);
-          } catch {
-              const stat = await fs.promises.stat(srcFile);
-              if (stat.isFile()) {
-                  await fs.promises.copyFile(srcFile, destFile);
+      if (fs.existsSync(resourcePath)) {
+          const sourceFiles = await fs.promises.readdir(resourcePath);
+          for (const file of sourceFiles) {
+              const srcFile = path.join(resourcePath, file);
+              const destFile = path.join(userIldaPath, file);
+              try {
+                  await fs.promises.access(destFile);
+              } catch {
+                  const stat = await fs.promises.stat(srcFile);
+                  if (stat.isFile()) await fs.promises.copyFile(srcFile, destFile);
               }
           }
       }
-      return userIldaPath;
+
+      // 2. Copy default Mapping files
+      let mappingSourcePath = path.join(__dirname, 'src');
+      if (app.isPackaged) {
+          // Check next to exe (extraFiles location) and resources fallback
+          const nextToExe = path.join(path.dirname(process.execPath), 'Mappings');
+          const inResources = path.join(process.resourcesPath, 'Mappings');
+          if (fs.existsSync(nextToExe)) mappingSourcePath = nextToExe;
+          else if (fs.existsSync(inResources)) mappingSourcePath = inResources;
+      }
+
+      console.log(`[Init] Checking for default mappings in: ${mappingSourcePath}`);
+
+      if (fs.existsSync(mappingSourcePath)) {
+          const mappingFiles = await fs.promises.readdir(mappingSourcePath);
+          for (const file of mappingFiles) {
+              if (file.toLowerCase().endsWith('mappings.json')) {
+                  const srcFile = path.join(mappingSourcePath, file);
+                  const destFile = path.join(userMappingsPath, file);
+                  try {
+                      await fs.promises.access(destFile);
+                  } catch {
+                      console.log(`[Init] Copying default mapping: ${file}`);
+                      await fs.promises.copyFile(srcFile, destFile);
+                  }
+              }
+          }
+      }
+
+      return { userIldaPath, userMappingsPath };
   } catch (e) {
-      console.warn("Could not copy default ILDA files:", e);
-      return userIldaPath; // Return path anyway even if copy failed
+      console.warn("Could not initialize user data:", e);
+      return { userIldaPath, userMappingsPath };
   }
 }
 
@@ -446,6 +482,11 @@ ipcMain.handle('get-default-project-path', async () => {
 ipcMain.handle('get-user-ilda-path', async () => {
     const documentsPath = app.getPath('documents');
     return path.join(documentsPath, 'TrueLazer', 'ILDA-FILES');
+});
+
+ipcMain.handle('get-user-mappings-path', async () => {
+    const documentsPath = app.getPath('documents');
+    return path.join(documentsPath, 'TrueLazer', 'Mappings');
 });
 
 let currentProjectpath = null;

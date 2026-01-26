@@ -41,6 +41,9 @@ body {
   flex-direction: column;
   height: 100vh;
 }
+.bi {
+	height: -webkit-fill-available;
+}
 @media only screen and (min-height: 691px) {
   .clip-label {
 	font-size: 0.7em;
@@ -310,6 +313,8 @@ body {
 	justify-self: stretch;
 	display: grid;
 	grid-template-rows: 4% 1fr 1fr 4%;
+	padding-bottom: 4px;
+	padding-top: 4px;
   }
   .systemStats, .performanceStats {
 	display: grid;
@@ -354,27 +359,28 @@ body {
   }
   .middle-bar-left-area {
 	display: flex;
-	min-height: 0;
-    justify-content: center;
+	height: 80%;
+	
   }
   .middle-bar-mid-area {
 	display: grid;
 	grid-template-columns: 1fr 1fr 5fr;
     justify-content: center;
     align-items: center;
-	height: 100%;
+	height: 80%;
   }
   .middle-bar-right-area {
 	display: flex;
 	min-height: 0;
 	justify-content: flex-end;
     align-items: center;
+	height: 80%;
   }
   .transport-controls {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     align-items: center;
-	justify-content: center;
+	justify-items: center;
 	height: 95%;
 	margin-left: 4px;
 	margin-right: 4px;
@@ -392,11 +398,12 @@ body {
 	justify-items: center;
   }
   .master-speed-slider label {
-    font-size: 0.8rem;
+    font-size: 0.7rem;
     color: #888;
     text-transform: uppercase;
     margin-right: 4px;
 	margin-left: 4px;
+	cursor: grabbing;
   }
   .slider_hor {
     width: 100%;
@@ -421,29 +428,27 @@ body {
 	grid-row-start: 4;
 	grid-row-end: 5;
 	display: grid;
-	grid-template-columns: repeat(5, 1fr);
+	grid-template-columns: repeat(4, 1fr);
 	background-color: #20232a;
     overflow-x: auto;
     overflow-y: hidden;
     gap: 6px;
     padding: 3px;
   }
+  
   .file-browser,
   .generator-panel,
   .effect-panel,
   .settings-panel-base,
   .dac-panel {
-	min-width: 280px;
     flex-shrink: 0;
 	background-color: #1a1a1a;
 	display: flex;
 	flex-direction: column;
-	border-radius: 10px;
-	height: 98%;
 	text-align: center;
 	overflow-y: auto;
-	row-gap: 3px;
-	clip-path: inset(0 round 10px);
+	height: 100%;
+	border-radius: 10px;
   }
   
   .column-headers-container {
@@ -483,11 +488,10 @@ h3 {
 .fileBrowser {
   margin: 0;
   display: block;
-  margin-block-start: .2rem;
-  margin-block-end: .2rem;
   margin-inline-start: 0px;
   margin-inline-end: 0px;
   unicode-bidi: isolate;
+  font-size: 0.6rem;
 }
 
 /* Settings Cards & Controls */
@@ -603,12 +607,12 @@ h3 {
   white-space: nowrap;
 }
 
-.clip-playback-settings .playback-mode-selector {
+.clip-playback-settings, .playback-mode-selector {
   display: flex;
   gap: 4px;
 }
 
-.clip-playback-settings .playback-mode-selector button {
+.playback-mode-selector button {
   flex: 1;
   background: #333;
   border: none;
@@ -620,7 +624,7 @@ h3 {
   font-weight: bold;
 }
 
-.clip-playback-settings .playback-mode-selector button.active {
+.playback-mode-selector button.active {
   background: var(--theme-color);
   color: white;
 }
@@ -862,13 +866,15 @@ input[type="checkbox"]:checked:before {
   cursor: pointer;
   margin-bottom: 5px;
   border-radius: 5px;
+  align-self: center;
+  width: 95%;
 }
 
 .ild-file-list {
   max-height: 100%;
   overflow-y: auto;
   border: 1px solid #3a3f47;
-  padding: 5px;
+  margin-top: 4px;
   border-radius: 10px;
   scrollbar-width: thin;
   scrollbar-color: var(--theme-color) #00000000;
@@ -887,7 +893,6 @@ input[type="checkbox"]:checked:before {
   display: flex;
   flex-direction: column;
   flex-wrap: wrap;
-  row-gap: 3px;
 }
 
 .generator-item {
@@ -1296,12 +1301,11 @@ input[type="checkbox"]:checked:before {
 .settings-card {
   background: #1a1a1a;
   border-radius: 6px;
-  margin-bottom: 8px;
+  margin: 4px;
   border: 1px solid #333;
   text-align: left;
   box-sizing: border-box;
-  margin-left: 4px;
-  margin-right: 4px;
+
 }
 
 .settings-card-header {
@@ -1894,13 +1898,20 @@ input[type="checkbox"]:checked:before {
   grid-template-columns: repeat( 8, 1fr);
   justify-items: center;
 }
+.knobs-row {
+	margin-top: 10px;
+}
 
 div[data-mappable-id^='quick_knob_'] {
-  width: 40px;
-  align-items: center;
+  width: 90%;
+  align-content: center;
   justify-items: center;
   cursor: ns-resize;
   user-select: none;
+  overflow-x: auto;
+  outline: solid 1px var(--theme-color);
+  border-radius: 5px;
+  height: 40px;
 }
 
 .knob-circle {
@@ -1925,7 +1936,6 @@ div[data-mappable-id^='quick_knob_'] {
 
 div[data-mappable-id^='quick_btn_'] {
   width: 100%;
-  min-width: 30px;
   height: 24px;
   background: #333;
   border: 1px solid #555;
@@ -1937,34 +1947,31 @@ div[data-mappable-id^='quick_btn_'] {
   transition: all 0.1s;
   box-sizing: border-box;
   padding: 2px;
+  overflow-x: auto;
 }
 
-div[data-mappable-id^='quick_btn_']:hover {
-  background: #444;
-  border-color: var(--theme-color);
-}
-
-div[data-mappable-id^='quick_btn_'].active,
-.quick-assign-button.active {
+div[data-mappable-id^='quick_btn_'].active {
   background: var(--theme-color) !important;
   color: #000 !important;
   border-color: var(--theme-color) !important;
-  box-shadow: 0 0 8px var(--theme-color) !important;
+  box-shadow: 0 0 4px var(--theme-color) !important;
 }
+
+/* Hover effect ONLY for assigned (not unassigned) buttons */
+div[data-mappable-id^='quick_btn_']:not(.unassigned):hover {
+    filter: brightness(1.2);
+}
+
+/* Explicitly reset unassigned buttons to prevent any inherited hover effects */
 div[data-mappable-id^='quick_btn_'].unassigned {
-  opacity: 0.3;
-  cursor: default;
-  border-color: #444;
+    cursor: default;
+    opacity: 0.5; /* Ensure opacity is enforced via class if inline fails or conflicts */
 }
 
 div[data-mappable-id^='quick_btn_'].unassigned:hover {
-  background: #333;
-  border-color: #444;
-}
-
-.quick-assign-knob.unassigned {
-  opacity: 0.3 !important; /* Force override inline style if needed, though inline logic handles it too */
-  cursor: default !important;
+    filter: none;
+    background: #333; /* Ensure background stays dark */
+    border-color: #555;
 }
 
 .quick-assign-knob.unassigned .knob-circle {
@@ -1978,20 +1985,24 @@ div[data-mappable-id^='quick_btn_'].unassigned:hover {
 
 .knob-label, .button-label {
   font-size: 8px;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   width: 100%;
   text-align: center;
-  color: #aaa;
   white-space: nowrap;
   pointer-events: none;
 }
+.knob-label {
+	position: fixed;
+	translate: 0px -15px;
+	width: 50px;
+	
+}
 
 /* Bottom Panel Tabs */
-.bottom-panel-tabs-container {
+.bottom-panel-tabs-container-1, .bottom-panel-tabs-container-2 {
     display: flex;
     flex-direction: column;
-    height: 100%;
     min-width: 0;
     /* Replaces the individual panels which had specific styles */
     background-color: #1a1a1a;
@@ -2001,7 +2012,7 @@ div[data-mappable-id^='quick_btn_'].unassigned:hover {
 }
 
 
-.bottom-panel-tabs {
+.bottom-panel-tabs-1, .bottom-panel-tabs-2{
     display: flex;
     background: #2a2a2a;
     border-bottom: 1px solid #333;
@@ -2009,27 +2020,29 @@ div[data-mappable-id^='quick_btn_'].unassigned:hover {
 	justify-content: center;
 }
 
-.tab-button {
+.tab-button-1, .tab-button-2{
     background: transparent;
     border: none;
     color: #888;
     padding: 5px 15px;
     cursor: pointer;
     border-top: 2px solid transparent;
-    font-size: 0.9em;
+    font-size: 0.8em;
+	width: -webkit-fill-available;
 }
 
-.tab-button.active {
+.tab-button-1.active, .tab-button-2.active {
     color: var(--theme-color);
     border-top-color: var(--theme-color);
     background: #252525;
 }
 
-.bottom-panel-tab-content {
+.bottom-panel-tab-content-1, .bottom-panel-tab-content-2{
     flex-grow: 1;
     overflow: hidden;
     position: relative;
     background: #1a1a1a;
+	margin: 4px;
 }
 .bottom-panel-tab-content > * {
     height: 100%;
@@ -2041,13 +2054,6 @@ div[data-mappable-id^='quick_btn_'].unassigned:hover {
 .top-bar-left-area {
     border-bottom: 1px solid #3a3f47;
 }
-
-.side-panel {
-    /* Ensure side panel respects top bar if needed, or stays full height */
-    /* Currently Row 1-3. If we want top bar to extend, we change this. */
-    /* But 'Global Settings' might just be in center. */
-}
-
 
 /* Range Slider */
 .range-slider-container {

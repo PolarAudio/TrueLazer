@@ -30,7 +30,6 @@ const LayerSettingsPanel = ({
 
     if (selectedLayerIndex === null) return (
         <div className="settings-panel-base">
-            <div className="settings-card-header"><h4>Layer Settings</h4></div>
             <div className="settings-card-content"><p className="info-text">Select a layer to edit settings</p></div>
         </div>
     );
@@ -55,8 +54,6 @@ const LayerSettingsPanel = ({
 
     return (
         <div className="settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
-             <h3>Layer Settings</h3>
-
              {/* Assigned DACs Section */}
              {assignedDacs && assignedDacs.length > 0 && (
                 <CollapsiblePanel title="Assigned DACs">

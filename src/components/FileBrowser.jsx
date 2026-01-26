@@ -33,7 +33,6 @@ const FileBrowser = () => {
 
   return (
     <div className="file-browser">
-      <h3>ILD File Browser</h3>
       <button onClick={handleOpenExplorer}>Open Folder</button>
       {selectedDirectory && <p className="fileBrowser">Selected Directory: {selectedDirectory.split('\\').filter(Boolean).pop()}</p>}
       <div className="ild-file-list">

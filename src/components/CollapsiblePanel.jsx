@@ -8,9 +8,9 @@ const CollapsiblePanel = ({ title, children, icon, defaultCollapsed = false, hea
             <div 
                 className="settings-card-header" 
                 onClick={() => setCollapsed(!collapsed)} 
-                style={{cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}
+                style={{ userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}
             >
-                <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer'}}>
                      {/* Playhead Arrow */}
                      <svg 
                         xmlns="http://www.w3.org/2000/svg" 

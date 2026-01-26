@@ -53,7 +53,6 @@ const ClipSettingsPanel = ({
   if (selectedLayerIndex === null || selectedColIndex === null) {
     return (
       <div className="clip-settings-panel settings-panel-base">
-        <div className="settings-card-header"><h4>Clip Settings</h4></div>
         <p className="info-text">Select a clip to view settings.</p>
       </div>
     );
@@ -140,8 +139,6 @@ const ClipSettingsPanel = ({
 
   return (
     <div className="clip-settings-panel settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
-	  <div className="settings-card-header"><h4>Clip Settings</h4></div>
-      
       <CollapsiblePanel title="Audio">
             {audioFile ? (
                 <div className="assigned-audio-info" style={{ position: 'relative' }}>
@@ -244,6 +241,7 @@ const ClipSettingsPanel = ({
                 draggable
                 onDragStart={() => handleEffectDragStart(effectIndex)}
                 onDragOver={(e) => handleEffectDragOver(e, effectIndex)}
+				style={{cursor: 'row-resize'}}
               >
                 <EffectEditor
                   effect={effect}

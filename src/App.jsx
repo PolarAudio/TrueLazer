@@ -53,8 +53,8 @@ const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => {
   };
 
   return (
-    <div className="master-speed-slider" draggable onDragStart={handleDragStart}>
-      <label htmlFor="masterSpeedRange">{playbackFps} FPS</label>
+    <div className="master-speed-slider">
+      <label htmlFor="masterSpeedRange" draggable onDragStart={handleDragStart}>{playbackFps} FPS</label>
       <Mappable id="master_speed">
           <input type="range" min="1" max="120" value={playbackFps} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
       </Mappable>
@@ -101,7 +101,7 @@ const getInitialState = (initialSettings) => ({
   clipContents: ensureArrayStructure(initialSettings?.clipContents, 5, 8, () => ({ parsing: false })),
   clipNames: ensureArrayStructure(initialSettings?.clipNames, 5, 8, (r, c) => `Clip ${r + 1}-${c + 1}`),
   thumbnailFrameIndexes: Array(5).fill(null).map(() => Array(8).fill(0)),
-  layerEffects: Array(5).fill([]),
+  layerEffects: Array.from({ length: 5 }, () => []),
   layerAssignedDacs: initialSettings?.layerAssignedDacs ?? Array(5).fill([]),
   layerIntensities: Array(5).fill(1), // Add this
   layerAutopilots: Array(5).fill('off'), // Add layer autopilots
@@ -731,6 +731,7 @@ function reducer(state, action) {
     }
     case 'UPDATE_QUICK_CONTROL': {
         const { type, index, value } = action.payload;
+		const targetKey = type === 'button' ? 'buttons' : 'knobs';
         
         const newAssigns = { 
             knobs: [...state.quickAssigns.knobs],
@@ -825,7 +826,13 @@ function reducer(state, action) {
         const control = newAssigns.buttons[index];
         if (control.link) {
             const { layerIndex, colIndex, effectIndex, paramName, targetType } = control.link;
-            
+            if (targetType === 'global') {
+				if (paramName === 'blackout') {
+					newState.globalBlackout = newValue;
+				} else if (paramName === 'laser_output') {
+					newState.isWorldOutputActive = newValue;
+				}
+			}	
             if (targetType === 'layer') {
                 if (paramName === 'blackout') {
                     const newLayerBlackouts = [...newState.layerBlackouts];
@@ -1475,7 +1482,8 @@ function App() {
   const [showAudioSettingsWindow, setShowAudioSettingsWindow] = useState(false);
   const [showFftSettingsWindow, setShowFftSettingsWindow] = useState(false);
   const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => {} });
-  const [activeBottomTab, setActiveBottomTab] = useState('files');
+  const [activeBottomTab_1, setActiveBottomTab_1] = useState('files');
+  const [activeBottomTab_2, setActiveBottomTab_2] = useState('layer');
   const [missingFiles, setMissingFiles] = useState([]);
 
   // Refs for performance tracking
@@ -2120,7 +2128,7 @@ function App() {
                   progress: clipProgress, 
                   time: currentTime, 
                   effectStates: effectStatesRef.current, 
-                  assignedDacs: clip.assignedDacs,
+                  assignedDacs: dacList, // Pass the combined list of DACs (Layer + Clip)
                   syncSettings: clip.syncSettings || {},
                   bpm: state.bpm,
                   clipDuration: clipDuration,
@@ -3453,20 +3461,6 @@ function App() {
     // Find effect definition
     const effectData = effectDefinitions.find(e => (e.id || e.name) === effectId);
     if (effectData) {
-        // 1. Direct Mutation for Instant Preview
-        if (layerEffectsRef.current && layerEffectsRef.current[layerIndex]) {
-             const newEffectInstance = {
-                  ...effectData,
-                  instanceId: generateId(),
-                  params: { ...effectData.defaultParams }
-             };
-             // We can push directly to the ref's array
-             layerEffectsRef.current[layerIndex].push(newEffectInstance);
-             // No hasPendingClipUpdate needed for layer effects as they are separate refs, 
-             // but we might want to force a frame tick? 
-             // The loop reads layerEffectsRef.current every frame, so it should pick it up.
-        }
-
         dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex, effect: effectData } });
     }
   }, []);
@@ -4286,93 +4280,102 @@ function App() {
                 activeChannelsCountRef={activeChannelsCountRef}
                 lastStatUpdateTimeRef={lastStatUpdateTimeRef}
             />
-                    <div className="middle-bar">
-                      <div className="middle-bar-left-area">
-                        <BPMControls
-                          bpm={state.bpm}
-                          onBpmChange={(newBpm) => dispatch({ type: 'SET_BPM', payload: newBpm })}
-                        />
-                      </div>
-                                  <div className="middle-bar-mid-area">
-                                      <TransportControls
-                                          onPlay={handlePlay}
-                                          onPause={handlePause}
-                                          onStop={handleStop}
-                                          isPlaying={isPlaying}
-                                          isStopped={state.isStopped}
-                                      />
-                      				<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
-                                  </div>          			<div className="middle-bar-right-area">
-          				<p> Right Section of Middle-Bar</p>
-                      </div>
-                    </div>          <div className="bottom-panel">
-            <div className="bottom-panel-tabs-container">
-                <div className="bottom-panel-tabs">
-                    <button className={`tab-button ${activeBottomTab === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab('files')}>Files</button>
-                    <button className={`tab-button ${activeBottomTab === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab('generators')}>Generators</button>
-                    <button className={`tab-button ${activeBottomTab === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab('effects')}>Effects</button>
+            <div className="middle-bar">
+                <div className="middle-bar-left-area">
+                    <BPMControls
+                        bpm={state.bpm}
+                        onBpmChange={(newBpm) => dispatch({ type: 'SET_BPM', payload: newBpm })}
+                    />
                 </div>
-                <div className="bottom-panel-tab-content">
-                    {activeBottomTab === 'files' && <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />}
-                    {activeBottomTab === 'generators' && <GeneratorPanel />}
-                    {activeBottomTab === 'effects' && <EffectPanel />}
+                    <div className="middle-bar-mid-area">
+                        <TransportControls
+                            onPlay={handlePlay}
+                            onPause={handlePause}
+                            onStop={handleStop}
+                            isPlaying={isPlaying}
+                            isStopped={state.isStopped}
+                        />
+						<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
+                    </div>
+				<div className="middle-bar-right-area">
+          			<p> Right Section of Middle-Bar</p>
+                </div>
+            </div>
+		<div className="bottom-panel">
+            <div className="bottom-panel-tabs-container-1">
+                <div className="bottom-panel-tabs-1">
+                    <button className={`tab-button-1 ${activeBottomTab_1 === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('files')}>Files</button>
+                    <button className={`tab-button-1 ${activeBottomTab_1 === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('generators')}>Generators</button>
+                    <button className={`tab-button-1 ${activeBottomTab_1 === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('effects')}>Effects</button>
+                </div>
+                <div className="bottom-panel-tab-content-1">
+                    {activeBottomTab_1 === 'files' && <FileBrowser onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} />}
+                    {activeBottomTab_1 === 'generators' && <GeneratorPanel />}
+                    {activeBottomTab_1 === 'effects' && <EffectPanel />}
                 </div>
             </div>
             
+			<div className="bottom-panel-tabs-container-2">
+				<div className="bottom-panel-tabs-2">
+					<button className={`tab-button-2 ${activeBottomTab_2 === 'layer' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('layer')}>Layer-Settings</button>
+					<button className={`tab-button-2 ${activeBottomTab_2 === 'clip' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('clip')}>Clip-Settings</button>
+				</div>
+				<div className="bottom-panel-tab-content-2">
+					{activeBottomTab_2 === 'layer' && <LayerSettingsPanel
+						selectedLayerIndex={selectedLayerIndex}
+						autopilotMode={selectedLayerIndex !== null ? state.layerAutopilots[selectedLayerIndex] : 'off'}
+						onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
+						layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
+						assignedDacs={selectedLayerIndex !== null && state.layerAssignedDacs ? state.layerAssignedDacs[selectedLayerIndex] : []}
+						onToggleDacMirror={(layerIndex, dacIndex, axis) => dispatch({ type: 'TOGGLE_LAYER_DAC_MIRROR', payload: { layerIndex, dacIndex, axis } })}
+						onRemoveDac={(layerIndex, dacIndex) => dispatch({ type: 'REMOVE_LAYER_DAC', payload: { layerIndex, dacIndex } })}
+						onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
+						onRemoveEffect={(index) => selectedLayerIndex !== null && dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex: index } })}
+						onParamChange={(effectIndex, paramName, val) => selectedLayerIndex !== null && dispatch({ type: 'UPDATE_LAYER_EFFECT_PARAMETER', payload: { layerIndex: selectedLayerIndex, effectIndex, paramName, newValue: val } })}
+					/>}
+					{activeBottomTab_2 === 'clip' && <ClipSettingsPanel
+						selectedLayerIndex={selectedLayerIndex}
+						selectedColIndex={selectedColIndex}
+						clip={selectedClip}
+						audioInfo={getAudioInfo(selectedLayerIndex)}
+						bpm={state.bpm}
+						getFftLevels={getFftLevels}
+						onAssignAudio={async () => {
+							const filePath = await window.electronAPI.showAudioFileDialog();
+							if (filePath) {
+								const fileName = filePath.split(/[\\/]/).pop();
+								dispatch({ type: 'SET_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, audioFile: { path: filePath, name: fileName } } });
+							}
+						}}
+						onRemoveAudio={() => {
+							stopAudio(selectedLayerIndex);
+							dispatch({ type: 'REMOVE_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex } });
+						}}
+						onUpdateAudioVolume={(lIdx, cIdx, volume) => {
+							dispatch({ type: 'SET_CLIP_AUDIO_VOLUME', payload: { layerIndex: lIdx, colIndex: cIdx, volume } });
+							setClipVolume(lIdx, volume);
+						}}
+						onUpdatePlaybackSettings={(lIdx, cIdx, settings) => dispatch({ type: 'UPDATE_CLIP_PLAYBACK_SETTINGS', payload: { layerIndex: lIdx, colIndex: cIdx, settings } })}
+						onSetParamSync={(paramId, syncMode) => dispatch({ type: 'SET_CLIP_PARAM_SYNC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, paramId, syncMode } })}
+						onToggleDacMirror={(lIdx, cIdx, dIdx, axis) => dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex: dIdx, axis } })}
+						onRemoveDac={(dacIndex) => dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } })}
+						onRemoveEffect={(lIdx, cIdx, eIdx) => dispatch({ type: 'REMOVE_CLIP_EFFECT', payload: { layerIndex: lIdx, colIndex: cIdx, effectIndex: eIdx } })}
+						onReorderEffects={(lIdx, cIdx, oldIdx, newIdx) => dispatch({ type: 'REORDER_CLIP_EFFECTS', payload: { layerIndex: lIdx, colIndex: cIdx, oldIndex: oldIdx, newIndex: newIdx } })}
+						onAddEffect={(effect) => dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effect } })}
+						onParameterChange={handleEffectParameterChange}
+						onGeneratorParameterChange={handleGeneratorParameterChange}
+						progressRef={progressRef}
+						onAudioError={handleAudioError}
+					/>}
+				</div>
+			</div>
+			
             <DacPanel 
                 dacs={dacs} 
                 onDacSelected={handleDacSelected} 
                 onDacsDiscovered={handleDacsDiscovered} 
                 dacSettings={dacOutputSettings}
                 onUpdateDacSettings={handleUpdateDacSettings}
-            />
-
-            <LayerSettingsPanel
-                selectedLayerIndex={selectedLayerIndex}
-                autopilotMode={selectedLayerIndex !== null ? state.layerAutopilots[selectedLayerIndex] : 'off'}
-                onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
-                layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
-                assignedDacs={selectedLayerIndex !== null && state.layerAssignedDacs ? state.layerAssignedDacs[selectedLayerIndex] : []}
-                onToggleDacMirror={(layerIndex, dacIndex, axis) => dispatch({ type: 'TOGGLE_LAYER_DAC_MIRROR', payload: { layerIndex, dacIndex, axis } })}
-                onRemoveDac={(layerIndex, dacIndex) => dispatch({ type: 'REMOVE_LAYER_DAC', payload: { layerIndex, dacIndex } })}
-                onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
-                onRemoveEffect={(index) => selectedLayerIndex !== null && dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex: index } })}
-                onParamChange={(effectIndex, paramName, val) => selectedLayerIndex !== null && dispatch({ type: 'UPDATE_LAYER_EFFECT_PARAMETER', payload: { layerIndex: selectedLayerIndex, effectIndex, paramName, newValue: val } })}
-            />
-
-            <ClipSettingsPanel
-              selectedLayerIndex={selectedLayerIndex}
-              selectedColIndex={selectedColIndex}
-              clip={selectedClip}
-              audioInfo={getAudioInfo(selectedLayerIndex)}
-              bpm={state.bpm}
-              getFftLevels={getFftLevels}
-              onAssignAudio={async () => {
-                const filePath = await window.electronAPI.showAudioFileDialog();
-                if (filePath) {
-                    const fileName = filePath.split(/[\\/]/).pop();
-                    dispatch({ type: 'SET_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, audioFile: { path: filePath, name: fileName } } });
-                }
-              }}
-              onRemoveAudio={() => {
-                  stopAudio(selectedLayerIndex);
-                  dispatch({ type: 'REMOVE_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex } });
-              }}
-              onUpdateAudioVolume={(lIdx, cIdx, volume) => {
-                  dispatch({ type: 'SET_CLIP_AUDIO_VOLUME', payload: { layerIndex: lIdx, colIndex: cIdx, volume } });
-                  setClipVolume(lIdx, volume);
-              }}
-              onUpdatePlaybackSettings={(lIdx, cIdx, settings) => dispatch({ type: 'UPDATE_CLIP_PLAYBACK_SETTINGS', payload: { layerIndex: lIdx, colIndex: cIdx, settings } })}
-              onSetParamSync={(paramId, syncMode) => dispatch({ type: 'SET_CLIP_PARAM_SYNC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, paramId, syncMode } })}
-              onToggleDacMirror={(lIdx, cIdx, dIdx, axis) => dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex: dIdx, axis } })}
-              onRemoveDac={(dacIndex) => dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } })}
-              onRemoveEffect={(lIdx, cIdx, eIdx) => dispatch({ type: 'REMOVE_CLIP_EFFECT', payload: { layerIndex: lIdx, colIndex: cIdx, effectIndex: eIdx } })}
-              onReorderEffects={(lIdx, cIdx, oldIdx, newIdx) => dispatch({ type: 'REORDER_CLIP_EFFECTS', payload: { layerIndex: lIdx, colIndex: cIdx, oldIndex: oldIdx, newIndex: newIdx } })}
-              onAddEffect={(effect) => dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effect } })}
-              onParameterChange={handleEffectParameterChange}
-              onGeneratorParameterChange={handleGeneratorParameterChange}
-              progressRef={progressRef}
-              onAudioError={handleAudioError}
             />
 
 			<SettingsPanel
@@ -4397,15 +4400,15 @@ function App() {
                           else if (link.paramName === 'pause') handlePause();
                           else if (link.paramName === 'stop') handleStop();
                       } else if (link.targetType === 'global') {
-                          if (link.paramName === 'blackout') dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
-                          else if (link.paramName === 'laser_output') dispatch({ type: 'TOGGLE_WORLD_OUTPUT_ACTIVE' });
+                          if (link.paramName === 'laser_output') handleToggleWorldOutput();
                           else if (link.paramName === 'clear') handleClearAllActive();
+                          // Blackout is handled purely in the reducer via TOGGLE_QUICK_BUTTON
                       } else {
                           // For effect/generator updates, signal pending update to avoid race condition
                           hasPendingClipUpdate.current = true;
                       }
                   }
-                  dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: 'button', index: i, value: !btn.value } });
+                  dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index: i } });
               }}
               onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
             />

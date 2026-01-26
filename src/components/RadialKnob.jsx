@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, ...props }) => {
+const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, className: extraClassName, ...props }) => {
     const knobRef = useRef(null);
 
     const handleDragOver = (e) => {
@@ -76,19 +76,21 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, ...
     }, [value, onChange, isAssigned]); 
 
     return (
-        <div className={`quick-assign-knob ${!isAssigned ? 'unassigned' : ''}`}
+		//
+        <div className={`quick-assign-knob ${!isAssigned ? 'unassigned' : ''} ${extraClassName || ''}`.trim()}
              ref={knobRef}
-             style={{ width: size, cursor: isAssigned ? 'ns-resize' : 'default', userSelect: 'none', opacity: isAssigned ? 1 : 0.5 }}
+             style={{cursor: isAssigned ? 'ns-resize' : 'default', userSelect: 'none', opacity: isAssigned ? 1 : 0.5 }}
              onDragOver={handleDragOver} 
              onDrop={handleDrop}
              onMouseDown={handleMouseDown}
              {...props}
         >
-            <div className="knob-circle" style={{ width: size*0.66, height: size*0.66 }}>
-                <div className="knob-indicator" style={{ transform: `rotate(${rotation}deg)` }}></div>
-            </div>
-            {label && <div className="knob-label" title={label}>{label}</div>}
-            <div className="knob-value" style={{ fontSize: '9px', color: '#888', marginTop: '2px' }}>{Math.round(value * 100)}%</div>
+		<div className="knob-label" title={label}>{label}</div>
+			<div className="knob-circle" >
+				<div className="knob-indicator" style={{ transform: `rotate(${rotation}deg)` }}></div>
+			</div>
+        
+			<div className="knob-value" style={{ fontSize: '9px', color: '#888', marginTop: '2px' }}>{Math.round(value * 100)}%</div>
         </div>
     );
 };

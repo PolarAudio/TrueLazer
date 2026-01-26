@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld(
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
                 getUserIldaPath: () => ipcRenderer.invoke('get-user-ilda-path'),
+                getUserMappingsPath: () => ipcRenderer.invoke('get-user-mappings-path'),
                 getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
                 saveMidiMappings: (mappings) => ipcRenderer.invoke('save-midi-mappings', mappings),
                 getKeyboardMappings: () => ipcRenderer.invoke('get-keyboard-mappings'),

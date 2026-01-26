@@ -43,7 +43,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                 draggable 
                 onDragStart={handleDragStart}
                 className="param-label"
-                style={{fontSize: '11px', color: '#aaa'}}
+                style={{fontSize: '11px', color: '#aaa', cursor: 'grab'}}
               >{control.label}</label>
             </div>
 

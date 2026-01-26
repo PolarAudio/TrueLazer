@@ -2,12 +2,28 @@ import opentype from 'opentype.js';
 
 const withDefaults = (params, defaults) => ({ ...defaults, ...params });
 
-const fontCache = new WeakMap();
+// Persistent font cache using a simple object or Map
+const parsedFontCache = new Map();
 
 export async function generateText(params, fontBuffer) {
   try {
     if (!fontBuffer) {
       throw new Error('A font buffer is required to generate text.');
+    }
+    
+    // We can't use the buffer itself as a WeakMap key effectively across IPC.
+    // We'll use the byteLength and a small checksum/hash of the first 100 bytes as a key.
+    const fontKey = `${fontBuffer.byteLength}_${new Uint8Array(fontBuffer.slice(0, 100)).join('')}`;
+    
+    let font = parsedFontCache.get(fontKey);
+    if (!font) {
+        font = opentype.parse(fontBuffer);
+        parsedFontCache.set(fontKey, font);
+        // Limit cache size
+        if (parsedFontCache.size > 10) {
+            const firstKey = parsedFontCache.keys().next().value;
+            parsedFontCache.delete(firstKey);
+        }
     }
     const { text, x, y, r, g, b, fontSize, numPoints } = withDefaults(params, {
       text: 'TrueLazer',
@@ -17,14 +33,9 @@ export async function generateText(params, fontBuffer) {
       g: 255,
       b: 255,
       fontSize: 72,
-      numPoints: 200
+      numPoints: 500 // Increased for better DAC buffer saturation
     });
 
-    let font = fontCache.get(fontBuffer);
-    if (!font) {
-        font = opentype.parse(fontBuffer);
-        fontCache.set(fontBuffer, font);
-    }
     const path = font.getPath(text, 0, 0, fontSize);
     const commands = path.commands;
 
@@ -162,7 +173,7 @@ export function generateCircle(params) {
   try {
     const { radius, numPoints, x, y, r, g, b } = withDefaults(params, {
       radius: 0.5,
-      numPoints: 100,
+      numPoints: 500, // Increased for better DAC buffer saturation
       x: 0,
       y: 0,
       r: 255,
@@ -198,7 +209,7 @@ export function generateSquare(params) {
     const { width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
       width: 1,
       height: 1,
-      pointDensity: 25,
+      pointDensity: 125, // Increased for ~500 total points
       x: 0,
       y: 0,
       r: 255,
@@ -250,7 +261,7 @@ export function generateLine(params) {
       y1: 0,
       x2: 0.5,
       y2: 0,
-      pointDensity: 50,
+      pointDensity: 200,
       r: 255,
       g: 255,
       b: 255

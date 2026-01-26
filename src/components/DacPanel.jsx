@@ -97,7 +97,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
       <div className="settings-card-header"><h4>DACs</h4></div>
       <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px'}}>
         <div style={{flex:1, display:'flex'}}>
-            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', marginBottom: 2}}>
+            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', marginBottom: 2}}>
               {networkInterfaces.map(iface => (
                 <option key={iface.address} value={iface.address}>
                   {iface.name} ({iface.address})

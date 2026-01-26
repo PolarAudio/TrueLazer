@@ -112,13 +112,11 @@ const OutputCanvas = ({
 
     // Draw Test Line
     if (testLineEnabled) {
-      // 1. Apply Flip
+      // 1. Coordinates are ABSOLUTE in the UI. 
+      // Hardware Flips are NOT applied to the preview to ensure 'Up is Up'.
       let finalLineY = testLineY;
-      if (flipY) {
-          finalLineY = 1.0 - finalLineY;
-      }
 
-      // 2. Apply Transformation
+      // 2. Apply Transformation (Preview where it lands on the hardware area)
       let startX = 0;
       let endX = 1;
       
