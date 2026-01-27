@@ -169,26 +169,34 @@ function reducer(state, action) {
         return { ...state, layers: newLayers };
     }
     case 'SET_CLIP_CONTENT': {
+      const { layerIndex, colIndex, content } = action.payload;
+      if (layerIndex === undefined || colIndex === undefined) return state;
+
       const newClipContents = [...state.clipContents];
       // Ensure the layer array exists
-      if (!newClipContents[action.payload.layerIndex]) {
-          console.error(`Reducer Error: Layer array at index ${action.payload.layerIndex} is undefined. Action:`, action);
+      if (!newClipContents[layerIndex]) {
+          console.error(`Reducer Error: Layer array at index ${layerIndex} is undefined. Action:`, action);
           return state; // Return current state to prevent crash
       }
       // Create a new array for the specific layer to ensure immutability
-      newClipContents[action.payload.layerIndex] = [...newClipContents[action.payload.layerIndex]];
+      newClipContents[layerIndex] = [...newClipContents[layerIndex]];
 
-      const existingClipContent = newClipContents[action.payload.layerIndex][action.payload.colIndex] || {};
-      newClipContents[action.payload.layerIndex][action.payload.colIndex] = {
+      const existingClipContent = newClipContents[layerIndex][colIndex] || {};
+      newClipContents[layerIndex][colIndex] = {
           ...existingClipContent, // Preserve existing properties like 'type', 'workerId', 'totalFrames', 'ildaFormat', 'fileName', 'filePath', 'effects'
-          ...action.payload.content, // Apply new content (which can include stillFrame and parsing status)
+          ...content, // Apply new content (which can include stillFrame and parsing status)
       };
       return { ...state, clipContents: newClipContents };
     }
     case 'SET_CLIP_NAME': {
+        const { layerIndex, colIndex, name } = action.payload;
+        if (layerIndex === undefined || colIndex === undefined) return state;
+        
         const newClipNames = [...state.clipNames];
-        newClipNames[action.payload.layerIndex] = [...newClipNames[action.payload.layerIndex]];
-        newClipNames[action.payload.layerIndex][action.payload.colIndex] = action.payload.name;
+        if (newClipNames[layerIndex]) {
+            newClipNames[layerIndex] = [...newClipNames[layerIndex]];
+            newClipNames[layerIndex][colIndex] = name;
+        }
         return { ...state, clipNames: newClipNames };
     }
     case 'SET_THUMBNAIL_FRAME_INDEX': {
@@ -621,10 +629,13 @@ function reducer(state, action) {
         const { layerIndex, colIndex, status } = action.payload;
         const newClipContents = [...state.clipContents];
         // Copy inner array
-        newClipContents[layerIndex] = [...newClipContents[layerIndex]];
-        const existingClip = newClipContents[layerIndex][colIndex] || {};
-        newClipContents[layerIndex][colIndex] = { ...existingClip, parsing: status };
-        return { ...state, clipContents: newClipContents };
+        if (newClipContents[layerIndex]) {
+            newClipContents[layerIndex] = [...newClipContents[layerIndex]];
+            const existingClip = newClipContents[layerIndex][colIndex] || {};
+            newClipContents[layerIndex][colIndex] = { ...existingClip, parsing: status };
+            return { ...state, clipContents: newClipContents };
+        }
+        return state;
     }
     case 'SET_BULK_PARSING_STATUS': {
         const newClipContents = [...state.clipContents];
@@ -1195,18 +1206,41 @@ const StatsDisplay = React.memo(({ type, previewFrameCountRef, totalPointsSentRe
     if (type === 'system') {
         return (
             <div className="systemStats">
-                <p>CPU: {stats.cpu}%</p><p>RAM: {stats.ram}MB</p>
+                <p className="sysStats">CPU: {stats.cpu}%</p><p className="sysStats">RAM: {stats.ram}MB</p>
             </div>
         );
     }
 
     return (
         <div className="performanceStats">
-            <p>FPS: {stats.fps}</p><p>AnimPPS: {stats.avgPps} (Avg)</p>
+            <p className="perfStats">FPS: {stats.fps}</p><p className="perfStats">AnimPPS: {stats.avgPps} (Avg)</p>
         </div>
     );
 });
 
+const SystemMonitor = React.memo(({
+	playbackFps,previewScanRate,previewFrameCountRef,totalPointsSentRef,activeChannelsCountRef,lastStatUpdateTimeRef
+}) => {
+	return (
+		<div className="system-monitor-grid">
+			<StatsDisplay 
+				type="performance" 
+				previewFrameCountRef={previewFrameCountRef}
+				totalPointsSentRef={totalPointsSentRef}
+				activeChannelsCountRef={activeChannelsCountRef}
+				lastStatUpdateTimeRef={lastStatUpdateTimeRef}
+			/>
+			<StatsDisplay 
+				type="system" 
+				previewFrameCountRef={previewFrameCountRef}
+				totalPointsSentRef={totalPointsSentRef}
+				activeChannelsCountRef={activeChannelsCountRef}
+				lastStatUpdateTimeRef={lastStatUpdateTimeRef}
+			/>
+		</div>
+	);
+});
+		
 const SidePanelContainer = React.memo(({ 
     clipContents, activeClipIndexes, layerEffects, bpm, playbackFps, 
     selectedLayerIndex, selectedColIndex, liveFramesRef, progressRef, 
@@ -1313,63 +1347,52 @@ const SidePanelContainer = React.memo(({
     }, [layerIntensities, layerBlackouts, layerSolos, globalBlackout]);
 
     return (
-                  <div className="side-panel">
-        			<StatsDisplay 
-                        type="system" 
-                        previewFrameCountRef={previewFrameCountRef}
-                        totalPointsSentRef={totalPointsSentRef}
-                        activeChannelsCountRef={activeChannelsCountRef}
-                        lastStatUpdateTimeRef={lastStatUpdateTimeRef}
-                    />
-        			<IldaPlayer
-                      frame={selectedClipFrame}
-                      effects={selectedClipEffects}
-                      showBeamEffect={showBeamEffect}
-                      beamAlpha={beamAlpha}
-                      fadeAlpha={fadeAlpha}
-                      previewScanRate={previewScanRate}
-                      beamRenderMode={beamRenderMode}
-                      intensity={selectedClipFinalIntensity}
-                      syncSettings={selectedClip?.syncSettings}
-                      bpm={bpm}
-                      clipDuration={(() => {
-                          const pb = selectedClip?.playbackSettings || {};
-                          if (pb.mode === 'timeline') return pb.duration || 1;
-                          if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (bpm || 120);
-                          return (selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30);
-                      })()}
-                      progress={selectedClipProgress}
-                      previewTime={previewTimeRef.current}
-                      fftLevels={getFftLevels ? getFftLevels() : fftLevels}
-                      effectStates={effectStatesRef.current}
-                      clipActivationTime={selectedLayerIndex !== null ? (clipActivationTimesRef.current[selectedLayerIndex] || 0) : 0}
-                      onToggleBeamEffect={() => handleToggleBeamEffect('clip')}
-                      onCycleDisplayMode={() => handleCycleDisplayMode('clip')}
-                    />
-                    <WorldPreview
-                      activeFrames={worldFrames}
-                      showBeamEffect={worldShowBeamEffect}
-                      beamAlpha={beamAlpha}
-                      fadeAlpha={fadeAlpha}
-                      previewScanRate={previewScanRate}
-                      beamRenderMode={worldBeamRenderMode}
-                      layerIntensities={effectiveLayerIntensities}
-                      masterIntensity={masterIntensity}
-                      dacSettings={selectedDac ? (liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[`${selectedDac.ip}:${selectedDac.channel}`] : dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`]) : null}
-                      previewTime={previewTimeRef.current}
-                      fftLevels={getFftLevels ? getFftLevels() : fftLevels}
-                      onToggleBeamEffect={() => handleToggleBeamEffect('world')}
-                      onCycleDisplayMode={() => handleCycleDisplayMode('world')}
-                    />
-        			<StatsDisplay 
-                        type="performance" 
-                        previewFrameCountRef={previewFrameCountRef}
-                        totalPointsSentRef={totalPointsSentRef}
-                        activeChannelsCountRef={activeChannelsCountRef}
-                        lastStatUpdateTimeRef={lastStatUpdateTimeRef}
-                    />
-                  </div>    );
+		<div className="side-panel">
+			<IldaPlayer
+				frame={selectedClipFrame}
+				effects={selectedClipEffects}
+				showBeamEffect={showBeamEffect}
+				beamAlpha={beamAlpha}
+				fadeAlpha={fadeAlpha}
+				previewScanRate={previewScanRate}
+				beamRenderMode={beamRenderMode}
+				intensity={selectedClipFinalIntensity}
+				syncSettings={selectedClip?.syncSettings}
+				bpm={bpm}
+				clipDuration={(() => {
+					const pb = selectedClip?.playbackSettings || {};
+					if (pb.mode === 'timeline') return pb.duration || 1;
+					if (pb.mode === 'bpm') return ((pb.beats || 8) * 60) / (bpm || 120);
+					return (selectedClip?.totalFrames || 30) / (selectedClip?.fps || playbackFps || 30);
+				})()}
+				progress={selectedClipProgress}
+				previewTime={previewTimeRef.current}
+				fftLevels={getFftLevels ? getFftLevels() : fftLevels}
+				effectStates={effectStatesRef.current}
+				clipActivationTime={selectedLayerIndex !== null ? (clipActivationTimesRef.current[selectedLayerIndex] || 0) : 0}
+				onToggleBeamEffect={() => handleToggleBeamEffect('clip')}
+				onCycleDisplayMode={() => handleCycleDisplayMode('clip')}
+			/>
+			<WorldPreview
+				activeFrames={worldFrames}
+				showBeamEffect={worldShowBeamEffect}
+				beamAlpha={beamAlpha}
+				fadeAlpha={fadeAlpha}
+				previewScanRate={previewScanRate}
+				beamRenderMode={worldBeamRenderMode}
+				layerIntensities={effectiveLayerIntensities}
+				masterIntensity={masterIntensity}
+				dacSettings={selectedDac ? (liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[`${selectedDac.ip}:${selectedDac.channel}`] : dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`]) : null}
+				previewTime={previewTimeRef.current}
+				fftLevels={getFftLevels ? getFftLevels() : fftLevels}
+				onToggleBeamEffect={() => handleToggleBeamEffect('world')}
+				onCycleDisplayMode={() => handleCycleDisplayMode('world')}
+			/>
+		</div>	
+	)
 });
+
+
 
 function App() {
   const ildaParserWorker = useIldaParserWorker();
@@ -1382,6 +1405,8 @@ function App() {
         uiGeneratorWorkerRef.current = worker;
 
         const handleUiMessage = (e) => {
+            if (e.data.browserFile) return;
+
             // Handle processing queue
             if (e.data.layerIndex !== undefined && e.data.colIndex !== undefined) {
                 const clipKey = `${e.data.layerIndex}-${e.data.colIndex}`;
@@ -1401,6 +1426,8 @@ function App() {
 
             if (e.data.success) {
                 const { layerIndex, colIndex, frames, generatorDefinition, currentParams, isLive, seq } = e.data;
+
+                if (layerIndex === undefined || colIndex === undefined) return;
 
                 // Discard out-of-order responses for non-live updates
                 if (seq !== undefined) {
@@ -1801,10 +1828,14 @@ function App() {
     if (!ildaParserWorker) return;
 
     const handleMessage = async (e) => {
+      if (e.data.browserFile) return; // Ignore messages for the FileBrowser
+
       if (e.data.type === 'get-frame' && e.data.success) {
         if (e.data.isStillFrame) {
           const { workerId, frame, layerIndex, colIndex } = e.data;
           
+          if (layerIndex === undefined || colIndex === undefined) return;
+
           // Generate Thumbnail
           let thumbnailPath = null;
           // Use live ref if available for latest data, else ref.current
@@ -1841,6 +1872,8 @@ function App() {
       } else if (e.data.type === 'parse-ilda' && e.data.success) {
         const { workerId, totalFrames, ildaFormat, fileName, filePath, layerIndex, colIndex } = e.data;
 
+        if (layerIndex === undefined || colIndex === undefined) return;
+
         const newClipContent = {
           type: 'ilda',
           workerId,
@@ -1870,6 +1903,9 @@ function App() {
       } else if (e.data.type === 'get-all-frames' && e.data.success) {
           console.log('Received get-all-frames response:', e.data);
           const { frames, workerId, layerIndex, colIndex } = e.data;
+          
+          if (layerIndex === undefined || colIndex === undefined) return;
+
           // Use dynamic import for writer
           import('./utils/ilda-writer.js').then(({ framesToIlda }) => {
               const buffer = framesToIlda(frames);
@@ -3036,10 +3072,12 @@ function App() {
         }
       } else if (e.data.type === 'parsing-status') {
         const { layerIndex, colIndex, status } = e.data;
-        dispatch({ type: 'SET_CLIP_PARSING_STATUS', payload: { layerIndex, colIndex, status } });
-        if (!status) {
-            // Mark as failed so we don't retry endlessly
-            dispatch({ type: 'SET_CLIP_PARSING_FAILED', payload: { layerIndex, colIndex, failed: true } });
+        if (layerIndex !== undefined && colIndex !== undefined) {
+            dispatch({ type: 'SET_CLIP_PARSING_STATUS', payload: { layerIndex, colIndex, status } });
+            if (!status) {
+                // Mark as failed so we don't retry endlessly
+                dispatch({ type: 'SET_CLIP_PARSING_FAILED', payload: { layerIndex, colIndex, failed: true } });
+            }
         }
       }
     };
@@ -3126,6 +3164,8 @@ function App() {
     if (!generatorWorker) return;
 
     const handleMessage = (e) => {
+        if (e.data.browserFile) return;
+
         // Handle processing queue
         if (e.data.layerIndex !== undefined && e.data.colIndex !== undefined) {
             const clipKey = `${e.data.layerIndex}-${e.data.colIndex}`;
@@ -3145,6 +3185,8 @@ function App() {
 
         if (e.data.success) {
             const { layerIndex, colIndex, frames, generatorDefinition, currentParams, isLive, seq } = e.data;
+
+            if (layerIndex === undefined || colIndex === undefined) return;
 
             // Discard out-of-order responses for non-live updates
             if (seq !== undefined) {
@@ -3808,31 +3850,7 @@ function App() {
   }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, handleClipPreview, handleActivateClick, handleColumnTrigger, clipContents, selectedLayerIndex, selectedColIndex, dacOutputSettings]);
 
   const handleToggleBeamEffect = useCallback((target) => {
-      // target: 'clip' (default/legacy) or 'world'
       if (target === 'world') {
-          // World Preview Logic
-          // We need a new state property for world beam effect if we want it separate.
-          // Currently state only has showBeamEffect.
-          // Let's assume we added worldShowBeamEffect to state (we haven't yet, let's fix that)
-          // Wait, I need to add state properties first.
-          // But I can't easily add state properties without modifying getInitialState and reducer.
-          // Let's modify the handler to assume the reducer handles 'SET_RENDER_SETTING' dynamically or add specific case.
-          // `SET_RENDER_SETTING` is dynamic: `[action.payload.setting]: action.payload.value`.
-          // So I can just dispatch 'worldShowBeamEffect'.
-          
-          // However, I need to READ the current value.
-          // I don't have `worldShowBeamEffect` in destructured state variables yet.
-          // I will access it via `state.worldShowBeamEffect` if I had `state` here, but `state` is available in the component scope?
-          // No, `state` is returned by useReducer. I have `showBeamEffect` destructured.
-          // I need to destructure `worldShowBeamEffect` and `worldBeamRenderMode` from state in the main body.
-          
-          // Let's assume I will add them to destructuring in next step.
-          // For now, let's implement the logic assuming they exist.
-          // I'll use `state.worldShowBeamEffect` directly if I didn't destructure, but I should destructure.
-          
-          // Since I can't see the destructuring line in this small context window, I will assume I will fix it.
-          // Actually, I can just use `state.worldShowBeamEffect`.
-          
           const currentVal = state.worldShowBeamEffect ?? true; // Default to true if undefined
           const newValue = !currentVal;
           
@@ -3840,10 +3858,7 @@ function App() {
           
           if (window.electronAPI && window.electronAPI.setRenderSettings) {
               const newSettings = {
-                  ...state.renderSettings, // We don't have state.renderSettings, we have individual keys.
-                  // We need to construct the object.
-                  // Let's fetch current settings first to be safe or reconstruct.
-                  // Reconstruct:
+                  ...state.renderSettings,
                   showBeamEffect: state.showBeamEffect,
                   beamRenderMode: state.beamRenderMode,
                   previewScanRate: state.previewScanRate,
@@ -4298,7 +4313,6 @@ function App() {
 						<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
                     </div>
 				<div className="middle-bar-right-area">
-          			<p> Right Section of Middle-Bar</p>
                 </div>
             </div>
 		<div className="bottom-panel">
@@ -4413,6 +4427,16 @@ function App() {
               onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
             />
           </div>
+			<div className="SystemMonitor">
+				<SystemMonitor
+					playbackFps={playbackFps}
+					previewScanRate={previewScanRate}
+					previewFrameCountRef={previewFrameCountRef}
+					totalPointsSentRef={totalPointsSentRef}
+					activeChannelsCountRef={activeChannelsCountRef}
+					lastStatUpdateTimeRef={lastStatUpdateTimeRef}
+				/>
+			</div>
         </div>
       </ErrorBoundary>
     </div>

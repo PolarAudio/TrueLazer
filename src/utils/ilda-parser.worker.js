@@ -251,9 +251,11 @@ self.onmessage = function(e) {
   } else if (type === 'load-and-parse-ilda') {
     // Worker requests file content from main process (via renderer)
     const newRequestId = Math.random().toString(36).substring(2, 15);
-    pendingFileRequests.set(newRequestId, { fileName, filePath, layerIndex, colIndex });
+    pendingFileRequests.set(newRequestId, { fileName, filePath, layerIndex, colIndex, browserFile: e.data.browserFile });
     // Inform renderer that parsing has started for this clip
-    self.postMessage({ type: 'parsing-status', status: true, layerIndex, colIndex });
+    if (layerIndex !== undefined && colIndex !== undefined) {
+        self.postMessage({ type: 'parsing-status', status: true, layerIndex, colIndex });
+    }
     self.postMessage({ type: 'request-file-content', filePath, requestId: newRequestId });
   } else if (type === 'file-content-response') {
     // Main process (renderer) sends file content back to worker
@@ -267,7 +269,9 @@ self.onmessage = function(e) {
     if (e.data.error) {
       console.error(`Worker: Error receiving file content: ${e.data.error}`);
       self.postMessage({ success: false, error: e.data.error, type: 'parse-ilda', ...requestContext });
-      self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex }); // Parsing finished with error
+      if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {
+          self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex }); // Parsing finished with error
+      }
       return;
     }
 
@@ -284,16 +288,21 @@ self.onmessage = function(e) {
         type: 'parse-ilda',
         ...requestContext 
       });
-      self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex }); // Parsing finished
+      if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {
+          self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex }); // Parsing finished
+      }
     } catch (error) {
       console.error('[ilda-parser.worker.js] Error parsing file from content response:', error);
       self.postMessage({ success: false, error: error.message, type: 'parse-ilda', ...requestContext });
-      self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex }); // Parsing finished with error
+      if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {
+          self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex }); // Parsing finished with error
+      }
     }
   } else if (type === 'get-frame') {
+    const { workerId, frameIndex, isStillFrame, layerIndex, colIndex, browserFile, filePath } = e.data;
     const ildaData = ildaDataStore.get(workerId);
     if (!ildaData) {
-      self.postMessage({ success: false, error: 'ILDA data not found', type: 'get-frame', workerId });
+      self.postMessage({ success: false, error: 'ILDA data not found', type: 'get-frame', workerId, browserFile, filePath, layerIndex, colIndex });
       return;
     }
 
@@ -302,14 +311,14 @@ self.onmessage = function(e) {
     const index = Math.floor(frameIndex);
 
     if (!Number.isFinite(index) || index >= framesMetadata.length || index < 0) {
-      self.postMessage({ success: false, error: `Frame index ${frameIndex} out of bounds or invalid`, type: 'get-frame', workerId });
+      self.postMessage({ success: false, error: `Frame index ${frameIndex} out of bounds or invalid`, type: 'get-frame', workerId, browserFile, filePath, layerIndex, colIndex });
       return;
     }
 
     const frameMeta = framesMetadata[index];
     
     if (!frameMeta) {
-      self.postMessage({ success: false, error: `Frame metadata not found for index ${index}`, type: 'get-frame', workerId });
+      self.postMessage({ success: false, error: `Frame metadata not found for index ${index}`, type: 'get-frame', workerId, browserFile, filePath, layerIndex, colIndex });
       return;
     }
     
@@ -329,7 +338,7 @@ self.onmessage = function(e) {
     };
     
 
-    self.postMessage({ success: true, frame, type: 'get-frame', workerId, frameIndex, isStillFrame, layerIndex, colIndex });
+    self.postMessage({ success: true, frame, type: 'get-frame', workerId, frameIndex, isStillFrame, layerIndex, colIndex, browserFile, filePath });
   } else if (type === 'get-all-frames') {
     const ildaData = ildaDataStore.get(workerId);
     if (!ildaData) {

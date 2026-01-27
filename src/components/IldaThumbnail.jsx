@@ -62,7 +62,7 @@ const IldaThumbnail = ({ frame, effects, width = 100, height = 100 }) => {
   }, [processedFrame]);
 
   return (
-    <div className="clip-thumbnail" style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' }}>
+    <div className="clip-thumbnail" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' }}>
         <canvas 
             ref={canvasRef} 
             width={width} 
