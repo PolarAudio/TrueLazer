@@ -2,10 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
 
-const FileBrowser = ({ onDropIld }) => {
+const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange }) => {
   const [selectedDirectory, setSelectedDirectory] = useState('');
   const [ildFiles, setIldFiles] = useState([]);
-  const [viewMode, setViewMode] = useState('list');
   const [thumbnails, setThumbnails] = useState({});
   const ildaParserWorker = useIldaParserWorker();
   const requestedThumbnailsRef = useRef(new Set());
@@ -86,12 +85,12 @@ const FileBrowser = ({ onDropIld }) => {
     <div className="file-browser">
       <button onClick={handleOpenExplorer}>Open Folder</button>
 	  	<div className="list_switcher">
-		<button className={viewMode === 'list' ? 'active' : ''} onClick={() => setViewMode('list')}>
+		<button className={viewMode === 'list' ? 'active' : ''} onClick={() => onViewModeChange && onViewModeChange('list')}>
 			<svg xmlns="http://www.w3.org/2000/svg" width="16" fill="currentColor" className="bi bi-list" viewBox="0 0 16 16">
 				<path fillRule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5"/>
 			</svg>
 		</button>
-		<button className={viewMode === 'thumbnails' ? 'active' : ''} onClick={() => setViewMode('thumbnails')}>
+		<button className={viewMode === 'thumbnails' ? 'active' : ''} onClick={() => onViewModeChange && onViewModeChange('thumbnails')}>
 			<svg xmlns="http://www.w3.org/2000/svg" width="16" fill="currentColor" className="bi bi-image" viewBox="0 0 16 16">
 				<path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/>
 				<path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1z"/>

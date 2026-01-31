@@ -841,8 +841,8 @@ function createWindow() {
     return await getDacServices(ip, localIp, 1000, type);
   });
 
-  ipcMain.handle('send-frame', async (event, ip, channel, frame, fps, type) => {
-    sendFrame(ip, channel, frame, fps, type);
+  ipcMain.handle('send-frame', async (event, ip, channel, points, fps, type, options) => {
+    sendFrame(ip, channel, points, fps, type, options);
   });
 
   ipcMain.handle('start-dac-output', async (event, ip, type) => {

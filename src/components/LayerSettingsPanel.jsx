@@ -12,9 +12,24 @@ const LayerSettingsPanel = ({
     onRemoveDac,
     onAddEffect,
     onRemoveEffect,
-    onParamChange 
+    onParamChange,
+    uiState,
+    onUpdateUiState
 }) => {
     const [dacStatuses, setDacStatuses] = useState({});
+
+    const collapsedPanels = uiState?.collapsedPanels || {};
+
+    const togglePanel = (panelId, val) => {
+        if (onUpdateUiState) {
+            onUpdateUiState({
+                collapsedPanels: {
+                    ...collapsedPanels,
+                    [panelId]: val
+                }
+            });
+        }
+    };
 
     useEffect(() => {
         if (window.electronAPI && window.electronAPI.onDacStatus) {
@@ -30,7 +45,7 @@ const LayerSettingsPanel = ({
 
     if (selectedLayerIndex === null) return (
         <div className="settings-panel-base">
-            <div className="settings-card-content"><p className="info-text">Select a layer to edit settings</p></div>
+            <p className="info-text">Select a layer to edit settings</p>
         </div>
     );
 
@@ -56,7 +71,11 @@ const LayerSettingsPanel = ({
         <div className="settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
              {/* Assigned DACs Section */}
              {assignedDacs && assignedDacs.length > 0 && (
-                <CollapsiblePanel title="Assigned DACs">
+                <CollapsiblePanel 
+                    title="Assigned DACs"
+                    isCollapsed={!!collapsedPanels['dacs']}
+                    onToggle={(val) => togglePanel('dacs', val)}
+                >
                     <ul className="assigned-dacs-list">
                     {assignedDacs.map((dac, index) => {
                         const status = dacStatuses[dac.ip];
@@ -92,7 +111,11 @@ const LayerSettingsPanel = ({
              )}
 
              {/* Autopilot Section */}
-             <CollapsiblePanel title={`Layer ${selectedLayerIndex + 1} Autopilot`}>
+             <CollapsiblePanel 
+                title={`Layer ${selectedLayerIndex + 1} Autopilot`}
+                isCollapsed={!!collapsedPanels['autopilot']}
+                onToggle={(val) => togglePanel('autopilot', val)}
+             >
                  <div className="param-editor">
                     <label>Mode</label>
                     <div className="clip-playback-settings">
@@ -117,7 +140,11 @@ const LayerSettingsPanel = ({
              </CollapsiblePanel>
 
              {/* Layer Effects Section */}
-             <CollapsiblePanel title="Layer Effects">
+             <CollapsiblePanel 
+                title="Layer Effects"
+                isCollapsed={!!collapsedPanels['effects']}
+                onToggle={(val) => togglePanel('effects', val)}
+             >
                  <div className="layer-effects-list" style={{ minHeight: '50px' }}>
                  {layerEffects && layerEffects.length > 0 ? (
                      layerEffects.map((effect, index) => (
@@ -129,6 +156,8 @@ const LayerSettingsPanel = ({
                              syncSettings={{}} 
                              onSetParamSync={() => {}} 
                              context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect' }}
+                             uiState={uiState}
+                             onUpdateUiState={onUpdateUiState}
                          />
                      ))
                  ) : (

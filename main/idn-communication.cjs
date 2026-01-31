@@ -148,19 +148,33 @@ function parseScanResponse(msg, rinfo) {
 }
 
 function sendCloseChannel(ip) {
-    sendFrame(ip, 0, { points: [] }, 30);
+    sendFrame(ip, 0, new Float32Array(0), 30);
 }
 
-function sendFrame(ip, channel, frame, fps) {
-    if (!frame || !frame.points) return;
-    let points = frame.points;
-    let isTyped = frame.isTypedArray;
-    if (isTyped && !(points instanceof Float32Array)) {
+function sendFrame(ip, channel, points, fps) {
+    if (!points) return;
+    
+    // Ensure we have a Float32Array
+    let activePoints = points;
+    if (!(points instanceof Float32Array)) {
         if (Buffer.isBuffer(points) || points instanceof Uint8Array) {
-            points = new Float32Array(points.buffer, points.byteOffset, points.byteLength / Float32Array.BYTES_PER_ELEMENT);
+            activePoints = new Float32Array(points.buffer, points.byteOffset, points.byteLength / Float32Array.BYTES_PER_ELEMENT);
+        } else if (Array.isArray(points)) {
+            // Fallback for legacy object-array format if still used anywhere
+            // But we prefer TypedArrays for performance
+            const numPts = points.length;
+            activePoints = new Float32Array(numPts * 8);
+            for (let i = 0; i < numPts; i++) {
+                const p = points[i];
+                const off = i * 8;
+                activePoints[off] = p.x; activePoints[off+1] = p.y; activePoints[off+2] = p.z || 0;
+                activePoints[off+3] = p.r; activePoints[off+4] = p.g; activePoints[off+5] = p.b;
+                activePoints[off+6] = p.blanking ? 1 : 0; activePoints[off+7] = p.lastPoint ? 1 : 0;
+            }
         }
     }
-    const numPoints = Math.floor(isTyped ? (points.length / 8) : points.length);
+
+    const numPoints = Math.floor(activePoints.length / 8);
     const pointSize = 8;
     const frameDataSize = numPoints * pointSize;
     const dictionary = Buffer.from('4200401042104010527e521451cc5c10', 'hex');
@@ -194,16 +208,14 @@ function sendFrame(ip, channel, frame, fps) {
     packet.writeUInt32BE(duration & 0x00FFFFFF, offset);
     offset += 4;
     for (let i = 0; i < numPoints; i++) {
-        let x, y, r, g, b, blanking;
-        if (isTyped) {
-            const pOffset = i * 8;
-            x = points[pOffset]; y = points[pOffset + 1];
-            r = points[pOffset + 3]; g = points[pOffset + 4]; b = points[pOffset + 5];
-            blanking = points[pOffset + 6] > 0.5;
-        } else {
-            const point = points[i];
-            x = point.x; y = point.y; r = point.r; g = point.g; b = point.b; blanking = point.blanking;
-        }
+        const pOffset = i * 8;
+        const x = activePoints[pOffset]; 
+        const y = activePoints[pOffset + 1];
+        let r = activePoints[pOffset + 3]; 
+        let g = activePoints[pOffset + 4]; 
+        let b = activePoints[pOffset + 5];
+        const blanking = activePoints[pOffset + 6] > 0.5;
+
         if (blanking) { r = 0; g = 0; b = 0; }
         packet.writeInt16BE(Math.max(-32767, Math.min(32767, Math.round(x * 32767))), offset);
         offset += 2;

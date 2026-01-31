@@ -466,19 +466,25 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
         // 3. Path Optimization (Greedy Nearest Neighbor in working pixel space)
         const optimizedPoints = [];
         const maxPoints = 4000;
-        const actualPoints = candidatePoints.length > maxPoints ? candidatePoints.filter((_, i) => i % Math.ceil(candidatePoints.length / maxPoints) === 0) : candidatePoints;
+        let actualPoints = candidatePoints.length > maxPoints ? candidatePoints.filter((_, i) => i % Math.ceil(candidatePoints.length / maxPoints) === 0) : candidatePoints;
         
-        let currentP = actualPoints.splice(0, 1)[0];
+        let currentP = actualPoints[0];
         optimizedPoints.push(currentP);
+        
+        // Use a more efficient way to track remaining points than splice(idx, 1)
+        // We'll move used points to the end or use a swap-to-last strategy
+        let remainingCount = actualPoints.length - 1;
+        actualPoints[0] = actualPoints[remainingCount]; // Replace first with last
 
-        while (actualPoints.length > 0) {
+        while (remainingCount > 0) {
             let closestIdx = -1;
             let minDistSq = Infinity;
-            const searchLimit = actualPoints.length > 1000 ? 500 : actualPoints.length;
+            const searchLimit = Math.min(remainingCount, 500); // Only search a subset for speed if too many
 
             for (let i = 0; i < searchLimit; i++) {
-                const dpx = actualPoints[i].px - currentP.px;
-                const dpy = actualPoints[i].py - currentP.py;
+                const p = actualPoints[i];
+                const dpx = p.px - currentP.px;
+                const dpy = p.py - currentP.py;
                 const distSq = dpx * dpx + dpy * dpy;
                 if (distSq < minDistSq) {
                     minDistSq = distSq;
@@ -487,7 +493,12 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
                 if (distSq <= 2) break;
             }
 
-            const nextP = actualPoints.splice(closestIdx, 1)[0];
+            const nextP = actualPoints[closestIdx];
+            
+            // Swap closest with the last remaining element so we can just decrement count
+            actualPoints[closestIdx] = actualPoints[remainingCount - 1];
+            remainingCount--;
+
             const jumpThreshold = w * 0.15;
             if (minDistSq > (jumpThreshold * jumpThreshold)) {
                 optimizedPoints.push({ ...currentP, r: 0, g: 0, b: 0, blanking: true });

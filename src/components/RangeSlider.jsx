@@ -50,7 +50,7 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                     fftLevels: getFftLevels ? getFftLevels() : { low: 0, mid: 0, high: 0 }
                 };
 
-                displayValue = resolveParam(null, currentValue, animSettings, context);
+                displayValue = resolveParam(null, currentValue, animSettings, context, safeMin, safeMax);
             }
 
             // Update DOM directly

@@ -1,9 +1,51 @@
 import { effectDefinitions } from './effectDefinitions';
 
-const withDefaults = (params, defaults) => ({ ...defaults, ...params });
+// Cache definitions by ID for O(1) lookup
+const definitionsById = effectDefinitions.reduce((acc, def) => {
+    acc[def.id] = def;
+    return acc;
+}, {});
+
+const withDefaults = (params, defaults) => {
+    // Optimization: If params already contains all keys, avoid spreading
+    // For now, keep it simple but avoid calling this in the tightest loops if possible
+    return { ...defaults, ...params };
+};
+
+function calculateAnimPhase(rawProgress, settings, baseValue, range) {
+    const style = settings.style || 'loop';
+    const direction = settings.direction || 'forward';
+    if (direction === 'pause') return baseValue;
+
+    let progress = rawProgress;
+    if (style === 'bounce') {
+        progress *= 2;
+    }
+
+    let animPhase = 0;
+    if (style === 'once') {
+        animPhase = Math.min(progress, 1.0);
+        if (direction === 'backward') animPhase = 1.0 - animPhase;
+    } else if (style === 'bounce') {
+        let localPhase = progress % 1.0;
+        const lap = Math.floor(progress);
+        if (lap % 2 === 1) animPhase = 1.0 - localPhase;
+        else animPhase = localPhase;
+        if (direction === 'backward') animPhase = 1.0 - animPhase;
+    } else {
+        animPhase = progress % 1.0;
+        if (direction === 'backward') animPhase = 1.0 - animPhase;
+    }
+
+    if (range && Array.isArray(range) && range.length === 2) {
+        return range[0] + (range[1] - range[0]) * animPhase;
+    }
+
+    return baseValue;
+}
 
 // Helper to resolve animated parameter values
-export function resolveParam(key, baseValue, animSettings, context) {
+export function resolveParam(key, baseValue, animSettings, context, minVal, maxValue) {
     if (!animSettings) return baseValue;
 
     // Handle legacy simple string mode or object mode
@@ -14,6 +56,15 @@ export function resolveParam(key, baseValue, animSettings, context) {
     if (!settings.syncMode) return baseValue;
 
     const { time, progress = 0, bpm = 120, clipDuration = 0, fftLevels = { low: 0, mid: 0, high: 0 }, activationTime = 0 } = context;
+    
+    // Resolve range
+    let range = settings.range;
+    if (!range || !Array.isArray(range) || range.length !== 2) {
+        if (minVal !== undefined && maxValue !== undefined) {
+            range = [minVal, maxValue];
+        }
+    }
+
     let rawProgress = 0;
 
     // 1. Calculate Raw Progress (Unwrapped, 0..infinity)
@@ -32,38 +83,25 @@ export function resolveParam(key, baseValue, animSettings, context) {
             const bps = bpm / 60;
             duration = paramBeats / (bps || 2);
         } else if (settings.syncMode === 'fps') {
-            // For FPS mode, rawProgress was (time * speed)
-            // Here we want (elapsed * speed)
             rawProgress = elapsed * speedMult;
-            return calculateAnimPhase(rawProgress, settings, baseValue); // Helper to avoid duplicate logic
+            return calculateAnimPhase(rawProgress, settings, baseValue, range); 
         }
         
         rawProgress = (elapsed / duration) * speedMult;
-        // Don't return yet, let it flow to animPhase logic, but ensure syncMode logic doesn't overwrite it?
-        // Actually, the block below overwrites rawProgress. We need to restructure.
     } else if (settings.syncMode === 'fps') {
-        // FPS Mode: Free running based on Time * Speed
-        // Base rate: 1 cycle per second
         rawProgress = (time * 0.001 * speedMult);
-
     } else if (settings.syncMode === 'timeline') {
-        // Timeline Mode: Synced to Clip Progress
-        // Param Duration (s)
         const paramDur = Math.max(0.01, settings.duration || 1.0);
-        
-        // If we have clip duration, we can map clip progress to parameter cycles
         if (clipDuration > 0) {
             const clipTime = progress * clipDuration;
             rawProgress = (clipTime / paramDur) * speedMult;
         } else {
             rawProgress = 0;
         }
-
     } else if (settings.syncMode === 'bpm') {
-        // BPM Mode: Synced to Clip Progress but scaled by Beats
         const paramBeats = Math.max(0.1, settings.beats || 4);
         const bps = bpm / 60;
-        const paramDur = paramBeats / (bps || 2); // Duration in Seconds
+        const paramDur = paramBeats / (bps || 2); 
 
         if (clipDuration > 0) {
             const clipTime = progress * clipDuration;
@@ -72,50 +110,12 @@ export function resolveParam(key, baseValue, animSettings, context) {
             rawProgress = 0;
         }
     } else if (settings.syncMode === 'fft') {
-        const range = settings.fftRange || 'low';
-        const level = fftLevels[range] || 0;
-        return resolveFftValue(level, baseValue, settings);
-    }
-
-    // Adjust rawProgress for Bounce style so a full cycle (up+down) fits in the duration
-    if (style === 'bounce') {
-        rawProgress *= 2;
-    }
-
-    // 2. Apply Direction
-    const direction = settings.direction || 'forward';
-    if (direction === 'pause') {
-        return baseValue; 
-    }
-
-    // 3. Apply Style (Loop, Bounce, Once)
-    let animPhase = 0;
-
-    if (style === 'once') {
-        animPhase = Math.min(rawProgress, 1.0);
-        if (direction === 'backward') animPhase = 1.0 - animPhase;
-    } else if (style === 'bounce') {
-        let localPhase = rawProgress % 1.0;
-        const lap = Math.floor(rawProgress);
-        if (lap % 2 === 1) animPhase = 1.0 - localPhase;
-        else animPhase = localPhase;
-        if (direction === 'backward') animPhase = 1.0 - animPhase;
-    } else {
-        animPhase = rawProgress % 1.0;
-        if (direction === 'backward') animPhase = 1.0 - animPhase;
-    }
-
-    // 4. Map to Range
-    const range = settings.range; 
-    let min = 0, max = 1;
-    if (range && Array.isArray(range) && range.length === 2) {
-        min = range[0];
-        max = range[1];
-    } else {
+        const level = fftLevels[settings.fftRange || 'low'] || 0;
+        if (range) return range[0] + (range[1] - range[0]) * level;
         return baseValue;
     }
 
-    return min + (max - min) * animPhase;
+    return calculateAnimPhase(rawProgress, settings, baseValue, range);
 }
 
 function resolveFftValue(level, baseValue, settings) {
@@ -126,99 +126,130 @@ function resolveFftValue(level, baseValue, settings) {
     return baseValue;
 }
 
+// Internal buffer for processing to reduce GC pressure
+let processingBuffer = new Float32Array(1024 * 8); 
+function ensureBufferSize(numPoints) {
+    if (processingBuffer.length < numPoints * 8) {
+        processingBuffer = new Float32Array(numPoints * 8 * 2); // Double size for buffer room
+    }
+}
+
 export function applyEffects(frame, effects, context = {}) {
   const { progress = 0, time = performance.now(), effectStates, syncSettings = {}, fftLevels } = context;
 
   if (!effects || effects.length === 0) return frame;
 
-  let pointsData;
-  if (Array.isArray(frame.points)) {
-      pointsData = new Float32Array(frame.points.length * 8);
-      for (let i = 0; i < frame.points.length; i++) {
-          const p = frame.points[i];
-          const offset = i * 8;
-          pointsData[offset] = p.x;
-          pointsData[offset + 1] = p.y;
-          pointsData[offset + 2] = p.z || 0;
-          pointsData[offset + 3] = p.r;
-          pointsData[offset + 4] = p.g;
-          pointsData[offset + 5] = p.b;
-          pointsData[offset + 6] = p.blanking ? 1 : 0;
-          pointsData[offset + 7] = p.lastPoint ? 1 : 0;
-      }
+  const sourcePoints = frame.points;
+  const isSourceTyped = frame.isTypedArray || sourcePoints instanceof Float32Array;
+  const numPointsCount = isSourceTyped ? (sourcePoints.length / 8) : sourcePoints.length;
+  
+  ensureBufferSize(numPointsCount);
+  const currentPoints = processingBuffer.subarray(0, numPointsCount * 8);
+
+  // Copy source to processing buffer
+  if (isSourceTyped) {
+      currentPoints.set(sourcePoints);
   } else {
-      pointsData = new Float32Array(frame.points);
+      for (let i = 0; i < numPointsCount; i++) {
+          const p = sourcePoints[i];
+          const offset = i * 8;
+          currentPoints[offset] = p.x;
+          currentPoints[offset + 1] = p.y;
+          currentPoints[offset + 2] = p.z || 0;
+          currentPoints[offset + 3] = p.r;
+          currentPoints[offset + 4] = p.g;
+          currentPoints[offset + 5] = p.b;
+          currentPoints[offset + 6] = p.blanking ? 1 : 0;
+          currentPoints[offset + 7] = p.lastPoint ? 1 : 0;
+      }
   }
 
-  let currentPoints = pointsData;
-  const numPoints = () => currentPoints.length / 8;
+  let activePoints = currentPoints;
 
   for (const effect of effects) {
-    if (effect.params.enabled === false) continue;
+    const params = effect.params;
+    if (params.enabled === false) continue;
 
-    const definition = effectDefinitions.find(def => def.id === effect.id);
+    const definition = definitionsById[effect.id];
     if (!definition) continue;
 
-    const resolvedParams = { ...effect.params };
-    for (const key of Object.keys(resolvedParams)) {
-        const paramKey = effect.instanceId ? `${effect.instanceId}.${key}` : `${effect.id}.${key}`;
-        if (syncSettings[paramKey]) {
-             resolvedParams[key] = resolveParam(key, resolvedParams[key], syncSettings[paramKey], context);
+    // Resolve current number of points based on current buffer
+    const currentNumPoints = activePoints.length / 8;
+
+    // Optimization: only resolve params if sync settings exist for this effect
+    let resolvedParams = params;
+    const instancePrefix = effect.instanceId ? `${effect.instanceId}.` : `${effect.id}.`;
+    
+    // Check if any param of this effect is synced
+    let needsResolution = false;
+    for (const key in params) {
+        if (syncSettings[instancePrefix + key]) {
+            needsResolution = true;
+            break;
+        }
+    }
+
+    if (needsResolution) {
+        resolvedParams = { ...params };
+        for (const key in resolvedParams) {
+            const paramKey = instancePrefix + key;
+            if (syncSettings[paramKey]) {
+                 resolvedParams[key] = resolveParam(key, resolvedParams[key], syncSettings[paramKey], context);
+            }
         }
     }
 
     switch (effect.id) {
       case 'rotate':
-        applyRotate(currentPoints, numPoints(), resolvedParams, progress, time);
+        applyRotate(activePoints, currentNumPoints, resolvedParams, progress, time);
         break;
       case 'scale':
-        applyScale(currentPoints, numPoints(), resolvedParams);
+        applyScale(activePoints, currentNumPoints, resolvedParams);
         break;
       case 'translate':
-        applyTranslate(currentPoints, numPoints(), resolvedParams);
+        applyTranslate(activePoints, currentNumPoints, resolvedParams);
         break;
       case 'color':
-        applyColor(currentPoints, numPoints(), resolvedParams, time);
+        applyColor(activePoints, currentNumPoints, resolvedParams, time);
         break;
       case 'wave':
-        applyWave(currentPoints, numPoints(), resolvedParams, time);
+        applyWave(activePoints, currentNumPoints, resolvedParams, time);
         break;
       case 'blanking':
-        applyBlanking(currentPoints, numPoints(), resolvedParams);
+        applyBlanking(activePoints, currentNumPoints, resolvedParams);
         break;
       case 'strobe':
-        applyStrobe(currentPoints, numPoints(), resolvedParams, time);
+        applyStrobe(activePoints, currentNumPoints, resolvedParams, time);
         break;
       case 'mirror':
-        currentPoints = applyMirror(currentPoints, numPoints(), resolvedParams);
+        activePoints = applyMirror(activePoints, currentNumPoints, resolvedParams);
         break;
       case 'warp':
-        applyWarp(currentPoints, numPoints(), resolvedParams, time);
+        applyWarp(activePoints, currentNumPoints, resolvedParams, time);
         break;
       case 'distortion':
-        applyDistortion(currentPoints, numPoints(), resolvedParams, time);
+        applyDistortion(activePoints, currentNumPoints, resolvedParams, time);
         break;
       case 'move':
-        applyMove(currentPoints, numPoints(), resolvedParams, time);
+        applyMove(activePoints, currentNumPoints, resolvedParams, time);
         break;
       case 'delay':
         if (effectStates && effect.instanceId) {
-            currentPoints = applyDelay(currentPoints, numPoints(), resolvedParams, effectStates, effect.instanceId, context);
+            activePoints = applyDelay(activePoints, currentNumPoints, resolvedParams, effectStates, effect.instanceId, context);
         }
         break;
       case 'chase':
-        currentPoints = applyChase(currentPoints, numPoints(), resolvedParams, time, context);
-        break;
-      default:
+        activePoints = applyChase(activePoints, currentNumPoints, resolvedParams, time, context);
         break;
     }
   }
 
-  return { ...frame, points: currentPoints, isTypedArray: true };
+  // Final result must be a NEW buffer because it's passed around, but we've reduced intermediate ones
+  return { ...frame, points: new Float32Array(activePoints), isTypedArray: true };
 }
 
 function applyRotate(points, numPoints, params, progress, time) {
-  const { angle, speed, direction } = withDefaults(params, effectDefinitions.find(def => def.id === 'rotate').defaultParams);
+  const { angle, speed, direction } = params;
   const dirMult = direction === 'CCW' ? -1 : 1;
   const continuousRotation = (time * 0.001) * speed * dirMult;
   const currentAngle = (angle * Math.PI / 180) + continuousRotation;
@@ -234,7 +265,7 @@ function applyRotate(points, numPoints, params, progress, time) {
 }
 
 function applyScale(points, numPoints, params) {
-  const { scaleX, scaleY } = withDefaults(params, effectDefinitions.find(def => def.id === 'scale').defaultParams);
+  const { scaleX, scaleY } = params;
   for (let i = 0; i < numPoints; i++) {
     const offset = i * 8;
     points[offset] *= scaleX;
@@ -243,7 +274,7 @@ function applyScale(points, numPoints, params) {
 }
 
 function applyTranslate(points, numPoints, params) {
-  const { translateX, translateY } = withDefaults(params, effectDefinitions.find(def => def.id === 'translate').defaultParams);
+  const { translateX, translateY } = params;
   for (let i = 0; i < numPoints; i++) {
     const offset = i * 8;
     points[offset] += translateX;
@@ -252,7 +283,7 @@ function applyTranslate(points, numPoints, params) {
 }
 
 function applyColor(points, numPoints, params, time) {
-  const { mode, r, g, b, cycleSpeed, rainbowSpread, rainbowOffset, rainbowPalette } = withDefaults(params, effectDefinitions.find(def => def.id === 'color').defaultParams);
+  const { mode, r, g, b, cycleSpeed, rainbowSpread, rainbowOffset, rainbowPalette } = params;
   const cycleTime = time * 0.001 * cycleSpeed;
 
   if (mode === 'rainbow') {
@@ -329,7 +360,7 @@ function hslToRgb(h, s, l) {
 }
 
 function applyWave(points, numPoints, params, time) {
-  const { amplitude, frequency, speed, direction } = withDefaults(params, effectDefinitions.find(def => def.id === 'wave').defaultParams);
+  const { amplitude, frequency, speed, direction } = params;
   const timeShift = time * 0.001 * speed;
   for (let i = 0; i < numPoints; i++) {
     const offset = i * 8;
@@ -342,7 +373,7 @@ function applyWave(points, numPoints, params, time) {
 }
 
 function applyBlanking(points, numPoints, params) {
-  const { blankingInterval, spacing = 0 } = withDefaults(params, effectDefinitions.find(def => def.id === 'blanking').defaultParams);
+  const { blankingInterval, spacing = 0 } = params;
   if (blankingInterval <= 0) return;
   const step = blankingInterval + 1 + spacing;
   for (let i = 0; i < numPoints; i++) {
@@ -353,7 +384,7 @@ function applyBlanking(points, numPoints, params) {
 }
 
 function applyStrobe(points, numPoints, params, time) {
-  const { strobeSpeed, strobeAmount } = withDefaults(params, effectDefinitions.find(def => def.id === 'strobe').defaultParams);
+  const { strobeSpeed, strobeAmount } = params;
   const cyclePosition = (time % strobeSpeed) / strobeSpeed;
   if (cyclePosition < strobeAmount) {
     for (let i = 0; i < numPoints; i++) {
@@ -363,45 +394,37 @@ function applyStrobe(points, numPoints, params, time) {
 }
 
 function applyMirror(points, numPoints, params) {
-  const { mode } = withDefaults(params, effectDefinitions.find(def => def.id === 'mirror').defaultParams);
-  if (mode === 'none') return points;
-  let sourcePoints = [];
+  const { mode } = params;
+  if (mode === 'none' || numPoints === 0) return points;
+  
+  // We keep ALL input points and ADD mirrored copies
+  // This allows stacking effects (X then Y) to create 4-way symmetry correctly.
+  const newBuffer = new Float32Array(numPoints * 2 * 8);
+  
+  // 1. Copy original points
+  newBuffer.set(points.subarray(0, numPoints * 8), 0);
+
+  // 2. Create mirrored copies
   for (let i = 0; i < numPoints; i++) {
-      const offset = i * 8;
-      const x = points[offset];
-      const y = points[offset + 1];
-      let keep = false;
-      if (mode === 'x-') if (x <= 0) keep = true;
-      else if (mode === 'x+') if (x >= 0) keep = true;
-      else if (mode === 'y-') if (y <= 0) keep = true;
-      else if (mode === 'y+') if (y >= 0) keep = true;
-      if (keep) {
-          sourcePoints.push({
-              x: points[offset], y: points[offset+1], z: points[offset+2],
-              r: points[offset+3], g: points[offset+4], b: points[offset+5],
-              blk: points[offset+6], last: points[offset+7]
-          });
+      const srcOff = i * 8;
+      const dstOff = (numPoints + i) * 8;
+      
+      // Copy all data (X,Y,Z,R,G,B,BLK,LAST)
+      newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
+      
+      // Flip the relevant axis
+      if (mode === 'x-' || mode === 'x+') {
+          newBuffer[dstOff] = -newBuffer[dstOff];
+      } else if (mode === 'y-' || mode === 'y+') {
+          newBuffer[dstOff + 1] = -newBuffer[dstOff + 1];
       }
   }
-  const newNumPoints = sourcePoints.length * 2;
-  const newBuffer = new Float32Array(newNumPoints * 8);
-  let ptr = 0;
-  for (const p of sourcePoints) {
-      newBuffer[ptr++] = p.x; newBuffer[ptr++] = p.y; newBuffer[ptr++] = p.z;
-      newBuffer[ptr++] = p.r; newBuffer[ptr++] = p.g; newBuffer[ptr++] = p.b;
-      newBuffer[ptr++] = p.blk; newBuffer[ptr++] = p.last;
-  }
-  for (const p of sourcePoints) {
-      if (mode === 'x-' || mode === 'x+') newBuffer[ptr++] = -p.x; else newBuffer[ptr++] = p.x;
-      if (mode === 'y-' || mode === 'y+') newBuffer[ptr++] = -p.y; else newBuffer[ptr++] = p.y;
-      newBuffer[ptr++] = p.z; newBuffer[ptr++] = p.r; newBuffer[ptr++] = p.g; newBuffer[ptr++] = p.b;
-      newBuffer[ptr++] = p.blk; newBuffer[ptr++] = p.last;
-  }
+  
   return newBuffer;
 }
 
 function applyWarp(points, numPoints, params, time) {
-    const { amount, chaos, speed } = withDefaults(params, effectDefinitions.find(def => def.id === 'warp').defaultParams);
+    const { amount, chaos, speed } = params;
     const t = time * 0.001 * speed;
     for(let i=0; i<numPoints; i++) {
         const off = i*8;
@@ -413,7 +436,7 @@ function applyWarp(points, numPoints, params, time) {
 }
 
 function applyDistortion(points, numPoints, params, time) {
-   const { amount, scale, speed } = withDefaults(params, effectDefinitions.find(def => def.id === 'distortion').defaultParams);
+   const { amount, scale, speed } = params;
    const t = time * 0.001 * speed;
    for(let i=0; i<numPoints; i++) {
        const off = i*8;
@@ -425,7 +448,7 @@ function applyDistortion(points, numPoints, params, time) {
 }
 
 function applyMove(points, numPoints, params, time) {
-    const { speedX, speedY } = withDefaults(params, effectDefinitions.find(def => def.id === 'move').defaultParams);
+    const { speedX, speedY } = params;
     const t = time * 0.001;
     const offsetX = t * speedX;
     const offsetY = t * speedY;
@@ -447,13 +470,12 @@ function applyMove(points, numPoints, params, time) {
 }
 
 function applyDelay(points, numPoints, params, effectStates, instanceId, context) {
-    const { mode = 'frame', delayAmount, decay, delayDirection, useCustomOrder, customOrder, playstyle = 'repeat' } = withDefaults(params, effectDefinitions.find(def => def.id === 'delay').defaultParams);
+    const { mode = 'frame', delayAmount, decay, delayDirection, useCustomOrder, customOrder, playstyle = 'repeat', steps = 10 } = params;
     if (!effectStates.has(instanceId)) effectStates.set(instanceId, []);
     const history = effectStates.get(instanceId);
     history.unshift(new Float32Array(points));
 
     if (mode === 'frame') {
-        const steps = 10;
         const maxHistory = delayAmount * steps + 1;
         if (history.length > maxHistory) history.length = maxHistory;
         const newPoints = new Float32Array(points.length);
@@ -468,10 +490,27 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
             const echo = (idx < history.length) ? history[idx] : null;
             const factor = Math.pow(decay, step);
             const off = i * 8;
-            if (echo && echo.length === points.length) {
-                newPoints[off] = echo[off]; newPoints[off+1] = echo[off+1]; newPoints[off+2] = echo[off+2];
-                newPoints[off+3] = echo[off+3] * factor; newPoints[off+4] = echo[off+4] * factor; newPoints[off+5] = echo[off+5] * factor;
-                newPoints[off+6] = echo[off+6]; newPoints[off+7] = echo[off+7];
+
+            if (echo && echo.length > 0) {
+                let echoOff;
+                if (echo.length === points.length) {
+                    echoOff = off;
+                } else {
+                    // Resample if point counts differ
+                    const echoNumPoints = echo.length / 8;
+                    let echoIdx = Math.floor(norm * echoNumPoints);
+                    if (echoIdx >= echoNumPoints) echoIdx = echoNumPoints - 1;
+                    echoOff = echoIdx * 8;
+                }
+
+                newPoints[off] = echo[echoOff]; 
+                newPoints[off+1] = echo[echoOff+1]; 
+                newPoints[off+2] = echo[echoOff+2];
+                newPoints[off+3] = echo[echoOff+3] * factor; 
+                newPoints[off+4] = echo[echoOff+4] * factor; 
+                newPoints[off+5] = echo[echoOff+5] * factor;
+                newPoints[off+6] = echo[echoOff+6]; 
+                newPoints[off+7] = echo[echoOff+7];
             } else {
                 newPoints.set(points.subarray(off, off+8), off);
                 newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0; newPoints[off+6] = 1;
@@ -534,7 +573,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
-    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playstyle = 'loop' } = withDefaults(params, effectDefinitions.find(def => def.id === 'chase').defaultParams);
+    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playstyle = 'loop' } = params;
     const { progress = 0, clipDuration = 1 } = context;
     const useSync = (progress !== undefined && clipDuration > 0);
 
@@ -631,13 +670,15 @@ export function applyChase(points, numPoints, params, time, context = {}) {
     }
 }
 
-export function applyOutputProcessing(frame, settings) {
+export function applyOutputProcessing(frame, settings, inPlace = false) {
     if (!settings || !frame || !frame.points) return frame;
     const { safetyZones, outputArea, transformationEnabled, transformationMode, flipX, flipY } = settings;
     let points = frame.points;
     const isTyped = frame.isTypedArray || points instanceof Float32Array;
     const numPoints = isTyped ? (points.length / 8) : points.length;
-    let newPoints = isTyped ? new Float32Array(points) : points.map(p => ({ ...p }));
+    
+    // Optimization: If inPlace is true, we modify the points array directly to avoid allocation
+    let newPoints = inPlace ? points : (isTyped ? new Float32Array(points) : points.map(p => ({ ...p })));
 
     for (let i = 0; i < numPoints; i++) {
         let x, y, r, g, b, blanking;

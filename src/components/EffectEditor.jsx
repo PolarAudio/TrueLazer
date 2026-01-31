@@ -5,9 +5,21 @@ import RangeSlider from './RangeSlider';
 import CollapsiblePanel from './CollapsiblePanel';
 import AnimationControls from './AnimationControls';
 
-const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration, bpm, getFftLevels }) => {
-    const [expanded, setExpanded] = useState(false);
+const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, paramKey }) => {
     const [hovered, setHovered] = useState(false);
+
+    const expanded = !!uiState?.expandedParams?.[paramKey];
+
+    const setExpanded = (val) => {
+        if (onUpdateUiState) {
+            onUpdateUiState({
+                expandedParams: {
+                    ...(uiState?.expandedParams || {}),
+                    [paramKey]: val
+                }
+            });
+        }
+    };
 
     const handleDragStart = (e) => {
         e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
@@ -109,7 +121,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
                         className="param-number-input"
                         step={control.step}
-                        style={{width: '100%', fontSize: '10px'}}
+                        style={{ fontSize: '10px'}}
                     />
                  )}
              </div>
@@ -176,7 +188,7 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) =>
     );
 };
 
-const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels }) => {
+const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState }) => {
   if (!effect) return null;
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
   if (!effectDefinition) return null;
@@ -185,6 +197,20 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
   const isChase = effect.id === 'chase';
   const isEnabled = effect.params.enabled !== false;
   const isChannelMode = effect.params.mode === 'channel';
+
+  const collapsedEffects = uiState?.collapsedEffects || {};
+  const isCollapsed = !!collapsedEffects[effect.instanceId];
+
+  const handleToggle = (val) => {
+    if (onUpdateUiState) {
+        onUpdateUiState({
+            collapsedEffects: {
+                ...collapsedEffects,
+                [effect.instanceId]: val
+            }
+        });
+    }
+  };
 
   const handleBlackoutDragStart = (e) => {
     e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
@@ -198,6 +224,8 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
   return (
     <CollapsiblePanel 
         title={effect.name} 
+        isCollapsed={isCollapsed}
+        onToggle={handleToggle}
         headerActions={
             <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
                 {(isDelay || isChase) && (
@@ -276,6 +304,9 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                 clipDuration={clipDuration}
                 bpm={bpm}
                 getFftLevels={getFftLevels}
+                uiState={uiState}
+                onUpdateUiState={onUpdateUiState}
+                paramKey={paramKey}
             />
           );
         })}

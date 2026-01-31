@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import IldaThumbnail from './IldaThumbnail';
+import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
 
 const Clip = ({
@@ -200,7 +201,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
                     ) : (
                         /* Still Frame Mode */
                         /* If we have a generated thumbnail path, use it for efficiency */
-                        (clipContent?.thumbnailPath && !isActive) ? (
+                        (clipContent?.thumbnailPath) ? (
                             <img 
                                 src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
                                 alt="thumbnail" 
@@ -208,8 +209,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
                                 style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
                             />
                         ) : (
-                            /* Fallback to WebGL rendering of still frame if no image yet, or if we want to show it */
-                            stillFrame && <IldaThumbnail frame={stillFrame} effects={clipContent?.effects} />
+                            /* Fallback to 2D Canvas rendering of still frame (much lighter than WebGL) */
+                            stillFrame && <StaticIldaThumbnail frame={stillFrame} />
                         )
                     )}
 

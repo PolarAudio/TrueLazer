@@ -4,9 +4,22 @@ import CollapsiblePanel from './CollapsiblePanel';
 import RangeSlider from './RangeSlider';
 import AnimationControls from './AnimationControls';
 
-const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration }) => {
-    const [expanded, setExpanded] = useState(false);
+const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration, uiState, onUpdateUiState }) => {
     const [hovered, setHovered] = useState(false);
+
+    const paramKey = `${generatorId}.${control.id}`;
+    const expanded = !!uiState?.expandedParams?.[paramKey];
+
+    const setExpanded = (val) => {
+        if (onUpdateUiState) {
+            onUpdateUiState({
+                expandedParams: {
+                    ...(uiState?.expandedParams || {}),
+                    [paramKey]: val
+                }
+            });
+        }
+    };
 
     const handleDragStart = (e) => {
         e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
@@ -21,7 +34,6 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
         }));
     };
 
-    const paramKey = `${generatorId}.${control.id}`;
     const animSettings = typeof syncSettings[paramKey] === 'object' 
         ? syncSettings[paramKey] 
         : { syncMode: syncSettings[paramKey] };
@@ -129,7 +141,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
     );
 };
 
-const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex, progressRef, workerId, clipDuration }) => {
+const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex, progressRef, workerId, clipDuration, uiState, onUpdateUiState }) => {
   const [systemFonts, setSystemFonts] = useState([]);
   const [projectFonts, setProjectFonts] = useState([]);
   const [loadingSystemFonts, setLoadingSystemFonts] = useState(false);
@@ -143,6 +155,19 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
   if (!generatorDefinition) {
     return <div className="generator-settings-panel">Generator definition not found for ID: {selectedGeneratorId}</div>;
   }
+
+  const collapsedPanels = uiState?.collapsedPanels || {};
+
+  const handleToggle = (val) => {
+    if (onUpdateUiState) {
+        onUpdateUiState({
+            collapsedPanels: {
+                ...collapsedPanels,
+                generator: val
+            }
+        });
+    }
+  };
 
   // Load project fonts on mount
   useEffect(() => {
@@ -189,7 +214,11 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
   };
 
   return (
-    <CollapsiblePanel title={`${generatorDefinition.name} Settings`}>
+    <CollapsiblePanel 
+        title={`${generatorDefinition.name} Settings`}
+        isCollapsed={!!collapsedPanels['generator']}
+        onToggle={handleToggle}
+    >
         {generatorDefinition.paramControls.map(control => {
           // Special case for fontUrl
           if (control.id === 'fontUrl') {
@@ -250,6 +279,8 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
                 workerId={workerId}
                 generatorId={selectedGeneratorId}
                 clipDuration={clipDuration}
+                uiState={uiState}
+                onUpdateUiState={onUpdateUiState}
             />
           );
         })}

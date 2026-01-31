@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import IldaThumbnail from './IldaThumbnail';
+import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
 
 const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect }) => {
@@ -83,17 +84,8 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
     }
   };
 
-  // Determine frame to show based on mode and hover state
-  let displayFrame = null;
-  if (activeClipData) {
-      if (thumbnailRenderMode === 'active') {
-          displayFrame = liveFrame;
-      } else if (thumbnailRenderMode === 'hover') {
-          displayFrame = isHovered ? liveFrame : activeClipData.stillFrame;
-      } else {
-          displayFrame = activeClipData.stillFrame;
-      }
-  }
+  // Determine rendering logic based on mode
+  const shouldShowLive = (thumbnailRenderMode === 'active') || (thumbnailRenderMode === 'hover' && isHovered);
 
   return (
     <div
@@ -161,12 +153,22 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
             className="layer-preview-thumbnail"
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
+            style={{ overflow: 'hidden' }}
         >
 			{activeClipData ? (
-				<IldaThumbnail 
-                    frame={displayFrame} 
-                    effects={combinedEffects}
-                />
+                shouldShowLive ? (
+                    <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} effects={combinedEffects} />
+                ) : (
+                    activeClipData.thumbnailPath ? (
+                        <img 
+                            src={`file://${activeClipData.thumbnailPath}?t=${activeClipData.thumbnailVersion || Date.now()}`}
+                            alt="layer-thumbnail"
+                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                        />
+                    ) : (
+                        <StaticIldaThumbnail frame={activeClipData.stillFrame} />
+                    )
+                )
 			) : (
 			appliedEffects.length > 0 && (
             <div className="applied-effects">

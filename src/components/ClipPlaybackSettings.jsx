@@ -1,8 +1,21 @@
 import React from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 
-const ClipPlaybackSettings = ({ settings, onUpdate }) => {
+const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) => {
   const { mode = 'fps', duration = 1, beats = 8, speedMultiplier = 1, fps = 60 } = settings || {};
+
+  const collapsedPanels = uiState?.collapsedPanels || {};
+
+  const handleToggle = (val) => {
+    if (onUpdateUiState) {
+        onUpdateUiState({
+            collapsedPanels: {
+                ...collapsedPanels,
+                playback: val
+            }
+        });
+    }
+  };
 
   const handleModeChange = (newMode) => {
     onUpdate({ mode: newMode });
@@ -20,7 +33,11 @@ const ClipPlaybackSettings = ({ settings, onUpdate }) => {
   };
 
   return (
-    <CollapsiblePanel title="Clip Playback">
+    <CollapsiblePanel 
+        title="Clip Playback"
+        isCollapsed={!!collapsedPanels['playback']}
+        onToggle={handleToggle}
+    >
         <div className="playback-mode-selector">
           <button 
               className={mode === 'fps' ? 'active' : 'button_inactive'} 

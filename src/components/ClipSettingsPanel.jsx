@@ -26,6 +26,7 @@ const ClipSettingsPanel = ({
   onAddEffect,
   onParameterChange,
   onGeneratorParameterChange,
+  onUpdateClipUiState,
   progressRef,
   onAudioError
 }) => {
@@ -33,6 +34,20 @@ const ClipSettingsPanel = ({
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
   const { seekAudio } = useAudio();
   const lastReorderTimeRef = useRef(0);
+
+  const uiState = clip?.uiState || {};
+  const collapsedPanels = uiState.collapsedPanels || {};
+
+  const togglePanel = (panelId, isNowCollapsed) => {
+    if (onUpdateClipUiState) {
+        onUpdateClipUiState(selectedLayerIndex, selectedColIndex, {
+            collapsedPanels: {
+                ...collapsedPanels,
+                [panelId]: isNowCollapsed
+            }
+        });
+    }
+  };
 
   const handleWavePlayerError = React.useCallback((err) => {
       if (onAudioError) onAudioError(selectedLayerIndex, selectedColIndex);
@@ -139,7 +154,11 @@ const ClipSettingsPanel = ({
 
   return (
     <div className="clip-settings-panel settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
-      <CollapsiblePanel title="Audio">
+      <CollapsiblePanel 
+        title="Audio" 
+        isCollapsed={!!collapsedPanels['audio']}
+        onToggle={(val) => togglePanel('audio', val)}
+      >
             {audioFile ? (
                 <div className="assigned-audio-info" style={{ position: 'relative' }}>
                     <button 
@@ -177,10 +196,16 @@ const ClipSettingsPanel = ({
       <ClipPlaybackSettings 
         settings={playbackSettings} 
         onUpdate={(settings) => onUpdatePlaybackSettings(selectedLayerIndex, selectedColIndex, settings)} 
+        uiState={uiState}
+        onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
       />
 
       {hasAssignedDacs && (
-        <CollapsiblePanel title="Assigned DACs">
+        <CollapsiblePanel 
+            title="Assigned DACs"
+            isCollapsed={!!collapsedPanels['dacs']}
+            onToggle={(val) => togglePanel('dacs', val)}
+        >
             <ul className="assigned-dacs-list">
               {assignedDacs.map((dac, index) => {
                 const status = dacStatuses[dac.ip];
@@ -229,10 +254,16 @@ const ClipSettingsPanel = ({
           clipDuration={clipDuration}
           bpm={bpm}
           getFftLevels={getFftLevels}
+          uiState={uiState}
+          onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
         />
       )}
 
-      <CollapsiblePanel title="Clip Effects">
+      <CollapsiblePanel 
+        title="Clip Effects"
+        isCollapsed={!!collapsedPanels['effects']}
+        onToggle={(val) => togglePanel('effects', val)}
+      >
         <div className="clip-effects-list" style={{ minHeight: '50px' }} onDrop={handleEffectDrop}>
           {hasEffects ? (
             effects.map((effect, effectIndex) => (
@@ -257,6 +288,8 @@ const ClipSettingsPanel = ({
                   clipDuration={clipDuration}
                   bpm={bpm}
                   getFftLevels={getFftLevels}
+                  uiState={uiState}
+                  onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
                 />
               </div>
             ))

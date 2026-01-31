@@ -131,6 +131,26 @@ async function discoverDacs(timeout = 2000) {
     } catch (e) { return []; }
 }
 
+function convertPoints(points, isTyped) {
+    if (!points || points.length === 0) return [];
+    const numPoints = isTyped ? (points.length / 8) : points.length;
+    const result = [];
+    for (let i = 0; i < numPoints; i++) {
+        if (isTyped) {
+            const off = i * 8;
+            result.push({
+                x: points[off], y: points[off+1], 
+                r: points[off+3], g: points[off+4], b: points[off+5],
+                blanking: points[off+6] > 0.5
+            });
+        } else {
+             const p = points[i];
+             result.push({ x: p.x || 0, y: p.y || 0, r: p.r || 0, g: p.g || 0, b: p.b || 0, blanking: !!p.blanking });
+        }
+    }
+    return result;
+}
+
 function optimizePoints(points, isTyped) {
     if (!points || points.length === 0) return [];
     const numPoints = isTyped ? (points.length / 8) : points.length;
@@ -191,11 +211,16 @@ function optimizePoints(points, isTyped) {
     return result;
 }
 
-function sendFrame(ip, channel, frame, fps) {
+function sendFrame(ip, channel, points, fps, options = {}) {
     const instance = getOrInitDac(ip);
-    if (frame && frame.points && frame.points.length > 0) {
-        const isTyped = frame.isTypedArray || (frame.points instanceof Float32Array);
-        const optimized = optimizePoints(frame.points, isTyped);
+    if (points && points.length > 0) {
+        const isTyped = (points instanceof Float32Array);
+        let optimized;
+        if (options.skipOptimization) {
+            optimized = convertPoints(points, isTyped);
+        } else {
+            optimized = optimizePoints(points, isTyped);
+        }
         
         // Match PPS exactly to point count to maintain 60 FPS without jitter
         const pps = Math.max(1000, Math.min(40000, optimized.length * 60));

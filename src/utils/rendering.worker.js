@@ -1,4 +1,5 @@
 import { WebGLRenderer } from './WebGLRenderer.jsx';
+import { optimizePoints } from './optimizer.js';
 
 const renderers = new Map();
 
@@ -35,6 +36,19 @@ self.onmessage = (e) => {
         const { id, data } = payload;
         const state = renderers.get(id);
         if (state) {
+            // Fix: Preserve effectStates across updates to prevent history reset
+            if (state.data && state.data.effectStates && data.effectStates) {
+                data.effectStates = state.data.effectStates;
+            } else if (state.data && state.data.worldData && state.data.worldData.length > 0) {
+                 const firstOldItem = state.data.worldData[0];
+                 if (firstOldItem && firstOldItem.effectStates && data.worldData) {
+                     const persistentMap = firstOldItem.effectStates;
+                     for (const item of data.worldData) {
+                         item.effectStates = persistentMap;
+                     }
+                 }
+            }
+
             state.data = data;
             // The continuous loop will pick up the new data.
         }

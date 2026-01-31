@@ -1,13 +1,23 @@
 import React, { useState } from 'react';
 
-const CollapsiblePanel = ({ title, children, icon, defaultCollapsed = false, headerActions }) => {
-    const [collapsed, setCollapsed] = useState(defaultCollapsed);
+const CollapsiblePanel = ({ title, children, icon, defaultCollapsed = false, headerActions, onToggle, isCollapsed }) => {
+    const [internalCollapsed, setInternalCollapsed] = useState(defaultCollapsed);
+
+    const collapsed = onToggle !== undefined ? isCollapsed : internalCollapsed;
+
+    const handleToggle = () => {
+        if (onToggle) {
+            onToggle(!collapsed);
+        } else {
+            setInternalCollapsed(!collapsed);
+        }
+    };
 
     return (
         <div className={`settings-card ${collapsed ? 'collapsed' : ''}`}>
             <div 
                 className="settings-card-header" 
-                onClick={() => setCollapsed(!collapsed)} 
+                onClick={handleToggle} 
                 style={{ userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}
             >
                 <div style={{display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer'}}>

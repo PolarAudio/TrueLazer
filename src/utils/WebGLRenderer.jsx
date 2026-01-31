@@ -1,5 +1,6 @@
 import { applyEffects, applyOutputProcessing } from './effects.js';
 import { effectDefinitions } from './effectDefinitions';
+import { optimizePoints } from './optimizer.js';
 
 export class WebGLRenderer {
   constructor(canvas, type) {
@@ -17,6 +18,7 @@ export class WebGLRenderer {
     this.positionBuffer = null;
     this.colorBuffer = null;
     this.alphaBuffer = null;
+    this.alphaBufferData = new Float32Array(131072); // Max points buffer for reuse
 
     this.lastPointDrawTime = 0; // Tracks the last time points were drawn
 
@@ -329,12 +331,16 @@ export class WebGLRenderer {
     // BUT, the existing manual mapping here (lines 323-338 in original) handles only range/number types
     // and calculates `newParams`.
     // If we remove it, we rely entirely on `applyEffects`.
-    // Let's rely on `applyEffects` which we just updated to be robust.
-    // So we pass original `effects` and let `applyEffects` do the work.
+    // Let's rely on 'applyEffects' which we just updated to be robust.
+    // So we pass original 'effects' and let 'applyEffects' do the work.
     
+    // Optimize BEFORE effects (Option 3 match)
+    const optimizedPoints = optimizePoints(frame.points);
+    const frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
+
     // Apply effects before drawing
     // We pass syncSettings and bpm in the context
-    const modifiedFrame = applyEffects(frame, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates });
+    const modifiedFrame = applyEffects(frameToProcess, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates });
     const points = modifiedFrame.points;
     const isTyped = modifiedFrame.isTypedArray;
     const numPoints = isTyped ? (points.length / 8) : points.length;
@@ -483,7 +489,12 @@ export class WebGLRenderer {
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    if (this.alphaBufferData.length < numPoints) {
+        this.alphaBufferData = new Float32Array(numPoints * 2);
+    }
+    this.alphaBufferData.fill(alpha, 0, numPoints);
+    const alphas = this.alphaBufferData.subarray(0, numPoints);
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
     gl.enableVertexAttribArray(this.alphaAttributeLocation);
@@ -510,7 +521,12 @@ export class WebGLRenderer {
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    if (this.alphaBufferData.length < numPoints) {
+        this.alphaBufferData = new Float32Array(numPoints * 2);
+    }
+    this.alphaBufferData.fill(alpha, 0, numPoints);
+    const alphas = this.alphaBufferData.subarray(0, numPoints);
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
     gl.enableVertexAttribArray(this.alphaAttributeLocation);
@@ -537,7 +553,12 @@ export class WebGLRenderer {
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    if (this.alphaBufferData.length < numPoints) {
+        this.alphaBufferData = new Float32Array(numPoints * 2);
+    }
+    this.alphaBufferData.fill(alpha, 0, numPoints);
+    const alphas = this.alphaBufferData.subarray(0, numPoints);
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
     gl.enableVertexAttribArray(this.alphaAttributeLocation);

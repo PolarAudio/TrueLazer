@@ -11,7 +11,9 @@ const SettingsPanel = ({
   quickAssigns,
   onUpdateKnob,
   onToggleButton,
-  onAssign
+  onAssign,
+  renderSettings = {},
+  onSetRenderSetting
 }) => {
   const { 
     midiInitialized, 
@@ -28,6 +30,17 @@ const SettingsPanel = ({
     exportMappings: exportMidiMappings,
     importMappings: importMidiMappings
   } = useMidi();
+
+  const collapsedStates = renderSettings.settingsPanelCollapsed || {};
+
+  const handleToggle = (id, val) => {
+    if (onSetRenderSetting) {
+        onSetRenderSetting('settingsPanelCollapsed', {
+            ...collapsedStates,
+            [id]: val
+        });
+    }
+  };
 
   const { 
     artnetInitialized,
@@ -115,7 +128,11 @@ const SettingsPanel = ({
       <div className="settings-card-header"><h4>Global Settings</h4></div>
 
       {quickAssigns && (
-          <CollapsiblePanel title="Quick Assigns">
+          <CollapsiblePanel 
+            title="Quick Assigns"
+            isCollapsed={!!collapsedStates['quickAssigns']}
+            onToggle={(val) => handleToggle('quickAssigns', val)}
+          >
               <GlobalQuickAssigns 
                   assigns={quickAssigns}
                   onUpdateKnob={onUpdateKnob}
@@ -126,7 +143,11 @@ const SettingsPanel = ({
       )}
 
       {/* Channel/DAC Settings Placeholder */}
-      <CollapsiblePanel title="Channel/DAC Settings">
+      <CollapsiblePanel 
+        title="Channel/DAC Settings"
+        isCollapsed={!!collapsedStates['dacSettings']}
+        onToggle={(val) => handleToggle('dacSettings', val)}
+      >
           <p className="info-text">Output routing and safety zones configuration.</p>
           <button className="small-btn" style={{width:'100%', marginTop:'5px'}} onClick={onOpenOutputSettings}>Open Output Settings</button>
       </CollapsiblePanel>
@@ -135,7 +156,11 @@ const SettingsPanel = ({
       {(enabledShortcuts.midi || enabledShortcuts.artnet || enabledShortcuts.osc || enabledShortcuts.keyboard) && (
         <div className="shortcuts-settings-panel">
           {enabledShortcuts.keyboard && (
-            <CollapsiblePanel title="Keyboard Shortcuts">
+            <CollapsiblePanel 
+                title="Keyboard Shortcuts"
+                isCollapsed={!!collapsedStates['keyboard']}
+                onToggle={(val) => handleToggle('keyboard', val)}
+            >
                 <div className="keyboard-config">
                     <div className="button-grid">
                       <button 
@@ -157,7 +182,11 @@ const SettingsPanel = ({
             </CollapsiblePanel>
           )}
           {enabledShortcuts.midi && (
-            <CollapsiblePanel title="MIDI Shortcuts">
+            <CollapsiblePanel 
+                title="MIDI Shortcuts"
+                isCollapsed={!!collapsedStates['midi']}
+                onToggle={(val) => handleToggle('midi', val)}
+            >
                 {!midiInitialized ? (
                   <p className="loading-text">Initializing MIDI...</p>
                 ) : (
@@ -191,7 +220,11 @@ const SettingsPanel = ({
           )}
 
           {enabledShortcuts.artnet && (
-            <CollapsiblePanel title="ArtNet Shortcuts">
+            <CollapsiblePanel 
+                title="ArtNet Shortcuts"
+                isCollapsed={!!collapsedStates['artnet']}
+                onToggle={(val) => handleToggle('artnet', val)}
+            >
                 {!artnetInitialized ? (
                   <p className="loading-text">Initializing Art-Net...</p>
                 ) : (
@@ -234,7 +267,11 @@ const SettingsPanel = ({
           )}
 
           {enabledShortcuts.osc && (
-            <CollapsiblePanel title="OSC Shortcuts">
+            <CollapsiblePanel 
+                title="OSC Shortcuts"
+                isCollapsed={!!collapsedStates['osc']}
+                onToggle={(val) => handleToggle('osc', val)}
+            >
                 <div className="osc-config">
                   <p className="info-text">Listening on port: {oscLocalPort}</p>
                 </div>
