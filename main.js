@@ -999,6 +999,24 @@ function createWindow() {
     buildApplicationMenu(currentThumbnailRenderMode);
   });
 
+  ipcMain.on('show-quick-assign-context-menu', (event, type, index) => {
+    const quickAssignMenu = Menu.buildFromTemplate([
+      { 
+        label: 'Reset Value', 
+        click: () => { 
+            if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); 
+        } 
+      },
+      { 
+        label: 'Clear Assignment', 
+        click: () => { 
+            if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); 
+        } 
+      },
+    ]);
+    quickAssignMenu.popup({ window: mainWindow });
+  });
+
   // Listen for context menu actions from renderer and send back to renderer
   ipcMain.on('context-menu-action', (event, action) => {
     console.log(`Main process received context menu action: ${JSON.stringify(action)}`);

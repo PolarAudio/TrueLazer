@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import Mappable from './Mappable';
 import RadialKnob from './RadialKnob';
 
-const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, className: extraClassName, ...props }) => {
+const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, onContextMenu, className: extraClassName, ...props }) => {
     const handleDragOver = (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'link';
@@ -37,6 +37,7 @@ const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, className: ex
 				}}
              onDragOver={handleDragOver} 
              onDrop={handleDrop}
+             onContextMenu={onContextMenu}
              {...props}
 			 onClick={isAssigned ? onToggle : (e) => e.preventDefault()}
         >
@@ -46,6 +47,13 @@ const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, className: ex
 };
 
 const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign }) => {
+    const handleContextMenu = (e, type, index) => {
+        e.preventDefault();
+        if (window.electronAPI && window.electronAPI.showQuickAssignContextMenu) {
+            window.electronAPI.showQuickAssignContextMenu(type, index);
+        }
+    };
+
     return (
         <div className="global-quick-assigns-panel">
             <div className="quick-assigns-row knobs-row">
@@ -58,6 +66,7 @@ const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign })
                                 label={assigns.knobs[i]?.label}
                                 isAssigned={isAssigned}
                                 onChange={(val) => isAssigned && onUpdateKnob(i, val)}
+                                onContextMenu={(e) => handleContextMenu(e, 'knob', i)}
                                 onDrop={(data) => {
                                     console.log(`[GlobalQuickAssigns] Knob ${i} Drop Data:`, data);
                                     onAssign('knob', i, data);
@@ -77,6 +86,7 @@ const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign })
                                 label={assigns.buttons[i]?.label}
                                 isAssigned={isAssigned}
                                 onToggle={() => onToggleButton(i)}
+                                onContextMenu={(e) => handleContextMenu(e, 'button', i)}
                                 onDrop={(data) => {
                                     console.log(`[GlobalQuickAssigns] Button ${i} Drop Data:`, data);
                                     onAssign('button', i, data);

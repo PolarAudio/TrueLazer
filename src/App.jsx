@@ -769,6 +769,20 @@ function reducer(state, action) {
         };
         return { ...state, quickAssigns: newAssigns };
     }
+    case 'CLEAR_QUICK_CONTROL': {
+        const { type, index } = action.payload;
+        const newAssigns = { 
+            knobs: [...state.quickAssigns.knobs],
+            buttons: [...state.quickAssigns.buttons]
+        };
+        const collection = type === 'knob' ? 'knobs' : 'buttons';
+        newAssigns[collection][index] = {
+            value: type === 'knob' ? 0 : false,
+            label: null,
+            link: null
+        };
+        return { ...state, quickAssigns: newAssigns };
+    }
     case 'UPDATE_QUICK_CONTROL': {
         const { type, index, value } = action.payload;
 		const targetKey = type === 'button' ? 'buttons' : 'knobs';
@@ -2897,6 +2911,11 @@ function App() {
                       onSave: (newName) => dispatch({ type: 'SET_LAYER_NAME', payload: { index: action.index, name: newName } })
                   });
                   setShowRenameModal(true);
+              } else if (action.type === 'reset-quick-assign') {
+                  const defaultValue = action.controlType === 'knob' ? 0 : false;
+                  dispatch({ type: 'UPDATE_QUICK_CONTROL', payload: { type: action.controlType, index: action.index, value: defaultValue } });
+              } else if (action.type === 'clear-quick-assign') {
+                  dispatch({ type: 'CLEAR_QUICK_CONTROL', payload: { type: action.controlType, index: action.index } });
               }
           });
       }

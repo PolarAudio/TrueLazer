@@ -245,7 +245,11 @@ export function applyEffects(frame, effects, context = {}) {
   }
 
   // Final result must be a NEW buffer because it's passed around, but we've reduced intermediate ones
-  return { ...frame, points: new Float32Array(activePoints), isTypedArray: true };
+  const finalPoints = new Float32Array(activePoints);
+  if (activePoints._channelDistributions) {
+      finalPoints._channelDistributions = activePoints._channelDistributions;
+  }
+  return { ...frame, points: finalPoints, isTypedArray: true };
 }
 
 function applyRotate(points, numPoints, params, progress, time) {
@@ -397,26 +401,46 @@ function applyMirror(points, numPoints, params) {
   const { mode } = params;
   if (mode === 'none' || numPoints === 0) return points;
   
-  // We keep ALL input points and ADD mirrored copies
-  // This allows stacking effects (X then Y) to create 4-way symmetry correctly.
-  const newBuffer = new Float32Array(numPoints * 2 * 8);
-  
-  // 1. Copy original points
-  newBuffer.set(points.subarray(0, numPoints * 8), 0);
+  let newBuffer;
+  const distributions = points._channelDistributions;
 
-  // 2. Create mirrored copies
-  for (let i = 0; i < numPoints; i++) {
-      const srcOff = i * 8;
-      const dstOff = (numPoints + i) * 8;
-      
-      // Copy all data (X,Y,Z,R,G,B,BLK,LAST)
-      newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
-      
-      // Flip the relevant axis
-      if (mode === 'x-' || mode === 'x+') {
-          newBuffer[dstOff] = -newBuffer[dstOff];
-      } else if (mode === 'y-' || mode === 'y+') {
-          newBuffer[dstOff + 1] = -newBuffer[dstOff + 1];
+  if (distributions) {
+      // Distribution-aware mirroring (keeps channel points contiguous)
+      newBuffer = new Float32Array(numPoints * 2 * 8);
+      const newDists = new Map();
+      let currentOffset = 0;
+
+      for (const [id, dist] of distributions) {
+          const sliceNumPoints = dist.length / 8;
+          const sliceStart = dist.start;
+          const targetStart = currentOffset;
+
+          // 1. Copy original slice
+          newBuffer.set(points.subarray(sliceStart, sliceStart + dist.length), currentOffset);
+          currentOffset += dist.length;
+
+          // 2. Append mirrored slice
+          for (let i = 0; i < sliceNumPoints; i++) {
+              const srcOff = sliceStart + i * 8;
+              const dstOff = currentOffset;
+              newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
+              if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
+              else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff+1] = -newBuffer[dstOff+1];
+              currentOffset += 8;
+          }
+          newDists.set(id, { start: targetStart, length: dist.length * 2 });
+      }
+      newBuffer._channelDistributions = newDists;
+  } else {
+      // Standard mirroring (additive)
+      newBuffer = new Float32Array(numPoints * 2 * 8);
+      newBuffer.set(points.subarray(0, numPoints * 8), 0);
+      for (let i = 0; i < numPoints; i++) {
+          const srcOff = i * 8;
+          const dstOff = (numPoints + i) * 8;
+          newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
+          if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
+          else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff + 1] = -newBuffer[dstOff + 1];
       }
   }
   
@@ -516,6 +540,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
                 newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0; newPoints[off+6] = 1;
             }
         }
+        if (points._channelDistributions) newPoints._channelDistributions = points._channelDistributions;
         return newPoints;
     } else {
         const { assignedDacs } = context || {};
@@ -611,6 +636,7 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             newPoints[off+3] *= intensity; newPoints[off+4] *= intensity; newPoints[off+5] *= intensity;
             if (intensity < 0.05) newPoints[off+6] = 1;
         }
+        if (points._channelDistributions) newPoints._channelDistributions = points._channelDistributions;
         return newPoints;
     } else {
         const { assignedDacs } = context || {};

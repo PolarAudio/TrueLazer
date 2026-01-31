@@ -34,7 +34,7 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
     const rotation = -135 + (value * 270);
 
     const handleMouseDown = (e) => {
-        if (!isAssigned) return;
+        if (!isAssigned || e.button !== 0) return;
         e.preventDefault(); // Prevent text selection
         const startY = e.clientY;
         const startVal = value;
