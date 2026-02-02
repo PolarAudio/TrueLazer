@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
-import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
+import { useThumbnailWorker } from '../contexts/ThumbnailWorkerContext';
 
-const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange }) => {
-  const [selectedDirectory, setSelectedDirectory] = useState('');
+const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onPathChange }) => {
   const [ildFiles, setIldFiles] = useState([]);
   const [thumbnails, setThumbnails] = useState({});
-  const ildaParserWorker = useIldaParserWorker();
+  const ildaParserWorker = useThumbnailWorker();
   const requestedThumbnailsRef = useRef(new Set());
+
+  const selectedDirectory = path;
+  const setSelectedDirectory = onPathChange;
 
   useEffect(() => {
     if (!ildaParserWorker) return;
@@ -45,7 +47,8 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange }) => {
                     type: 'load-and-parse-ilda',
                     fileName,
                     filePath,
-                    browserFile: true
+                    browserFile: true,
+                    stopAtFirstFrame: true
                 });
             }
         });
@@ -54,6 +57,15 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange }) => {
 
   useEffect(() => {
     const loadDefaultDir = async () => {
+      if (path) {
+          // If we already have a path, just read the files
+          const files = await window.electronAPI.readIldFiles(path);
+          setIldFiles(files);
+          requestedThumbnailsRef.current.clear();
+          setThumbnails({});
+          return;
+      }
+
       if (window.electronAPI && window.electronAPI.getUserIldaPath) {
         const defaultDir = await window.electronAPI.getUserIldaPath();
         if (defaultDir) {
@@ -66,7 +78,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange }) => {
       }
     };
     loadDefaultDir();
-  }, []);
+  }, [path]);
 
   const handleOpenExplorer = async () => {
     if (window.electronAPI) {

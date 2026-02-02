@@ -6,15 +6,18 @@ import './index.css';
 import { SharedWorkerProvider } from './contexts/WorkerContext.jsx';
 import { IldaParserWorkerProvider } from './contexts/IldaParserWorkerContext.jsx';
 import { GeneratorWorkerProvider } from './contexts/GeneratorWorkerContext.jsx'; // Import GeneratorWorkerProvider
+import { ThumbnailWorkerProvider } from './contexts/ThumbnailWorkerContext.jsx';
 import { AudioProvider } from './contexts/AudioContext.jsx';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <SharedWorkerProvider>
       <IldaParserWorkerProvider>
         <GeneratorWorkerProvider> {/* Wrap App with GeneratorWorkerProvider */}
-          <AudioProvider>
-            <App />
-          </AudioProvider>
+          <ThumbnailWorkerProvider>
+            <AudioProvider>
+              <App />
+            </AudioProvider>
+          </ThumbnailWorkerProvider>
         </GeneratorWorkerProvider>
       </IldaParserWorkerProvider>
     </SharedWorkerProvider>

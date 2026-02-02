@@ -1,9 +1,20 @@
 const defaultPalette = [
-  { r: 255, g: 0, b: 0 }, { r: 0, g: 255, b: 0 }, { r: 0, g: 0, b: 255 }, { r: 255, g: 255, b: 0 },
-  { r: 0, g: 255, b: 255 }, { r: 255, g: 0, b: 255 }, { r: 255, g: 128, b: 0 }, { r: 128, g: 255, b: 0 },
-  { r: 0, g: 255, b: 128 }, { r: 0, g: 128, b: 255 }, { r: 128, g: 0, b: 255 }, { r: 255, g: 0, b: 128 },
-  { r: 255, g: 255, b: 255 }, { r: 128, g: 128, b: 128 }, { r: 255, g: 128, b: 128 }, { r: 128, g: 255, b: 128 },
-  { r: 128, g: 128, b: 255 }, { r: 255, g: 255, b: 128 }, { r: 128, g: 255, b: 255 }, { r: 255, g: 128, b: 255 },
+  { r: 255, g: 0, b: 0 }, { r: 255, g: 17, b: 0 }, { r: 255, g: 34, b: 0 }, { r: 255, g: 51, b: 0 },
+  { r: 255, g: 68, b: 0 }, { r: 255, g: 85, b: 0 }, { r: 255, g: 102, b: 0 }, { r: 255, g: 119, b: 0 },
+  { r: 255, g: 136, b: 0 }, { r: 255, g: 153, b: 0 }, { r: 255, g: 170, b: 0 }, { r: 255, g: 187, b: 0 },
+  { r: 255, g: 204, b: 0 }, { r: 255, g: 221, b: 0 }, { r: 255, g: 238, b: 0 }, { r: 255, g: 255, b: 0 },
+  { r: 255, g: 255, b: 0 }, { r: 238, g: 255, b: 0 }, { r: 204, g: 255, b: 0 }, { r: 170, g: 255, b: 0 },
+  { r: 136, g: 255, b: 0 }, { r: 102, g: 255, b: 0 }, { r: 68, g: 255, b: 0 }, { r: 34, g: 255, b: 0 },
+  { r: 0, g: 255, b: 0 }, { r: 0, g: 255, b: 34 }, { r: 0, g: 255, b: 68 }, { r: 0, g: 255, b: 102 },
+  { r: 0, g: 255, b: 136 }, { r: 0, g: 255, b: 170 }, { r: 0, g: 255, b: 204 }, { r: 0, g: 255, b: 238 },
+  { r: 0, g: 136, b: 255 }, { r: 0, g: 119, b: 255 }, { r: 0, g: 102, b: 255 }, { r: 0, g: 102, b: 255 },
+  { r: 0, g: 85, b: 255 }, { r: 0, g: 68, b: 255 }, { r: 0, g: 68, b: 255 }, { r: 0, g: 34, b: 255 },
+  { r: 0, g: 0, b: 255 }, { r: 34, g: 0, b: 255 }, { r: 68, g: 0, b: 255 }, { r: 102, g: 0, b: 255 },
+  { r: 136, g: 0, b: 255 }, { r: 170, g: 0, b: 255 }, { r: 204, g: 0, b: 255 }, { r: 238, g: 0, b: 255 },
+  { r: 255, g: 0, b: 255 }, { r: 255, g: 34, b: 255 }, { r: 255, g: 68, b: 255 }, { r: 255, g: 102, b: 255 },
+  { r: 255, g: 136, b: 255 }, { r: 255, g: 170, b: 255 }, { r: 255, g: 204, b: 255 }, { r: 255, g: 238, b: 255 },
+  { r: 255, g: 255, b: 255 }, { r: 255, g: 238, b: 238 }, { r: 255, g: 204, b: 204 }, { r: 255, g: 170, b: 170 },
+  { r: 255, g: 136, b: 136 }, { r: 255, g: 102, b: 102 }, { r: 255, g: 68, b: 68 }, { r: 0, g: 34, b: 34 },
 ];
 
 const ildaDataStore = new Map(); // Store parsed ILDA data by a unique ID
@@ -100,13 +111,13 @@ function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount, c
   return points;
 }
 
-function parseIldaFile(arrayBuffer) {
-  console.log('[ilda-parser.worker.js] parseIldaFile - Starting parsing.'); // DEBUG LOG
+function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
+  console.log(`[ilda-parser.worker.js] parseIldaFile - Starting parsing. stopAtFirstFrame=${stopAtFirstFrame}`);
   const view = new DataView(arrayBuffer);
   const framesMetadata = []; // Will store metadata about frames, not parsed points
   let firstFormatCode = null;
   let currentOffset = 0;
-  let colorPalette = null;
+  let activePalette = null;
 
   while (currentOffset + 32 <= arrayBuffer.byteLength) {
     const frameStartOffset = currentOffset;
@@ -156,14 +167,14 @@ function parseIldaFile(arrayBuffer) {
     }
 
     if (formatCode === 2) {
-      colorPalette = [];
+      activePalette = [];
 	  const paletteStart = currentOffset + 32;
       for (let i = 0; i < pointCount; i++) {
         const r = view.getUint8(paletteStart + i * 4); 		//Byte 0: Red
         const g = view.getUint8(paletteStart + i * 4 + 1);	//Byte 1: Green
         const b = view.getUint8(paletteStart + i * 4 + 2);	//Byte 2: Blue
 		//Byte 3 is reserved, skip it
-        colorPalette.push({ r, g, b });
+        activePalette.push({ r, g, b });
       }
     }
 
@@ -204,20 +215,25 @@ function parseIldaFile(arrayBuffer) {
         pointDataOffset: frameStartOffset + 32, // Store offset to actual point data
         pointDataSize: pointsDataSize,
         frameEndOffset: frameStartOffset + frameTotalSize,
-        // We no longer store pointDataBuffer slice here
-        bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } // Placeholder, calculated on demand
+        palette: activePalette, // Store the palette that was active for this frame
+        bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } 
     });
     currentOffset += frameTotalSize;
+
+    if (stopAtFirstFrame && framesMetadata.length > 0) {
+        console.log("[ilda-parser.worker.js] parseIldaFile - stopAtFirstFrame requested, breaking early.");
+        break;
+    }
   }
   console.log(`[ilda-parser.worker.js] parseIldaFile - Finished parsing. Found ${framesMetadata.length} frames.`);
-  return { frames: framesMetadata, error: framesMetadata.length === 0 ? 'No valid frames found' : null, firstFormatCode, ildaFileBuffer: arrayBuffer, colorPalette };
+  return { frames: framesMetadata, error: framesMetadata.length === 0 ? 'No valid frames found' : null, firstFormatCode, ildaFileBuffer: arrayBuffer };
 }
 
 
 const pendingFileRequests = new Map();
 
 self.onmessage = function(e) {
-  const { arrayBuffer, type, fileName, filePath, layerIndex, colIndex, workerId, frameIndex, isStillFrame, requestId } = e.data;
+  const { arrayBuffer, type, fileName, filePath, layerIndex, colIndex, workerId, frameIndex, isStillFrame, requestId, stopAtFirstFrame } = e.data;
 
   if (type === 'parse-ilda') {
     // This case now expects arrayBuffer to be present
@@ -227,9 +243,9 @@ self.onmessage = function(e) {
     }
     try {
       console.log('[ilda-parser.worker.js] Calling parseIldaFile for:', fileName); // DEBUG LOG
-      const parsedData = parseIldaFile(arrayBuffer); // This now returns framesMetadata and ildaFileBuffer
+      const parsedData = parseIldaFile(arrayBuffer, stopAtFirstFrame); // This now returns framesMetadata and ildaFileBuffer
       const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames, colorPalette: parsedData.colorPalette}); // Store full buffer and metadata
+      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames }); // Store full buffer and metadata
       console.log('[ilda-parser.worker.js] Posting success message for parse-ilda.'); // DEBUG LOG
       self.postMessage({ 
         success: true, 
@@ -251,7 +267,7 @@ self.onmessage = function(e) {
   } else if (type === 'load-and-parse-ilda') {
     // Worker requests file content from main process (via renderer)
     const newRequestId = Math.random().toString(36).substring(2, 15);
-    pendingFileRequests.set(newRequestId, { fileName, filePath, layerIndex, colIndex, browserFile: e.data.browserFile });
+    pendingFileRequests.set(newRequestId, { fileName, filePath, layerIndex, colIndex, browserFile: e.data.browserFile, stopAtFirstFrame });
     // Inform renderer that parsing has started for this clip
     if (layerIndex !== undefined && colIndex !== undefined) {
         self.postMessage({ type: 'parsing-status', status: true, layerIndex, colIndex });
@@ -277,9 +293,9 @@ self.onmessage = function(e) {
 
     try {
       console.log(`[ilda-parser.worker.js] Calling parseIldaFile for: ${requestContext.fileName} (from file-content-response)`);
-      const parsedData = parseIldaFile(arrayBuffer); // This now returns framesMetadata and ildaFileBuffer
+      const parsedData = parseIldaFile(arrayBuffer, requestContext.stopAtFirstFrame); // This now returns framesMetadata and ildaFileBuffer
       const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames, colorPalette: parsedData.colorPalette}); // Store full buffer and metadata
+      ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames }); // Store full buffer and metadata
       self.postMessage({ 
         success: true, 
         workerId: newWorkerId, 
@@ -306,7 +322,7 @@ self.onmessage = function(e) {
       return;
     }
 
-    const { ildaFileBuffer, framesMetadata, colorPalette } = ildaData;
+    const { ildaFileBuffer, framesMetadata } = ildaData;
     
     const index = Math.floor(frameIndex);
 
@@ -327,7 +343,7 @@ self.onmessage = function(e) {
     
     if (!points) {
       const pointDataBuffer = ildaFileBuffer.slice(frameMeta.pointDataOffset, frameMeta.pointDataOffset + frameMeta.pointDataSize);
-      points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, colorPalette);
+      points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, frameMeta.palette);
       // Cache the parsed points back into the metadata for this frame
       frameMeta.cachedPoints = points;
     }
@@ -346,7 +362,7 @@ self.onmessage = function(e) {
       return;
     }
 
-    const { ildaFileBuffer, framesMetadata, colorPalette } = ildaData;
+    const { ildaFileBuffer, framesMetadata } = ildaData;
     const allFrames = [];
 
     try {
@@ -355,7 +371,7 @@ self.onmessage = function(e) {
             let points = frameMeta.cachedPoints;
             if (!points) {
                 const pointDataBuffer = ildaFileBuffer.slice(frameMeta.pointDataOffset, frameMeta.pointDataOffset + frameMeta.pointDataSize);
-                points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, colorPalette);
+                points = parseFramePoints(pointDataBuffer, frameMeta.formatCode, frameMeta.recordSize, frameMeta.pointCount, frameMeta.palette);
                 frameMeta.cachedPoints = points;
             }
             allFrames.push({ ...frameMeta, points });

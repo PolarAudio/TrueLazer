@@ -907,6 +907,7 @@ input[type="checkbox"]:checked:before {
   display: grid;
   grid-gap: 3px;
   grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+  grid-template-rows: repeat(auto-fill, 75px);
   overflow-x: clip;
   grid-column-start: 1;
   grid-column-end: 3;

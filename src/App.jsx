@@ -24,6 +24,7 @@ import RelocateModal from './components/RelocateModal';
 import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
+import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
 import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
 import { useAudioOutput } from './hooks/useAudioOutput'; // Add this
 import { useAudio } from './contexts/AudioContext.jsx'; // Add this
@@ -116,6 +117,7 @@ const getInitialState = (initialSettings) => ({
   dacs: [],
   selectedDac: initialSettings?.dacAssignment?.selectedDac ?? initialSettings?.selectedDac ?? null,
   fileBrowserViewMode: 'list',
+  fileBrowserPath: '',
   layerUiStates: Array(6).fill({}),
   ildaFrames: [],
   selectedIldaWorkerId: null,
@@ -162,6 +164,59 @@ function reducer(state, action) {
         const newColumns = [...state.columns];
         newColumns[action.payload.index] = action.payload.name;
         return { ...state, columns: newColumns };
+    }
+    case 'DUPLICATE_COLUMN': {
+        const sourceIndex = action.payload.index;
+        const newColumns = [...state.columns];
+        newColumns.splice(sourceIndex + 1, 0, `${newColumns[sourceIndex]} (Copy)`);
+
+        const newClipContents = state.clipContents.map(layer => {
+            const newLayer = [...layer];
+            const sourceClip = newLayer[sourceIndex];
+            let newClip = null;
+            if (sourceClip) {
+                // Deep clone and unique IDs
+                newClip = JSON.parse(JSON.stringify(sourceClip));
+                if (newClip.type === 'ilda') newClip.workerId = null;
+                if (newClip.effects) {
+                    const sync = newClip.syncSettings || {};
+                    newClip.effects = newClip.effects.map(eff => {
+                        const oldId = eff.instanceId;
+                        const newId = generateId();
+                        Object.keys(sync).forEach(key => {
+                            if (oldId && key.startsWith(`${oldId}.`)) {
+                                sync[`${newId}.${key.split('.')[1]}`] = sync[key];
+                                delete sync[key];
+                            }
+                        });
+                        return { ...eff, instanceId: newId };
+                    });
+                    newClip.syncSettings = sync;
+                }
+            }
+            newLayer.splice(sourceIndex + 1, 0, newClip);
+            return newLayer;
+        });
+
+        const newClipNames = state.clipNames.map(layer => {
+            const newLayer = [...layer];
+            newLayer.splice(sourceIndex + 1, 0, `${newLayer[sourceIndex]} (Copy)`);
+            return newLayer;
+        });
+
+        const newThumbnailIndexes = state.thumbnailFrameIndexes.map(layer => {
+            const newLayer = [...layer];
+            newLayer.splice(sourceIndex + 1, 0, newLayer[sourceIndex]);
+            return newLayer;
+        });
+
+        return { 
+            ...state, 
+            columns: newColumns, 
+            clipContents: newClipContents, 
+            clipNames: newClipNames, 
+            thumbnailFrameIndexes: newThumbnailIndexes 
+        };
     }
     case 'SET_LAYERS': {
       return { ...state, layers: action.payload };
@@ -321,6 +376,9 @@ function reducer(state, action) {
 	}
     case 'SET_FILE_BROWSER_VIEW_MODE': {
         return { ...state, fileBrowserViewMode: action.payload };
+    }
+    case 'SET_FILE_BROWSER_PATH': {
+        return { ...state, fileBrowserPath: action.payload };
     }
     case 'UPDATE_CLIP_UI_STATE': {
         const { layerIndex, colIndex, uiState } = action.payload;
@@ -1178,9 +1236,9 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex) => {
                 ctx.lineTo(screenX, screenY);
                 
                 // Color
-                const ir = Math.floor(Math.max(0, Math.min(1, r)) * 255);
-                const ig = Math.floor(Math.max(0, Math.min(1, g)) * 255);
-                const ib = Math.floor(Math.max(0, Math.min(1, b)) * 255);
+                const ir = Math.floor(Math.max(0, Math.min(255, r)));
+                const ig = Math.floor(Math.max(0, Math.min(255, g)));
+                const ib = Math.floor(Math.max(0, Math.min(255, b)));
                 
                 ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
                 ctx.stroke();
@@ -1441,6 +1499,7 @@ const SidePanelContainer = React.memo(({
 
 function App() {
   const ildaParserWorker = useIldaParserWorker();
+  const thumbnailWorker = useThumbnailWorker();
     const generatorWorker = useGeneratorWorker();
     const uiGeneratorWorkerRef = useRef(null);
     const { fftLevels, getFftLevels } = useAudio() || {};
@@ -1762,6 +1821,7 @@ function App() {
     const prevGeneratorParamsRef = useRef(new Map());
 
     const prevWorkerIdsRef = useRef(new Map()); // Add this
+    const fontBufferCacheRef = useRef(new Map()); // Cache for font buffers to prevent 60fps disk reads
 
         const lastNdiSourceNameRef = useRef(null); // Ref to track NDI source name across renders
     
@@ -2528,7 +2588,12 @@ function App() {
           } else if (pSettings.mode === 'bpm') {
               clipDuration = ((pSettings.beats || 8) * 60) / currentBpm;
           } else {
-              clipDuration = totalFrames / (pSettings.fps || 60);
+              // FPS mode or default
+              if (clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1)) {
+                  clipDuration = pSettings.duration || 1.0;
+              } else {
+                  clipDuration = totalFrames / (pSettings.fps || 60);
+              }
           }
 
           // Generator Parameter Animation Sync
@@ -2682,51 +2747,86 @@ function App() {
                               layerIndex,
                               colIndex,
                           });
-                      } else if (clipToExport.type === 'generator' && clipToExport.frames) {
-                          console.log('Exporting generator frames with effects...');
-                          import('./utils/ilda-writer.js').then(({ framesToIlda }) => {
+                      } else if (clipToExport.type === 'generator') {
+                          console.log('Exporting generator frames with parameter animation...');
+                          
+                          const exportGenerator = async () => {
+                              const { framesToIlda } = await import('./utils/ilda-writer.js');
                               const fps = playbackFps || 60;
-                              let duration = 2.0; // Default 2s
+                              let duration = 2.0;
                               
-                              if (clipToExport.playbackSettings) {
-                                  if (clipToExport.playbackSettings.mode === 'timeline' && clipToExport.playbackSettings.duration) {
-                                      duration = clipToExport.playbackSettings.duration;
-                                  } else if (clipToExport.playbackSettings.mode === 'bpm' && clipToExport.playbackSettings.beats) {
-                                      const bpm = state.bpm || 120;
-                                      duration = (clipToExport.playbackSettings.beats / bpm) * 60;
-                                  } else if (clipToExport.playbackSettings.mode === 'fps' && clipToExport.frames.length > 1) {
-                                      duration = clipToExport.frames.length / fps;
-                                  }
-                              }
+                              const pb = clipToExport.playbackSettings || {};
+                              if (pb.mode === 'timeline') duration = pb.duration || 2.0;
+                              else if (pb.mode === 'bpm') duration = ((pb.beats || 8) * 60) / (state.bpm || 120);
+                              else if (clipToExport.frames?.length > 1) duration = clipToExport.frames.length / fps;
 
                               const totalExportFrames = Math.ceil(duration * fps);
                               const bakedFrames = [];
-                              
-                              // We need a clean effect state for the export
                               const exportEffectStates = new Map();
+                              const generatorId = clipToExport.generatorDefinition?.id;
+
+                              // Load font buffer once if needed
+                              let fontBuffer = null;
+                              if (['text', 'spout-receiver'].includes(generatorId)) {
+                                  const fontUrl = clipToExport.currentParams?.fontUrl || 'src/fonts/Geometr415 Blk BT Black.ttf';
+                                  try {
+                                      if (fontUrl.startsWith('http')) fontBuffer = await window.electronAPI.fetchUrlAsArrayBuffer(fontUrl);
+                                      else fontBuffer = await window.electronAPI.readFileForWorker(fontUrl);
+                                  } catch (e) { console.error("Failed to load font for export:", e); }
+                              }
 
                               for (let i = 0; i < totalExportFrames; i++) {
                                   const time = i * (1000 / fps);
                                   const progress = i / totalExportFrames;
                                   
-                                  // Select base frame from generator (looping)
-                                  const baseFrameIdx = Math.floor(progress * clipToExport.frames.length) % clipToExport.frames.length;
-                                  const baseFrame = clipToExport.frames[baseFrameIdx];
+                                  // 1. Resolve Parameters for this frame
+                                  const syncSettings = clipToExport.syncSettings || {};
+                                  const genDef = clipToExport.generatorDefinition;
+                                  const currentParams = clipToExport.currentParams || {};
+                                  const resolvedParams = { ...currentParams };
                                   
-                                  if (baseFrame) {
-                                      // Clone frame to avoid mutating original
-                                      const frameClone = { ...baseFrame }; 
-                                      
-                                      // Apply Effects
-                                      // Filter effects for export (ignore Delay/Chase in channel mode)
-                                  const effectsToApply = (clipToExport.effects || []).filter(eff => {
-                                      if ((eff.id === 'delay' || eff.id === 'chase') && eff.params?.mode === 'channel') {
-                                          return false;
-                                      }
-                                      return true;
-                                  });
+                                  const context = {
+                                      time: time,
+                                      progress: progress,
+                                      bpm: state.bpm,
+                                      clipDuration: duration,
+                                      fftLevels: { low: 0, mid: 0, high: 0 },
+                                      activationTime: 0
+                                  };
 
-                                  const processedFrame = applyEffects(frameClone, effectsToApply, {
+                                  for (const key in syncSettings) {
+                                      if (key.startsWith(`${generatorId}.`)) {
+                                          const paramId = key.split('.')[1];
+                                          const control = genDef?.paramControls?.find(c => c.id === paramId);
+                                          const baseValue = currentParams[paramId] !== undefined ? currentParams[paramId] : genDef.defaultParams[paramId];
+                                          resolvedParams[paramId] = resolveParam(paramId, baseValue, syncSettings[key], context, control?.min, control?.max);
+                                      }
+                                  }
+
+                                  // 2. Generate Base Geometry
+                                  let baseFrame = null;
+                                  try {
+                                      if (generatorId === 'circle') baseFrame = generateCircle(resolvedParams);
+                                      else if (generatorId === 'square') baseFrame = generateSquare(resolvedParams);
+                                      else if (generatorId === 'line') baseFrame = generateLine(resolvedParams);
+                                      else if (generatorId === 'star') baseFrame = generateStar(resolvedParams);
+                                      else if (generatorId === 'text') baseFrame = await generateText(resolvedParams, fontBuffer);
+                                      else if (generatorId === 'spout-receiver') baseFrame = await generateText({ ...resolvedParams, text: resolvedParams.sourceName }, fontBuffer);
+                                      else if (clipToExport.frames) {
+                                          // Fallback to cycling original frames (e.g. NDI)
+                                          const idx = Math.floor(progress * clipToExport.frames.length) % clipToExport.frames.length;
+                                          baseFrame = clipToExport.frames[idx];
+                                      }
+                                  } catch (e) { console.error("Generation failed during export:", e); }
+
+                                  if (baseFrame) {
+                                      // 3. Apply Effects
+                                      const effectsToApply = (clipToExport.effects || []).filter(eff => {
+                                          if ((eff.id === 'delay' || eff.id === 'chase') && eff.params?.mode === 'channel') return false;
+                                          return true;
+                                      });
+
+                                      const processedFrame = applyEffects(baseFrame, effectsToApply, {
                                           time: time,
                                           progress: progress,
                                           effectStates: exportEffectStates,
@@ -2736,31 +2836,14 @@ function App() {
                                           assignedDacs: clipToExport.assignedDacs || []
                                       });
                                       
-                                      // Convert TypedArray back to points structure if needed by writer?
-                                      // ilda-writer.js handles {x,y,r,g,b...} objects. 
-                                      // applyEffects returns TypedArray in `processedFrame.points` (format X,Y,Z,R,G,B,BLK,LAST)
-                                      // We need to convert this back to object array for `ilda-writer.js` OR update `ilda-writer.js` to handle typed arrays.
-                                      // `ilda-writer.js` ALREADY handles objects.
-                                      // Let's check `ilda-writer.js` if it handles TypedArrays.
-                                      // I wrote it recently. Let me check.
-                                      
-                                      // Checking ilda-writer.js logic:
-                                      // It iterates: const p = points[i]; let x = p.x ...
-                                      // It expects OBJECTS.
-                                      // applyEffects returns TypedArray.
-                                      // So we MUST convert TypedArray back to Objects for the writer.
-                                      
+                                      // 4. Convert to Object Points for writer
                                       const pts = processedFrame.points;
                                       const numPts = pts.length / 8;
                                       const objectPoints = [];
                                       for(let k=0; k<numPts; k++) {
                                           objectPoints.push({
-                                              x: pts[k*8],
-                                              y: pts[k*8+1],
-                                              z: pts[k*8+2],
-                                              r: pts[k*8+3],
-                                              g: pts[k*8+4],
-                                              b: pts[k*8+5],
+                                              x: pts[k*8], y: pts[k*8+1], z: pts[k*8+2],
+                                              r: pts[k*8+3], g: pts[k*8+4], b: pts[k*8+5],
                                               blanking: pts[k*8+6] > 0.5,
                                               lastPoint: pts[k*8+7] > 0.5
                                           });
@@ -2778,12 +2861,13 @@ function App() {
                               const buffer = framesToIlda(bakedFrames);
                               const defaultName = `${clipToExport.generatorDefinition?.name || 'generator'}_export.ild`;
                               if (window.electronAPI && window.electronAPI.saveIldaFile) {
-                                  window.electronAPI.saveIldaFile(buffer, defaultName).then(res => {
-                                      if (res.success) showNotification(`Exported to ${res.filePath}`);
-                                      else if (res.error) showNotification(`Export failed: ${res.error}`);
-                                  });
+                                  const res = await window.electronAPI.saveIldaFile(buffer, defaultName);
+                                  if (res.success) showNotification(`Exported to ${res.filePath}`);
+                                  else if (res.error) showNotification(`Export failed: ${res.error}`);
                               }
-                          }).catch(err => console.error('Failed to export generator:', err));
+                          };
+
+                          exportGenerator().catch(err => console.error('Failed to export generator:', err));
                       } else {
                           console.warn('Clip type not supported for export or missing data:', clipToExport.type, clipToExport);
                           if (clipToExport.type === 'ilda' && !clipToExport.workerId) {
@@ -2845,9 +2929,38 @@ function App() {
               } else if (command === 'paste-clip') {
                   if (state.clipClipboard) {
                       const { content, name } = state.clipClipboard;
-                      let contentToPaste = { ...content };
+                      
+                      // Deep clone the content to ensure complete independence
+                      // Using JSON parse/stringify for a quick deep clone of the plain data
+                      let contentToPaste = JSON.parse(JSON.stringify(content));
+                      
                       if (contentToPaste.type === 'ilda') {
                           contentToPaste.workerId = null;
+                      }
+
+                      // Regenerate effect instance IDs to ensure they are unique in the new clip
+                      // and update the corresponding syncSettings keys.
+                      if (contentToPaste.effects && contentToPaste.effects.length > 0) {
+                          const oldSyncSettings = contentToPaste.syncSettings || {};
+                          const newSyncSettings = { ...oldSyncSettings };
+                          
+                          contentToPaste.effects = contentToPaste.effects.map(effect => {
+                              const oldInstanceId = effect.instanceId;
+                              const newInstanceId = generateId();
+                              
+                              // If this effect had synced parameters, update their keys to the new instance ID
+                              Object.keys(newSyncSettings).forEach(key => {
+                                  if (oldInstanceId && key.startsWith(`${oldInstanceId}.`)) {
+                                      const paramPart = key.substring(oldInstanceId.length); // includes the dot
+                                      newSyncSettings[`${newInstanceId}${paramPart}`] = newSyncSettings[key];
+                                      delete newSyncSettings[key];
+                                  }
+                              });
+                              
+                              return { ...effect, instanceId: newInstanceId };
+                          });
+                          
+                          contentToPaste.syncSettings = newSyncSettings;
                       }
 
                       dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: contentToPaste }});
@@ -3164,6 +3277,17 @@ function App() {
           dispatch({ type: 'SET_THEME', payload: themeColor });
         } else if (action === 'shortcuts-window' || (action.startsWith('open-') && action.endsWith('-settings'))) {
             setShowShortcutsWindow(true);
+        } else if (action === 'column-duplicate') {
+            if (selectedColIndex !== null) {
+                dispatch({ type: 'DUPLICATE_COLUMN', payload: { index: selectedColIndex } });
+                showNotification('Column duplicated.');
+            }
+        } else if (action === 'column-clear-clips') {
+            if (selectedColIndex !== null) {
+                layers.forEach((_, lIdx) => {
+                    dispatch({ type: 'CLEAR_CLIP', payload: { layerIndex: lIdx, colIndex: selectedColIndex } });
+                });
+            }
         } else if (action.startsWith('toggle-')) {
             // action format: toggle-midi-true
             const parts = action.split('-');
@@ -3238,6 +3362,33 @@ function App() {
       ildaParserWorker.removeEventListener('message', handleWorkerRequest);
     };
   }, [ildaParserWorker]);
+
+  // Handles requests from thumbnailWorker
+  useEffect(() => {
+    if (!thumbnailWorker) return;
+
+    const handleThumbnailRequest = async (e) => {
+      if (e.data.type === 'request-file-content') {
+        const { filePath, requestId } = e.data;
+        try {
+          const arrayBuffer = await window.electronAPI.readFileForWorker(filePath);
+          thumbnailWorker.postMessage({
+            type: 'file-content-response',
+            requestId,
+            arrayBuffer,
+          }, [arrayBuffer]);
+        } catch (error) {
+          console.error(`Thumbnail Worker: Error reading file: ${filePath}`, error);
+          thumbnailWorker.postMessage({ type: 'file-content-response', requestId, error: error.message });
+        }
+      }
+    };
+
+    thumbnailWorker.addEventListener('message', handleThumbnailRequest);
+    return () => {
+      thumbnailWorker.removeEventListener('message', handleThumbnailRequest);
+    };
+  }, [thumbnailWorker]);
 
   // Effect to trigger re-parsing of ILDA clips when workerId is missing (e.g. after load)
   useEffect(() => {
@@ -3431,24 +3582,32 @@ function App() {
         fontUrl = defaultFontUrl;
       }
 
-      try {
-        if (fontUrl.startsWith('http')) {
-          if (window.electronAPI && window.electronAPI.fetchUrlAsArrayBuffer) {
-            fontBuffer = await window.electronAPI.fetchUrlAsArrayBuffer(fontUrl);
-          } else {
-            throw new Error('URL fetching API is not available.');
+      // Check cache first
+      if (fontBufferCacheRef.current.has(fontUrl)) {
+          fontBuffer = fontBufferCacheRef.current.get(fontUrl);
+      } else {
+          try {
+            if (fontUrl.startsWith('http')) {
+              if (window.electronAPI && window.electronAPI.fetchUrlAsArrayBuffer) {
+                fontBuffer = await window.electronAPI.fetchUrlAsArrayBuffer(fontUrl);
+              } else {
+                throw new Error('URL fetching API is not available.');
+              }
+            } else {
+              if (window.electronAPI && window.electronAPI.readFileForWorker) {
+                fontBuffer = await window.electronAPI.readFileForWorker(fontUrl);
+              } else {
+                throw new Error('File reading API is not available.');
+              }
+            }
+            if (fontBuffer) {
+                fontBufferCacheRef.current.set(fontUrl, fontBuffer);
+            }
+          } catch (error) {
+            console.error(`Failed to load font for text generator at ${layerIndex}-${colIndex}:`, error);
+            showNotification(`Font error: ${error.message}`);
+            return;
           }
-        } else {
-          if (window.electronAPI && window.electronAPI.readFileForWorker) {
-            fontBuffer = await window.electronAPI.readFileForWorker(fontUrl);
-          } else {
-            throw new Error('File reading API is not available.');
-          }
-        }
-      } catch (error) {
-        console.error(`Failed to load font for text generator at ${layerIndex}-${colIndex}:`, error);
-        showNotification(`Font error: ${error.message}`);
-        return;
       }
     }
 
@@ -3458,12 +3617,14 @@ function App() {
       colIndex,
       generator: generatorDefinition,
       params: completeParams, // Pass the complete params
-      fontBuffer,
+      fontBuffer, 
       seq, // Pass sequence number
       isAutoUpdate
     };
     
-    const transferables = fontBuffer ? [fontBuffer] : [];
+    // We only transfer the buffer if we just loaded it (it's not cached yet)
+    // Actually, simpler to never transfer the font buffer as it's small and reusable.
+    const transferables = []; 
 
     // Throttling Logic
     if (generatorProcessingMap.current.get(clipKey)) {
@@ -4529,6 +4690,8 @@ function App() {
                     {activeBottomTab_1 === 'files' && <FileBrowser 
                         viewMode={state.fileBrowserViewMode}
                         onViewModeChange={(mode) => dispatch({ type: 'SET_FILE_BROWSER_VIEW_MODE', payload: mode })}
+                        path={state.fileBrowserPath}
+                        onPathChange={(newPath) => dispatch({ type: 'SET_FILE_BROWSER_PATH', payload: newPath })}
                         onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex })} 
                     />}
                     {activeBottomTab_1 === 'generators' && <GeneratorPanel />}

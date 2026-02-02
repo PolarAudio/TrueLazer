@@ -50,9 +50,9 @@ const StaticIldaThumbnail = ({ frame, width = 50, height = 50 }) => {
                     ctx.moveTo(lastX, lastY);
                     ctx.lineTo(screenX, screenY);
                     
-                    const ir = Math.floor(Math.max(0, Math.min(1, r)) * 255);
-                    const ig = Math.floor(Math.max(0, Math.min(1, g)) * 255);
-                    const ib = Math.floor(Math.max(0, Math.min(1, b)) * 255);
+                    const ir = Math.floor(Math.max(0, Math.min(255, r)));
+                    const ig = Math.floor(Math.max(0, Math.min(255, g)));
+                    const ib = Math.floor(Math.max(0, Math.min(255, b)));
                     
                     ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
                     ctx.stroke();

@@ -1,9 +1,20 @@
 const defaultPalette = [
-  { r: 255, g: 0, b: 0 }, { r: 0, g: 255, b: 0 }, { r: 0, g: 0, b: 255 }, { r: 255, g: 255, b: 0 },
-  { r: 0, g: 255, b: 255 }, { r: 255, g: 0, b: 255 }, { r: 255, g: 128, b: 0 }, { r: 128, g: 255, b: 0 },
-  { r: 0, g: 255, b: 128 }, { r: 0, g: 128, b: 255 }, { r: 128, g: 0, b: 255 }, { r: 255, g: 0, b: 128 },
-  { r: 255, g: 255, b: 255 }, { r: 128, g: 128, b: 128 }, { r: 255, g: 128, b: 128 }, { r: 128, g: 255, b: 128 },
-  { r: 128, g: 128, b: 255 }, { r: 255, g: 255, b: 128 }, { r: 128, g: 255, b: 255 }, { r: 255, g: 128, b: 255 },
+  { r: 255, g: 0, b: 0 }, { r: 255, g: 17, b: 0 }, { r: 255, g: 34, b: 0 }, { r: 255, g: 51, b: 0 },
+  { r: 255, g: 68, b: 0 }, { r: 255, g: 85, b: 0 }, { r: 255, g: 102, b: 0 }, { r: 255, g: 119, b: 0 },
+  { r: 255, g: 136, b: 0 }, { r: 255, g: 153, b: 0 }, { r: 255, g: 170, b: 0 }, { r: 255, g: 187, b: 0 },
+  { r: 255, g: 204, b: 0 }, { r: 255, g: 221, b: 0 }, { r: 255, g: 238, b: 0 }, { r: 255, g: 255, b: 0 },
+  { r: 255, g: 255, b: 0 }, { r: 238, g: 255, b: 0 }, { r: 204, g: 255, b: 0 }, { r: 170, g: 255, b: 0 },
+  { r: 136, g: 255, b: 0 }, { r: 102, g: 255, b: 0 }, { r: 68, g: 255, b: 0 }, { r: 34, g: 255, b: 0 },
+  { r: 0, g: 255, b: 0 }, { r: 0, g: 255, b: 34 }, { r: 0, g: 255, b: 68 }, { r: 0, g: 255, b: 102 },
+  { r: 0, g: 255, b: 136 }, { r: 0, g: 255, b: 170 }, { r: 0, g: 255, b: 204 }, { r: 0, g: 255, b: 238 },
+  { r: 0, g: 136, b: 255 }, { r: 0, g: 119, b: 255 }, { r: 0, g: 102, b: 255 }, { r: 0, g: 102, b: 255 },
+  { r: 0, g: 85, b: 255 }, { r: 0, g: 68, b: 255 }, { r: 0, g: 68, b: 255 }, { r: 0, g: 34, b: 255 },
+  { r: 0, g: 0, b: 255 }, { r: 34, g: 0, b: 255 }, { r: 68, g: 0, b: 255 }, { r: 102, g: 0, b: 255 },
+  { r: 136, g: 0, b: 255 }, { r: 170, g: 0, b: 255 }, { r: 204, g: 0, b: 255 }, { r: 238, g: 0, b: 255 },
+  { r: 255, g: 0, b: 255 }, { r: 255, g: 34, b: 255 }, { r: 255, g: 68, b: 255 }, { r: 255, g: 102, b: 255 },
+  { r: 255, g: 136, b: 255 }, { r: 255, g: 170, b: 255 }, { r: 255, g: 204, b: 255 }, { r: 255, g: 238, b: 255 },
+  { r: 255, g: 255, b: 255 }, { r: 255, g: 238, b: 238 }, { r: 255, g: 204, b: 204 }, { r: 255, g: 170, b: 170 },
+  { r: 255, g: 136, b: 136 }, { r: 255, g: 102, b: 102 }, { r: 255, g: 68, b: 68 }, { r: 0, g: 34, b: 34 },
 ];
 
 // Helper function to parse points from a DataView slice
@@ -36,25 +47,23 @@ function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount, c
 
       const blanking = (statusByte & 0x40) !== 0; // Bit 6
       const lastPoint = (statusByte & 0x80) !== 0; // Bit 7
-	  if (blanking) {
-		  r = 0;
-		  g = 0;
-		  b = 0;
-	  } else {
+
       // Read color data
+      if (blanking) {
+		  r = 0; g = 0; b = 0;
+	  } else {
 		if (formatCode === 0 || formatCode === 1) { // Indexed Color
 			const colorIndex = view.getUint8(pointDataOffset + (formatCode === 0 ? 7 : 5));
 			const palette = colorPalette || defaultPalette;
 			const color = palette[colorIndex % palette.length] || defaultPalette[0];
-			r = color.r;
-			g = color.g;
-			b = color.b;
+			r = color.r; g = color.g; b = color.b;
 		} else if (formatCode === 4 || formatCode === 5) { // True Color formats
 			b = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
 			g = view.getUint8(pointDataOffset + (formatCode === 4 ? 8 : 6));
 			r = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
 		}
 	  }
+
       points.push({ 
         x, y, z, 
         r: r === undefined ? 255 : r, g: g === undefined ? 255 : g, b: b === undefined ? 255 : b,
@@ -64,9 +73,7 @@ function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount, c
       
       pointDataOffset += recordSize;
 	  
-      if (lastPoint) {
-        break; // Stop processing points for this frame
-      }
+      if (lastPoint) break; 
     }
   } catch (error) {
     console.warn("Parser: Error reading points:", error);
@@ -78,118 +85,59 @@ export const parseIldaFile = (arrayBuffer) => {
   const frames = [];
   const view = new DataView(arrayBuffer);
   let offset = 0;
-  let colorPalette = null;
+  let activePalette = null;
+  let firstFormatCode = null;
 
-  while (offset < view.byteLength) {
-    if (offset + 32 > view.byteLength) {
-      break; 
-    }
-
+  while (offset + 32 <= view.byteLength) {
     const signature = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
     if (signature !== 'ILDA') {
-      offset++;
-      continue; 
+      offset++; continue; 
     }
 
     const formatCode = view.getUint8(offset + 7);
+    if (firstFormatCode === null) firstFormatCode = formatCode;
+
     const frameName = String.fromCharCode(...new Uint8Array(arrayBuffer, offset + 8, 8)).trim();
     const companyName = String.fromCharCode(...new Uint8Array(arrayBuffer, offset + 16, 8)).trim();
-    const pointCount = view.getUint16(offset + 24, false);
+    let pointCount = view.getUint16(offset + 24, false);
     const frameNumber = view.getUint16(offset + 26, false);
     const totalFrames = view.getUint16(offset + 28, false);
     const scannerHead = view.getUint8(offset + 30);
 
+    let recordSize;
+    switch (formatCode) {
+      case 0: recordSize = 8; break;
+      case 1: recordSize = 6; break;
+      case 2: recordSize = 4; break;
+      case 4: recordSize = 10; break;
+      case 5: recordSize = 8; break;
+      default: offset += 32; continue;
+    }
+
     if (formatCode === 2) {
-      colorPalette = [];
-	  const paletteStart = currentOffset + 32;
+      activePalette = [];
+	  const paletteStart = offset + 32;
       for (let i = 0; i < pointCount; i++) {
         const r = view.getUint8(paletteStart + i * 4);
         const g = view.getUint8(paletteStart + i * 4 + 1);
         const b = view.getUint8(paletteStart + i * 4 + 2);
-        colorPalette.push({ r, g, b });
+        activePalette.push({ r, g, b });
       }
     }
 
-    if (pointCount === 0) {
-        break;
+    let pointsDataSize = pointCount * recordSize;
+    let frameTotalSize = 32 + pointsDataSize;
+
+    if (offset + frameTotalSize > arrayBuffer.byteLength) break;
+
+    if (pointCount > 0 && formatCode !== 2) {
+        const pointDataBuffer = arrayBuffer.slice(offset + 32, offset + 32 + pointsDataSize);
+        const points = parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount, activePalette);
+        frames.push({ frameName, companyName, frameNumber, totalFrames, scannerHead, points, formatCode });
     }
 
-    
-
-        offset += 32;
-    
-        if (formatCode === 2) {
-            // Color palette record size is 4 bytes.
-            // We read it above and now skip the data.
-            offset += pointCount * 4;
-            continue;
-        }    else { 
-        console.warn(`Parser: Unsupported ILDA format: ${formatCode}. Skipping this section.`);
-        offset += 32; 
-        continue; 
-    }
-
-    try {
-      for (let i = 0; i < pointCount; i++) {
-        let x, y, z = 0;
-        let statusByte, r, g, b;
-
-        if (formatCode === 0 || formatCode === 4) { // 3D formats
-          x = view.getInt16(offset, false);
-          y = view.getInt16(offset + 2, false);
-          z = view.getInt16(offset + 4, false);
-          statusByte = view.getUint8(offset + 6);
-          offset += 7;
-        } else if (formatCode === 1 || formatCode === 5) { // 2D formats
-          x = view.getInt16(offset, false);
-          y = view.getInt16(offset + 2, false);
-          statusByte = view.getUint8(offset + 4);
-          offset += 5;
-        }
-
-        const blanking = (statusByte & 0x01) !== 0; // Bit 0
-        const lastPoint = (statusByte & 0x02) !== 0; // Bit 1
-        console.log(`Status: ${statusByte.toString(2).padStart(8, '0')}, Blanking: ${blanking}, Last: ${lastPoint}`);
-
-        if (formatCode === 0 || formatCode === 1) { // Indexed Color formats
-          const colorIndex = view.getUint8(offset);
-          offset += 1;
-          const color = defaultPalette[colorIndex % defaultPalette.length] || defaultPalette[0];
-          r = color.r;
-          g = color.g;
-          b = color.b;
-        } else if (formatCode === 4 || formatCode === 5) { // True Color formats
-          b = view.getUint8(offset);
-          g = view.getUint8(offset + 1);
-          r = view.getUint8(offset + 2);
-          offset += 3;
-        }
-
-        points.push({
-          x: x / 32768.0,
-          y: y / 32768.0,
-          z: z / 32768.0,
-          r,
-          g,
-          b,
-          blanking,
-          lastPoint
-        });
-
-        if (lastPoint) {
-          break;
-        }
-      }
-    } catch (e) {
-      if (e instanceof RangeError) {
-        console.warn("Parser: Reached end of file while reading points.");
-      } else {
-        throw e;
-      }
-    }
-
-    frames.push({ frameName, companyName, frameNumber, totalFrames, scannerHead, points, colorPalette });
+    offset += frameTotalSize;
   }
 
-  return { frames, colorPalette };
+  return { frames, firstFormatCode, colorPalette: activePalette };
 };

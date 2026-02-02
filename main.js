@@ -906,6 +906,7 @@ function createWindow() {
 
   ipcMain.on('show-column-context-menu', (event, index) => {
     const columnContextMenu = Menu.buildFromTemplate([
+      { label: 'Duplicate', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'column-duplicate'); } },
       { label: 'Rename Column', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-column', index: index }); } },
     ]);
     columnContextMenu.popup({ window: mainWindow });

@@ -65,7 +65,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
              </div>
 
              {/* Row 2: Gear | RangeSlider | Value Input */}
-             <div className="param-row-control" style={{ display: 'grid', gridTemplateColumns: '20px 1fr 50px', gap: '5px', alignItems: 'center' }}>
+             <div className="param-row-control" style={{ display: 'grid', gridTemplateColumns: '20px 1fr 60px', gap: '5px', alignItems: 'center' }}>
                 {/* Col 1: Gear */}
                 <button 
                     className={`anim-toggle-btn ${expanded ? 'active' : ''}`}
