@@ -5,63 +5,94 @@ import { useThumbnailWorker } from '../contexts/ThumbnailWorkerContext';
 const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onPathChange }) => {
   const [ildFiles, setIldFiles] = useState([]);
   const [thumbnails, setThumbnails] = useState({});
+  const [invalidFiles, setInvalidFiles] = useState(new Set());
   const ildaParserWorker = useThumbnailWorker();
   const requestedThumbnailsRef = useRef(new Set());
+  const processingQueueRef = useRef([]);
+  const isProcessingRef = useRef(false);
 
   const selectedDirectory = path;
   const setSelectedDirectory = onPathChange;
+
+  const processNextInQueue = useCallback(() => {
+    if (isProcessingRef.current || processingQueueRef.current.length === 0 || !ildaParserWorker) {
+        return;
+    }
+
+    isProcessingRef.current = true;
+    const filePath = processingQueueRef.current.shift();
+    const fileName = filePath.split(/[/\\]/).pop();
+
+    ildaParserWorker.postMessage({
+        type: 'load-and-parse-ilda',
+        fileName,
+        filePath,
+        browserFile: true,
+        stopAtFirstFrame: true
+    });
+  }, [ildaParserWorker]);
 
   useEffect(() => {
     if (!ildaParserWorker) return;
 
     const handleMessage = (e) => {
       if (e.data.browserFile) {
-        if (e.data.type === 'parse-ilda' && e.data.success) {
-          ildaParserWorker.postMessage({
-            type: 'get-frame',
-            workerId: e.data.workerId,
-            frameIndex: 0,
-            browserFile: true,
-            filePath: e.data.filePath
-          });
-        } else if (e.data.type === 'get-frame' && e.data.success) {
-          setThumbnails(prev => ({
-            ...prev,
-            [e.data.filePath]: e.data.frame
-          }));
+        if (e.data.type === 'parse-ilda') {
+          if (e.data.success) {
+            ildaParserWorker.postMessage({
+                type: 'get-frame',
+                workerId: e.data.workerId,
+                frameIndex: 0,
+                browserFile: true,
+                filePath: e.data.filePath
+            });
+          } else {
+            console.warn(`[FileBrowser] Skipping invalid ILDA file: ${e.data.filePath}. Reason: ${e.data.error}`);
+            setInvalidFiles(prev => new Set(prev).add(e.data.filePath));
+            isProcessingRef.current = false;
+            processNextInQueue();
+          }
+        } else if (e.data.type === 'get-frame') {
+          if (e.data.success) {
+            setThumbnails(prev => ({
+                ...prev,
+                [e.data.filePath]: e.data.bitmap || e.data.frame
+            }));
+          }
+          isProcessingRef.current = false;
+          processNextInQueue();
         }
       }
     };
 
     ildaParserWorker.addEventListener('message', handleMessage);
     return () => ildaParserWorker.removeEventListener('message', handleMessage);
-  }, [ildaParserWorker]);
+  }, [ildaParserWorker, processNextInQueue]);
 
   useEffect(() => {
     if (viewMode === 'thumbnails' && ildFiles.length > 0 && ildaParserWorker) {
+        let addedToQueue = false;
         ildFiles.forEach(filePath => {
             if (!thumbnails[filePath] && !requestedThumbnailsRef.current.has(filePath)) {
                 requestedThumbnailsRef.current.add(filePath);
-                const fileName = filePath.split(/[/\\]/).pop();
-                ildaParserWorker.postMessage({
-                    type: 'load-and-parse-ilda',
-                    fileName,
-                    filePath,
-                    browserFile: true,
-                    stopAtFirstFrame: true
-                });
+                processingQueueRef.current.push(filePath);
+                addedToQueue = true;
             }
         });
+        if (addedToQueue && !isProcessingRef.current) {
+            processNextInQueue();
+        }
     }
-  }, [viewMode, ildFiles, ildaParserWorker, thumbnails]);
+  }, [viewMode, ildFiles, ildaParserWorker, thumbnails, processNextInQueue]);
 
   useEffect(() => {
     const loadDefaultDir = async () => {
       if (path) {
-          // If we already have a path, just read the files
           const files = await window.electronAPI.readIldFiles(path);
           setIldFiles(files);
           requestedThumbnailsRef.current.clear();
+          processingQueueRef.current = [];
+          isProcessingRef.current = false;
           setThumbnails({});
           return;
       }
@@ -72,7 +103,9 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
           setSelectedDirectory(defaultDir);
           const files = await window.electronAPI.readIldFiles(defaultDir);
           setIldFiles(files);
-          requestedThumbnailsRef.current.clear(); // Clear on dir change
+          requestedThumbnailsRef.current.clear();
+          processingQueueRef.current = [];
+          isProcessingRef.current = false;
           setThumbnails({});
         }
       }
@@ -87,7 +120,9 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
         setSelectedDirectory(directoryPath);
         const files = await window.electronAPI.readIldFiles(directoryPath);
         setIldFiles(files);
-        requestedThumbnailsRef.current.clear(); // Clear on dir change
+        requestedThumbnailsRef.current.clear();
+        processingQueueRef.current = [];
+        isProcessingRef.current = false;
         setThumbnails({});
       }
     }
@@ -114,10 +149,10 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
 		</p>
 	  }
       <div className="ild-file-grid" style= {{display: viewMode === 'thumbnails' ? null : 'none'}}>
-		{ildFiles.length > 0 ? (
-          ildFiles.map((filePath, index) => {
+		{ildFiles.filter(f => !invalidFiles.has(f)).length > 0 ? (
+          ildFiles.filter(f => !invalidFiles.has(f)).map((filePath, index) => {
             const fileName = filePath.split(/[/\\]/).pop();
-            const frame = thumbnails[filePath];
+            const data = thumbnails[filePath];
             return (
               <div
                 key={index}
@@ -126,19 +161,26 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
                 onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ filePath, fileName }))}
               >
 				<div className="file_thumbnail">
-                    {frame ? <StaticIldaThumbnail frame={frame} /> : <div className="clip-loading-spinner"></div>}
+                    {data ? (
+                        <StaticIldaThumbnail 
+                            bitmap={data instanceof ImageBitmap ? data : null} 
+                            frame={data instanceof ImageBitmap ? null : data} 
+                        />
+                    ) : (
+                        <div className="clip-loading-spinner"></div>
+                    )}
                 </div>
                 <div className="file_name">{fileName}</div>
               </div>
             );
           })
         ) : (
-          <p>No ILD files found in selected directory.</p>
+          <p>No valid ILD files found in selected directory.</p>
         )}
 	  </div>
 	  <div className="ild-file-list" style= {{display: viewMode === 'list' ? null : 'none'}}>
-        {ildFiles.length > 0 ? (
-          ildFiles.map((filePath, index) => {
+        {ildFiles.filter(f => !invalidFiles.has(f)).length > 0 ? (
+          ildFiles.filter(f => !invalidFiles.has(f)).map((filePath, index) => {
             const fileName = filePath.split(/[/\\]/).pop();
             return (
               <div
@@ -152,7 +194,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
             );
           })
         ) : (
-          <p>No ILD files found in selected directory.</p>
+          <p>No valid ILD files found in selected directory.</p>
         )}
       </div>
     </div>

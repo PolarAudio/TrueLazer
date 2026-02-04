@@ -88,7 +88,7 @@ contextBridge.exposeInMainWorld(
                 getKeyboardMappings: () => ipcRenderer.invoke('get-keyboard-mappings'),
                 saveKeyboardMappings: (mappings) => ipcRenderer.invoke('save-keyboard-mappings', mappings),
 	            	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
-	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
+	                                        readFileForWorker: (filePath, maxBytes) => ipcRenderer.invoke('read-file-for-worker', filePath, maxBytes),
 	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),
 	                                        showAudioFileDialog: () => ipcRenderer.invoke('show-audio-file-dialog'),
                                             showOpenDialog: (options) => ipcRenderer.invoke('show-open-dialog', options),

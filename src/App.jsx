@@ -131,6 +131,7 @@ const getInitialState = (initialSettings) => ({
   beamRenderMode: initialSettings?.renderSettings?.beamRenderMode ?? 'both',
   worldShowBeamEffect: initialSettings?.renderSettings?.worldShowBeamEffect ?? true,
   worldBeamRenderMode: initialSettings?.renderSettings?.worldBeamRenderMode ?? 'both',
+  optimizationEnabled: initialSettings?.renderSettings?.optimizationEnabled ?? true,
   activeClipIndexes: Array(5).fill(null),
   isPlaying: false,
   isStopped: true, // Add this
@@ -533,6 +534,9 @@ function reducer(state, action) {
     case 'SET_WORLD_OUTPUT_ACTIVE': {
       return { ...state, isWorldOutputActive: action.payload };
 	}
+    case 'SET_OPTIMIZATION_ENABLED': {
+        return { ...state, optimizationEnabled: action.payload };
+    }
     case 'TOGGLE_WORLD_OUTPUT_ACTIVE': {
       return { ...state, isWorldOutputActive: !state.isWorldOutputActive };
 	}
@@ -937,15 +941,13 @@ function reducer(state, action) {
     
         const control = newAssigns.buttons[index];
         if (control.link) {
-            const { layerIndex, colIndex, effectIndex, paramName, targetType } = control.link;
+            const { layerIndex, colIndex, effectIndex, targetType } = control.link;
+            const paramName = control.link.paramName || control.link.paramId;
+
             if (targetType === 'global') {
-				if (paramName === 'blackout') {
-					newState.globalBlackout = newValue;
-				} else if (paramName === 'laser_output') {
-					newState.isWorldOutputActive = newValue;
-				}
-			}	
-            if (targetType === 'layer') {
+				if (paramName === 'blackout') newState.globalBlackout = newValue;
+				else if (paramName === 'laser_output') newState.isWorldOutputActive = newValue;
+			} else if (targetType === 'layer') {
                 if (paramName === 'blackout') {
                     const newLayerBlackouts = [...newState.layerBlackouts];
                     newLayerBlackouts[layerIndex] = newValue;
@@ -960,30 +962,28 @@ function reducer(state, action) {
                     }
                     newState = { ...newState, layerSolos: newLayerSolos };
                 } else if (paramName === 'clear') {
-                    // 'clear' is usually an action, not a state.
-                    // But if it's a toggle button, what does 'on' mean?
-                    // Clear is usually momentary.
-                    // If we assigned it to a button, we probably want it to trigger on True?
                     if (newValue) {
-                       // We can't easily trigger side-effect here (clearing clips) because it involves complex state changes
-                       // But we can call CLEAR_CLIP or DEACTIVATE_LAYER_CLIPS logic directly?
-                       // Since we are in reducer, we can modify state.
                        const deactivatedActiveClipIndexes = [...newState.activeClipIndexes];
                        deactivatedActiveClipIndexes[layerIndex] = null;
                        newState = { ...newState, activeClipIndexes: deactivatedActiveClipIndexes };
-                       
-                       // Reset button to false immediately for momentary effect?
                        newAssigns.buttons[index].value = false;
                        newState.quickAssigns = newAssigns;
                     }
                 } else if (paramName === 'autopilot') {
-                    // Assuming value maps to some autopilot mode? Or just toggle on/off?
-                    // Autopilot is 'off', 'forward', 'random'.
-                    // Toggle could cycle or switch between off/forward.
-                    // For now, let's assume it switches off <-> forward
                     const newLayerAutopilots = [...newState.layerAutopilots];
                     newLayerAutopilots[layerIndex] = newValue ? 'forward' : 'off';
                     newState = { ...newState, layerAutopilots: newLayerAutopilots };
+                }
+            } else if (targetType === 'layerEffect') {
+                const newLayerEffects = [...newState.layerEffects];
+                if (newLayerEffects[layerIndex]) {
+                    newLayerEffects[layerIndex] = [...newLayerEffects[layerIndex]];
+                    if (newLayerEffects[layerIndex][effectIndex]) {
+                        const effect = { ...newLayerEffects[layerIndex][effectIndex] };
+                        effect.params = { ...effect.params, [paramName]: newValue };
+                        newLayerEffects[layerIndex][effectIndex] = effect;
+                        newState = { ...newState, layerEffects: newLayerEffects };
+                    }
                 }
             } else {
                 const updatedClipContents = [...newState.clipContents];
@@ -1164,16 +1164,25 @@ const MidiFeedbackHandler = ({ isPlaying, globalBlackout, layerBlackouts, layerS
   return null;
 };
 
-const generateThumbnail = async (frame, effects, layerIndex, colIndex) => {
+const generateThumbnail = async (frame, effects, layerIndex, colIndex, optimizationEnabled = true) => {
     // Basic validation
     if (!frame || !frame.points) return null;
 
+    let frameToProcess = frame;
+    if (optimizationEnabled) {
+        try {
+            const optimizedPoints = optimizePoints(frame.points);
+            frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
+        } catch (e) {
+            console.warn("Failed to optimize points for thumbnail:", e);
+        }
+    }
+
     // Apply effects to the frame for the thumbnail
-    // We pass a minimal context since we are generating a static thumbnail
-    let processedFrame = frame;
+    let processedFrame = frameToProcess;
     try {
         if (effects && effects.length > 0) {
-             processedFrame = applyEffects(frame, effects, { 
+             processedFrame = applyEffects(frameToProcess, effects, { 
                 progress: 0, 
                 time: 0, 
                 effectStates: {}, 
@@ -1204,49 +1213,42 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex) => {
     
     let lastX = null;
     let lastY = null;
+    let lastWasBlanked = true;
 
     for (let i = 0; i < numPoints; i++) {
         let x, y, r, g, b, blanking;
         if (isTyped) {
-            x = points[i*8];
-            y = points[i*8+1];
-            r = points[i*8+3];
-            g = points[i*8+4];
-            b = points[i*8+5];
-            blanking = points[i*8+6] > 0.5;
+            const off = i * 8;
+            x = points[off]; y = points[off+1];
+            r = points[off+3]; g = points[off+4]; b = points[off+5];
+            blanking = points[off+6] > 0.5;
         } else {
             const p = points[i];
-            x = p.x;
-            y = p.y;
-            r = p.r;
-            g = p.g;
-            b = p.b;
-            blanking = p.blanking;
+            x = p.x; y = p.y;
+            r = p.r; g = p.g; b = p.b;
+            blanking = !!p.blanking;
         }
 
-        // Map Normalized Coordinates (-1 to 1) to Canvas (0 to width/height)
-        // Y is inverted in ILDA relative to Canvas (usually +Y is up, Canvas +Y is down)
         const screenX = (x + 1) * 0.5 * width;
         const screenY = (1 - (y + 1) * 0.5) * height;
 
-        if (!blanking) {
-            if (lastX !== null) {
-                ctx.beginPath();
-                ctx.moveTo(lastX, lastY);
-                ctx.lineTo(screenX, screenY);
-                
-                // Color
-                const ir = Math.floor(Math.max(0, Math.min(255, r)));
-                const ig = Math.floor(Math.max(0, Math.min(255, g)));
-                const ib = Math.floor(Math.max(0, Math.min(255, b)));
-                
-                ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
-                ctx.stroke();
-            }
+        // Draw ONLY if both this point and the previous point are LIT
+        if (!blanking && !lastWasBlanked && lastX !== null) {
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(screenX, screenY);
+            
+            const ir = Math.floor(Math.max(0, Math.min(255, r)));
+            const ig = Math.floor(Math.max(0, Math.min(255, g)));
+            const ib = Math.floor(Math.max(0, Math.min(255, b)));
+            
+            ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
+            ctx.stroke();
         }
 
         lastX = screenX;
         lastY = screenY;
+        lastWasBlanked = blanking;
     }
 
     // Convert to Blob and then ArrayBuffer
@@ -1255,7 +1257,6 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex) => {
         const arrayBuffer = await blob.arrayBuffer();
 
         if (window.electronAPI && window.electronAPI.saveThumbnail) {
-             // Deterministic filename based on slot
              const filename = `thumb_L${layerIndex}_C${colIndex}.png`;
              return await window.electronAPI.saveThumbnail(arrayBuffer, filename);
         }
@@ -1351,7 +1352,7 @@ const SidePanelContainer = React.memo(({
     worldShowBeamEffect, worldBeamRenderMode, masterIntensity, layerIntensities, globalBlackout, layerSolos, layerBlackouts,
     handleToggleBeamEffect, handleCycleDisplayMode,
     previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef,
-    liveClipContentsRef
+    liveClipContentsRef, optimizationEnabled
 }) => {
     const [tick, setTick] = useState(0);
     const lastPreviewTimeRef = useRef(0);
@@ -1473,6 +1474,7 @@ const SidePanelContainer = React.memo(({
 				fftLevels={getFftLevels ? getFftLevels() : fftLevels}
 				effectStates={effectStatesRef.current}
 				clipActivationTime={selectedLayerIndex !== null ? (clipActivationTimesRef.current[selectedLayerIndex] || 0) : 0}
+				optimizationEnabled={optimizationEnabled}
 				onToggleBeamEffect={() => handleToggleBeamEffect('clip')}
 				onCycleDisplayMode={() => handleCycleDisplayMode('clip')}
 			/>
@@ -1488,6 +1490,7 @@ const SidePanelContainer = React.memo(({
 				dacSettings={selectedDac ? (liveDacOutputSettingsRef.current ? liveDacOutputSettingsRef.current[`${selectedDac.ip}:${selectedDac.channel}`] : dacOutputSettings[`${selectedDac.ip}:${selectedDac.channel}`]) : null}
 				previewTime={previewTimeRef.current}
 				fftLevels={getFftLevels ? getFftLevels() : fftLevels}
+				optimizationEnabled={optimizationEnabled}
 				onToggleBeamEffect={() => handleToggleBeamEffect('world')}
 				onCycleDisplayMode={() => handleCycleDisplayMode('world')}
 			/>
@@ -1670,6 +1673,7 @@ function App() {
     beamRenderMode,
     worldShowBeamEffect,
     worldBeamRenderMode,
+    optimizationEnabled,
     activeClipIndexes,
     isPlaying,
     isWorldOutputActive,
@@ -1787,6 +1791,7 @@ function App() {
     const selectedLayerIndexRef = useRef(selectedLayerIndex);
     const selectedColIndexRef = useRef(selectedColIndex);
     const getAudioInfoRef = useRef(getAudioInfo);
+    const optimizationEnabledRef = useRef(optimizationEnabled);
 
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
     useEffect(() => { isWorldOutputActiveRef.current = isWorldOutputActive; }, [isWorldOutputActive]);
@@ -1795,6 +1800,7 @@ function App() {
     useEffect(() => { selectedLayerIndexRef.current = selectedLayerIndex; }, [selectedLayerIndex]);
     useEffect(() => { selectedColIndexRef.current = selectedColIndex; }, [selectedColIndex]);
     useEffect(() => { getAudioInfoRef.current = getAudioInfo; }, [getAudioInfo]);
+    useEffect(() => { optimizationEnabledRef.current = optimizationEnabled; }, [optimizationEnabled]);
 
     const playbackFpsRef = useRef(playbackFps);
     useEffect(() => { playbackFpsRef.current = playbackFps; }, [playbackFps]);
@@ -2002,7 +2008,7 @@ function App() {
               frameToProcess = applyOutputProcessing(frame, settingsForThumbnail);
           }
 
-          thumbnailPath = await generateThumbnail(frameToProcess, effects, layerIndex, colIndex);
+          thumbnailPath = await generateThumbnail(frameToProcess, effects, layerIndex, colIndex, optimizationEnabled);
 
           // Update stillFrame and set parsing status to false
           dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: frame, parsing: false, thumbnailPath, thumbnailVersion: Date.now() } } });
@@ -2308,12 +2314,6 @@ function App() {
               const speedMult = playbackSettings.speedMultiplier || 1;
               if (speedMult !== 0) clipDuration /= speedMult;
 
-              // Pre-optimization to handle effect-based discontinuities (e.g. Delay)
-              // This aligns with "Option 3" of the architectural fix.
-              const optimizedPts = optimizePoints(intensityAdjustedFrame.points);
-              intensityAdjustedFrame.points = optimizedPts;
-              intensityAdjustedFrame.isTypedArray = true;
-
               const modifiedFrame = applyEffects(intensityAdjustedFrame, effects, { 
                   progress: clipProgress, 
                   time: currentTime, 
@@ -2324,6 +2324,13 @@ function App() {
                   clipDuration: clipDuration,
                   fftLevels: getFftLevels ? getFftLevels() : fftLevels // Use helper for fresh data
               });
+
+              // Optimization AFTER effects ensures all transitions (Mirror, Delay, Blanking) are handled
+              if (optimizationEnabledRef.current) {
+                  const optimizedPts = optimizePoints(modifiedFrame.points);
+                  modifiedFrame.points = optimizedPts;
+                  modifiedFrame.isTypedArray = true;
+              }
 
               dacList.forEach((targetDac, dacIndex) => {
                 const ip = targetDac.ip;
@@ -2436,8 +2443,8 @@ function App() {
               const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
               totalPointsSentRef.current += numPts;
               // Optimization: send points buffer directly to reduce overhead
-              // Passing { skipOptimization: true } because we already optimized before effects
-              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame.points, OUTPUT_FPS, group.type, { skipOptimization: true });
+              // Passing skipOptimization flag because we handled it before effects if enabled
+              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame.points, OUTPUT_FPS, group.type, { skipOptimization: optimizationEnabledRef.current });
             }
           });
           activeChannelsCountRef.current = activeCount;
@@ -2895,7 +2902,7 @@ function App() {
                           const currentFrame = clipToUpdate.frames?.[currentIdx % clipToUpdate.frames.length];
                           if (currentFrame) {
                               const effects = clipToUpdate.effects || [];
-                              generateThumbnail(currentFrame, effects, layerIndex, colIndex).then(thumbnailPath => {
+                              generateThumbnail(currentFrame, effects, layerIndex, colIndex, optimizationEnabled).then(thumbnailPath => {
                                   dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame, thumbnailPath, thumbnailVersion: Date.now() } } });
                               });
                           }
@@ -3319,7 +3326,7 @@ function App() {
 
     const handleWorkerRequest = async (e) => {
       if (e.data.type === 'request-file-content') {
-        const { filePath, requestId } = e.data;
+        const { filePath, requestId, maxBytes } = e.data;
         try {
           if (window.electronAPI && window.electronAPI.checkFileExists) {
               const exists = await window.electronAPI.checkFileExists(filePath);
@@ -3328,7 +3335,7 @@ function App() {
               }
           }
 
-          const arrayBuffer = await window.electronAPI.readFileForWorker(filePath);
+          const arrayBuffer = await window.electronAPI.readFileForWorker(filePath, maxBytes);
           ildaParserWorker.postMessage({
             type: 'file-content-response',
             requestId,
@@ -3369,9 +3376,9 @@ function App() {
 
     const handleThumbnailRequest = async (e) => {
       if (e.data.type === 'request-file-content') {
-        const { filePath, requestId } = e.data;
+        const { filePath, requestId, maxBytes } = e.data;
         try {
-          const arrayBuffer = await window.electronAPI.readFileForWorker(filePath);
+          const arrayBuffer = await window.electronAPI.readFileForWorker(filePath, maxBytes);
           thumbnailWorker.postMessage({
             type: 'file-content-response',
             requestId,
@@ -3683,6 +3690,26 @@ function App() {
     frameIndexesRef.current = {};
   }, [resetAllAudio, pauseAllAudio]);
 
+  const handleToggleWorldOutput = useCallback(() => {
+    const nextActive = !isWorldOutputActive;
+    dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: nextActive });
+    
+    if (window.electronAPI) {
+        if (nextActive) {
+            // Trigger handshake for all available DACs
+            // We use the dacs list from state
+            state.dacs.forEach(dac => {
+                window.electronAPI.startDacOutput(dac.ip, dac.type);
+            });
+        } else {
+            // Stop output for all DACs
+            state.dacs.forEach(dac => {
+                window.electronAPI.stopDacOutput(dac.ip, dac.type);
+            });
+        }
+    }
+  }, [isWorldOutputActive, state.dacs]);
+
   const handleClipPreview = useCallback((layerIndex, colIndex) => {
       dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
       const clip = clipContents[layerIndex][colIndex];
@@ -3756,7 +3783,7 @@ function App() {
 
     // Manage associated audio: load/cue it regardless of playback state, but only play if `isPlaying`
     if (clip && clip.audioFile) {
-        playAudio(layerIndex, clip.audioFile.path, clip.audioVolume ?? 1.0, isPlaying).catch(err => {
+        playAudio(layerIndex, clip.audioFile.path, clip.audioVolume ?? 1.0, isPlayingRef.current).catch(err => {
             console.warn(`Failed to play audio for clip ${layerIndex}-${colIndex}:`, err);
             // Add to missing files if it's a "NotSupportedError" or similar (usually indicates file issues)
             // Note: error.code might be useful.
@@ -4052,6 +4079,60 @@ function App() {
       );
   }, [state.quickAssigns, debouncedDispatch]);
 
+  const handleToggleQuickButton = useCallback((index) => {
+      const btn = state.quickAssigns.buttons[index];
+      const link = btn.link;
+      const newValue = !btn.value;
+
+      if (link) {
+          const { layerIndex, colIndex, effectIndex, targetType } = link;
+          const paramName = link.paramName || link.paramId;
+
+          if (targetType === 'transport') {
+              if (paramName === 'play') handlePlay();
+              else if (paramName === 'pause') handlePause();
+              else if (paramName === 'stop') handleStop();
+              // These functions handle their own dispatch
+              return; 
+          }
+
+          if (targetType === 'global') {
+              if (paramName === 'blackout') globalBlackoutRef.current = newValue;
+              else if (paramName === 'laser_output') {
+                  handleToggleWorldOutput();
+                  return;
+              } else if (paramName === 'clear') {
+                  handleClearAllActive();
+                  return;
+              }
+          } else if (targetType === 'layer') {
+              if (paramName === 'blackout') layerBlackoutsRef.current[layerIndex] = newValue;
+              else if (paramName === 'solo') {
+                  layerSolosRef.current.fill(false);
+                  layerSolosRef.current[layerIndex] = newValue;
+              } else if (paramName === 'autopilot') {
+                  layerAutopilotsRef.current[layerIndex] = newValue ? 'forward' : 'off';
+              }
+          } else if (targetType === 'layerEffect') {
+              if (layerEffectsRef.current[layerIndex] && layerEffectsRef.current[layerIndex][effectIndex]) {
+                  layerEffectsRef.current[layerIndex][effectIndex].params[paramName] = newValue;
+              }
+          } else if (targetType === 'effect' || targetType === 'generator') {
+              if (liveClipContentsRef.current && liveClipContentsRef.current[layerIndex] && liveClipContentsRef.current[layerIndex][colIndex]) {
+                  const clip = liveClipContentsRef.current[layerIndex][colIndex];
+                  if (targetType === 'effect' && clip.effects && clip.effects[effectIndex]) {
+                      clip.effects[effectIndex].params[paramName] = newValue;
+                  } else if (targetType === 'generator' && clip.currentParams) {
+                      clip.currentParams[paramName] = newValue;
+                  }
+                  hasPendingClipUpdate.current = true;
+              }
+          }
+      }
+
+      dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index } });
+  }, [state.quickAssigns, handlePlay, handlePause, handleStop, handleToggleWorldOutput, handleClearAllActive]);
+
   const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon') => {
     // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
     // ALLOW value 0 if it's a clip trigger (to support Flash mode release)
@@ -4152,7 +4233,7 @@ function App() {
         } else if (id.startsWith('quick_btn_')) {
             const index = parseInt(id.split('_')[2]);
             if (value > 0) { // Toggle on press
-                dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index } });
+                handleToggleQuickButton(index);
             }
         } else if (id.startsWith('dimmer_')) {
             // Reconstruct the key: dimmer_192_168_1_50:1 -> 192.168.1.50:1
@@ -4297,26 +4378,6 @@ function App() {
       }
   }, [showBeamEffect, beamRenderMode, previewScanRate, beamAlpha, fadeAlpha, state.worldShowBeamEffect, state.worldBeamRenderMode]);
 
-  const handleToggleWorldOutput = useCallback(() => {
-    const nextActive = !isWorldOutputActive;
-    dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: nextActive });
-    
-    if (window.electronAPI) {
-        if (nextActive) {
-            // Trigger handshake for all available DACs
-            // We use the dacs list from state
-            state.dacs.forEach(dac => {
-                window.electronAPI.startDacOutput(dac.ip, dac.type);
-            });
-        } else {
-            // Stop output for all DACs
-            state.dacs.forEach(dac => {
-                window.electronAPI.stopDacOutput(dac.ip, dac.type);
-            });
-        }
-    }
-  }, [isWorldOutputActive, state.dacs]);
-
   const handleRelocate = async (fileEntry) => {
       if (!window.electronAPI || !window.electronAPI.showOpenDialog) return;
 
@@ -4433,14 +4494,14 @@ function App() {
                   colIndex,
               });
           } else if (clip.type === 'generator' && clip.stillFrame) {
-               generateThumbnail(clip.stillFrame, clip.effects, layerIndex, colIndex).then(path => {
+               generateThumbnail(clip.stillFrame, clip.effects, layerIndex, colIndex, optimizationEnabled).then(path => {
                    if (path) {
                        dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { thumbnailPath: path, thumbnailVersion: Date.now() } } });
                    }
                });
           }
       }
-  }, [clipContentsRef, thumbnailFrameIndexes, ildaParserWorker]);
+  }, [clipContentsRef, thumbnailFrameIndexes, ildaParserWorker, optimizationEnabled]);
 
   const handleAudioError = useCallback((layerIndex, colIndex) => {
       // Use live ref to get latest clip data if possible
@@ -4658,6 +4719,7 @@ function App() {
                 activeChannelsCountRef={activeChannelsCountRef}
                 lastStatUpdateTimeRef={lastStatUpdateTimeRef}
                 liveClipContentsRef={liveClipContentsRef}
+                optimizationEnabled={optimizationEnabled}
             />
             <div className="middle-bar">
                 <div className="middle-bar-left-area">
@@ -4778,30 +4840,21 @@ function App() {
                   beamRenderMode,
                   worldShowBeamEffect,
                   worldBeamRenderMode,
-                  settingsPanelCollapsed: state.settingsPanelCollapsed
+                  settingsPanelCollapsed: state.settingsPanelCollapsed,
+                  optimizationEnabled: state.optimizationEnabled
               }}
-              onSetRenderSetting={(setting, value) => dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } })}
+              onSetRenderSetting={(setting, value) => {
+                  if (setting === 'optimizationEnabled') {
+                      dispatch({ type: 'SET_OPTIMIZATION_ENABLED', payload: value });
+                  } else {
+                      dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } });
+                  }
+              }}
               onUpdateKnob={(i, v) => {
                   handleUpdateQuickControl('knob', i, v);
               }}
               onToggleButton={(i) => {
-                  const btn = state.quickAssigns.buttons[i];
-                  const link = btn.link;
-                  if (link) {
-                      if (link.targetType === 'transport') {
-                          if (link.paramName === 'play') handlePlay();
-                          else if (link.paramName === 'pause') handlePause();
-                          else if (link.paramName === 'stop') handleStop();
-                      } else if (link.targetType === 'global') {
-                          if (link.paramName === 'laser_output') handleToggleWorldOutput();
-                          else if (link.paramName === 'clear') handleClearAllActive();
-                          // Blackout is handled purely in the reducer via TOGGLE_QUICK_BUTTON
-                      } else {
-                          // For effect/generator updates, signal pending update to avoid race condition
-                          hasPendingClipUpdate.current = true;
-                      }
-                  }
-                  dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index: i } });
+                  handleToggleQuickButton(i);
               }}
               onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
             />

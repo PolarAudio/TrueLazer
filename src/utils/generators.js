@@ -190,12 +190,6 @@ export function generateCircle(params) {
         r, g, b
       });
     }
-    
-    // Add final blanked point
-    if (points.length > 0) {
-        const last = points[points.length - 1];
-        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
-    }
 
     return { points };
   } catch (error) {
@@ -241,12 +235,6 @@ export function generateSquare(params) {
     // Add the final corner to close the loop
     points.push({ ...corners[corners.length - 1], r, g, b });
 
-    // Add final blanked point
-    if (points.length > 0) {
-        const last = points[points.length - 1];
-        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
-    }
-
     return { points };
   } catch (error) {
     console.error('Error in generateSquare:', error);
@@ -275,12 +263,6 @@ export function generateLine(params) {
         y: y1 + (y2 - y1) * t,
         r, g, b
       });
-    }
-
-    // Add final blanked point
-    if (points.length > 0) {
-        const last = points[points.length - 1];
-        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
     }
 
     return { points };
@@ -329,12 +311,6 @@ export function generateStar(params) {
       }
     }
     points.push({ ...vertices[vertices.length - 1], r, g, b });
-
-    // Add final blanked point
-    if (points.length > 0) {
-        const last = points[points.length - 1];
-        points.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
-    }
 
     return { points };
   } catch (error) {

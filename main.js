@@ -573,6 +573,10 @@ function buildApplicationMenu(mode) {
       submenu: [
         { label: 'About', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
         { type: 'separator' },
+		{ type: 'Shape Builder', click: () => { if(mainWindow.webContents.send('menu-action', 'shapeBuilder');} },
+		{ type: 'separator' },
+		{ type: 'Timeline Editor', click: () => { if(mainWindow.webContents.send('menu-action', 'timeline');} },
+		{ type: 'separator' },
         { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => { if(mainWindow) mainWindow.webContents.send('new-project'); } },
         { label: 'Open Project', accelerator: 'CmdOrCtrl+O', click: () => { ipcMain.emit('open-project'); } },
         { label: 'Save Project', accelerator: 'CmdOrCtrl+S', click: () => { if(mainWindow) mainWindow.webContents.send('save-project'); } },
@@ -1080,10 +1084,19 @@ function createWindow() {
   }
   });
 
-  ipcMain.handle('read-file-for-worker', async (event, filePath) => {
+  ipcMain.handle('read-file-for-worker', async (event, filePath, maxBytes) => {
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
-      const buffer = await fs.promises.readFile(fullPath);
+      let buffer;
+      if (maxBytes) {
+          const fileHandle = await fs.promises.open(fullPath, 'r');
+          const allocSize = Math.min(maxBytes, (await fileHandle.stat()).size);
+          const { buffer: chunk } = await fileHandle.read(Buffer.alloc(allocSize), 0, allocSize, 0);
+          await fileHandle.close();
+          buffer = chunk;
+      } else {
+          buffer = await fs.promises.readFile(fullPath);
+      }
       // Convert Node.js Buffer to ArrayBuffer for transfer to worker
       const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
       return arrayBuffer;

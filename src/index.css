@@ -923,6 +923,7 @@ input[type="checkbox"]:checked:before {
 	grid-template-rows: 50px 25px;
 	background: #2a2a2a;
 	border-radius: 5px;
+	justify-items: center;
 }
 
 .file_thumbnail {
@@ -935,7 +936,7 @@ input[type="checkbox"]:checked:before {
 	font-size: 8px;
 	overflow:clip;
 	text-overflow: ellipsis;
-	width: 100%;
+	width: 50px;
 	text-align: center;
 	white-space: pre-wrap;
 	align-content: center;
@@ -1962,10 +1963,10 @@ div[data-mappable-id^='quick_knob_'] {
   justify-items: center;
   cursor: ns-resize;
   user-select: none;
-  overflow-x: auto;
   outline: solid 1px var(--theme-color);
   border-radius: 5px;
   height: 40px;
+  position: relative;
 }
 
 .knob-circle {
@@ -2047,10 +2048,9 @@ div[data-mappable-id^='quick_btn_'].unassigned:hover {
   pointer-events: none;
 }
 .knob-label {
-	position: fixed;
+	position: absolute;
 	translate: 0px -15px;
 	width: 50px;
-	
 }
 
 /* Bottom Panel Tabs */

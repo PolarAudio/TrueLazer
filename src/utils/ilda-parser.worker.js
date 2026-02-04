@@ -114,6 +114,17 @@ function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount, c
 function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
   console.log(`[ilda-parser.worker.js] parseIldaFile - Starting parsing. stopAtFirstFrame=${stopAtFirstFrame}`);
   const view = new DataView(arrayBuffer);
+
+  // Check for ILDA header at the very beginning
+  if (arrayBuffer.byteLength < 32) {
+      return { frames: [], error: 'File too small to be a valid ILDA file' };
+  }
+  const firstSignature = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  if (firstSignature !== 'ILDA') {
+      console.warn(`[ilda-parser.worker.js] Parser: Invalid ILDA header signature: ${firstSignature}`);
+      return { frames: [], error: 'Invalid ILDA file header' };
+  }
+
   const framesMetadata = []; // Will store metadata about frames, not parsed points
   let firstFormatCode = null;
   let currentOffset = 0;
@@ -230,12 +241,50 @@ function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
 }
 
 
+// Helper to render a frame to an ImageBitmap for fast UI display
+async function renderThumbnailToBitmap(points, width = 128, height = 128) {
+    if (!points || points.length === 0) return null;
+    
+    // Create offscreen canvas
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, width, height);
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    
+    let lastX = null;
+    let lastY = null;
+    let lastWasBlanked = true;
+
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const screenX = (p.x + 1) * 0.5 * width;
+        const screenY = (1 - (p.y + 1) * 0.5) * height;
+
+        if (!p.blanking && !lastWasBlanked && lastX !== null) {
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(screenX, screenY);
+            ctx.strokeStyle = `rgb(${p.r},${p.g},${p.b})`;
+            ctx.stroke();
+        }
+        lastX = screenX;
+        lastY = screenY;
+        lastWasBlanked = p.blanking;
+    }
+    
+    return canvas.transferToImageBitmap();
+}
+
 const pendingFileRequests = new Map();
 
-self.onmessage = function(e) {
+self.onmessage = async function(e) {
   const { arrayBuffer, type, fileName, filePath, layerIndex, colIndex, workerId, frameIndex, isStillFrame, requestId, stopAtFirstFrame } = e.data;
 
   if (type === 'parse-ilda') {
+// ... existing parse-ilda code ...
     // This case now expects arrayBuffer to be present
     if (!arrayBuffer) {
       self.postMessage({ success: false, error: 'ArrayBuffer missing for parse-ilda command', type: 'parse-ilda' });
@@ -244,6 +293,13 @@ self.onmessage = function(e) {
     try {
       console.log('[ilda-parser.worker.js] Calling parseIldaFile for:', fileName); // DEBUG LOG
       const parsedData = parseIldaFile(arrayBuffer, stopAtFirstFrame); // This now returns framesMetadata and ildaFileBuffer
+      
+      if (parsedData.error) {
+          self.postMessage({ success: false, error: parsedData.error, type: 'parse-ilda', fileName, filePath, layerIndex, colIndex });
+          self.postMessage({ type: 'parsing-status', status: false, layerIndex, colIndex });
+          return;
+      }
+
       const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames }); // Store full buffer and metadata
       console.log('[ilda-parser.worker.js] Posting success message for parse-ilda.'); // DEBUG LOG
@@ -272,8 +328,11 @@ self.onmessage = function(e) {
     if (layerIndex !== undefined && colIndex !== undefined) {
         self.postMessage({ type: 'parsing-status', status: true, layerIndex, colIndex });
     }
-    self.postMessage({ type: 'request-file-content', filePath, requestId: newRequestId });
+    // Optimization: If we only want the first frame, request only the first 64KB
+    const maxBytes = stopAtFirstFrame ? 65536 : null;
+    self.postMessage({ type: 'request-file-content', filePath, requestId: newRequestId, maxBytes });
   } else if (type === 'file-content-response') {
+// ... existing file-content-response ...
     // Main process (renderer) sends file content back to worker
     const requestContext = pendingFileRequests.get(requestId);
     if (!requestContext) {
@@ -294,6 +353,15 @@ self.onmessage = function(e) {
     try {
       console.log(`[ilda-parser.worker.js] Calling parseIldaFile for: ${requestContext.fileName} (from file-content-response)`);
       const parsedData = parseIldaFile(arrayBuffer, requestContext.stopAtFirstFrame); // This now returns framesMetadata and ildaFileBuffer
+      
+      if (parsedData.error) {
+          self.postMessage({ success: false, error: parsedData.error, type: 'parse-ilda', ...requestContext });
+          if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {
+              self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex });
+          }
+          return;
+      }
+
       const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames }); // Store full buffer and metadata
       self.postMessage({ 
@@ -348,13 +416,16 @@ self.onmessage = function(e) {
       frameMeta.cachedPoints = points;
     }
 
-    const frame = {
-        points: points,
-        // Add other frame properties as needed
-    };
-    
-
-    self.postMessage({ success: true, frame, type: 'get-frame', workerId, frameIndex, isStillFrame, layerIndex, colIndex, browserFile, filePath });
+    if (browserFile) {
+        // Render to Bitmap for the browser to avoid sending huge point arrays
+        const bitmap = await renderThumbnailToBitmap(points);
+        self.postMessage({ success: true, bitmap, type: 'get-frame', workerId, frameIndex, isStillFrame, layerIndex, colIndex, browserFile, filePath }, [bitmap]);
+    } else {
+        const frame = {
+            points: points,
+        };
+        self.postMessage({ success: true, frame, type: 'get-frame', workerId, frameIndex, isStillFrame, layerIndex, colIndex, browserFile, filePath });
+    }
   } else if (type === 'get-all-frames') {
     const ildaData = ildaDataStore.get(workerId);
     if (!ildaData) {

@@ -286,11 +286,86 @@ function applyTranslate(points, numPoints, params) {
   }
 }
 
+function hexToRgb(hex) {
+    if (!hex) return { r: 255, g: 255, b: 255 };
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : { r: 255, g: 255, b: 255 };
+}
+
+function hsvToRgb(h, s, v) {
+    let r, g, b;
+    const i = Math.floor(h * 6);
+    const f = h * 6 - i;
+    const p = v * (1 - s);
+    const q = v * (1 - f * s);
+    const t = v * (1 - (1 - f) * s);
+    switch (i % 6) {
+        case 0: r = v; g = t; b = p; break;
+        case 1: r = q; g = v; b = p; break;
+        case 2: r = p; g = v; b = t; break;
+        case 3: r = p; g = q; b = v; break;
+        case 4: r = t; g = p; b = v; break;
+        case 5: r = v; g = p; b = q; break;
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, v = max;
+    const d = max - min;
+    s = max === 0 ? 0 : d / max;
+    if (max === min) {
+        h = 0;
+    } else {
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return { h, s, v };
+}
+
 function applyColor(points, numPoints, params, time) {
-  const { mode, r, g, b, cycleSpeed, rainbowSpread, rainbowOffset, rainbowPalette } = params;
+  const { 
+      mode, r, g, b, color, 
+      hue, saturation, brightness,
+      cycleSpeed, rainbowSpread, rainbowOffset, rainbowPalette,
+      paletteColors = [], paletteSize = 4, paletteSpread = 1.0 
+  } = params;
   const cycleTime = time * 0.001 * cycleSpeed;
 
-  if (mode === 'rainbow') {
+  if (mode === 'palette') {
+      // ... existing palette logic ...
+      const activeCount = Math.min(paletteColors.length, paletteSize);
+      const colors = paletteColors.slice(0, activeCount).map(hexToRgb);
+      if (colors.length === 0) colors.push({r:255, g:255, b:255});
+      
+      for (let i = 0; i < numPoints; i++) {
+          const offset = i * 8;
+          const normalizedPos = ((i / numPoints * paletteSpread) + (cycleTime * 0.5) + (rainbowOffset / 360)) % 1.0;
+          
+          const scaledPos = normalizedPos * (colors.length);
+          const index = Math.floor(scaledPos) % colors.length;
+          const nextIndex = (index + 1) % colors.length;
+          const factor = scaledPos - Math.floor(scaledPos);
+          
+          const c1 = colors[index];
+          const c2 = colors[nextIndex];
+          
+          points[offset + 3] = Math.round(c1.r + (c2.r - c1.r) * factor);
+          points[offset + 4] = Math.round(c1.g + (c2.g - c1.g) * factor);
+          points[offset + 5] = Math.round(c1.b + (c2.b - c1.b) * factor);
+      }
+  } else if (mode === 'rainbow') {
+    // ... existing rainbow logic ...
     const palette = rainbowPalette || 'rainbow';
     for (let i = 0; i < numPoints; i++) {
       const offset = i * 8;
@@ -306,9 +381,19 @@ function applyColor(points, numPoints, params, time) {
       points[offset + 5] = cb;
     }
   } else {
+    let fr = r, fg = g, fb = b;
+    
+    // HSV Parameters take priority for animation
+    if (hue !== undefined && saturation !== undefined && brightness !== undefined) {
+        [fr, fg, fb] = hsvToRgb(hue, saturation, brightness);
+    } else if (color) {
+        const c = hexToRgb(color);
+        fr = c.r; fg = c.g; fb = c.b;
+    }
+
     if (cycleSpeed > 0) {
-      const hue = (cycleTime * 50) % 360;
-      const [cr, cg, cb] = hslToRgb(hue / 360, 1, 0.5);
+      const hueCycle = (cycleTime * 50) % 360;
+      const [cr, cg, cb] = hslToRgb(hueCycle / 360, 1, 0.5);
       for (let i = 0; i < numPoints; i++) {
         const offset = i * 8;
         points[offset + 3] = cr;
@@ -318,9 +403,9 @@ function applyColor(points, numPoints, params, time) {
     } else {
       for (let i = 0; i < numPoints; i++) {
         const offset = i * 8;
-        points[offset + 3] = r;
-        points[offset + 4] = g;
-        points[offset + 5] = b;
+        points[offset + 3] = fr;
+        points[offset + 4] = fg;
+        points[offset + 5] = fb;
       }
     }
   }
@@ -406,7 +491,8 @@ function applyMirror(points, numPoints, params) {
 
   if (distributions) {
       // Distribution-aware mirroring (keeps channel points contiguous)
-      newBuffer = new Float32Array(numPoints * 2 * 8);
+      // Add 1 blanking bridge point per channel
+      newBuffer = new Float32Array((numPoints * 2 + distributions.size) * 8);
       const newDists = new Map();
       let currentOffset = 0;
 
@@ -419,7 +505,16 @@ function applyMirror(points, numPoints, params) {
           newBuffer.set(points.subarray(sliceStart, sliceStart + dist.length), currentOffset);
           currentOffset += dist.length;
 
-          // 2. Append mirrored slice
+          // 2. Insert blanking bridge point (Hint for Optimizer/Hardware)
+          const lastOrigOff = sliceStart + dist.length - 8;
+          newBuffer.set(points.subarray(lastOrigOff, lastOrigOff + 8), currentOffset);
+          newBuffer[currentOffset + 6] = 1; // Blanking = true
+          newBuffer[currentOffset + 3] = 0; // R=0
+          newBuffer[currentOffset + 4] = 0; // G=0
+          newBuffer[currentOffset + 5] = 0; // B=0
+          currentOffset += 8;
+
+          // 3. Append mirrored slice
           for (let i = 0; i < sliceNumPoints; i++) {
               const srcOff = sliceStart + i * 8;
               const dstOff = currentOffset;
@@ -428,16 +523,27 @@ function applyMirror(points, numPoints, params) {
               else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff+1] = -newBuffer[dstOff+1];
               currentOffset += 8;
           }
-          newDists.set(id, { start: targetStart, length: dist.length * 2 });
+          newDists.set(id, { start: targetStart, length: (sliceNumPoints * 2 + 1) * 8 });
       }
       newBuffer._channelDistributions = newDists;
   } else {
       // Standard mirroring (additive)
-      newBuffer = new Float32Array(numPoints * 2 * 8);
+      // Add 1 blanking point between segments
+      newBuffer = new Float32Array((numPoints * 2 + 1) * 8);
       newBuffer.set(points.subarray(0, numPoints * 8), 0);
+      
+      // Blanking bridge point
+      const bridgeOff = numPoints * 8;
+      const lastOrigOff = (numPoints - 1) * 8;
+      newBuffer.set(points.subarray(lastOrigOff, lastOrigOff + 8), bridgeOff);
+      newBuffer[bridgeOff + 6] = 1;
+      newBuffer[bridgeOff + 3] = 0;
+      newBuffer[bridgeOff + 4] = 0;
+      newBuffer[bridgeOff + 5] = 0;
+
       for (let i = 0; i < numPoints; i++) {
           const srcOff = i * 8;
-          const dstOff = (numPoints + i) * 8;
+          const dstOff = (numPoints + 1 + i) * 8;
           newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
           if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
           else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff + 1] = -newBuffer[dstOff + 1];
@@ -520,7 +626,6 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
                 if (echo.length === points.length) {
                     echoOff = off;
                 } else {
-                    // Resample if point counts differ
                     const echoNumPoints = echo.length / 8;
                     let echoIdx = Math.floor(norm * echoNumPoints);
                     if (echoIdx >= echoNumPoints) echoIdx = echoNumPoints - 1;
@@ -535,6 +640,19 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
                 newPoints[off+5] = echo[echoOff+5] * factor;
                 newPoints[off+6] = echo[echoOff+6]; 
                 newPoints[off+7] = echo[echoOff+7];
+
+                // Detect boundary with next point to force blanking
+                if (i < numPoints - 1) {
+                    const nextNorm = (i + 1) / numPoints;
+                    let nextStep = 0;
+                    if (delayDirection === 'left_to_right') nextStep = Math.floor(nextNorm * (steps - 1));
+                    else if (delayDirection === 'right_to_left') nextStep = Math.floor((1 - nextNorm) * (steps - 1));
+                    else if (delayDirection === 'center_to_out') nextStep = Math.floor(Math.abs(nextNorm - 0.5) * 2 * (steps - 1));
+                    else if (delayDirection === 'out_to_center') nextStep = Math.floor((1 - Math.abs(nextNorm - 0.5) * 2) * (steps - 1));
+                    if (nextStep !== step) {
+                        newPoints[off+6] = 1; // Force blanking at the step transition
+                    }
+                }
             } else {
                 newPoints.set(points.subarray(off, off+8), off);
                 newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0; newPoints[off+6] = 1;
@@ -599,8 +717,12 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 
 export function applyChase(points, numPoints, params, time, context = {}) {
     const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playstyle = 'loop' } = params;
-    const { progress = 0, clipDuration = 1 } = context;
-    const useSync = (progress !== undefined && clipDuration > 0);
+    const { progress = 0, clipDuration = 1, syncSettings = {} } = context;
+    
+    // Check if THIS specific parameter ('speed') is synced
+    const instancePrefix = params.instanceId ? `${params.instanceId}.` : 'chase.';
+    const isSpeedSynced = !!syncSettings[instancePrefix + 'speed'];
+    const useSync = (progress !== undefined && clipDuration > 0) || isSpeedSynced;
 
     if (mode === 'frame') {
         const steps = paramSteps;
@@ -635,6 +757,20 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             newPoints.set(points.subarray(off, off + 8), off);
             newPoints[off+3] *= intensity; newPoints[off+4] *= intensity; newPoints[off+5] *= intensity;
             if (intensity < 0.05) newPoints[off+6] = 1;
+
+            // Detect boundary
+            if (i < numPoints - 1) {
+                const nextNorm = (i + 1) / numPoints;
+                let nextStepIndex = 0;
+                if (direction === 'left_to_right') nextStepIndex = Math.min(steps - 1, Math.floor(nextNorm * steps));
+                else if (direction === 'right_to_left') nextStepIndex = Math.min(steps - 1, Math.floor((1 - nextNorm) * steps));
+                else if (direction === 'center_to_out') nextStepIndex = Math.min(steps - 1, Math.floor(Math.abs(nextNorm - 0.5) * 2 * steps));
+                else if (direction === 'out_to_center') nextStepIndex = Math.min(steps - 1, Math.floor((1 - Math.abs(nextNorm - 0.5) * 2) * steps));
+                
+                if (nextStepIndex !== stepIndex) {
+                    newPoints[off + 6] = 1; // Mark boundary
+                }
+            }
         }
         if (points._channelDistributions) newPoints._channelDistributions = points._channelDistributions;
         return newPoints;

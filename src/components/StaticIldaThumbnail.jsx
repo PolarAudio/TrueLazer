@@ -1,13 +1,21 @@
 import React, { useRef, useEffect } from 'react';
 
-const StaticIldaThumbnail = ({ frame, width = 50, height = 50 }) => {
+const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
     const canvasRef = useRef(null);
 
     useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas || !frame || !frame.points) return;
-
+        if (!canvas) return;
         const ctx = canvas.getContext('2d');
+
+        if (bitmap) {
+            ctx.clearRect(0, 0, width, height);
+            ctx.drawImage(bitmap, 0, 0, width, height);
+            return;
+        }
+
+        if (!frame || !frame.points) return;
+
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, width, height);
 
@@ -73,7 +81,7 @@ const StaticIldaThumbnail = ({ frame, width = 50, height = 50 }) => {
             ref={canvasRef} 
             width={width} 
             height={height} 
-            style={{ width: '100%', height: '100%', backgroundColor: 'black', display: 'block', borderRadius: '5px' }}
+            style={{ width: '50px', height: '50px', backgroundColor: 'black', display: 'block', borderRadius: '5px' }}
         />
     );
 };

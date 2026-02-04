@@ -105,8 +105,8 @@ export const AudioProvider = ({ children }) => {
             }
         }
 
-        const audio = new Audio(`file://${filePath}`);
-        audio.crossOrigin = "anonymous";
+        // Use 3 slashes for Windows local file support
+        const audio = new Audio(`file:///${filePath}`);
         audio.volume = volume * globalVolume;
 
         if (selectedDeviceId && audio.setSinkId) {
@@ -120,6 +120,7 @@ export const AudioProvider = ({ children }) => {
         audioRefs.current[layerIndex] = audio;
 
         if (audioCtx) {
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
             const source = connectMediaElement(audio);
             if (source) sourceRefs.current[layerIndex] = source;
         }
@@ -208,7 +209,7 @@ export const AudioProvider = ({ children }) => {
     }, []);
 
     // Initialize AudioContext on first user interaction
-    const initAudio = useCallback(() => {
+    const initAudio = useCallback(async () => {
         if (audioCtx) return;
         
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -217,6 +218,10 @@ export const AudioProvider = ({ children }) => {
         node.smoothingTimeConstant = fftSettings.smoothingTimeConstant;
         fftDataRef.current = new Uint8Array(node.frequencyBinCount);
         
+        if (ctx.state === 'suspended') {
+            await ctx.resume();
+        }
+
         setAudioCtx(ctx);
         setAnalyser(node);
     }, [audioCtx, fftSettings.smoothingTimeConstant]);
@@ -255,6 +260,7 @@ export const AudioProvider = ({ children }) => {
         let stream = null;
         const startExternal = async () => {
             try {
+                if (audioCtx.state === 'suspended') await audioCtx.resume();
                 stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 const source = audioCtx.createMediaStreamSource(stream);
                 source.connect(analyser);

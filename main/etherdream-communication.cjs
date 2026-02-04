@@ -219,13 +219,21 @@ function sendFrame(ip, channel, points, fps, options = {}) {
         if (options.skipOptimization) {
             optimized = convertPoints(points, isTyped);
         } else {
-            optimized = optimizePoints(points, isTyped);
+            // Increase threshold to 4000
+            if ((isTyped ? points.length / 8 : points.length) > 4000) {
+                optimized = convertPoints(points, isTyped);
+            } else {
+                optimized = optimizePoints(points, isTyped);
+            }
         }
         
-        // Match PPS exactly to point count to maintain 60 FPS without jitter
-        const pps = Math.max(1000, Math.min(40000, optimized.length * 60));
+        // STABLE PPS CALCULATION: 
+        // We want to output at 60 FPS. 
+        // Ideal PPS = pointCount * 60.
+        // But we cap it at hardware limits (e.g. 35k for stable EtherDream).
+        const targetPPS = Math.max(10000, Math.min(35000, optimized.length * 60));
         
-        instance.frameQueue.push({ points: optimized, rate: pps });
+        instance.frameQueue.push({ points: optimized, rate: targetPPS });
         if (instance.frameQueue.length > 30) instance.frameQueue.shift();
         instance.lastFrameTime = Date.now();
     } else {

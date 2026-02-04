@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const CollapsiblePanel = ({ title, children, icon, defaultCollapsed = false, headerActions, onToggle, isCollapsed }) => {
+const CollapsiblePanel = ({ title, children, icon, defaultCollapsed = false, headerActions, onToggle, isCollapsed, dragHandle }) => {
     const [internalCollapsed, setInternalCollapsed] = useState(defaultCollapsed);
 
     const collapsed = onToggle !== undefined ? isCollapsed : internalCollapsed;
@@ -20,7 +20,12 @@ const CollapsiblePanel = ({ title, children, icon, defaultCollapsed = false, hea
                 onClick={handleToggle} 
                 style={{ userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}
             >
-                <div style={{display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer', flex: 1, overflow: 'hidden'}}>
+                     {dragHandle && (
+                         <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center' }}>
+                             {dragHandle}
+                         </div>
+                     )}
                      {/* Playhead Arrow */}
                      <svg 
                         xmlns="http://www.w3.org/2000/svg" 
@@ -28,15 +33,15 @@ const CollapsiblePanel = ({ title, children, icon, defaultCollapsed = false, hea
                         height="12" 
                         fill="currentColor" 
                         viewBox="0 0 16 16"
-                        style={{ transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.2s' }}
+                        style={{ transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.2s', flexShrink: 0 }}
                      >
                         <path d="m12.14 8.753-5.482 4.796c-.646.566-1.658.106-1.658-.753V3.204a1 1 0 0 1 1.659-.753l5.48 4.796a1 1 0 0 1 0 1.506z"/>
                      </svg>
-                     {icon && <span className={`bi ${icon}`}></span>}
-                     <h4>{title}</h4>
+                     {icon && <span className={`bi ${icon}`} style={{ flexShrink: 0 }}></span>}
+                     <h4 style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: 0 }}>{title}</h4>
                 </div>
                 {headerActions && (
-                    <div onClick={(e) => e.stopPropagation()}>
+                    <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, marginLeft: '5px' }}>
                         {headerActions}
                     </div>
                 )}

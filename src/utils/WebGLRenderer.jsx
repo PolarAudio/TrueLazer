@@ -177,14 +177,14 @@ export class WebGLRenderer {
     }
 
     if (this.type === 'world') {
-      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings, data.previewTime, data.fftLevels);
+      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings, data.previewTime, data.fftLevels, data.optimizationEnabled);
     }
     else {
-      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings, data.bpm, data.clipDuration, data.progress, data.previewTime, data.fftLevels, data.effectStates);
+      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings, data.bpm, data.clipDuration, data.progress, data.previewTime, data.fftLevels, data.effectStates, data.optimizationEnabled);
     }
   }
 
-  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}, bpm = 120, clipDuration = 1, progressOverride = null, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null) {
+  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}, bpm = 120, clipDuration = 1, progressOverride = null, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -201,7 +201,7 @@ export class WebGLRenderer {
     const progress = progressOverride !== null ? progressOverride : (frameIndex / ildaFrames.length);
     const time = previewTime !== null ? previewTime : performance.now();
 
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates);
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -209,7 +209,7 @@ export class WebGLRenderer {
     }
   }
 
-  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }) {
+  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }, optimizationEnabled = true) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -266,13 +266,13 @@ export class WebGLRenderer {
                                  newPts[i].b *= dacSettings.dimmer;
                              }
                          }
-                         processedFrame = { ...frame, points: newPts, isTypedArray: isT };
+                         processedFrame = { ...frame, points: newPts, isTypedArray: t };
                     }
                     frameToDraw = applyOutputProcessing(processedFrame, dacSettings);
                 }
 
                 // Pass layerIndex, progress and time to draw
-                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates);
+                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
             }
         }
       }
@@ -317,7 +317,7 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true) {
     const gl = this.gl;
     if (!frame || !frame.points) return;
 
@@ -335,8 +335,11 @@ export class WebGLRenderer {
     // So we pass original 'effects' and let 'applyEffects' do the work.
     
     // Optimize BEFORE effects (Option 3 match)
-    const optimizedPoints = optimizePoints(frame.points);
-    const frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
+    let frameToProcess = frame;
+    if (optimizationEnabled) {
+        const optimizedPoints = optimizePoints(frame.points);
+        frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
+    }
 
     // Apply effects before drawing
     // We pass syncSettings and bpm in the context

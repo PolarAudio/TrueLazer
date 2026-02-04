@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings = {}, bpm = 120, clipDuration = 1, progress = 0, previewTime = 0, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, onToggleBeamEffect, onCycleDisplayMode }) => {
+const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings = {}, bpm = 120, clipDuration = 1, progress = 0, previewTime = 0, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true, onToggleBeamEffect, onCycleDisplayMode }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`ilda-player-${Math.random()}`);
@@ -18,7 +18,7 @@ const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, prev
         id: canvasId.current,
         canvas: offscreen,
         type: 'single',
-        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration, progress, previewTime, fftLevels, effectStates }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration, progress, previewTime, fftLevels, effectStates, optimizationEnabled }
       }
     }, [offscreen]);
 
@@ -37,10 +37,10 @@ const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, prev
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { ildaFrames: framesToSend, effects: effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration, progress, previewTime, fftLevels, effectStates }
+        data: { ildaFrames: framesToSend, effects: effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration, progress, previewTime, fftLevels, effectStates, optimizationEnabled }
       }
     });
-  }, [worker, frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration, progress, previewTime, fftLevels, effectStates]);
+  }, [worker, frame, effects, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, intensity, syncSettings, bpm, clipDuration, progress, previewTime, fftLevels, effectStates, optimizationEnabled]);
 	
   return (
     <div className="ilda-player">

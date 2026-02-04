@@ -269,10 +269,8 @@ const ClipSettingsPanel = ({
             effects.map((effect, effectIndex) => (
               <div 
                 key={effect.instanceId || (effect.id + effectIndex)}
-                draggable
-                onDragStart={() => handleEffectDragStart(effectIndex)}
                 onDragOver={(e) => handleEffectDragOver(e, effectIndex)}
-				style={{cursor: 'row-resize'}}
+                style={{ marginBottom: '4px' }}
               >
                 <EffectEditor
                   effect={effect}
@@ -290,6 +288,18 @@ const ClipSettingsPanel = ({
                   getFftLevels={getFftLevels}
                   uiState={uiState}
                   onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
+                  dragHandle={
+                    <div 
+                        draggable
+                        onDragStart={() => handleEffectDragStart(effectIndex)}
+                        style={{ cursor: 'grab', marginRight: '5px', display: 'flex', alignItems: 'center', color: '#666' }}
+                        title="Drag to reorder"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/>
+                        </svg>
+                    </div>
+                  }
                 />
               </div>
             ))

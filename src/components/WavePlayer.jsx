@@ -10,6 +10,8 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
     const [themeColor, setThemeColor] = useState('rgb(255, 94, 0)'); // Default orange
     const rafRef = useRef(null);
     const isDraggingRef = useRef(false);
+    const barDataRef = useRef([]); // Pre-calculated min/max for bars
+    const offscreenCanvasRef = useRef(null); // Cached background waveform
 
     // 1. Resolve Theme Color
     const resolveThemeColor = useCallback(() => {
@@ -47,7 +49,7 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
                 }
 
                 // Fetch local file
-                const response = await fetch(`file://${audioFile.path}`);
+                const response = await fetch(`file:///${audioFile.path}`);
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const arrayBuffer = await response.arrayBuffer();
                 
@@ -57,6 +59,22 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
                 const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
                 
                 if (active) {
+                    // PRE-CALCULATE BARS (Only once per file load)
+                    const data = decodedBuffer.getChannelData(0);
+                    const bars = [];
+                    const samplesPerBar = Math.max(1, Math.floor(data.length / 500)); // Constant resolution
+                    for (let i = 0; i < data.length; i += samplesPerBar) {
+                        let min = 1.0;
+                        let max = -1.0;
+                        for (let j = 0; j < samplesPerBar && (i + j) < data.length; j++) {
+                            const val = data[i + j];
+                            if (val < min) min = val;
+                            if (val > max) max = val;
+                        }
+                        bars.push({ min, max });
+                    }
+                    barDataRef.current = bars;
+                    offscreenCanvasRef.current = null; // Clear cache
                     setAudioBuffer(decodedBuffer);
                 }
             } catch (err) {
@@ -72,71 +90,69 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
         return () => { active = false; };
     }, [audioFile, audioCtx, onLoadError]);
 
-    // 3. Draw Waveform Helper
-    const drawWaveform = useCallback((ctx, width, height, buffer, progress) => {
-        if (!buffer) return;
+    // 3. Draw Waveform Helper (Optimized)
+    const drawWaveform = useCallback((ctx, width, height, progress) => {
+        const bars = barDataRef.current;
+        if (!bars || bars.length === 0) return;
 
-        const data = buffer.getChannelData(0); // Left channel
         const amp = height / 2;
-        
-        // Bar configuration
         const barWidth = 2;
-        const barGap = 2;
+        const barGap = 1;
         const totalBarWidth = barWidth + barGap;
 
-        ctx.clearRect(0, 0, width, height);
-
-        const drawBars = (color) => {
-            ctx.fillStyle = color;
-            ctx.beginPath();
+        // Cache background if needed
+        if (!offscreenCanvasRef.current || offscreenCanvasRef.current.width !== width || offscreenCanvasRef.current.height !== height) {
+            const offscreen = document.createElement('canvas');
+            offscreen.width = width;
+            offscreen.height = height;
+            const octx = offscreen.getContext('2d');
             
-            for (let i = 0; i < width; i += totalBarWidth) {
-                // Map current pixel to audio data samples
-                const startSample = Math.floor(i * (data.length / width));
-                const endSample = Math.floor((i + barWidth) * (data.length / width));
-                
-                let min = 1.0;
-                let max = -1.0;
-                
-                for (let j = startSample; j < endSample && j < data.length; j++) {
-                    const datum = data[j];
-                    if (datum < min) min = datum;
-                    if (datum > max) max = datum;
-                }
-                
-                const y = (1 + min) * amp;
-                const h = Math.max(1, (max - min) * amp);
-                
-                // Draw rounded bar if supported, otherwise rect
-                if (ctx.roundRect) {
-                    ctx.roundRect(i, y, barWidth, h, 1);
-                } else {
-                    ctx.rect(i, y, barWidth, h);
-                }
+            let faintColor = themeColor;
+            if (themeColor.startsWith('rgb(')) {
+                faintColor = themeColor.replace('rgb', 'rgba').replace(')', ', 0.2)');
             }
-            ctx.fill();
-        };
-
-        const progressX = width * progress;
-
-        // 1. Draw Background (faint)
-        let faintColor = themeColor;
-        if (themeColor.startsWith('rgb(')) {
-            faintColor = themeColor.replace('rgb', 'rgba').replace(')', ', 0.25)');
+            
+            octx.fillStyle = faintColor;
+            const barCount = Math.ceil(width / totalBarWidth);
+            for (let i = 0; i < barCount; i++) {
+                const barIdx = Math.floor((i / barCount) * bars.length);
+                const bar = bars[barIdx];
+                const y = (1 + bar.min) * amp;
+                const h = Math.max(1, (bar.max - bar.min) * amp);
+                octx.fillRect(i * totalBarWidth, y, barWidth, h);
+            }
+            offscreenCanvasRef.current = offscreen;
         }
-        drawBars(faintColor);
 
-        // 2. Draw Foreground (solid theme color) with clipping
-        if (progress > 0) {
+        ctx.clearRect(0, 0, width, height);
+        
+        // 1. Draw cached background
+        ctx.drawImage(offscreenCanvasRef.current, 0, 0);
+
+        // 2. Draw active foreground (progress)
+        const progressX = width * progress;
+        if (progressX > 0) {
             ctx.save();
             ctx.beginPath();
             ctx.rect(0, 0, progressX, height);
             ctx.clip();
-            drawBars(themeColor);
+            
+            ctx.fillStyle = themeColor;
+            const barCount = Math.ceil(width / totalBarWidth);
+            for (let i = 0; i < barCount; i++) {
+                const x = i * totalBarWidth;
+                if (x > progressX) break; // Early exit
+                
+                const barIdx = Math.floor((i / barCount) * bars.length);
+                const bar = bars[barIdx];
+                const y = (1 + bar.min) * amp;
+                const h = Math.max(1, (bar.max - bar.min) * amp);
+                ctx.fillRect(x, y, barWidth, h);
+            }
             ctx.restore();
         }
         
-        // Draw cursor line
+        // 3. Draw cursor line
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(progressX, 0, 1, height);
 
@@ -150,11 +166,11 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
         const ctx = canvas.getContext('2d');
         
         const render = () => {
-            // Match canvas internal resolution to CSS display size for crispness
             const rect = canvas.getBoundingClientRect();
             if (canvas.width !== rect.width || canvas.height !== rect.height) {
                 canvas.width = rect.width;
                 canvas.height = rect.height;
+                offscreenCanvasRef.current = null; // Invalidate cache on resize
             }
 
             const width = canvas.width;
@@ -168,8 +184,7 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
                 }
             }
 
-            progress = Math.max(0, Math.min(1, progress));
-            drawWaveform(ctx, width, height, audioBuffer, progress);
+            drawWaveform(ctx, width, height, Math.max(0, Math.min(1, progress)));
             rafRef.current = requestAnimationFrame(render);
         };
 

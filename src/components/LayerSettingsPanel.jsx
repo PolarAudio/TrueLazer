@@ -148,17 +148,38 @@ const LayerSettingsPanel = ({
                  <div className="layer-effects-list" style={{ minHeight: '50px' }}>
                  {layerEffects && layerEffects.length > 0 ? (
                      layerEffects.map((effect, index) => (
-                         <EffectEditor
-                             key={effect.instanceId || index}
-                             effect={effect}
-                             onRemove={() => onRemoveEffect(index)}
-                             onParamChange={(paramId, val) => onParamChange(index, paramId, val)}
-                             syncSettings={{}} 
-                             onSetParamSync={() => {}} 
-                             context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect' }}
-                             uiState={uiState}
-                             onUpdateUiState={onUpdateUiState}
-                         />
+                         <div key={effect.instanceId || index} style={{ marginBottom: '4px' }}>
+                            <EffectEditor
+                                effect={effect}
+                                onRemove={() => onRemoveEffect(index)}
+                                onParamChange={(paramId, val) => onParamChange(index, paramId, val)}
+                                syncSettings={{}} 
+                                onSetParamSync={() => {}} 
+                                context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect' }}
+                                uiState={uiState}
+                                onUpdateUiState={onUpdateUiState}
+                                dragHandle={
+                                    <div 
+                                        draggable
+                                        onDragStart={(e) => {
+                                            // Handle reordering logic if needed, 
+                                            // currently LayerSettingsPanel doesn't seem to have onReorder
+                                            e.dataTransfer.setData('application/json', JSON.stringify({
+                                                type: 'effect-reorder',
+                                                index: index,
+                                                layerIndex: selectedLayerIndex
+                                            }));
+                                        }}
+                                        style={{ cursor: 'grab', marginRight: '5px', display: 'flex', alignItems: 'center', color: '#666' }}
+                                        title="Drag to reorder"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/>
+                                        </svg>
+                                    </div>
+                                }
+                            />
+                         </div>
                      ))
                  ) : (
                      <div className="info-text" style={{padding: '20px', border: '1px dashed #444', borderRadius: '5px'}}>
