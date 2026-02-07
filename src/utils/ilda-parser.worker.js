@@ -71,30 +71,23 @@ function parseFramePoints(pointDataBuffer, formatCode, recordSize, pointCount, c
       const blanking = (statusByte & 0x40) !== 0; // Bit 6
       const lastPoint = (statusByte & 0x80) !== 0; // Bit 7
 
-      // Read color data
-      if (blanking) {
-		  r = 0;
-		  g = 0;
-		  b = 0;
-	  } else {
-      // Read color data
-		if (formatCode === 0 || formatCode === 1) { // Indexed Color
-			const colorIndex = view.getUint8(pointDataOffset + (formatCode === 0 ? 7 : 5));
-			const palette = colorPalette || defaultPalette;
-			const color = palette[colorIndex % palette.length] || defaultPalette[0];
-			r = color.r;
-			g = color.g;
-			b = color.b;
-		} else if (formatCode === 4 || formatCode === 5) { // True Color formats
-			b = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
-			g = view.getUint8(pointDataOffset + (formatCode === 4 ? 8 : 6));
-			r = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
-		}
-	  }
+      // Read color data (Always read if format supports it)
+      if (formatCode === 0 || formatCode === 1) { // Indexed Color
+          const colorIndex = view.getUint8(pointDataOffset + (formatCode === 0 ? 7 : 5));
+          const palette = colorPalette || defaultPalette;
+          const color = palette[colorIndex % palette.length] || defaultPalette[0];
+          r = color.r; g = color.g; b = color.b;
+      } else if (formatCode === 4 || formatCode === 5) { // True Color formats
+          b = view.getUint8(pointDataOffset + (formatCode === 4 ? 7 : 5));
+          g = view.getUint8(pointDataOffset + (formatCode === 4 ? 8 : 6));
+          r = view.getUint8(pointDataOffset + (formatCode === 4 ? 9 : 7));
+      }
 
       points.push({ 
         x, y, z, 
-        r: r === undefined ? 255 : r, g: g === undefined ? 255 : g, b: b === undefined ? 255 : b,
+        r: r === undefined ? 255 : r, 
+        g: g === undefined ? 255 : g, 
+        b: b === undefined ? 255 : b,
         blanking, 
         lastPoint 
       });
@@ -168,7 +161,7 @@ function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
     switch (formatCode) {
       case 0: recordSize = 8; break;
       case 1: recordSize = 6; break;
-      case 2: recordSize = 4; break;
+      case 2: recordSize = 3; break;
       case 4: recordSize = 10; break;
       case 5: recordSize = 8; break;
       default:
@@ -181,10 +174,9 @@ function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
       activePalette = [];
 	  const paletteStart = currentOffset + 32;
       for (let i = 0; i < pointCount; i++) {
-        const r = view.getUint8(paletteStart + i * 4); 		//Byte 0: Red
-        const g = view.getUint8(paletteStart + i * 4 + 1);	//Byte 1: Green
-        const b = view.getUint8(paletteStart + i * 4 + 2);	//Byte 2: Blue
-		//Byte 3 is reserved, skip it
+        const r = view.getUint8(paletteStart + i * 3);
+        const g = view.getUint8(paletteStart + i * 3 + 1);
+        const b = view.getUint8(paletteStart + i * 3 + 2);
         activePalette.push({ r, g, b });
       }
     }
@@ -263,7 +255,7 @@ async function renderThumbnailToBitmap(points, width = 128, height = 128) {
         const screenX = (p.x + 1) * 0.5 * width;
         const screenY = (1 - (p.y + 1) * 0.5) * height;
 
-        if (!p.blanking && !lastWasBlanked && lastX !== null) {
+        if (!p.blanking && lastX !== null) {
             ctx.beginPath();
             ctx.moveTo(lastX, lastY);
             ctx.lineTo(screenX, screenY);
@@ -272,7 +264,24 @@ async function renderThumbnailToBitmap(points, width = 128, height = 128) {
         }
         lastX = screenX;
         lastY = screenY;
-        lastWasBlanked = p.blanking;
+    }
+
+    // Final Closure: If the last point is lit and close to the first point, draw the connection
+    if (points.length > 2) {
+        const pFirst = points[0];
+        const pLast = points[points.length - 1];
+        if (!pLast.blanking) {
+            const firstX = (pFirst.x + 1) * 0.5 * width;
+            const firstY = (1 - (pFirst.y + 1) * 0.5) * height;
+            const dist = Math.sqrt(Math.pow(firstX - lastX, 2) + Math.pow(firstY - lastY, 2));
+            if (dist < width * 0.02) { // 2% threshold
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(firstX, firstY);
+                ctx.strokeStyle = `rgb(${pLast.r},${pLast.g},${pLast.b})`;
+                ctx.stroke();
+            }
+        }
     }
     
     return canvas.transferToImageBitmap();

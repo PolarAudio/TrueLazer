@@ -1,4 +1,4 @@
-import { generateCircle, generateSquare, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver } from './generators.js';
+import { generateCircle, generateSquare, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave } from './generators.js';
 
 self.onmessage = async (event) => {
   const { type, layerIndex, colIndex, generator, params } = event.data;
@@ -33,6 +33,9 @@ self.onmessage = async (event) => {
               break;
             case 'spout-receiver':
               frames = [await generateSpoutReceiver(currentParams, event.data.fontBuffer)];
+              break;
+            case 'sinewave':
+              frames = [generateSinewave(currentParams)];
               break;
             default:
               frames = [{ points: [] }];

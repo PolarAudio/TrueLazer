@@ -386,26 +386,48 @@ export class WebGLRenderer {
       const drawPoints = beamRenderMode === 'points' || beamRenderMode === 'both';
       const drawLines = beamRenderMode === 'lines' || beamRenderMode === 'both';
       
-      let currentSegmentPositions = [];
-      let currentSegmentColors = [];
-      
-      for (let i = 0; i < pointsToDraw; i++) {
-        const point = getPointData(i);
-        if (point.blanking) {
-          if (currentSegmentPositions.length > 0) {
-            if (drawLines) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
-            if (drawPoints) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, true);
-            currentSegmentPositions = [];
-            currentSegmentColors = [];
+      if (drawLines) {
+          let currentSegmentPositions = [];
+          let currentSegmentColors = [];
+          let prevPoint = getPointData(0);
+
+          for (let i = 1; i < pointsToDraw; i++) {
+            const point = getPointData(i);
+            if (point.blanking) {
+              if (currentSegmentPositions.length > 0) {
+                this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
+                currentSegmentPositions = [];
+                currentSegmentColors = [];
+              }
+            } else {
+              // Beam to this point is ON. The segment starts at prevPoint.
+              if (currentSegmentPositions.length === 0) {
+                currentSegmentPositions.push(prevPoint.x, prevPoint.y);
+                currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+              }
+              currentSegmentPositions.push(point.x, point.y);
+              currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+            }
+            prevPoint = point;
           }
-          continue;
-        }
-        currentSegmentPositions.push(point.x, point.y);
-        currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+          if (currentSegmentPositions.length > 0) {
+            this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
+          }
       }
-      if (currentSegmentPositions.length > 0) {
-        if (drawLines) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
-        if (drawPoints) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, true);
+
+      if (drawPoints) {
+          const pts = [];
+          const cols = [];
+          for (let i = 0; i < pointsToDraw; i++) {
+            const point = getPointData(i);
+            if (!point.blanking) {
+              pts.push(point.x, point.y);
+              cols.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+            }
+          }
+          if (pts.length > 0) {
+            this._drawSegment(new Float32Array(pts), new Float32Array(cols), 1.0, pts.length / 2, true);
+          }
       }
     };
 
@@ -434,16 +456,13 @@ export class WebGLRenderer {
 
       for (let i = 1; i < pointsToDraw; i++) {
         const point = getPointData(i);
-        if (!prevPoint.blanking && !point.blanking) {
+        if (!point.blanking) {
           trianglePositions.push(0, 0, prevPoint.x, prevPoint.y, point.x, point.y);
           
-          const color1 = [prevPoint.r / 255 * intensity, prevPoint.g / 255 * intensity, prevPoint.b / 255 * intensity];
+          const color1 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
           const color2 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
           
-          // Center is average of full intensity colors
-          const centerColor = [(color1[0] + color2[0]) / 2, (color1[1] + color2[1]) / 2, (color1[2] + color2[2]) / 2];
-          
-          // Fade edges to simulate density drop-off (Halo effect)
+          const centerColor = [color1[0], color1[1], color1[2]];
           const edgeFade = 0.3;
           const fadedColor1 = [color1[0] * edgeFade, color1[1] * edgeFade, color1[2] * edgeFade];
           const fadedColor2 = [color2[0] * edgeFade, color2[1] * edgeFade, color2[2] * edgeFade];

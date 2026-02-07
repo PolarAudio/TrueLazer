@@ -42,7 +42,7 @@ body {
   height: 100vh;
 }
 .bi {
-	height: -webkit-fill-available;
+	/* height: -webkit-fill-available; */
 }
 @media only screen and (min-height: 691px) {
   .clip-label {

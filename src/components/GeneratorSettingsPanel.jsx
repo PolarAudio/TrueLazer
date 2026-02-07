@@ -112,6 +112,17 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                             onChange={(e) => onChange(control.id, e.target.checked)}
                             className="param-checkbox"
                         />
+                    ) : control.type === 'select' ? (
+                        <select
+                            value={value}
+                            onChange={(e) => onChange(control.id, e.target.value)}
+                            className="param-select"
+                            style={{width: '100%', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555'}}
+                        >
+                            {control.options.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </select>
                     ) : null}
                 </div>
 
@@ -219,7 +230,9 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
         isCollapsed={!!collapsedPanels['generator']}
         onToggle={handleToggle}
     >
-        {generatorDefinition.paramControls.map(control => {
+        {generatorDefinition.paramControls
+          .filter(control => !control.condition || control.condition(selectedGeneratorParams))
+          .map(control => {
           // Special case for fontUrl
           if (control.id === 'fontUrl') {
               const currentFont = selectedGeneratorParams[control.id] || 'src/fonts/Geometr415 Blk BT Black.ttf';

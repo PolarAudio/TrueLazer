@@ -23,6 +23,9 @@ import AudioSettingsWindow from './components/AudioSettingsWindow';
 import RelocateModal from './components/RelocateModal';
 import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
+import ShapeBuilder from './components/ShapeBuilder';
+import TimelineEditor from './components/TimelineEditor';
+import AboutWindow from './components/aboutWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
 import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
@@ -37,7 +40,7 @@ import { applyEffects, applyOutputProcessing, resolveParam } from './utils/effec
 import { optimizePoints } from './utils/optimizer';
 import { effectDefinitions } from './utils/effectDefinitions';
 import { sendNote } from './utils/midi';
-import { generateCircle, generateSquare, generateLine, generateStar, generateText } from './utils/generators'; // Import generator functions
+import { generateCircle, generateSquare, generateLine, generateStar, generateText, generateSinewave } from './utils/generators'; // Import generator functions
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -1504,87 +1507,8 @@ function App() {
   const ildaParserWorker = useIldaParserWorker();
   const thumbnailWorker = useThumbnailWorker();
     const generatorWorker = useGeneratorWorker();
-    const uiGeneratorWorkerRef = useRef(null);
     const { fftLevels, getFftLevels } = useAudio() || {};
 
-    useEffect(() => {
-        const worker = new Worker(new URL('./utils/ui-generators.worker.js', import.meta.url), { type: 'module' });
-        uiGeneratorWorkerRef.current = worker;
-
-        const handleUiMessage = (e) => {
-            if (e.data.browserFile) return;
-
-            // Handle processing queue
-            if (e.data.layerIndex !== undefined && e.data.colIndex !== undefined) {
-                const clipKey = `${e.data.layerIndex}-${e.data.colIndex}`;
-                generatorProcessingMap.current.set(clipKey, false); // Mark free
-                
-                // Check for pending
-                if (generatorPendingMap.current.has(clipKey)) {
-                    const { message, transferables } = generatorPendingMap.current.get(clipKey);
-                    generatorPendingMap.current.delete(clipKey);
-                    
-                    // Send pending request
-                    console.log(`[App.jsx] UI Generator ${clipKey} free, processing pending seq ${message.seq}`);
-                    generatorProcessingMap.current.set(clipKey, true);
-                    worker.postMessage(message, transferables);
-                }
-            }
-
-            if (e.data.success) {
-                const { layerIndex, colIndex, frames, generatorDefinition, currentParams, isLive, isAutoUpdate, seq } = e.data;
-
-                if (layerIndex === undefined || colIndex === undefined) return;
-
-                // Discard out-of-order responses for non-live updates
-                if (seq !== undefined) {
-                    if (seq < latestProcessedSeqRef.current) return;
-                    latestProcessedSeqRef.current = seq;
-                }
-
-                // Update liveFrames ref
-                const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
-                liveFramesRef.current[generatorWorkerId] = frames[0];
-
-                // Only dispatch to state if it's NOT a live frame update (i.e., it's a parameter change)
-                // AND if it's NOT an automated update (prevents 60fps state updates during animation)
-                if (!isLive && !isAutoUpdate) {
-                    const existingClip = clipContentsRef.current[layerIndex][colIndex] || {};
-                    const newClipContent = {
-                        ...existingClip,
-                        type: 'generator',
-                        generatorDefinition,
-                        frames,
-                        currentParams,
-                        playbackSettings: existingClip.playbackSettings || {
-                            mode: 'fps',
-                            duration: 5,
-                            beats: 8,
-                            speedMultiplier: 1
-                        },
-                    };
-                    
-                    dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
-
-                    const currentName = clipNamesRef.current[layerIndex][colIndex];
-                    const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
-                    if (currentName === defaultPattern) {
-                        dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
-                    }
-                }
-            } else {
-                showNotification(`UI Generator error: ${e.data.error}`);
-            }
-        };
-
-        worker.addEventListener('message', handleUiMessage);
-
-        return () => {
-            worker.removeEventListener('message', handleUiMessage);
-            worker.terminate();
-        };
-    }, []);
-  
   const {
     devices: audioDevices,
     selectedDeviceId,
@@ -1612,6 +1536,8 @@ function App() {
 
   const [initialSettings, setInitialSettings] = useState(null);
   const [initialSettingsLoaded, setInitialSettingsLoaded] = useState(false);
+  const [currentPage, setCurrentPage] = useState('main'); // 'main', 'shapeBuilder', 'timeline'
+  const [showAboutWindow, setShowAboutWindow] = useState(false);
   const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
   const [enabledShortcuts, setEnabledShortcuts] = useState({ midi: false, artnet: false, osc: false, keyboard: false });
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -1835,11 +1761,11 @@ function App() {
         
         const hoveredClipRef = useRef(null); // { layerIndex, colIndex } or null
     
-        const generatorRequestSeqRef = useRef(0); // Track latest request ID
-            const latestProcessedSeqRef = useRef(0); // Track latest processed response ID        
-            const generatorProcessingMap = useRef(new Map()); // key: "layer-col", val: boolean
-            const generatorPendingMap = useRef(new Map()); // key: "layer-col", val: { message, transferables }        
-            const previewTimeRef = useRef(performance.now());
+  const generatorRequestSeqRef = useRef(0); // Track latest request ID
+  const latestProcessedSeqRef = useRef(new Map()); // Track latest processed response ID per clip
+  const generatorProcessingMap = useRef(new Map()); // key: "layer-col", val: boolean
+  const generatorPendingMap = useRef(new Map()); // key: "layer-col", val: { message, transferables }
+  const previewTimeRef = useRef(performance.now());
       
             useEffect(() => {  
           // If we have a pending local update, it means the Ref is already ahead of (or equal to) the State.
@@ -2442,9 +2368,8 @@ function App() {
               activeCount++;
               const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
               totalPointsSentRef.current += numPts;
-              // Optimization: send points buffer directly to reduce overhead
-              // Passing skipOptimization flag because we handled it before effects if enabled
-              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame.points, OUTPUT_FPS, group.type, { skipOptimization: optimizationEnabledRef.current });
+              // Fix: optimizationEnabledRef.current being true should mean skipOptimization is FALSE
+              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame.points, OUTPUT_FPS, group.type, { skipOptimization: !optimizationEnabledRef.current });
             }
           });
           activeChannelsCountRef.current = activeCount;
@@ -3275,6 +3200,14 @@ function App() {
         console.log("Menu action received:", action);
         if (action === 'output-settings') {
           setShowOutputSettingsWindow(true);
+        } else if (action === 'shapeBuilder') {
+          setCurrentPage('shapeBuilder');
+          dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: false });
+        } else if (action === 'timeline') {
+          setCurrentPage('timeline');
+          dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: false });
+        } else if (action === 'about') {
+          setShowAboutWindow(true);
         } else if (action === 'settings-audio-output') {
           setShowAudioSettingsWindow(true);
         } else if (action === 'settings-audio-fft') {
@@ -3478,17 +3411,14 @@ function App() {
     const handleMessage = (e) => {
         if (e.data.browserFile) return;
 
-        // Handle processing queue
+        // 1. Mark as free and check for pending tasks FIRST
         if (e.data.layerIndex !== undefined && e.data.colIndex !== undefined) {
             const clipKey = `${e.data.layerIndex}-${e.data.colIndex}`;
-            generatorProcessingMap.current.set(clipKey, false); // Mark free
+            generatorProcessingMap.current.set(clipKey, false); 
             
-            // Check for pending
             if (generatorPendingMap.current.has(clipKey)) {
                 const { message, transferables } = generatorPendingMap.current.get(clipKey);
                 generatorPendingMap.current.delete(clipKey);
-                
-                // Send pending request
                 generatorProcessingMap.current.set(clipKey, true);
                 generatorWorker.postMessage(message, transferables);
             }
@@ -3499,20 +3429,24 @@ function App() {
 
             if (layerIndex === undefined || colIndex === undefined) return;
 
-            // Discard out-of-order responses for non-live updates
+            // 2. DISCARD stale responses
+            // If we have a sequence number, and it's older than what we've already processed, IGNORE it.
             if (seq !== undefined) {
-                if (seq < latestProcessedSeqRef.current) return;
-                latestProcessedSeqRef.current = seq;
+                const key = `${layerIndex}-${colIndex}`;
+                const lastProcessed = latestProcessedSeqRef.current.get(key) || 0;
+                if (seq < lastProcessed) {
+                    console.log(`[App.jsx] Discarding stale response: seq ${seq} < ${lastProcessed}`);
+                    return;
+                }
+                latestProcessedSeqRef.current.set(key, seq);
             }
 
-            // Update liveFrames ref regardless of whether it's a live update or param change
+            // Update liveFrames ref
             const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
             liveFramesRef.current[generatorWorkerId] = frames[0];
 
-            // Only dispatch to state if it's NOT a live frame update (i.e., it's a parameter change)
-            // AND if it's NOT an automated update (prevents 60fps state updates during animation)
-            // AND if it matches the latest requested sequence
-            if (!isLive && !isAutoUpdate && seq === generatorRequestSeqRef.current) {
+            // 3. Update State only for relevant parameter changes
+            if (!isLive && !isAutoUpdate && seq === (generatorRequestSeqRef.current)) {
                 const existingClip = clipContentsRef.current[layerIndex][colIndex] || {};
                 
                 const newClipContent = {
@@ -3570,7 +3504,23 @@ function App() {
     }
   }, [generatorWorker]);
 
-  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params, seq, isAutoUpdate = false) => {
+  const generateLiveFrame = (generatorId, params) => {
+      try {
+          switch (generatorId) {
+              case 'circle': return generateCircle(params);
+              case 'square': return generateSquare(params);
+              case 'line': return generateLine(params);
+              case 'star': return generateStar(params);
+              case 'sinewave': return generateSinewave(params);
+              default: return null;
+          }
+      } catch (e) {
+          console.error(`Error in synchronous live generation for ${generatorId}:`, e);
+          return null;
+      }
+  };
+
+  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params, seq, isAutoUpdate = false, isLive = false) => {
     // Create a complete params object to ensure stability
     const completeParams = { ...generatorDefinition.defaultParams, ...params };
     const clipKey = `${layerIndex}-${colIndex}`;
@@ -3626,7 +3576,8 @@ function App() {
       params: completeParams, // Pass the complete params
       fontBuffer, 
       seq, // Pass sequence number
-      isAutoUpdate
+      isAutoUpdate,
+      isLive
     };
     
     // We only transfer the buffer if we just loaded it (it's not cached yet)
@@ -3641,8 +3592,8 @@ function App() {
     } else {
         // Worker is free, send immediately
         generatorProcessingMap.current.set(clipKey, true);
-        if (uiGeneratorWorkerRef.current) {
-            uiGeneratorWorkerRef.current.postMessage(message, transferables);
+        if (generatorWorker) {
+            generatorWorker.postMessage(message, transferables);
         }
     }
   };
@@ -3915,6 +3866,15 @@ function App() {
 
       if (!currentClip || !currentClip.generatorDefinition) return;
 
+      const generatorId = currentClip.generatorDefinition.id;
+      const generatorWorkerId = `generator-${selectedLayerIndex}-${selectedColIndex}`;
+
+      // 2. Synchronous Live Generation for instant feedback (Only for simple shapes)
+      const liveFrame = generateLiveFrame(generatorId, paramsSource);
+      if (liveFrame) {
+          liveFramesRef.current[generatorWorkerId] = liveFrame;
+      }
+
       // Dispatch the state update (Persistence) - DEBOUNCED
       debouncedDispatch(
           `generator-${selectedLayerIndex}-${selectedColIndex}-${paramName}`,
@@ -3929,15 +3889,15 @@ function App() {
           }
       );
 
-      // Update the previous params ref to prevent the useEffect from triggering a double regeneration
+      // Update the previous params ref
       const key = `${selectedLayerIndex}-${selectedColIndex}`;
       const completeParams = { ...currentClip.generatorDefinition.defaultParams, ...paramsSource };
       prevGeneratorParamsRef.current.set(key, JSON.stringify(completeParams));
 
-      // Immediately trigger regeneration with the new parameters
-      // Use paramsSource which contains the accumulated latest state
+      // Trigger full regeneration in worker
+      // isLive=true flag tells the handler NOT to dispatch state updates
       const seq = ++generatorRequestSeqRef.current;
-      regenerateGeneratorClip(selectedLayerIndex, selectedColIndex, currentClip.generatorDefinition, paramsSource, seq, false);
+      regenerateGeneratorClip(selectedLayerIndex, selectedColIndex, currentClip.generatorDefinition, paramsSource, seq, false, true);
     }
   };
 
@@ -4538,9 +4498,14 @@ function App() {
         quickAssigns={state.quickAssigns}
     />
     <MidiMappingOverlay />
+    {currentPage === 'main' ? (
     <div className="app">
       <ErrorBoundary>
         <NotificationPopup message={notification.message} visible={notification.visible} />
+        <AboutWindow 
+            show={showAboutWindow} 
+            onClose={() => setShowAboutWindow(false)} 
+        />
         <OutputSettingsWindow
             show={showOutputSettingsWindow}
             onClose={() => setShowOutputSettingsWindow(false)}
@@ -4872,6 +4837,11 @@ function App() {
         </div>
       </ErrorBoundary>
     </div>
+    ) : currentPage === 'shapeBuilder' ? (
+      <ShapeBuilder onBack={() => setCurrentPage('main')} />
+    ) : (
+      <TimelineEditor onBack={() => setCurrentPage('main')} />
+    )}
     </KeyboardProvider>
     </ArtnetProvider>
     </MidiProvider>

@@ -5,21 +5,69 @@ const withDefaults = (params, defaults) => ({ ...defaults, ...params });
 // Persistent font cache using a simple object or Map
 const parsedFontCache = new Map();
 
+function applyRenderingStyle(points, params) {
+    const { renderingStyle, thickness, blankingSize } = withDefaults(params, {
+        renderingStyle: 'normal',
+        thickness: 1,
+        blankingSize: 3
+    });
+
+    if (renderingStyle === 'normal' || !points || points.length === 0) {
+        return points;
+    }
+
+    const styledPoints = [];
+
+    if (renderingStyle === 'dotted') {
+        for (const p of points) {
+            // Repeat the same point multiple times to increase dwell time (thicken the beam)
+            for (let i = 0; i < thickness; i++) {
+                styledPoints.push({ ...p });
+            }
+        }
+    } else if (renderingStyle === 'blanked') {
+        // "Blank each 2nd line" with adjustable segment size
+        const size = Math.max(1, Math.floor(blankingSize));
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            if (p.blanking) {
+                styledPoints.push({ ...p });
+            } else {
+                // Blocks of 'size' points on, 'size' points off
+                if (Math.floor(i / size) % 2 === 0) {
+                    styledPoints.push({ ...p });
+                } else {
+                    styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
+                }
+            }
+        }
+    } else if (renderingStyle === 'dots') {
+        // "Only show the points and no lines"
+        for (const p of points) {
+            // 1. Move to point while blanked
+            styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
+            // 2. Show the point (Flash it)
+            styledPoints.push({ ...p, blanking: false });
+            // 3. Repeat to ensure visibility
+            styledPoints.push({ ...p, blanking: false });
+        }
+    }
+
+    return styledPoints;
+}
+
 export async function generateText(params, fontBuffer) {
   try {
     if (!fontBuffer) {
       throw new Error('A font buffer is required to generate text.');
     }
     
-    // We can't use the buffer itself as a WeakMap key effectively across IPC.
-    // We'll use the byteLength and a small checksum/hash of the first 100 bytes as a key.
     const fontKey = `${fontBuffer.byteLength}_${new Uint8Array(fontBuffer.slice(0, 100)).join('')}`;
     
     let font = parsedFontCache.get(fontKey);
     if (!font) {
         font = opentype.parse(fontBuffer);
         parsedFontCache.set(fontKey, font);
-        // Limit cache size
         if (parsedFontCache.size > 10) {
             const firstKey = parsedFontCache.keys().next().value;
             parsedFontCache.delete(firstKey);
@@ -33,18 +81,15 @@ export async function generateText(params, fontBuffer) {
       g: 255,
       b: 255,
       fontSize: 72,
-      numPoints: 500 // Increased for better DAC buffer saturation
+      numPoints: 100
     });
 
     const path = font.getPath(text, 0, 0, fontSize);
     const commands = path.commands;
-
-    // Calculate bounding box to center the text
     const bbox = path.getBoundingBox();
     const midX = (bbox.x1 + bbox.x2) / 2;
     const midY = (bbox.y1 + bbox.y2) / 2;
     
-    // First, calculate total "rough" length to distribute numPoints
     let totalLength = 0;
     let prevX = 0, prevY = 0;
     commands.forEach(cmd => {
@@ -62,44 +107,19 @@ export async function generateText(params, fontBuffer) {
     const sampledPoints = [];
     prevX = 0; prevY = 0;
     let startX = 0, startY = 0;
-
-    // We use a constant divisor (e.g., 200) to normalize the opentype coordinates 
-    // to the [-1, 1] laser range. Since fontSize is already used in font.getPath,
-    // this constant ensures the slider works as expected.
     const normalizeScale = 200;
 
     commands.forEach(cmd => {
         if (cmd.type === 'M') {
-            // Add a blanked point at the previous position to turn off the laser
             if (sampledPoints.length > 0) {
                 const last = sampledPoints[sampledPoints.length - 1];
-                sampledPoints.push({
-                    ...last,
-                    r: 0, g: 0, b: 0,
-                    blanking: true
-                });
+                sampledPoints.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
             }
-
             startX = cmd.x; startY = cmd.y;
-            // Add a blanked point at the NEW position to allow the scanner to settle
             const targetX = (cmd.x - midX) / normalizeScale + x;
             const targetY = -(cmd.y - midY) / normalizeScale + y;
-            
-            sampledPoints.push({ 
-                x: targetX, 
-                y: targetY, 
-                r: 0, g: 0, b: 0, 
-                blanking: true 
-            });
-            
-            // Add a COLORED point at the same position to start the path
-            sampledPoints.push({ 
-                x: targetX, 
-                y: targetY, 
-                r, g, b, 
-                blanking: false 
-            });
-            
+            sampledPoints.push({ x: targetX, y: targetY, r: 0, g: 0, b: 0, blanking: true });
+            sampledPoints.push({ x: targetX, y: targetY, r, g, b, blanking: false });
             prevX = cmd.x; prevY = cmd.y;
         } else if (cmd.type === 'L') {
             const dx = cmd.x - prevX;
@@ -122,7 +142,6 @@ export async function generateText(params, fontBuffer) {
             const steps = Math.max(2, Math.floor(dist * pointsPerUnit));
             for (let i = 1; i <= steps; i++) {
                 const t = i / steps;
-                // Quadratic Bezier: (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
                 const cx = Math.pow(1-t, 2) * prevX + 2 * (1-t) * t * cmd.x1 + Math.pow(t, 2) * cmd.x;
                 const cy = Math.pow(1-t, 2) * prevY + 2 * (1-t) * t * cmd.y1 + Math.pow(t, 2) * cmd.y;
                 sampledPoints.push({ x: (cx - midX) / normalizeScale + x, y: -(cy - midY) / normalizeScale + y, r, g, b });
@@ -135,34 +154,23 @@ export async function generateText(params, fontBuffer) {
             const steps = Math.max(3, Math.floor(dist * pointsPerUnit));
             for (let i = 1; i <= steps; i++) {
                 const t = i / steps;
-                // Cubic Bezier: (1-t)^3*P0 + 3(1-t)^2*t*P1 + 3(1-t)t^2*P2 + t^3*P3
                 const cx = Math.pow(1-t, 3) * prevX + 3 * Math.pow(1-t, 2) * t * cmd.x1 + 3 * (1-t) * Math.pow(t, 2) * cmd.x2 + Math.pow(t, 3) * cmd.x;
                 const cy = Math.pow(1-t, 3) * prevY + 3 * Math.pow(1-t, 2) * t * cmd.y1 + 3 * (1-t) * Math.pow(t, 2) * cmd.y2 + Math.pow(t, 3) * cmd.y;
                 sampledPoints.push({ x: (cx - midX) / normalizeScale + x, y: -(cy - midY) / normalizeScale + y, r, g, b });
             }
             prevX = cmd.x; prevY = cmd.y;
         } else if (cmd.type === 'Z') {
-            // Close path: return to startX, startY
-            sampledPoints.push({ 
-                x: (startX - midX) / normalizeScale + x, 
-                y: -(startY - midY) / normalizeScale + y, 
-                r, g, b 
-            });
+            sampledPoints.push({ x: (startX - midX) / normalizeScale + x, y: -(startY - midY) / normalizeScale + y, r, g, b });
             prevX = startX; prevY = startY;
         }
     });
 
-    // Add a final blanked point at the last position to ensure clean blanking after the text
     if (sampledPoints.length > 0) {
         const lastPoint = sampledPoints[sampledPoints.length - 1];
-        sampledPoints.push({
-            ...lastPoint,
-            r: 0, g: 0, b: 0,
-            blanking: true
-        });
+        sampledPoints.push({ ...lastPoint, r: 0, g: 0, b: 0, blanking: true });
     }
 
-    return { points: sampledPoints };
+    return { points: applyRenderingStyle(sampledPoints, params) };
   } catch (error) {
     console.error('Error in generateText:', error);
     throw error;
@@ -173,7 +181,7 @@ export function generateCircle(params) {
   try {
     const { radius, numPoints, x, y, r, g, b } = withDefaults(params, {
       radius: 0.5,
-      numPoints: 500, // Increased for better DAC buffer saturation
+      numPoints: 50,
       x: 0,
       y: 0,
       r: 255,
@@ -191,7 +199,7 @@ export function generateCircle(params) {
       });
     }
 
-    return { points };
+    return { points: applyRenderingStyle(points, params) };
   } catch (error) {
     console.error('Error in generateCircle:', error);
     throw error;
@@ -203,7 +211,7 @@ export function generateSquare(params) {
     const { width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
       width: 1,
       height: 1,
-      pointDensity: 125, // Increased for ~500 total points
+      pointDensity: 12,
       x: 0,
       y: 0,
       r: 255,
@@ -232,10 +240,9 @@ export function generateSquare(params) {
         });
       }
     }
-    // Add the final corner to close the loop
     points.push({ ...corners[corners.length - 1], r, g, b });
 
-    return { points };
+    return { points: applyRenderingStyle(points, params) };
   } catch (error) {
     console.error('Error in generateSquare:', error);
     throw error;
@@ -249,7 +256,7 @@ export function generateLine(params) {
       y1: 0,
       x2: 0.5,
       y2: 0,
-      pointDensity: 200,
+      pointDensity: 50,
       r: 255,
       g: 255,
       b: 255
@@ -265,7 +272,7 @@ export function generateLine(params) {
       });
     }
 
-    return { points };
+    return { points: applyRenderingStyle(points, params) };
   } catch (error) {
     console.error('Error in generateLine:', error);
     throw error;
@@ -278,7 +285,7 @@ export function generateStar(params) {
       outerRadius: 0.5,
       innerRadius: 0.2,
       numSpikes: 5,
-      pointDensity: 10,
+      pointDensity: 5,
       x: 0,
       y: 0,
       r: 255,
@@ -312,7 +319,7 @@ export function generateStar(params) {
     }
     points.push({ ...vertices[vertices.length - 1], r, g, b });
 
-    return { points };
+    return { points: applyRenderingStyle(points, params) };
   } catch (error) {
     console.error('Error in generateStar:', error);
     throw error;
@@ -338,18 +345,13 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
         }
 
         const { width: srcW, height: srcH, data: srcData } = ndiFrame;
-        
-        // 1. Working Buffer Strategy
-        // Increased processing resolution for better workstations
         const workingWidth = Math.min(srcW, 640);
         const workingScale = workingWidth / srcW;
         const w = workingWidth;
         const h = Math.floor(srcH * workingScale);
-        
         const workingGray = new Uint8Array(w * h);
         const blurred = new Uint8Array(w * h);
 
-        // Fast Downsample + Grayscale
         for (let py = 0; py < h; py++) {
             const srcY = Math.floor(py / workingScale);
             const pyW = py * w;
@@ -361,7 +363,6 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
             }
         }
 
-        // Fast 3x3 Box Blur
         for (let py = 1; py < h - 1; py++) {
             const pyW = py * w;
             for (let px = 1; px < w - 1; px++) {
@@ -378,27 +379,21 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
         const skip = edgeDetection ? 1 : 2;
 
         if (edgeDetection) {
-            // 2. High-Detail Sobel on Working Buffer
             for (let py = 1; py < h - 1; py += skip) {
                 const pyW = py * w;
                 for (let px = 1; px < w - 1; px += skip) {
                     const idx = pyW + px;
-                    
                     const gx = (blurred[idx - w + 1] + 2 * blurred[idx + 1] + blurred[idx + w + 1]) - 
                                (blurred[idx - w - 1] + 2 * blurred[idx - 1] + blurred[idx + w - 1]);
                     const gy = (blurred[idx - w - 1] + 2 * blurred[idx - w] + blurred[idx - w + 1]) - 
                                (blurred[idx + w - 1] + 2 * blurred[idx + w] + blurred[idx + w + 1]);
-                    
                     const magnitude = Math.sqrt(gx * gx + gy * gy) / 4;
-
                     if (magnitude > threshold) {
                         const lx = (px / w * 2 - 1) * scale + x;
                         const ly = (1 - py / h * 2) * scale + y;
-                        
                         const srcX = Math.floor(px / workingScale);
                         const srcY = Math.floor(py / workingScale);
                         const dIdx = (srcY * srcW + srcX) * 4;
-
                         candidatePoints.push({
                             x: lx, y: ly,
                             px: px, py: py,
@@ -411,7 +406,6 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
                 }
             }
         } else {
-            // Basic Threshold Mode
             for (let py = 0; py < h; py += 2) {
                 const pyW = py * w;
                 for (let px = 0; px < w; px += 2) {
@@ -439,24 +433,18 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
             return { points: [{ x: 0, y: 0, r: 0, g: 0, b: 0, blanking: true }] };
         }
 
-        // 3. Path Optimization (Greedy Nearest Neighbor in working pixel space)
         const optimizedPoints = [];
-        const maxPoints = 4000;
+        const maxPoints = 2000;
         let actualPoints = candidatePoints.length > maxPoints ? candidatePoints.filter((_, i) => i % Math.ceil(candidatePoints.length / maxPoints) === 0) : candidatePoints;
-        
         let currentP = actualPoints[0];
         optimizedPoints.push(currentP);
-        
-        // Use a more efficient way to track remaining points than splice(idx, 1)
-        // We'll move used points to the end or use a swap-to-last strategy
         let remainingCount = actualPoints.length - 1;
-        actualPoints[0] = actualPoints[remainingCount]; // Replace first with last
+        actualPoints[0] = actualPoints[remainingCount];
 
         while (remainingCount > 0) {
             let closestIdx = -1;
             let minDistSq = Infinity;
-            const searchLimit = Math.min(remainingCount, 500); // Only search a subset for speed if too many
-
+            const searchLimit = Math.min(remainingCount, 500);
             for (let i = 0; i < searchLimit; i++) {
                 const p = actualPoints[i];
                 const dpx = p.px - currentP.px;
@@ -468,19 +456,14 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
                 }
                 if (distSq <= 2) break;
             }
-
             const nextP = actualPoints[closestIdx];
-            
-            // Swap closest with the last remaining element so we can just decrement count
             actualPoints[closestIdx] = actualPoints[remainingCount - 1];
             remainingCount--;
-
             const jumpThreshold = w * 0.15;
             if (minDistSq > (jumpThreshold * jumpThreshold)) {
                 optimizedPoints.push({ ...currentP, r: 0, g: 0, b: 0, blanking: true });
                 optimizedPoints.push({ ...nextP, r: 0, g: 0, b: 0, blanking: true });
             }
-
             optimizedPoints.push(nextP);
             currentP = nextP;
         }
@@ -490,7 +473,7 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
             optimizedPoints.push({ ...last, r: 0, g: 0, b: 0, blanking: true });
         }
 
-        return { points: optimizedPoints };
+        return { points: applyRenderingStyle(optimizedPoints, params) };
     } catch (error) {
         console.error('Error in generateNdiSource:', error);
         throw error;
@@ -510,10 +493,11 @@ export async function generateSpoutReceiver(params, fontBuffer) {
         });
         
         const textParams = {
+            ...params,
             text: sourceName || 'Spout Input',
             x, y, r, g, b,
             fontSize: 72 * scale,
-            numPoints: 200
+            numPoints: 100
         };
         
         return await generateText(textParams, fontBuffer);
@@ -521,4 +505,39 @@ export async function generateSpoutReceiver(params, fontBuffer) {
         console.error('Error in generateSpoutReceiver:', error);
         throw error;
     }
+}
+
+export function generateSinewave(params) {
+  try {
+    const { amplitude, frequency, phase, width, numPoints, x, y, r, g, b } = withDefaults(params, {
+      amplitude: 0.5,
+      frequency: 1,
+      phase: 0,
+      width: 2.0,
+      numPoints: 50,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255
+    });
+
+    const points = [];
+    const startX = -width / 2;
+    for (let i = 0; i <= numPoints; i++) {
+      const t = i / numPoints;
+      const curX = startX + t * width;
+      const curY = amplitude * Math.sin(frequency * (curX * Math.PI) + phase);
+      points.push({
+        x: curX + x,
+        y: curY + y,
+        r, g, b
+      });
+    }
+
+    return { points: applyRenderingStyle(points, params) };
+  } catch (error) {
+    console.error('Error in generateSinewave:', error);
+    throw error;
+  }
 }

@@ -110,22 +110,31 @@ export function optimizePoints(points) {
     const dy = firstPoint.y - prevPoint.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
 
-    // Intelligent loop closure: only jump if needed
-    const isJumpClose = firstPoint.blanking || prevPoint.blanking || dist > JUMP_THRESHOLD;
+    // Intelligent loop closure: 
+    // 1. If points are very close and not blanked, just interpolate without jumping
+    // 2. Otherwise, perform a standard blanked jump
+    const isSeamless = dist < 0.01 && !firstPoint.blanking && !prevPoint.blanking;
+    const isJumpClose = !isSeamless && (firstPoint.blanking || prevPoint.blanking || dist > JUMP_THRESHOLD);
 
-    if (isJumpClose) {
-        push(prevPoint.x, prevPoint.y, prevPoint.z, 0, 0, 0, true);
-        push(prevPoint.x, prevPoint.y, prevPoint.z, 0, 0, 0, true);
+    if (isSeamless) {
+        // Just push the first point again to close the path
+        push(firstPoint.x, firstPoint.y, firstPoint.z, firstPoint.r, firstPoint.g, firstPoint.b, false);
+    } else if (isJumpClose) {
+        // Only perform blanked jump if the distance is significant
+        if (dist > 0.01) {
+            push(prevPoint.x, prevPoint.y, prevPoint.z, 0, 0, 0, true);
+            push(prevPoint.x, prevPoint.y, prevPoint.z, 0, 0, 0, true);
 
-        if (dist > OPT_MAX_DIST) {
-            const steps = Math.floor(dist / OPT_MAX_DIST);
-            for (let s = 1; s < steps; s++) {
-                const t = s / steps;
-                push(prevPoint.x + dx * t, prevPoint.y + dy * t, prevPoint.z + (firstPoint.z - prevPoint.z) * t, 0, 0, 0, true);
+            if (dist > OPT_MAX_DIST) {
+                const steps = Math.floor(dist / OPT_MAX_DIST);
+                for (let s = 1; s < steps; s++) {
+                    const t = s / steps;
+                    push(prevPoint.x + dx * t, prevPoint.y + dy * t, prevPoint.z + (firstPoint.z - prevPoint.z) * t, 0, 0, 0, true);
+                }
             }
-        }
-        for (let d = 0; d < OPT_PATH_DWELL; d++) {
-            push(firstPoint.x, firstPoint.y, firstPoint.z, 0, 0, 0, true);
+            for (let d = 0; d < OPT_PATH_DWELL; d++) {
+                push(firstPoint.x, firstPoint.y, firstPoint.z, 0, 0, 0, true);
+            }
         }
     }
 

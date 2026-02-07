@@ -571,12 +571,12 @@ function buildApplicationMenu(mode) {
     {
       label: 'TrueLazer',
       submenu: [
-        { label: 'About', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
-        { type: 'separator' },
-		{ type: 'Shape Builder', click: () => { if(mainWindow.webContents.send('menu-action', 'shapeBuilder');} },
-		{ type: 'separator' },
-		{ type: 'Timeline Editor', click: () => { if(mainWindow.webContents.send('menu-action', 'timeline');} },
-		{ type: 'separator' },
+                { label: 'About', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
+                { type: 'separator' },
+        		{ label: 'Shape Builder', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'shapeBuilder'); } },
+        		{ type: 'separator' },
+        		{ label: 'Timeline Editor', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'timeline'); } },
+        		{ type: 'separator' },
         { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => { if(mainWindow) mainWindow.webContents.send('new-project'); } },
         { label: 'Open Project', accelerator: 'CmdOrCtrl+O', click: () => { ipcMain.emit('open-project'); } },
         { label: 'Save Project', accelerator: 'CmdOrCtrl+S', click: () => { if(mainWindow) mainWindow.webContents.send('save-project'); } },
@@ -1077,7 +1077,8 @@ function createWindow() {
   try {
     const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
     const buffer = await fs.promises.readFile(fullPath);
-    return buffer;
+    // Explicitly return ArrayBuffer
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   } catch (error) {
     console.error('Error reading file:', error);
     throw error;

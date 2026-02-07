@@ -233,9 +233,11 @@ export const effectDefinitions = [
     description: 'Mirrors the shape from the center.',
     defaultParams: {
       mode: 'none', 
+      additive: true,
     },
     paramControls: [
       { id: 'mode', label: 'Mirror Mode', type: 'select', options: ['none', 'x+', 'x-', 'y+', 'y-'] },
+      { id: 'additive', label: 'Additive', type: 'checkbox' },
     ],
   },
 ];

@@ -483,16 +483,23 @@ function applyStrobe(points, numPoints, params, time) {
 }
 
 function applyMirror(points, numPoints, params) {
-  const { mode } = params;
+  const { mode, additive = true } = params;
   if (mode === 'none' || numPoints === 0) return points;
   
   let newBuffer;
   const distributions = points._channelDistributions;
 
+  const filterPoint = (x, y, mode) => {
+      if (additive) return true;
+      if (mode === 'x+') return x >= 0;
+      if (mode === 'x-') return x <= 0;
+      if (mode === 'y+') return y >= 0;
+      if (mode === 'y-') return y <= 0;
+      return true;
+  };
+
   if (distributions) {
-      // Distribution-aware mirroring (keeps channel points contiguous)
-      // Add 1 blanking bridge point per channel
-      newBuffer = new Float32Array((numPoints * 2 + distributions.size) * 8);
+      newBuffer = new Float32Array((numPoints * 2 + distributions.size * 2 + 50) * 8);
       const newDists = new Map();
       let currentOffset = 0;
 
@@ -500,57 +507,124 @@ function applyMirror(points, numPoints, params) {
           const sliceNumPoints = dist.length / 8;
           const sliceStart = dist.start;
           const targetStart = currentOffset;
+          let keptInSlice = 0;
+          let lastWasIn = true;
 
-          // 1. Copy original slice
-          newBuffer.set(points.subarray(sliceStart, sliceStart + dist.length), currentOffset);
-          currentOffset += dist.length;
-
-          // 2. Insert blanking bridge point (Hint for Optimizer/Hardware)
-          const lastOrigOff = sliceStart + dist.length - 8;
-          newBuffer.set(points.subarray(lastOrigOff, lastOrigOff + 8), currentOffset);
-          newBuffer[currentOffset + 6] = 1; // Blanking = true
-          newBuffer[currentOffset + 3] = 0; // R=0
-          newBuffer[currentOffset + 4] = 0; // G=0
-          newBuffer[currentOffset + 5] = 0; // B=0
-          currentOffset += 8;
-
-          // 3. Append mirrored slice
+          // 1. Original (filtered)
           for (let i = 0; i < sliceNumPoints; i++) {
-              const srcOff = sliceStart + i * 8;
-              const dstOff = currentOffset;
-              newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
-              if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
-              else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff+1] = -newBuffer[dstOff+1];
-              currentOffset += 8;
+              const off = sliceStart + i * 8;
+              const isIn = filterPoint(points[off], points[off+1], mode);
+              if (isIn) {
+                  if (!lastWasIn && keptInSlice > 0) {
+                      newBuffer.set(points.subarray(off, off + 8), currentOffset);
+                      newBuffer[currentOffset + 6] = 1;
+                      newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
+                      currentOffset += 8;
+                      keptInSlice++;
+                  }
+                  newBuffer.set(points.subarray(off, off + 8), currentOffset);
+                  currentOffset += 8;
+                  keptInSlice++;
+              }
+              lastWasIn = isIn;
           }
-          newDists.set(id, { start: targetStart, length: (sliceNumPoints * 2 + 1) * 8 });
+
+          if (keptInSlice > 0) {
+              // 2. Bridge
+              const lastKeptOff = currentOffset - 8;
+              newBuffer.set(newBuffer.subarray(lastKeptOff, lastKeptOff + 8), currentOffset);
+              newBuffer[currentOffset + 6] = 1;
+              newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
+              currentOffset += 8;
+
+              // 3. Mirrored
+              let lastWasInMirror = true;
+              let mirrorKeptCount = 0;
+              for (let i = sliceNumPoints - 1; i >= 0; i--) {
+                  const off = sliceStart + i * 8;
+                  const isIn = filterPoint(points[off], points[off+1], mode);
+                  if (isIn) {
+                      if (!lastWasInMirror && mirrorKeptCount > 0) {
+                          newBuffer.set(points.subarray(off, off + 8), currentOffset);
+                          if (mode === 'x-' || mode === 'x+') newBuffer[currentOffset] = -newBuffer[currentOffset];
+                          else if (mode === 'y-' || mode === 'y+') newBuffer[currentOffset+1] = -newBuffer[currentOffset+1];
+                          newBuffer[currentOffset + 6] = 1;
+                          newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
+                          currentOffset += 8;
+                      }
+                      newBuffer.set(points.subarray(off, off + 8), currentOffset);
+                      const dstOff = currentOffset;
+                      if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
+                      else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff+1] = -newBuffer[dstOff+1];
+                      currentOffset += 8;
+                      mirrorKeptCount++;
+                  }
+                  lastWasInMirror = isIn;
+              }
+              newDists.set(id, { start: targetStart, length: (currentOffset - targetStart) });
+          }
       }
-      newBuffer._channelDistributions = newDists;
+      const finalBuffer = new Float32Array(currentOffset);
+      finalBuffer.set(newBuffer.subarray(0, currentOffset));
+      finalBuffer._channelDistributions = newDists;
+      return finalBuffer;
   } else {
-      // Standard mirroring (additive)
-      // Add 1 blanking point between segments
-      newBuffer = new Float32Array((numPoints * 2 + 1) * 8);
-      newBuffer.set(points.subarray(0, numPoints * 8), 0);
-      
-      // Blanking bridge point
-      const bridgeOff = numPoints * 8;
-      const lastOrigOff = (numPoints - 1) * 8;
-      newBuffer.set(points.subarray(lastOrigOff, lastOrigOff + 8), bridgeOff);
-      newBuffer[bridgeOff + 6] = 1;
-      newBuffer[bridgeOff + 3] = 0;
-      newBuffer[bridgeOff + 4] = 0;
-      newBuffer[bridgeOff + 5] = 0;
+      newBuffer = new Float32Array((numPoints * 2 + 50) * 8);
+      let currentOffset = 0;
+      let keptPoints = 0;
+      let lastWasIn = true;
 
       for (let i = 0; i < numPoints; i++) {
-          const srcOff = i * 8;
-          const dstOff = (numPoints + 1 + i) * 8;
-          newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
-          if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
-          else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff + 1] = -newBuffer[dstOff + 1];
+          const off = i * 8;
+          const isIn = filterPoint(points[off], points[off+1], mode);
+          if (isIn) {
+              if (!lastWasIn && keptPoints > 0) {
+                  newBuffer.set(points.subarray(off, off + 8), currentOffset);
+                  newBuffer[currentOffset+6] = 1;
+                  newBuffer[currentOffset+3] = 0; newBuffer[currentOffset+4] = 0; newBuffer[currentOffset+5] = 0;
+                  currentOffset += 8;
+                  keptPoints++;
+              }
+              newBuffer.set(points.subarray(off, off + 8), currentOffset);
+              currentOffset += 8;
+              keptPoints++;
+          }
+          lastWasIn = isIn;
       }
+
+      if (keptPoints > 0) {
+          const lastKeptOff = currentOffset - 8;
+          newBuffer.set(newBuffer.subarray(lastKeptOff, lastKeptOff + 8), currentOffset);
+          newBuffer[currentOffset+6] = 1;
+          newBuffer[currentOffset+3] = 0; newBuffer[currentOffset+4] = 0; newBuffer[currentOffset+5] = 0;
+          currentOffset += 8;
+
+          let lastWasInMirror = true;
+          let mirrorKeptCount = 0;
+          for (let i = numPoints - 1; i >= 0; i--) {
+              const off = i * 8;
+              const isIn = filterPoint(points[off], points[off+1], mode);
+              if (isIn) {
+                  if (!lastWasInMirror && mirrorKeptCount > 0) {
+                      newBuffer.set(points.subarray(off, off + 8), currentOffset);
+                      if (mode === 'x-' || mode === 'x+') newBuffer[currentOffset] = -newBuffer[currentOffset];
+                      else if (mode === 'y-' || mode === 'y+') newBuffer[currentOffset + 1] = -newBuffer[currentOffset + 1];
+                      newBuffer[currentOffset+6] = 1;
+                      newBuffer[currentOffset+3] = 0; newBuffer[currentOffset+4] = 0; newBuffer[currentOffset+5] = 0;
+                      currentOffset += 8;
+                  }
+                  newBuffer.set(points.subarray(off, off + 8), currentOffset);
+                  const dstOff = currentOffset;
+                  if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
+                  else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff + 1] = -newBuffer[dstOff + 1];
+                  currentOffset += 8;
+                  mirrorKeptCount++;
+              }
+              lastWasInMirror = isIn;
+          }
+      }
+      return newBuffer.slice(0, currentOffset);
   }
-  
-  return newBuffer;
 }
 
 function applyWarp(points, numPoints, params, time) {

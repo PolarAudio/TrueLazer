@@ -97,9 +97,14 @@ const handleFilePathDrop = async (filePath, fileName) => {
   try {
     // Use readFileAsBinary instead of readFileContent
     if (window.electronAPI && window.electronAPI.readFileAsBinary) {
-      const uint8Array = await window.electronAPI.readFileAsBinary(filePath);
-      // Convert Uint8Array to ArrayBuffer - this is much simpler!
-      const arrayBuffer = uint8Array.slice().buffer;
+      const arrayBuffer = await window.electronAPI.readFileAsBinary(filePath);
+      
+      if (!arrayBuffer || !(arrayBuffer instanceof ArrayBuffer)) {
+          console.error('[Clip.jsx] readFileAsBinary did not return an ArrayBuffer:', arrayBuffer);
+          onUnsupportedFile("Error reading file: Invalid data format received.");
+          return;
+      }
+
       console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFilePathDrop): ${arrayBuffer.byteLength}`);
       ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, filePath, layerIndex, colIndex }, [arrayBuffer]);
     } else {
