@@ -29,12 +29,14 @@ const ShapeBuilder = ({ onBack }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, target: null });
+  const [renderTrigger, setRenderTrigger] = useState(0);
 
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const startPosRef = useRef({ x: 0, y: 0 });
   const isMovingPointRef = useRef(false);
   const isMovingShapeRef = useRef(false);
+  const isMovingPivotRef = useRef(false);
   const isRotatingRef = useRef(false);
   const isPanningRef = useRef(false);
   const isSelectingBoxRef = useRef(false);
@@ -53,8 +55,8 @@ const ShapeBuilder = ({ onBack }) => {
       setHistoryStep(newHistory.length - 1);
   };
 
-  const getBoundingBox = (shape) => {
-      const pts = getShapePoints(shape);
+  const getBoundingBox = (shape, includeTransform = true) => {
+      const pts = getShapePoints(shape, includeTransform);
       if (pts.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
       const minX = Math.min(...pts.map(p => p.x));
       const maxX = Math.max(...pts.map(p => p.x));
@@ -63,17 +65,47 @@ const ShapeBuilder = ({ onBack }) => {
       return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   };
 
+  const bakeTransform = (shape) => {
+      const pts = getSampledPoints(shape);
+      const baked = {
+          ...shape,
+          type: (shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star') ? 'polygon' : shape.type,
+          points: pts,
+          rotationX: 0, rotationY: 0, rotationZ: 0,
+          scaleX: 1, scaleY: 1
+      };
+      if (baked.start) delete baked.start;
+      if (baked.end) delete baked.end;
+      if (baked.width) delete baked.width;
+      if (baked.height) delete baked.height;
+      if (baked.pivotX) delete baked.pivotX;
+      if (baked.pivotY) delete baked.pivotY;
+      return baked;
+  };
+
   const groupShapes = () => {
       if (selectedShapeIndexes.length < 2) return;
       const newFrames = [...frames];
       const currentShapes = [...newFrames[currentFrameIndex]];
-      const selected = selectedShapeIndexes.sort((a, b) => b - a).map(idx => currentShapes.splice(idx, 1)[0]);
-      currentShapes.push({
+      
+      // Bake transforms of selected shapes before grouping so they move as one relative to the group
+      const selected = selectedShapeIndexes
+          .sort((a, b) => b - a)
+          .map(idx => bakeTransform(currentShapes.splice(idx, 1)[0]));
+      
+      const newGroup = {
           type: 'group',
           shapes: selected.reverse(),
           color: selected[0].color,
           scaleX: 1, scaleY: 1, rotationX: 0, rotationY: 0, rotationZ: 0
-      });
+      };
+
+      // Calculate initial pivot at collective center
+      const center = getShapeCenter(newGroup);
+      newGroup.pivotX = center.x;
+      newGroup.pivotY = center.y;
+
+      currentShapes.push(newGroup);
       newFrames[currentFrameIndex] = currentShapes;
       setFrames(newFrames);
       recordHistory(newFrames);
@@ -87,7 +119,21 @@ const ShapeBuilder = ({ onBack }) => {
       const newFrames = [...frames];
       const currentShapes = [...newFrames[currentFrameIndex]];
       currentShapes.splice(selectedShapeIndexes[0], 1);
-      currentShapes.push(...group.shapes);
+      
+      // When ungrouping, we might want to keep the group's transforms? 
+      // For now, let's keep it simple: ungrouping results in shapes with group transforms baked in.
+      const bakedSubShapes = group.shapes.map(s => {
+          // Temporarily apply group transforms to child and bake
+          const pts = applyTransformations(getSampledPoints(s), group);
+          return {
+              ...s,
+              points: pts,
+              rotationX: 0, rotationY: 0, rotationZ: 0,
+              scaleX: 1, scaleY: 1
+          };
+      });
+
+      currentShapes.push(...bakedSubShapes);
       newFrames[currentFrameIndex] = currentShapes;
       setFrames(newFrames);
       recordHistory(newFrames);
@@ -136,33 +182,54 @@ const ShapeBuilder = ({ onBack }) => {
       return isInside;
   };
 
-  const getShapeCenter = (shape) => {
+  const getShapeCenter = (shape, includeTransform = false) => {
       if (!shape) return { x: 500, y: 500 };
-      if (shape.type === 'rect') return { x: shape.start.x + shape.width / 2, y: shape.start.y + shape.height / 2 };
-      if (shape.type === 'circle' || shape.type === 'star') return shape.start;
-      if (shape.type === 'line') return { x: (shape.start.x + shape.end.x) / 2, y: (shape.start.y + shape.end.y) / 2 };
+      if (shape.type === 'rect' && !includeTransform) return { x: shape.start.x + shape.width / 2, y: shape.start.y + shape.height / 2 };
+      if ((shape.type === 'circle' || shape.type === 'star') && !includeTransform) return shape.start;
+      if (shape.type === 'line' && !includeTransform) return { x: (shape.start.x + shape.end.x) / 2, y: (shape.start.y + shape.end.y) / 2 };
+      
+      const pts = getShapePoints(shape, includeTransform);
+      if (pts.length === 0) return { x: 500, y: 500 };
+      const sum = pts.reduce((acc, p) => ({ x: acc.x + (p.x || 0), y: acc.y + (p.y || 0) }), { x: 0, y: 0 });
+      return { x: sum.x / pts.length, y: sum.y / pts.length };
+  };
+
+  const getPointByPath = (shape, path) => {
+      if (!path || !shape) return null;
+      const p = Array.isArray(path) ? path : [path];
       if (shape.type === 'group') {
-          if (!shape.shapes || shape.shapes.length === 0) return { x: 500, y: 500 };
-          const centers = shape.shapes.map(getShapeCenter).filter(c => !!c);
-          if (centers.length === 0) return { x: 500, y: 500 };
-          return {
-              x: centers.reduce((sum, c) => sum + (c.x || 0), 0) / centers.length,
-              y: centers.reduce((sum, c) => sum + (c.y || 0), 0) / centers.length
-          };
+          return getPointByPath(shape.shapes[p[0]], p.slice(1));
       }
-      if (shape.points && shape.points.length > 0) {
-          const validPoints = shape.points.filter(p => !!p);
-          if (validPoints.length === 0) return { x: 500, y: 500 };
-          const sum = validPoints.reduce((acc, p) => ({ x: acc.x + (p.x || 0), y: acc.y + (p.y || 0) }), { x: 0, y: 0 });
-          return { x: sum.x / validPoints.length, y: sum.y / validPoints.length };
+      const idx = p[0];
+      if (shape.type === 'line') return idx === 0 ? shape.start : shape.end;
+      if (shape.type === 'rect') {
+          const pts = [
+              shape.start, 
+              { x: shape.start.x + shape.width, y: shape.start.y },
+              { x: shape.start.x + shape.width, y: shape.start.y + shape.height },
+              { x: shape.start.x, y: shape.start.y + shape.height }
+          ];
+          return pts[idx];
       }
-      return { x: 500, y: 500 };
+      if (shape.type === 'circle' || shape.type === 'star') {
+          const pts = [shape.start, { x: shape.end.x, y: shape.start.y }, { x: shape.start.x, y: shape.end.y }];
+          return pts[idx];
+      }
+      return shape.points ? shape.points[idx] : null;
+  };
+
+  const getShapePivot = (shape) => {
+      if (!shape) return { x: 500, y: 500 };
+      if (shape.pivotX !== undefined && shape.pivotY !== undefined) {
+          return { x: shape.pivotX, y: shape.pivotY };
+      }
+      return getShapeCenter(shape);
   };
 
   const applyTransformations = useCallback((pts, shape) => {
     if (!pts || pts.length === 0 || !shape) return pts;
     
-    const center = getShapeCenter(shape);
+    const pivot = getShapePivot(shape);
     const sX = shape.scaleX ?? 1;
     const sY = shape.scaleY ?? 1;
     const rotX = shape.rotationX || 0;
@@ -172,8 +239,8 @@ const ShapeBuilder = ({ onBack }) => {
     if (sX === 1 && sY === 1 && rotX === 0 && rotY === 0 && rotZ === 0) return pts;
 
     return pts.map(p => {
-        let x = p.x - center.x;
-        let y = p.y - center.y;
+        let x = p.x - pivot.x;
+        let y = p.y - pivot.y;
         let z = p.z || 0;
 
         // Scale
@@ -201,7 +268,7 @@ const ShapeBuilder = ({ onBack }) => {
             x = nx; z = nz;
         }
 
-        return { ...p, x: center.x + x, y: center.y + y, z };
+        return { ...p, x: pivot.x + x, y: pivot.y + y, z };
     });
   }, []);
 
@@ -259,7 +326,7 @@ const ShapeBuilder = ({ onBack }) => {
     return applyTransformations(pts, shape);
   }, [applyTransformations]);
 
-  const getShapePoints = useCallback((shape) => {
+  const getShapePoints = useCallback((shape, includeTransform = true) => {
     if (!shape) return [];
     let pts = [];
     if (shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline' || shape.type === 'bezier') pts = shape.points || [];
@@ -273,25 +340,48 @@ const ShapeBuilder = ({ onBack }) => {
         pts = [shape.start, { x: shape.end.x, y: shape.start.y }, { x: shape.start.x, y: shape.end.y }];
     }
     else if (shape.type === 'group') {
-        shape.shapes.forEach(s => pts.push(...getShapePoints(s)));
+        shape.shapes.forEach(s => pts.push(...getShapePoints(s, true)));
     }
 
-    // IMPORTANT: For points (handles), we WANT transformed coordinates so they overlap with the rendered lines
+    if (!includeTransform) return pts;
     return applyTransformations(pts, shape);
   }, [applyTransformations]);
 
-  const isHit = (shape, mouse, isSelected) => {
+  const isHit = (shape, mouse, isSelected, pointSelection = [], pathPrefix = []) => {
+      if (shape.hidden || shape.locked) return null;
       const threshold = 15 / zoom; 
       const center = getShapeCenter(shape);
+      const pivot = getShapePivot(shape);
       
+      // High-priority hit test for pivot handle (if selected)
+      if (isSelected && getDistance(pivot, mouse) < 15 / zoom) return { type: 'pivot' };
+
       // High-priority hit test for center handle (if selected)
       if (isSelected && getDistance(center, mouse) < 20 / zoom) return { type: 'shape' };
 
+      // Recursively check for point hits in groups
+      if (shape.type === 'group') {
+          for (let i = shape.shapes.length - 1; i >= 0; i--) {
+              const hit = isHit(shape.shapes[i], mouse, true, pointSelection, [...pathPrefix, i]);
+              if (hit && hit.type === 'point') return hit;
+          }
+      }
+
       const pts = getShapePoints(shape);
-      
-      // Check points (handles)
-      for (let i = 0; i < pts.length; i++) {
-          if (getDistance(pts[i], mouse) < threshold) return { type: 'point', index: i };
+      // Check points (handles) - skip for groups as we handled it above recursively
+      if (shape.type !== 'group') {
+          const hits = [];
+          for (let i = 0; i < pts.length; i++) {
+              if (getDistance(pts[i], mouse) < threshold) {
+                  hits.push({ type: 'point', index: i, path: [...pathPrefix, i] });
+              }
+          }
+          
+          if (hits.length > 0) {
+              // Selection Cycling: Prefer first point that is NOT already selected
+              const unselected = hits.find(h => !pointSelection.some(sel => JSON.stringify(sel) === JSON.stringify(h.path)));
+              return unselected || hits[0];
+          }
       }
 
       // Check shape body/segments using sampled points for curves
@@ -325,7 +415,38 @@ const ShapeBuilder = ({ onBack }) => {
       };
   }, [zoom, pan]);
 
-  const snap = useCallback((val) => snapToGrid ? Math.round(val / gridSize) * gridSize : val, [snapToGrid, gridSize]);
+  const snap = useCallback((x, y, excludePaths = []) => {
+      if (!snapToGrid) return { x, y };
+      
+      const pointSnapThreshold = 10 / zoom;
+      let bestPoint = null;
+      let minPointDist = pointSnapThreshold;
+
+      // 1. Try snapping to other points
+      shapes.forEach((shape, sIdx) => {
+          if (shape.hidden) return;
+          const pts = getShapePoints(shape);
+          pts.forEach((p, pIdx) => {
+              const ptPath = [sIdx, pIdx];
+              const isExcluded = excludePaths.some(ep => JSON.stringify(ep) === JSON.stringify(ptPath));
+              if (isExcluded) return;
+
+              const d = getDistance({ x, y }, p);
+              if (d < minPointDist) {
+                  minPointDist = d;
+                  bestPoint = { x: p.x, y: p.y };
+              }
+          });
+      });
+
+      if (bestPoint) return bestPoint;
+
+      // 2. Fallback to absolute grid snapping
+      return {
+          x: Math.round(x / gridSize) * gridSize,
+          y: Math.round(y / gridSize) * gridSize
+      };
+  }, [snapToGrid, gridSize, shapes, zoom, getShapePoints]);
 
   // --- ACTIONS ---
   const handleWheel = (e) => { 
@@ -342,9 +463,9 @@ const ShapeBuilder = ({ onBack }) => {
       }
       const mouse = screenToWorld(e.clientX, e.clientY);
       for (let i = shapes.length - 1; i >= 0; i--) {
-          const hit = isHit(shapes[i], mouse, selectedShapeIndexes.includes(i));
+          const hit = isHit(shapes[i], mouse, selectedShapeIndexes.includes(i), selectedPointIndexes);
           if (hit) {
-              setContextMenu({ visible: true, x: e.clientX, y: e.clientY, target: { ...hit, shapeIndex: i } });
+              setContextMenu({ visible: true, x: e.clientX, y: e.clientY, target: { ...hit, shapeIndex: i, pos: mouse } });
               if (!selectedShapeIndexes.includes(i)) setSelectedShapeIndexes([i]);
               return;
           }
@@ -353,44 +474,62 @@ const ShapeBuilder = ({ onBack }) => {
   };
 
   const deletePoint = () => {
-      if (!contextMenu.target || contextMenu.target.type !== 'point') return;
-      const { shapeIndex, index: pointIndex } = contextMenu.target;
-      const newFrames = [...frames]; const currentShapes = [...newFrames[currentFrameIndex]];
-      const shape = { ...currentShapes[shapeIndex] };
-      
-      if (shape.points) {
-          let newPts = [...shape.points];
-          if (shape.type === 'bezier') {
-              // Beziers are tricky. If we delete a point, we should probably delete the segment it belongs to.
-              // Or if it's an endpoint, remove it and its control point.
-              if (pointIndex % 2 === 0) { // Endpoint
-                  if (pointIndex === 0) {
-                      newPts.splice(0, 2); // Remove start and first CP
-                  } else {
-                      newPts.splice(pointIndex - 1, 2); // Remove end and its CP
-                  }
-              } else { // Control point
-                  newPts.splice(pointIndex - 1, 2); // Remove CP and following end point
-              }
-          } else {
-              newPts = shape.points.filter((_, idx) => idx !== pointIndex);
-          }
+      const pointSelection = selectedPointIndexes.length > 0 ? selectedPointIndexes : (contextMenu.target?.type === 'point' ? [contextMenu.target.path || [contextMenu.target.index]] : []);
+      if (pointSelection.length === 0) return;
 
-          if (newPts.length < 2) { 
-              currentShapes.splice(shapeIndex, 1);
-              setSelectedShapeIndexes([]); 
-          } else { 
-              shape.points = newPts; 
-              currentShapes[shapeIndex] = shape; 
-          }
-      } else { 
-          currentShapes.splice(shapeIndex, 1);
-          setSelectedShapeIndexes([]); 
-      }
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
       
-      newFrames[currentFrameIndex] = currentShapes;
-      setFrames(newFrames);
-      recordHistory(newFrames);
+      // Group selection by top-level shape index
+      const selectionByShape = {};
+      pointSelection.forEach(p => {
+          const path = Array.isArray(p) ? p : [p];
+          if (selectedShapeIndexes.length === 1) {
+              const sIdx = selectedShapeIndexes[0];
+              if (!selectionByShape[sIdx]) selectionByShape[sIdx] = [];
+              selectionByShape[sIdx].push(path);
+          } else if (contextMenu.target?.shapeIndex !== undefined) {
+              const sIdx = contextMenu.target.shapeIndex;
+              if (!selectionByShape[sIdx]) selectionByShape[sIdx] = [];
+              selectionByShape[sIdx].push(path);
+          }
+      });
+
+      const deepDelete = (item, paths) => {
+          if (item.type === 'group') {
+              item.shapes = item.shapes.map((s, i) => {
+                  const subPaths = paths.filter(p => p[0] === i).map(p => p.slice(1));
+                  if (subPaths.length > 0) return deepDelete({ ...s }, subPaths);
+                  return s;
+              }).filter(s => !!s);
+              return item.shapes.length > 0 ? item : null;
+          } else {
+              if (!item.points) return null;
+              const indicesToDelete = paths.map(p => p[0]);
+              const newPts = item.points.filter((_, i) => !indicesToDelete.includes(i));
+              if (newPts.length < 2) return null;
+              return { ...item, points: newPts };
+          }
+      };
+
+      let changed = false;
+      Object.keys(selectionByShape).forEach(sIdx => {
+          const idx = parseInt(sIdx);
+          const result = deepDelete(currentShapes[idx], selectionByShape[sIdx]);
+          if (result) {
+              currentShapes[idx] = result;
+          } else {
+              currentShapes.splice(idx, 1);
+          }
+          changed = true;
+      });
+
+      if (changed) {
+          newFrames[currentFrameIndex] = currentShapes;
+          setFrames(newFrames);
+          recordHistory(newFrames);
+          setSelectedPointIndexes([]);
+      }
       setContextMenu({ visible: false, x: 0, y: 0, target: null });
   };
 
@@ -458,6 +597,102 @@ const ShapeBuilder = ({ onBack }) => {
       setContextMenu({ visible: false, x: 0, y: 0, target: null });
   };
 
+  const convertToPoints = () => {
+      if (!contextMenu.target || contextMenu.target.shapeIndex === undefined) return;
+      const { shapeIndex } = contextMenu.target;
+      const newFrames = [...frames]; const currentShapes = [...newFrames[currentFrameIndex]];
+      const shape = currentShapes[shapeIndex];
+      
+      if (['rect', 'circle', 'star', 'line'].includes(shape.type)) {
+          const sampled = getSampledPoints(shape);
+          const newShape = {
+              type: shape.type === 'line' ? 'polyline' : 'polygon',
+              color: shape.color,
+              renderMode: shape.renderMode || 'simple',
+              points: sampled,
+              rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
+          };
+          currentShapes[shapeIndex] = newShape;
+          newFrames[currentFrameIndex] = currentShapes;
+          setFrames(newFrames);
+          recordHistory(newFrames);
+      }
+      setContextMenu({ visible: false, x: 0, y: 0, target: null });
+  };
+
+  const resetPivot = () => {
+      if (selectedShapeIndexes.length === 0) return;
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
+      selectedShapeIndexes.forEach(idx => {
+          const shape = { ...currentShapes[idx] };
+          delete shape.pivotX;
+          delete shape.pivotY;
+          currentShapes[idx] = shape;
+      });
+      newFrames[currentFrameIndex] = currentShapes;
+      setFrames(newFrames);
+      recordHistory(newFrames);
+      setContextMenu({ visible: false, x: 0, y: 0, target: null });
+  };
+
+  const selectOddPoints = () => {
+      if (selectedShapeIndexes.length !== 1) return;
+      const shape = shapes[selectedShapeIndexes[0]];
+      if (!shape || !shape.points) return;
+      const newSelection = [];
+      for (let i = 1; i < shape.points.length; i += 2) newSelection.push(i);
+      setSelectedPointIndexes(newSelection);
+  };
+
+  const selectEvenPoints = () => {
+      if (selectedShapeIndexes.length !== 1) return;
+      const shape = shapes[selectedShapeIndexes[0]];
+      if (!shape || !shape.points) return;
+      const newSelection = [];
+      for (let i = 0; i < shape.points.length; i += 2) newSelection.push(i);
+      setSelectedPointIndexes(newSelection);
+  };
+
+  const invertPointSelection = () => {
+      if (selectedShapeIndexes.length !== 1) return;
+      const shape = shapes[selectedShapeIndexes[0]];
+      if (!shape || !shape.points) return;
+      const newSelection = [];
+      for (let i = 0; i < shape.points.length; i++) {
+          if (!selectedPointIndexes.includes(i)) newSelection.push(i);
+      }
+      setSelectedPointIndexes(newSelection);
+  };
+
+  const expandPointSelection = () => {
+      if (selectedShapeIndexes.length !== 1 || selectedPointIndexes.length === 0) return;
+      const shape = shapes[selectedShapeIndexes[0]];
+      if (!shape || !shape.points) return;
+      const newSelection = new Set(selectedPointIndexes);
+      selectedPointIndexes.forEach(idx => {
+          if (idx > 0) newSelection.add(idx - 1);
+          if (idx < shape.points.length - 1) newSelection.add(idx + 1);
+          if (shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star') {
+              if (idx === 0) newSelection.add(shape.points.length - 1);
+              if (idx === shape.points.length - 1) newSelection.add(0);
+          }
+      });
+      setSelectedPointIndexes(Array.from(newSelection).sort((a,b) => a-b));
+  };
+
+  const shrinkPointSelection = () => {
+      if (selectedShapeIndexes.length !== 1 || selectedPointIndexes.length === 0) return;
+      const shape = shapes[selectedShapeIndexes[0]];
+      if (!shape || !shape.points) return;
+      const newSelection = selectedPointIndexes.filter(idx => {
+          const prev = (idx === 0 && (shape.type === 'polygon' || shape.type === 'rect')) ? shape.points.length - 1 : idx - 1;
+          const next = (idx === shape.points.length - 1 && (shape.type === 'polygon' || shape.type === 'rect')) ? 0 : idx + 1;
+          return selectedPointIndexes.includes(prev) && selectedPointIndexes.includes(next);
+      });
+      setSelectedPointIndexes(newSelection);
+  };
+
   const handleImportImage = async () => {
       if (!window.electronAPI) return;
       const path = await window.electronAPI.showOpenDialog({ 
@@ -475,92 +710,555 @@ const ShapeBuilder = ({ onBack }) => {
   };
 
   const joinPoints = () => {
-      // We need exactly 2 points selected to join them
-      if (selectedPointIndexes.length !== 2) {
-          alert("Select exactly 2 points to join them (Shift+Click)");
-          return;
+      if (selectedShapeIndexes.length === 0) return;
+      
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
+      const JOIN_THRESHOLD = 15 / zoom; // Use a visual threshold
+      
+      // Helper to ensure a shape is point-based and open (for merging)
+      const toOpenPath = (s) => {
+          let pts = [];
+          if (s.points) {
+              pts = [...s.points];
+          } else {
+              pts = getSampledPoints(s);
+          }
+          return {
+              ...s,
+              type: 'polyline',
+              points: pts,
+              rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
+          };
+      };
+
+      if (selectedShapeIndexes.length === 1) {
+          // Join within a single shape
+          const idx = selectedShapeIndexes[0];
+          const shape = { ...currentShapes[idx] };
+          
+          // Ensure it's point-based
+          if (!shape.points) {
+              shape.points = getSampledPoints(shape);
+              shape.rotationX = 0; shape.rotationY = 0; shape.rotationZ = 0; shape.scaleX = 1; shape.scaleY = 1;
+          }
+
+          if (selectedPointIndexes.length === 2) {
+              // Connect two specific points by making them the "closing" segment
+              const [i1, i2] = [...selectedPointIndexes].sort((a, b) => a - b);
+              const newPts = [];
+              const len = shape.points.length;
+              // Reorder so the gap is between i2 and i1
+              for (let i = 0; i < len; i++) {
+                  newPts.push(shape.points[(i1 + i) % len]);
+              }
+              shape.points = newPts;
+              shape.type = 'polygon';
+          } else {
+              // Just close the shape
+              shape.type = 'polygon';
+          }
+          currentShapes[idx] = shape;
+      } else {
+          // Join multiple shapes
+          const sortedSelectedIdxs = [...selectedShapeIndexes].sort((a, b) => b - a);
+          const shapesToMerge = sortedSelectedIdxs.map(idx => toOpenPath(currentShapes.splice(idx, 1)[0]));
+          
+          if (shapesToMerge.length > 0) {
+              let merged = shapesToMerge.pop();
+              
+              while (shapesToMerge.length > 0) {
+                  let bestDist = Infinity;
+                  let bestIdx = -1;
+                  let mergeType = 'end-end'; // 'end-end' or 'mid-insert'
+                  let reverseMerged = false;
+                  let reverseTarget = false;
+                  let insertIndex = -1;
+
+                  const p1Start = merged.points[0];
+                  const p1End = merged.points[merged.points.length - 1];
+
+                  shapesToMerge.forEach((s, idx) => {
+                      const p2Start = s.points[0];
+                      const p2End = s.points[s.points.length - 1];
+
+                      // 1. Check Endpoint to Endpoint
+                      const dES = getDistance(p1End, p2Start);
+                      const dEE = getDistance(p1End, p2End);
+                      const dSS = getDistance(p1Start, p2Start);
+                      const dSE = getDistance(p1Start, p2End);
+
+                      if (dES < bestDist) { bestDist = dES; bestIdx = idx; mergeType = 'end-end'; reverseMerged = false; reverseTarget = false; }
+                      if (dEE < bestDist) { bestDist = dEE; bestIdx = idx; mergeType = 'end-end'; reverseMerged = false; reverseTarget = true; }
+                      if (dSS < bestDist) { bestDist = dSS; bestIdx = idx; mergeType = 'end-end'; reverseMerged = true; reverseTarget = false; }
+                      if (dSE < bestDist) { bestDist = dSE; bestIdx = idx; mergeType = 'end-end'; reverseMerged = true; reverseTarget = true; }
+
+                      // 2. Check Endpoint (Target) to Midpoint (Merged) - Only if end-to-end is not super close
+                      if (bestDist > JOIN_THRESHOLD) {
+                          for (let i = 0; i < merged.points.length; i++) {
+                              const p = merged.points[i];
+                              const dMidStart = getDistance(p, p2Start);
+                              const dMidEnd = getDistance(p, p2End);
+
+                              if (dMidStart < bestDist) { bestDist = dMidStart; bestIdx = idx; mergeType = 'mid-insert'; insertIndex = i; reverseTarget = false; }
+                              if (dMidEnd < bestDist) { bestDist = dMidEnd; bestIdx = idx; mergeType = 'mid-insert'; insertIndex = i; reverseTarget = true; }
+                          }
+                      }
+                  });
+
+                  if (bestIdx === -1) break; // Should not happen given logic, but safety
+
+                  const target = shapesToMerge.splice(bestIdx, 1)[0];
+                  
+                  if (mergeType === 'end-end') {
+                      if (reverseMerged) merged.points.reverse();
+                      if (reverseTarget) target.points.reverse();
+                      merged.points = [...merged.points, ...target.points];
+                  } else {
+                      // Mid-Insert: Insert target loop into merged at insertIndex
+                      // Path: ... -> P_insert -> [Target Shape] -> P_insert -> ...
+                      if (reverseTarget) target.points.reverse();
+                      
+                      // Construct the spur: Target Points + Back to Start of Target (which is at insertIndex)
+                      // Ideally, laser goes: ... -> P[i] -> T[0] -> ... -> T[last] -> T[...back?] -> P[i] -> ...
+                      // We need to retrace the target shape back to the junction to continue the main path
+                      // Simplified: Just insert the target points, then add the junction point again.
+                      // ... P[i], T[0], T[1]...T[last], P[i], P[i+1] ...
+                      
+                      // Note: We need a 'retrace' of the target if it's a dead end line.
+                      // If Target is A-B, and we attach A to M. Path: M -> A -> B -> A -> M.
+                      // For now, let's just insert: M, T[0]...T[N], T[N-1]...T[0], M (Full retrace)
+                      // Or just: M, T[0]...T[N], M. (Jump back? No, laser must draw)
+                      
+                      // Let's implement full retrace for the inserted segment to ensure continuity
+                      const retrace = [...target.points].reverse();
+                      // Remove first point of retrace (same as last of target) to avoid double point
+                      retrace.shift(); 
+                      
+                      const spur = [...target.points, ...retrace];
+                      
+                      // Insert spur at insertIndex + 1
+                      const head = merged.points.slice(0, insertIndex + 1);
+                      const tail = merged.points.slice(insertIndex + 1);
+                      merged.points = [...head, ...spur, ...tail];
+                  }
+              }
+              
+              currentShapes.push(merged);
+          }
       }
 
-      // This is complex because selectedPointIndexes refers to points within a SINGLE selected shape.
-      // If the user selects points from DIFFERENT shapes, our current state doesn't track that well.
-      // Let's assume for now they are in the same shape, or we need to update selection state.
+      newFrames[currentFrameIndex] = currentShapes;
+      setFrames(newFrames);
+      recordHistory(newFrames);
+      setSelectedShapeIndexes([currentShapes.length - 1]);
+      setSelectedPointIndexes([]);
+  };
+
+  const subdividePoints = (points, smooth = false, closed = false) => {
+      if (!points || points.length < 2) return points;
+      const newPoints = [];
       
-      // RE-THINK: To join points from different shapes, the user must have multiple shapes selected
-      // and points selected from them. Our current selection state only allows selecting points
-      // from the LAST clicked shape.
-      
-      if (selectedShapeIndexes.length === 1) {
-          const shapeIdx = selectedShapeIndexes[0];
-          const newFrames = [...frames];
-          const shape = { ...newFrames[currentFrameIndex][shapeIdx] };
-          
-          if (shape.type === 'polyline' || shape.type === 'pen' || shape.type === 'polygon') {
-              const p1Idx = selectedPointIndexes[0];
-              const p2Idx = selectedPointIndexes[1];
-              
-              // If it's a polyline and they selected start and end, make it a polygon
-              const isStartEnd = (p1Idx === 0 && p2Idx === shape.points.length - 1) || (p2Idx === 0 && p1Idx === shape.points.length - 1);
-              
-              if (isStartEnd && shape.type !== 'polygon') {
-                  shape.type = 'polygon';
-                  newFrames[currentFrameIndex][shapeIdx] = shape;
-                  setFrames(newFrames);
-                  recordHistory(newFrames);
-                  return;
-              }
-              
-              // Otherwise, just draw a line between them? That's what the tool usually does.
-              // For now, let's just support the start-end join to close shapes.
+      const getPoint = (i) => {
+          if (closed) return points[(i + points.length) % points.length];
+          return points[Math.max(0, Math.min(points.length - 1, i))];
+      };
+
+      for (let i = 0; i < points.length; i++) {
+          if (!closed && i === points.length - 1) {
+              newPoints.push(points[i]);
+              break;
           }
-      } else if (selectedShapeIndexes.length === 2) {
-          // Join two different shapes
-          const idx1 = selectedShapeIndexes[0];
-          const idx2 = selectedShapeIndexes[1];
-          const newFrames = [...frames];
-          const currentShapes = [...newFrames[currentFrameIndex]];
-          
-          const s1 = currentShapes[idx1];
-          const s2 = currentShapes[idx2];
-          
-          if ((s1.type === 'polyline' || s1.type === 'pen') && (s2.type === 'polyline' || s2.type === 'pen')) {
-              // Merge points. We might need to reverse one to join them at the closest ends.
-              const p1Start = s1.points[0];
-              const p1End = s1.points[s1.points.length - 1];
-              const p2Start = s2.points[0];
-              const p2End = s2.points[s2.points.length - 1];
+
+          const p0 = getPoint(i - 1);
+          const p1 = getPoint(i);
+          const p2 = getPoint(i + 1);
+          const p3 = getPoint(i + 2);
+
+          newPoints.push(p1);
+
+          if (smooth) {
+              // Catmull-Rom spline interpolation at t=0.5
+              // P(t) = 0.5 * ( (2*P1) + (-P0 + P2)*t + (2*P0 - 5*P1 + 4*P2 - P3)*t^2 + (-P0 + 3*P1 - 3*P2 + P3)*t^3 )
+              // For t=0.5:
+              // P(0.5) = 0.5 * ( 2*P1 + 0.5*(-P0 + P2) + 0.25*(2*P0 - 5*P1 + 4*P2 - P3) + 0.125*(-P0 + 3*P1 - 3*P2 + P3) )
+              // Simplified weights:
+              // P0: -0.5*0.5 + 0.25*2 - 0.125 = -0.25 + 0.5 - 0.125 = 0.125 ?? No
+              // Let's use standard basis functions for Catmull-Rom at t=0.5
+              // w0 = -0.5*t^3 + t^2 - 0.5*t
+              // w1 = 1.5*t^3 - 2.5*t^2 + 1
+              // w2 = -1.5*t^3 + 2*t^2 + 0.5*t
+              // w3 = 0.5*t^3 - 0.5*t^2
               
-              const dEndStart = getDistance(p1End, p2Start);
-              const dEndEnd = getDistance(p1End, p2End);
-              const dStartStart = getDistance(p1Start, p2Start);
-              const dStartEnd = getDistance(p1Start, p2End);
+              // t = 0.5:
+              // w0 = -0.0625 + 0.25 - 0.25 = -0.0625
+              // w1 = 0.1875 - 0.625 + 1 = 0.5625
+              // w2 = -0.1875 + 0.5 + 0.25 = 0.5625
+              // w3 = 0.0625 - 0.125 = -0.0625
               
-              let mergedPoints = [];
-              if (dEndStart <= dEndEnd && dEndStart <= dStartStart && dEndStart <= dStartEnd) {
-                  mergedPoints = [...s1.points, ...s2.points];
-              } else if (dEndEnd <= dEndStart && dEndEnd <= dStartStart && dEndEnd <= dStartEnd) {
-                  mergedPoints = [...s1.points, ...[...s2.points].reverse()];
-              } else if (dStartStart <= dEndStart && dStartStart <= dEndEnd && dStartStart <= dStartEnd) {
-                  mergedPoints = [...[...s1.points].reverse(), ...s2.points];
-              } else {
-                  mergedPoints = [...s2.points, ...s1.points];
-              }
+              const w0 = -0.0625;
+              const w1 = 0.5625;
+              const w2 = 0.5625;
+              const w3 = -0.0625;
               
-              const mergedShape = { ...s1, points: mergedPoints };
+              const x = w0 * p0.x + w1 * p1.x + w2 * p2.x + w3 * p3.x;
+              const y = w0 * p0.y + w1 * p1.y + w2 * p2.y + w3 * p3.y;
               
-              // Remove old shapes and add merged one
-              const highIdx = Math.max(idx1, idx2);
-              const lowIdx = Math.min(idx1, idx2);
-              currentShapes.splice(highIdx, 1);
-              currentShapes.splice(lowIdx, 1);
-              currentShapes.push(mergedShape);
+              // Interpolate color linearly
+              const c1 = hexToRgb(p1.color || '#ffffff');
+              const c2 = hexToRgb(p2.color || '#ffffff');
+              const r = Math.round((c1.r + c2.r) / 2);
+              const g = Math.round((c1.g + c2.g) / 2);
+              const b = Math.round((c1.b + c2.b) / 2);
+              const color = `rgb(${r},${g},${b})`; // Or hex
               
-              newFrames[currentFrameIndex] = currentShapes;
-              setFrames(newFrames);
-              recordHistory(newFrames);
-              setSelectedShapeIndexes([currentShapes.length - 1]);
-              setSelectedPointIndexes([]);
+              newPoints.push({ x, y, color: p1.color }); // Simplified color inheritance
+          } else {
+              // Linear midpoint
+              const midX = (p1.x + p2.x) / 2;
+              const midY = (p1.y + p2.y) / 2;
+              newPoints.push({ x: midX, y: midY, color: p1.color });
           }
       }
+      return newPoints;
+  };
+
+  const subdivideShape = (smooth = false) => {
+      if (selectedShapeIndexes.length === 0) return;
+      
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
+      let changed = false;
+
+      // Helper to check if a segment between i and i+1 should be subdivided
+      const shouldSubdivideSegment = (i, len, selectedIndices) => {
+          if (!selectedIndices || selectedIndices.length === 0) return true; // No selection -> all
+          const idx1 = i;
+          const idx2 = (i + 1) % len;
+          // Check if both points of the segment are selected
+          return selectedIndices.includes(idx1) && selectedIndices.includes(idx2);
+      };
+
+      selectedShapeIndexes.forEach(idx => {
+          const shape = { ...currentShapes[idx] };
+          
+          // Get selected point indices for this shape
+          let selectedIndices = [];
+          if (selectedPointIndexes.length > 0) {
+              selectedPointIndexes.forEach(p => {
+                  const path = Array.isArray(p) ? p : [p];
+                  // Assuming top level shape or need recursive check? 
+                  // For simple shapes, path is [index].
+                  // For now let's handle simple top level shapes.
+                  if (path.length === 1) selectedIndices.push(path[0]);
+              });
+          }
+
+          if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
+              // Custom subdivision logic based on selection
+              if (selectedIndices.length > 0) {
+                  const oldPts = shape.points;
+                  const newPts = [];
+                  const closed = shape.type === 'polygon';
+                  const len = oldPts.length;
+                  
+                  for (let i = 0; i < len; i++) {
+                      if (!closed && i === len - 1) {
+                          newPts.push(oldPts[i]);
+                          break;
+                      }
+                      
+                      newPts.push(oldPts[i]);
+                      
+                      if (shouldSubdivideSegment(i, len, selectedIndices)) {
+                          const p1 = oldPts[i];
+                          const p2 = oldPts[(i + 1) % len];
+                          
+                          if (smooth) {
+                              // Catmull-Rom logic for single point insert
+                              const getP = (k) => oldPts[(k + len) % len];
+                              const p0 = closed ? getP(i - 1) : (i > 0 ? oldPts[i - 1] : p1); 
+                              const p3 = closed ? getP(i + 2) : (i < len - 2 ? oldPts[i + 2] : p2);
+
+                              // Same weights as before for t=0.5
+                              const w0 = -0.0625, w1 = 0.5625, w2 = 0.5625, w3 = -0.0625;
+                              const x = w0 * p0.x + w1 * p1.x + w2 * p2.x + w3 * p3.x;
+                              const y = w0 * p0.y + w1 * p1.y + w2 * p2.y + w3 * p3.y;
+                              newPts.push({ x, y, color: p1.color });
+                          } else {
+                              const midX = (p1.x + p2.x) / 2;
+                              const midY = (p1.y + p2.y) / 2;
+                              newPts.push({ x: midX, y: midY, color: p1.color });
+                          }
+                      }
+                  }
+                  shape.points = newPts;
+                  currentShapes[idx] = shape;
+                  changed = true;
+              } else {
+                  // No specific points selected, subdivide all
+                  const closed = shape.type === 'polygon';
+                  shape.points = subdividePoints(shape.points, smooth, closed);
+                  currentShapes[idx] = shape;
+                  changed = true;
+              }
+          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect') {
+              // Convert to polygon first
+              const sampled = getSampledPoints(shape);
+              const newShape = {
+                  type: 'polygon',
+                  color: shape.color,
+                  renderMode: shape.renderMode,
+                  points: subdividePoints(sampled, smooth, true), 
+                  rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
+              };
+              currentShapes[idx] = newShape;
+              changed = true;
+          }
+      });
+
+      if (changed) {
+          newFrames[currentFrameIndex] = currentShapes;
+          setFrames(newFrames);
+          recordHistory(newFrames);
+      }
+  };
+
+  const decimateShape = () => {
+      if (selectedShapeIndexes.length === 0) return;
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
+      let changed = false;
+
+      selectedShapeIndexes.forEach(idx => {
+          const shape = { ...currentShapes[idx] };
+          
+          // Get selected point indices for this shape
+          let selectedIndices = [];
+          if (selectedPointIndexes.length > 0) {
+              selectedPointIndexes.forEach(p => {
+                  const path = Array.isArray(p) ? p : [p];
+                  if (path.length === 1) selectedIndices.push(path[0]);
+              });
+          }
+
+          if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
+              if (selectedIndices.length > 0) {
+                  // Sort to ensure alternating logic works
+                  selectedIndices.sort((a, b) => a - b);
+                  // Decimate selection: remove every 2nd point AMONG the selected ones
+                  const toRemove = selectedIndices.filter((_, i) => i % 2 === 1);
+                  
+                  if (shape.points.length - toRemove.length >= 2) {
+                      shape.points = shape.points.filter((_, i) => !toRemove.includes(i));
+                      currentShapes[idx] = shape;
+                      changed = true;
+                  }
+              } else if (shape.points.length > 2) {
+                  shape.points = shape.points.filter((_, i) => i % 2 === 0);
+                  currentShapes[idx] = shape;
+                  changed = true;
+              }
+          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect') {
+              const sampled = getSampledPoints(shape);
+              let newPoints = [];
+              
+              if (selectedIndices.length > 0) {
+                  selectedIndices.sort((a, b) => a - b);
+                  const toRemove = selectedIndices.filter((_, i) => i % 2 === 1);
+                  newPoints = sampled.filter((_, i) => !toRemove.includes(i));
+              } else {
+                  newPoints = sampled.filter((_, i) => i % 2 === 0);
+              }
+
+              if (newPoints.length >= 2) {
+                  const newShape = {
+                      type: 'polygon',
+                      color: shape.color,
+                      renderMode: shape.renderMode,
+                      points: newPoints,
+                      rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
+                  };
+                  currentShapes[idx] = newShape;
+                  changed = true;
+              }
+          }
+      });
+
+      if (changed) {
+          newFrames[currentFrameIndex] = currentShapes;
+          setFrames(newFrames);
+          recordHistory(newFrames);
+          if (selectedPointIndexes.length > 0) setSelectedPointIndexes([]);
+      }
+  };
+
+  const mergePointsInShape = () => {
+      if (selectedShapeIndexes.length === 0) return;
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
+      let changed = false;
+      const threshold = 0.5; // Distance threshold for merging
+
+      selectedShapeIndexes.forEach(idx => {
+          const shape = { ...currentShapes[idx] };
+          let pts = [];
+          
+          if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
+              pts = shape.points;
+          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect') {
+              pts = getSampledPoints(shape);
+              shape.type = 'polygon';
+              shape.rotationX = 0; shape.rotationY = 0; shape.rotationZ = 0; shape.scaleX = 1; shape.scaleY = 1;
+          }
+
+          // Get selected indices
+          let selectedIndices = [];
+          if (selectedPointIndexes.length > 0) {
+              selectedPointIndexes.forEach(p => {
+                  const path = Array.isArray(p) ? p : [p];
+                  if (path.length === 1) selectedIndices.push(path[0]);
+              });
+          }
+
+          if (pts.length > 1) {
+              const merged = [pts[0]];
+              for (let i = 1; i < pts.length; i++) {
+                  // If selection is active, ONLY merge if the current point is selected
+                  // If no selection, merge everything
+                  const isCandidate = selectedIndices.length === 0 || selectedIndices.includes(i);
+                  
+                  if (!isCandidate) {
+                      merged.push(pts[i]);
+                  } else {
+                      if (getDistance(pts[i], merged[merged.length - 1]) > threshold) {
+                          merged.push(pts[i]);
+                      }
+                  }
+              }
+              // Check last vs first if closed
+              if (shape.type === 'polygon' && merged.length > 2) {
+                  // Only merge last point if it is a candidate
+                  const isLastCandidate = selectedIndices.length === 0 || selectedIndices.includes(pts.length - 1); // Mapping might be off if we removed points, but we use original index logic conceptually. 
+                  // Actually, 'merged' contains new points. We should check if the LAST point in 'merged' is close to FIRST.
+                  // And we only remove it if it was originally selected? That's hard to track.
+                  // Simplified: Just check distance.
+                  if (getDistance(merged[merged.length - 1], merged[0]) < threshold) {
+                      // Remove last point if we are allowed to
+                      if (selectedIndices.length === 0) {
+                          merged.pop();
+                      } else {
+                          // Check if the original point corresponding to this last point was selected
+                          // This is complex because 'i' is gone.
+                          // Let's just allow it for now or skip. 
+                          // Better: Re-run strict selection check?
+                          // Let's just pop it. Merging start/end is usually desired.
+                          merged.pop();
+                      }
+                  }
+              }
+              
+              if (merged.length !== pts.length) {
+                  shape.points = merged;
+                  currentShapes[idx] = shape;
+                  changed = true;
+              }
+          }
+      });
+
+      if (changed) {
+          newFrames[currentFrameIndex] = currentShapes;
+          setFrames(newFrames);
+          recordHistory(newFrames);
+          if (selectedPointIndexes.length > 0) setSelectedPointIndexes([]);
+      }
+  };
+
+  const addCornerPoints = () => {
+      if (selectedShapeIndexes.length === 0) return;
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
+      let changed = false;
+      const thresholdAngle = 150 * (Math.PI / 180); // 150 degrees in radians
+
+      const getAngle = (p1, p2, p3) => {
+          const a = Math.atan2(p1.y - p2.y, p1.x - p2.x);
+          const b = Math.atan2(p3.y - p2.y, p3.x - p2.x);
+          let diff = Math.abs(a - b);
+          if (diff > Math.PI) diff = 2 * Math.PI - diff;
+          return diff; // Returns angle in radians (0 to PI)
+      };
+
+      selectedShapeIndexes.forEach(idx => {
+          const shape = { ...currentShapes[idx] };
+          let pts = [];
+          
+          if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
+              pts = shape.points;
+          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect') {
+              pts = getSampledPoints(shape);
+              shape.type = 'polygon';
+              shape.rotationX = 0; shape.rotationY = 0; shape.rotationZ = 0; shape.scaleX = 1; shape.scaleY = 1;
+          }
+
+          // Get selected indices
+          let selectedIndices = [];
+          if (selectedPointIndexes.length > 0) {
+              selectedPointIndexes.forEach(p => {
+                  const path = Array.isArray(p) ? p : [p];
+                  if (path.length === 1) selectedIndices.push(path[0]);
+              });
+          }
+
+          if (pts.length > 2) {
+              const newPts = [];
+              const closed = shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star';
+              
+              for (let i = 0; i < pts.length; i++) {
+                  newPts.push(pts[i]);
+                  
+                  // If selection is active, only check this vertex if selected
+                  if (selectedIndices.length > 0 && !selectedIndices.includes(i)) continue;
+
+                  // Calculate angle
+                  let pPrev, pNext;
+                  if (i === 0) {
+                      if (closed) pPrev = pts[pts.length - 1];
+                      else continue; // Open path start has no angle
+                  } else {
+                      pPrev = pts[i - 1];
+                  }
+                  
+                  if (i === pts.length - 1) {
+                      if (closed) pNext = pts[0];
+                      else continue; // Open path end has no angle
+                  } else {
+                      pNext = pts[i + 1];
+                  }
+
+                  const angle = getAngle(pPrev, pts[i], pNext);
+                  // Check if angle is sharp (smaller means sharper turn)
+                  // Straight line is PI (180). Sharp turn is < threshold.
+                  if (angle < thresholdAngle) {
+                      // Add duplicate point for dwell
+                      newPts.push({ ...pts[i] });
+                  }
+              }
+              
+              if (newPts.length !== pts.length) {
+                  shape.points = newPts;
+                  currentShapes[idx] = shape;
+                  changed = true;
+              }
+          }
+      });
+
+      if (changed) {
+          newFrames[currentFrameIndex] = currentShapes;
+          setFrames(newFrames);
+          recordHistory(newFrames);
+      }
+      setContextMenu({ visible: false, x: 0, y: 0, target: null });
   };
 
   const importClip = async () => {
@@ -756,17 +1454,13 @@ const ShapeBuilder = ({ onBack }) => {
 
   const pasteShape = () => { 
       if (!shapeClipboard) return; 
-      const { data, sourceFrameIndex } = shapeClipboard;
+      const { data } = shapeClipboard;
       const newItems = Array.isArray(data) ? JSON.parse(JSON.stringify(data)) : [JSON.parse(JSON.stringify(data))];
       
       const newFrames = [...frames]; 
       const ns = [...(newFrames[currentFrameIndex] || [])]; 
       
       newItems.forEach(s => {
-          if (sourceFrameIndex === currentFrameIndex) {
-              if (s.points) s.points.forEach(p => { p.x += 20; p.y += 20; }); 
-              else if (s.start) { s.start.x += 20; s.start.y += 20; s.end.x += 20; s.end.y += 20; }
-          }
           ns.push(s);
       });
 
@@ -823,9 +1517,13 @@ const ShapeBuilder = ({ onBack }) => {
               ns[idx] = applyPropsToShape(ns[idx], props);
           });
           newFrames[currentFrameIndex] = ns; 
-          recordHistory(newFrames);
           return newFrames;
       });
+      // recordHistory will be called by useEffect or manually after the state is settled
+      // But for simple property changes, we should record it.
+      setTimeout(() => {
+          setFrames(f => { recordHistory(f); return f; });
+      }, 0);
   };
 
   const updatePointColor = (c) => { 
@@ -835,64 +1533,121 @@ const ShapeBuilder = ({ onBack }) => {
           const ns = [...newFrames[currentFrameIndex]];
           const idx = selectedShapeIndexes[0];
           if (!ns[idx]) return prev;
-          const s = { ...ns[idx] }; 
-          selectedPointIndexes.forEach(pIdx => { 
-              if (s.points) { 
-                  s.points = [...s.points]; 
-                  if (s.points[pIdx]) {
-                      s.points[pIdx] = { ...s.points[pIdx], color: c }; 
+          
+          let s = { ...ns[idx] }; 
+          selectedPointIndexes.forEach(pData => {
+              const path = Array.isArray(pData) ? pData : [pData];
+              
+              const deepColorUpdate = (item, ptPath, color) => {
+                  if (ptPath.length === 1) {
+                      const pIdx = ptPath[0];
+                      const updated = { ...item };
+                      if (updated.points) {
+                          updated.points = [...updated.points];
+                          updated.points[pIdx] = { ...updated.points[pIdx], color };
+                      } else if (updated.type === 'line') {
+                          if (pIdx === 0) updated.startColor = color;
+                          else updated.endColor = color;
+                      } else if (updated.type === 'rect') {
+                          updated.cornerColors = [...(updated.cornerColors || [updated.color, updated.color, updated.color, updated.color])];
+                          updated.cornerColors[pIdx] = color;
+                      } else if (updated.type === 'circle' || updated.type === 'star') {
+                          if (pIdx === 0) updated.centerColor = color;
+                          else updated.outerColor = color;
+                      }
+                      return updated;
+                  } else {
+                      const [currIdx, ...rest] = ptPath;
+                      const updated = { ...item };
+                      updated.shapes = [...updated.shapes];
+                      updated.shapes[currIdx] = deepColorUpdate(updated.shapes[currIdx], rest, color);
+                      return updated;
                   }
-              } 
-              else if (s.type === 'line') { if (pIdx === 0) s.startColor = c; else s.endColor = c; } 
-              else if (s.type === 'rect') { s.cornerColors = s.cornerColors || [s.color, s.color, s.color, s.color]; const cc = [...s.cornerColors]; cc[pIdx] = c; s.cornerColors = cc; } 
-              else if (s.type === 'circle' || s.type === 'star') { if (pIdx === 0) s.centerColor = c; else s.outerColor = c; } 
+              };
+              
+              s = deepColorUpdate(s, path, c);
           }); 
+          
           ns[idx] = s; 
           newFrames[currentFrameIndex] = ns; 
-          recordHistory(newFrames);
           return newFrames;
       });
+      
+      setTimeout(() => {
+          setFrames(f => { recordHistory(f); return f; });
+      }, 0);
   };
 
   const saveAsClip = async () => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
       try {
           const ildaFramesData = frames.map(frameShapes => {
-              const pts = []; frameShapes.forEach(s => {
+              const pts = []; 
+              frameShapes.forEach((s, shapeIdx) => {
                   const mode = s.renderMode || 'simple';
                   const sampledPts = getSampledPoints(s);
                   const process = (p) => ({ ...p, x: (p.x - 500) / 500, y: (1 - p.y / 500) });
+                  const processed = sampledPts.map(process);
                   
-                  if (s.type === 'pen' || s.type === 'polyline' || s.type === 'polygon' || s.type === 'bezier' || s.type === 'rect' || s.type === 'line') {
-                      const processed = sampledPts.map(process);
-                      for (let i = 0; i < processed.length - 1; i++) {
-                          pts.push(...interpolatePoints(processed[i], processed[i+1], mode));
-                      }
-                      if (s.type === 'polygon' || s.type === 'rect') {
-                          pts.push(...interpolatePoints(processed[processed.length-1], processed[0], mode));
-                      }
-                  } else if (s.type === 'circle' || s.type === 'star') {
-                      const processed = sampledPts.map(process);
-                      for (let i = 0; i < processed.length - 1; i++) {
-                          const p = processed[i];
-                          const c = hexToRgb(p.color || s.color);
-                          pts.push({ ...p, r: c.r, g: c.g, b: c.b, blanking: (mode === 'dotted' && i % 2 !== 0) });
+                  if (processed.length < 2) return;
+
+                  const shapePts = [];
+                  for (let i = 0; i < processed.length - 1; i++) {
+                      let segmentMode = mode;
+                      if (mode === 'dashed' && i % 2 === 1) segmentMode = 'blanked';
+
+                      const segmentPoints = interpolatePoints(processed[i], processed[i+1], segmentMode);
+                      
+                      // Add all points except the last one of the segment, unless it's the last segment
+                      if (i < processed.length - 2) {
+                          shapePts.push(...segmentPoints.slice(0, -1));
+                      } else {
+                          shapePts.push(...segmentPoints);
                       }
                   }
-                  if (pts.length > 0) pts[pts.length-1].blanking = true;
-              }); return { points: pts, frameName: 'SHAPE' };
+
+                  if (s.type === 'polygon' || s.type === 'rect' || s.type === 'circle' || s.type === 'star') {
+                      // Close the shape
+                      let segmentMode = mode;
+                      if (mode === 'dashed' && (processed.length - 1) % 2 === 1) segmentMode = 'blanked';
+
+                      const closingPoints = interpolatePoints(processed[processed.length-1], processed[0], segmentMode);
+                      if (closingPoints.length > 1) {
+                          shapePts.push(...closingPoints.slice(1));
+                      }
+                  }
+
+                  // Add shape points to the main list
+                  if (shapePts.length > 0) {
+                      // Add a blanked move-to point at the start of each shape to jump to it
+                      pts.push({ ...shapePts[0], blanking: true });
+                      pts.push(...shapePts);
+                  }
+              }); 
+              return { points: pts, frameName: 'SHAPE' };
           });
           const buffer = framesToIlda(ildaFramesData); await window.electronAPI.saveIldaFile(buffer, 'built_shape.ild');
       } catch (e) { console.error(e); } finally { setIsExporting(false); }
   };
 
-  const interpolatePoints = (p1, p2, mode, spacing = 0.01) => {
-      const dist = getDistance(p1, p2); const points = []; const numPoints = Math.max(2, Math.floor(dist / spacing));
+  const interpolatePoints = (p1, p2, mode) => {
       const c1 = hexToRgb(p1.color || color), c2 = hexToRgb(p2.color || color);
-      for (let i = 0; i < numPoints; i++) {
-          const t = i / (numPoints - 1); let b = false; if (mode === 'dotted') b = (i % 2 !== 0); else if (mode === 'dashed') b = (Math.floor(i / 4) % 2 !== 0); else if (mode === 'points') b = (i > 0 && i < numPoints - 1);
-          points.push({ x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t, r: c1.r + (c2.r - c1.r) * t, g: c1.g + (c2.g - c1.g) * t, b: c1.b + (c2.b - c1.b) * t, blanking: b });
-      } return points;
+      
+      if (mode === 'dotted') {
+          return [
+              { x: p1.x, y: p1.y, r: c1.r, g: c1.g, b: c1.b, blanking: false },
+              { x: p1.x, y: p1.y, r: c1.r, g: c1.g, b: c1.b, blanking: false }
+          ];
+      }
+
+      const isBlanked = mode === 'blanked';
+      
+      // Return just the start and end points, creating a single vector segment.
+      // No extra points are added between p1 and p2.
+      return [
+          { x: p1.x, y: p1.y, r: c1.r, g: c1.g, b: c1.b, blanking: isBlanked },
+          { x: p2.x, y: p2.y, r: c2.r, g: c2.g, b: c2.b, blanking: isBlanked }
+      ];
   };
 
   const finishMultiPointShape = () => {
@@ -921,40 +1676,50 @@ const ShapeBuilder = ({ onBack }) => {
     if (e.button === 1 || (e.button === 0 && e.altKey)) { isPanningRef.current = true; startPosRef.current = { x: e.clientX, y: e.clientY }; return; }
     if (e.button !== 0) return; // Only respond to left-clicks for drawing and selection
     
-    const mouse = screenToWorld(e.clientX, e.clientY); const sx = snap(mouse.x), sy = snap(mouse.y); setContextMenu({ visible: false });
+    const mouse = screenToWorld(e.clientX, e.clientY); 
+    const snapped = snap(mouse.x, mouse.y);
+    const sx = snapped.x, sy = snapped.y;
+    setContextMenu({ visible: false });
     if (tool === 'select') {
         let hitIdx = -1;
-        let hitType = null;
-        let ptIdx = -1;
+        let bestHit = null;
 
         for (let i = shapes.length - 1; i >= 0; i--) {
-            const hit = isHit(shapes[i], mouse, selectedShapeIndexes.includes(i));
+            const hit = isHit(shapes[i], mouse, selectedShapeIndexes.includes(i), selectedPointIndexes);
             if (hit) {
                 hitIdx = i;
-                hitType = hit.type;
-                ptIdx = hit.index;
+                bestHit = hit;
                 break;
             }
         }
 
-        if (hitIdx !== -1) {
-            if (hitType === 'point') {
+        if (bestHit) {
+            if (bestHit.type === 'point') {
+                const ptPath = bestHit.path || [bestHit.index];
                 if (!e.shiftKey) {
                     // Clicking a point without shift: Select ONLY this point
-                    setSelectedPointIndexes([ptIdx]);
+                    setSelectedPointIndexes([ptPath]);
                     setSelectedShapeIndexes([hitIdx]);
                 } else {
                     // Shift+Click: Toggle point in selection
-                    // But ONLY if it's the same shape
                     if (selectedShapeIndexes.includes(hitIdx)) {
-                        setSelectedPointIndexes(prev => prev.includes(ptIdx) ? prev.filter(i => i !== ptIdx) : [...prev, ptIdx]);
+                        setSelectedPointIndexes(prev => {
+                            const isSelected = prev.some(p => JSON.stringify(p) === JSON.stringify(ptPath));
+                            if (isSelected) {
+                                return prev.filter(p => JSON.stringify(p) !== JSON.stringify(ptPath));
+                            } else {
+                                return [...prev, ptPath];
+                            }
+                        });
                     } else {
                         // Different shape: select new shape and this point
                         setSelectedShapeIndexes([hitIdx]);
-                        setSelectedPointIndexes([ptIdx]);
+                        setSelectedPointIndexes([ptPath]);
                     }
                 }
                 isMovingPointRef.current = true;
+            } else if (bestHit.type === 'pivot') {
+                isMovingPivotRef.current = true;
             } else {
                 if (!e.shiftKey && !selectedShapeIndexes.includes(hitIdx)) setSelectedShapeIndexes([hitIdx]);
                 else if (e.shiftKey) setSelectedShapeIndexes(prev => prev.includes(hitIdx) ? prev.filter(i => i !== hitIdx) : [...prev, hitIdx]);
@@ -994,34 +1759,44 @@ const ShapeBuilder = ({ onBack }) => {
   };
 
   const moveShape = useCallback((shape, dx, dy) => {
+      const updated = { ...shape };
       if (shape.type === 'group') {
-          shape.shapes = shape.shapes.map(s => moveShape({ ...s }, dx, dy));
+          updated.shapes = shape.shapes.map(s => moveShape(s, dx, dy));
       } else {
-          if (shape.points) shape.points = shape.points.map(p => ({ ...p, x: p.x + dx, y: p.y + dy }));
-          if (shape.start) { shape.start.x += dx; shape.start.y += dy; }
-          if (shape.end) { shape.end.x += dx; shape.end.y += dy; }
+          if (shape.points) updated.points = shape.points.map(p => ({ ...p, x: p.x + dx, y: p.y + dy }));
+          if (shape.start) updated.start = { ...shape.start, x: shape.start.x + dx, y: shape.start.y + dy };
+          if (shape.end) updated.end = { ...shape.end, x: shape.end.x + dx, y: shape.end.y + dy };
       }
-      return shape;
+      
+      if (shape.pivotX !== undefined) updated.pivotX = shape.pivotX + dx;
+      if (shape.pivotY !== undefined) updated.pivotY = shape.pivotY + dy;
+      
+      return updated;
   }, []);
 
   const draw = (e) => {
     const mouse = screenToWorld(e.clientX, e.clientY);
     if (isPanningRef.current) { const dx = (e.clientX - startPosRef.current.x) / zoom, dy = (e.clientY - startPosRef.current.y) / zoom; setPan(prev => ({ x: prev.x + dx, y: prev.y + dy })); startPosRef.current = { x: e.clientX, y: e.clientY }; return; }
-    if (isRotatingRef.current && selectedShapeIndexes.length > 0) { const center = getShapeCenter(shapes[selectedShapeIndexes[0]]); updateSelectedShape({ rotationZ: Math.atan2(mouse.y - center.y, mouse.x - center.x) + Math.PI / 2 }); return; }
-    if (isSelectingBoxRef.current) { selectionBoxRef.current = { x: Math.min(startPosRef.current.x, mouse.x), y: Math.min(startPosRef.current.y, mouse.y), w: Math.abs(mouse.x - startPosRef.current.x), h: Math.abs(mouse.y - startPosRef.current.y) }; return; }
+    if (isRotatingRef.current && selectedShapeIndexes.length > 0) { 
+        const pivot = getShapePivot(shapes[selectedShapeIndexes[0]]); 
+        updateSelectedShape({ rotationZ: Math.atan2(mouse.y - pivot.y, mouse.x - pivot.x) + Math.PI / 2 }); 
+        return; 
+    }
+    if (isSelectingBoxRef.current) { 
+        selectionBoxRef.current = { x: Math.min(startPosRef.current.x, mouse.x), y: Math.min(startPosRef.current.y, mouse.y), w: Math.abs(mouse.x - startPosRef.current.x), h: Math.abs(mouse.y - startPosRef.current.y) }; 
+        setRenderTrigger(prev => prev + 1);
+        return; 
+    }
     
     if (isMovingShapeRef.current) {
         const dx = mouse.x - startPosRef.current.x, dy = mouse.y - startPosRef.current.y;
-        let actualDx = 0;
-        let actualDy = 0;
-
-        if (snapToGrid) {
-            actualDx = Math.round(dx / gridSize) * gridSize;
-            actualDy = Math.round(dy / gridSize) * gridSize;
-        } else {
-            actualDx = dx;
-            actualDy = dy;
-        }
+        
+        // Use first selected shape's center as snap reference
+        const refShape = shapes[selectedShapeIndexes[0]];
+        const center = getShapeCenter(refShape);
+        const snappedTarget = snap(center.x + dx, center.y + dy);
+        const actualDx = snappedTarget.x - center.x;
+        const actualDy = snappedTarget.y - center.y;
 
         if (actualDx !== 0 || actualDy !== 0) {
             setFrames(prev => {
@@ -1033,71 +1808,87 @@ const ShapeBuilder = ({ onBack }) => {
                 newFrames[currentFrameIndex] = ns;
                 return newFrames;
             });
-            
-            if (snapToGrid) {
-                startPosRef.current.x += actualDx;
-                startPosRef.current.y += actualDy;
-            } else {
-                startPosRef.current = mouse;
-            }
+            startPosRef.current.x += actualDx;
+            startPosRef.current.y += actualDy;
         }
+        return;
+    }
+
+    if (isMovingPivotRef.current && selectedShapeIndexes.length === 1) {
+        const snapped = snap(mouse.x, mouse.y);
+        setFrames(prev => {
+            const nf = [...prev], ns = [...nf[currentFrameIndex]];
+            ns[selectedShapeIndexes[0]] = { ...ns[selectedShapeIndexes[0]], pivotX: snapped.x, pivotY: snapped.y };
+            nf[currentFrameIndex] = ns;
+            return nf;
+        });
         return;
     }
 
     if (isMovingPointRef.current && selectedShapeIndexes.length === 1) {
         const dx = mouse.x - startPosRef.current.x, dy = mouse.y - startPosRef.current.y;
-        let actualDx = 0;
-        let actualDy = 0;
+        
+        const shape = shapes[selectedShapeIndexes[0]];
+        const refPath = selectedPointIndexes[0];
+        const refPoint = getPointByPath(shape, refPath);
 
-        if (snapToGrid) {
-            actualDx = Math.round(dx / gridSize) * gridSize;
-            actualDy = Math.round(dy / gridSize) * gridSize;
-        } else {
-            actualDx = dx;
-            actualDy = dy;
-        }
+        if (refPoint) {
+            const snappedTarget = snap(refPoint.x + dx, refPoint.y + dy, selectedPointIndexes);
+            const actualDx = snappedTarget.x - refPoint.x;
+            const actualDy = snappedTarget.y - refPoint.y;
 
-        if (actualDx !== 0 || actualDy !== 0) {
-            setFrames(prev => {
-                const nf = [...prev], ns = [...nf[currentFrameIndex]], s = { ...ns[selectedShapeIndexes[0]] };
-                selectedPointIndexes.forEach(idx => {
-                    // For point movement, we directly add the actual delta
-                    if (s.type === 'line') { 
-                        if (idx === 0) { s.start.x += actualDx; s.start.y += actualDy; } 
-                        else { s.end.x += actualDx; s.end.y += actualDy; } 
-                    }
-                    else if (s.type === 'rect') { 
-                        if (idx === 0) { s.start.x += actualDx; s.start.y += actualDy; s.width -= actualDx; s.height -= actualDy; } 
-                        else if (idx === 1) { s.start.y += actualDy; s.width += actualDx; s.height -= actualDy; } 
-                        else if (idx === 2) { s.width += actualDx; s.height += actualDy; } 
-                        else if (idx === 3) { s.start.x += actualDx; s.width -= actualDx; s.height += actualDy; } 
-                    }
-                    else if (s.type === 'circle' || s.type === 'star') { 
-                        if (idx === 0) { s.start.x += actualDx; s.start.y += actualDy; } 
-                        else if (idx === 1) s.end.x += actualDx; 
-                        else if (idx === 2) s.end.y += actualDy; 
-                    }
-                    else if (s.points) { 
-                        s.points = [...s.points]; 
-                        if (s.points[idx]) {
-                            s.points[idx] = { ...s.points[idx], x: s.points[idx].x + actualDx, y: s.points[idx].y + actualDy }; 
+            if (actualDx !== 0 || actualDy !== 0) {
+                const deepUpdate = (item, path, dX, dY) => {
+                    if (path.length === 1) {
+                        const idx = path[0];
+                        const s = { ...item };
+                        if (s.type === 'line') {
+                            if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; }
+                            else { s.end = { ...s.end, x: s.end.x + dX, y: s.end.y + dY }; }
+                        } else if (s.type === 'rect') {
+                            if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; s.width -= dX; s.height -= dY; }
+                            else if (idx === 1) { s.start = { ...s.start, y: s.start.y + dY }; s.width += dX; s.height -= dY; }
+                            else if (idx === 2) { s.width += dX; s.height += dY; }
+                            else if (idx === 3) { s.start = { ...s.start, x: s.start.x + dX }; s.width -= dX; s.height += dY; }
+                        } else if (s.type === 'circle' || s.type === 'star') {
+                            if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; }
+                            else if (idx === 1) s.end = { ...s.end, x: s.end.x + dX };
+                            else if (idx === 2) s.end = { ...s.end, y: s.end.y + dY };
+                        } else if (s.points) {
+                            s.points = [...s.points];
+                            if (s.points[idx]) {
+                                s.points[idx] = { ...s.points[idx], x: s.points[idx].x + dX, y: s.points[idx].y + dY };
+                            }
                         }
+                        return s;
+                    } else {
+                        const [currentIdx, ...rest] = path;
+                        const s = { ...item };
+                        s.shapes = [...s.shapes];
+                        s.shapes[currentIdx] = deepUpdate(s.shapes[currentIdx], rest, dX, dY);
+                        return s;
                     }
-                });
-                ns[selectedShapeIndexes[0]] = s; nf[currentFrameIndex] = ns; return nf;
-            });
+                };
 
-            if (snapToGrid) {
+                setFrames(prev => {
+                    const nf = [...prev], ns = [...nf[currentFrameIndex]];
+                    let shape = { ...ns[selectedShapeIndexes[0]] };
+                    selectedPointIndexes.forEach(pData => {
+                        const path = Array.isArray(pData) ? pData : [pData];
+                        shape = deepUpdate(shape, path, actualDx, actualDy);
+                    });
+                    ns[selectedShapeIndexes[0]] = shape; nf[currentFrameIndex] = ns; return nf;
+                });
+
                 startPosRef.current.x += actualDx;
                 startPosRef.current.y += actualDy;
-            } else {
-                startPosRef.current = mouse;
             }
         }
         return;
     }
     if (!isDrawing) return;
-    const x = snap(mouse.x), y = snap(mouse.y);
+    const snappedMouse = snap(mouse.x, mouse.y);
+    const x = snappedMouse.x, y = snappedMouse.y;
     setActiveShape(prev => {
         if (!prev) return null; const updated = { ...prev }, isShift = e.shiftKey;
         if (tool === 'pen') updated.points = [...prev.points, { x, y, color }];
@@ -1120,30 +1911,76 @@ const ShapeBuilder = ({ onBack }) => {
     });
   };
 
-  const stopDrawing = () => {
+  const stopDrawing = (e) => {
     if (isSelectingBoxRef.current && selectionBoxRef.current) {
         const box = selectionBoxRef.current;
+        const isShift = e.shiftKey;
         if (box.w < 5/zoom && box.h < 5/zoom) {
-            setSelectedShapeIndexes([]);
-            setSelectedPointIndexes([]);
+            if (!isShift) {
+                setSelectedShapeIndexes([]);
+                setSelectedPointIndexes([]);
+            }
         } else {
-            // Select shapes intersecting with box
-            const newSelection = [];
-            shapes.forEach((s, i) => {
-                const bb = getBoundingBox(s);
-                if (bb.x < box.x + box.w && bb.x + bb.w > box.x && bb.y < box.y + box.h && bb.y + bb.h > box.y) {
-                    newSelection.push(i);
+            // If exactly one shape is selected, box selection selects POINTS of that shape
+            if (selectedShapeIndexes.length === 1) {
+                const shapeIdx = selectedShapeIndexes[0];
+                const shape = shapes[shapeIdx];
+                const pts = getShapePoints(shape);
+                const caughtPoints = [];
+                pts.forEach((p, i) => {
+                    if (p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h) {
+                        caughtPoints.push(i);
+                    }
+                });
+                
+                if (caughtPoints.length > 0) {
+                    if (isShift) {
+                        setSelectedPointIndexes(prev => Array.from(new Set([...prev, ...caughtPoints])).sort((a,b) => a-b));
+                    } else {
+                        setSelectedPointIndexes(caughtPoints);
+                    }
+                } else {
+                    // Fallback to shape selection if no points were caught
+                    const caughtShapes = [];
+                    shapes.forEach((s, i) => {
+                        if (s.hidden || s.locked) return;
+                        const bb = getBoundingBox(s);
+                        if (bb.x < box.x + box.w && bb.x + bb.w > box.x && bb.y < box.y + box.h && bb.y + bb.h > box.y) {
+                            caughtShapes.push(i);
+                        }
+                    });
+                    if (isShift) {
+                        setSelectedShapeIndexes(prev => Array.from(new Set([...prev, ...caughtShapes])));
+                    } else {
+                        setSelectedShapeIndexes(caughtShapes);
+                        setSelectedPointIndexes([]);
+                    }
                 }
-            });
-            setSelectedShapeIndexes(newSelection);
+            } else {
+                // Select shapes intersecting with box
+                const caughtShapes = [];
+                shapes.forEach((s, i) => {
+                    if (s.hidden || s.locked) return;
+                    const bb = getBoundingBox(s);
+                    if (bb.x < box.x + box.w && bb.x + bb.w > box.x && bb.y < box.y + box.h && bb.y + bb.h > box.y) {
+                        caughtShapes.push(i);
+                    }
+                });
+                if (isShift) {
+                    setSelectedShapeIndexes(prev => Array.from(new Set([...prev, ...caughtShapes])));
+                } else {
+                    setSelectedShapeIndexes(caughtShapes);
+                    setSelectedPointIndexes([]);
+                }
+            }
         }
     }
     
-    if (isMovingPointRef.current || isMovingShapeRef.current) {
+    if (isMovingPointRef.current || isMovingShapeRef.current || isMovingPivotRef.current) {
         recordHistory(frames);
     }
 
-    isMovingPointRef.current = false; isMovingShapeRef.current = false; isRotatingRef.current = false; isSelectingBoxRef.current = false; isPanningRef.current = false; selectionBoxRef.current = null;
+    isMovingPointRef.current = false; isMovingShapeRef.current = false; isMovingPivotRef.current = false; isRotatingRef.current = false; isSelectingBoxRef.current = false; isPanningRef.current = false; selectionBoxRef.current = null;
     
     if (!isDrawing) return;
     
@@ -1167,13 +2004,41 @@ const ShapeBuilder = ({ onBack }) => {
   };
 
   // --- RENDERING ---
-  const drawShape = (ctx, shape, isSelected, isOnion = false) => {
-    if (!shape) return; ctx.save(); 
+  const drawShape = (ctx, shape, isSelected, isOnion = false, path = []) => {
+    if (!shape || shape.hidden) return; ctx.save(); 
     
     // Group handling
     if (shape.type === 'group') {
-        shape.shapes.forEach(child => drawShape(ctx, child, isSelected, isOnion));
+        shape.shapes.forEach((child, i) => drawShape(ctx, child, false, isOnion, [...path, i]));
         ctx.restore();
+        
+        // After drawing children, if the group itself is selected, draw ITS handles
+        if (isSelected && !isOnion) {
+            ctx.save();
+            const groupCenter = getShapeCenter(shape);
+            const groupPivot = getShapePivot(shape);
+            
+            // Re-apply same handle drawing logic but specifically for this group object
+            // Center handle
+            ctx.fillStyle = '#0089ff';
+            ctx.beginPath(); ctx.arc(groupCenter.x, groupCenter.y, 6/zoom, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = 'white'; ctx.lineWidth = 1/zoom; ctx.stroke();
+
+            // Rotation handle (using bounding box topmost point for groups)
+            const bb = getBoundingBox(shape);
+            ctx.beginPath(); ctx.moveTo(groupCenter.x, bb.y); ctx.lineTo(groupCenter.x, bb.y - 30/zoom); ctx.strokeStyle = 'white'; ctx.stroke();
+            ctx.beginPath(); ctx.arc(groupCenter.x, bb.y - 30/zoom, 6/zoom, 0, Math.PI*2); ctx.fillStyle = '#0089ff'; ctx.fill(); ctx.stroke();
+
+            // Pivot Handle
+            ctx.strokeStyle = 'var(--theme-color)';
+            ctx.lineWidth = 2/zoom;
+            ctx.beginPath();
+            ctx.moveTo(groupPivot.x - 10/zoom, groupPivot.y); ctx.lineTo(groupPivot.x + 10/zoom, groupPivot.y);
+            ctx.moveTo(groupPivot.x, groupPivot.y - 10/zoom); ctx.lineTo(groupPivot.x, groupPivot.y + 10/zoom);
+            ctx.stroke();
+            ctx.beginPath(); ctx.arc(groupPivot.x, groupPivot.y, 5/zoom, 0, Math.PI*2); ctx.stroke();
+            ctx.restore();
+        }
         return;
     }
 
@@ -1181,14 +2046,20 @@ const ShapeBuilder = ({ onBack }) => {
     ctx.lineWidth = (isSelected ? 2.5 : 1.5) / zoom;
     
     // Batch drawing optimization
-    const drawPoly = (pts, closed) => {
+    const drawPoly = (pts, closed, mode = 'simple') => {
         if (!pts || pts.length < 2) return;
-        let pendingStroke = false;
         
+        let pendingStroke = false;
         ctx.beginPath();
         if (pts[0]) ctx.moveTo(pts[0].x, pts[0].y);
         
         for (let i = 0; i < pts.length - 1; i++) {
+            if (mode === 'dashed' && i % 2 === 1) {
+                if (pendingStroke) { ctx.stroke(); pendingStroke = false; }
+                ctx.moveTo(pts[i+1].x, pts[i+1].y);
+                continue;
+            }
+
             const p1 = pts[i];
             const p2 = pts[i+1];
             if (!p1 || !p2) continue;
@@ -1216,31 +2087,58 @@ const ShapeBuilder = ({ onBack }) => {
                 pendingStroke = true;
             }
         }
+
         if (closed && pts.length > 2) {
-             const pLast = pts[pts.length - 1];
-             const pFirst = pts[0];
-             const c1 = isOnion ? '#444' : (pLast.color || shape.color);
-             const c2 = isOnion ? '#444' : (pFirst.color || shape.color);
-             
-             if (c1 !== c2) {
-                 if (pendingStroke) { ctx.stroke(); }
-                 const g = ctx.createLinearGradient(pLast.x, pLast.y, pFirst.x, pFirst.y);
-                 g.addColorStop(0, c1); g.addColorStop(1, c2);
-                 ctx.strokeStyle = g;
-                 ctx.beginPath(); ctx.moveTo(pLast.x, pLast.y); ctx.lineTo(pFirst.x, pFirst.y); ctx.stroke();
+             const iLast = pts.length - 1;
+             if (mode === 'dashed' && iLast % 2 === 1) {
+                 if (pendingStroke) ctx.stroke();
              } else {
-                 if (ctx.strokeStyle !== c1 && pendingStroke) { ctx.stroke(); ctx.beginPath(); ctx.moveTo(pLast.x, pLast.y); ctx.strokeStyle = c1; }
-                 ctx.lineTo(pFirst.x, pFirst.y);
-                 ctx.stroke();
-                 pendingStroke = false;
+                 const pLast = pts[iLast];
+                 const pFirst = pts[0];
+                 const c1 = isOnion ? '#444' : (pLast.color || shape.color);
+                 const c2 = isOnion ? '#444' : (pFirst.color || shape.color);
+                 
+                 if (c1 !== c2) {
+                     if (pendingStroke) { ctx.stroke(); }
+                     const g = ctx.createLinearGradient(pLast.x, pLast.y, pFirst.x, pFirst.y);
+                     g.addColorStop(0, c1); g.addColorStop(1, c2);
+                     ctx.strokeStyle = g;
+                     ctx.beginPath(); ctx.moveTo(pLast.x, pLast.y); ctx.lineTo(pFirst.x, pFirst.y); ctx.stroke();
+                 } else {
+                     if (ctx.strokeStyle !== c1 && pendingStroke) { ctx.stroke(); ctx.beginPath(); ctx.moveTo(pLast.x, pLast.y); ctx.strokeStyle = c1; }
+                     ctx.lineTo(pFirst.x, pFirst.y);
+                     ctx.stroke();
+                     pendingStroke = false;
+                 }
              }
         } else if (pendingStroke) {
             ctx.stroke();
         }
+
+        if (mode === 'dotted') {
+            pts.forEach(p => {
+                ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color);
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
     };
 
-    const ds = (p1, p2) => {
+    const ds = (p1, p2, mode = 'simple') => {
         if (!p1 || !p2) return;
+        if (mode === 'dotted') {
+            [p1, p2].forEach(p => {
+                ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color);
+                ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill();
+            });
+            return;
+        }
+        if (mode === 'dashed') {
+            // Only draw the segment (it's segment 0)
+            // Wait, for a single line, it has 1 segment (index 0). So it's always drawn.
+            // If the user wants dashed lines to mean something else for single segments, we'd need more info.
+        }
         const c1 = isOnion ? '#444' : (p1.color || shape.color), c2 = isOnion ? '#444' : (p2.color || shape.color);
         if (c1 === c2) ctx.strokeStyle = c1; else { const g = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y); g.addColorStop(0, c1); g.addColorStop(1, c2); ctx.strokeStyle = g; }
         ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
@@ -1248,37 +2146,44 @@ const ShapeBuilder = ({ onBack }) => {
 
     if (shape.renderMode === 'points') { getSampledPoints({...shape, rotation: 0, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1}).forEach(p => { ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color); ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill(); }); ctx.restore(); return; }
     
+    const mode = shape.renderMode || 'simple';
+
     switch (shape.type) {
         case 'pen': case 'polyline': case 'bezier': { 
             const pts = getSampledPoints(shape);
-            drawPoly(pts, false);
+            drawPoly(pts, false, mode);
             break; 
         }
         case 'polygon': {
             const pts = getSampledPoints(shape);
-            drawPoly(pts, true);
+            drawPoly(pts, true, mode);
             break;
         }
         case 'line': {
             const pts = getSampledPoints(shape);
-            ds(pts[0], pts[1]); 
+            ds(pts[0], pts[1], mode); 
             break;
         }
-        case 'rect': { const pts = getSampledPoints(shape); drawPoly(pts, true); break; }
+        case 'rect': { const pts = getSampledPoints(shape); drawPoly(pts, true, mode); break; }
         case 'circle': { 
             const pts = getSampledPoints(shape);
-            drawPoly(pts, true);
+            drawPoly(pts, true, mode);
             break; 
         }
         case 'star': { 
             const pts = getSampledPoints(shape);
-            drawPoly(pts, true);
+            drawPoly(pts, true, mode);
             break; 
         }
     }
     if (isSelected && !isOnion) {
         const actualPts = getShapePoints(shape); actualPts.forEach((p, i) => { 
-            const isPointSelected = selectedPointIndexes.includes(i);
+            const ptPath = [...path, i];
+            // Normalize selectedPointIndexes items to paths for comparison
+            const isPointSelected = selectedPointIndexes.some(sel => {
+                const selPath = Array.isArray(sel) ? sel : [sel];
+                return JSON.stringify(selPath) === JSON.stringify(ptPath);
+            });
             ctx.fillStyle = isPointSelected ? 'var(--theme-color)' : 'white'; 
             ctx.beginPath(); 
             ctx.arc(p.x, p.y, 5/zoom, 0, Math.PI*2); 
@@ -1292,6 +2197,18 @@ const ShapeBuilder = ({ onBack }) => {
         const minY = Math.min(...actualPts.map(p => p.y));
         ctx.beginPath(); ctx.moveTo(center.x, minY); ctx.lineTo(center.x, minY - 30/zoom); ctx.strokeStyle = 'white'; ctx.stroke();
         ctx.beginPath(); ctx.arc(center.x, minY - 30/zoom, 6/zoom, 0, Math.PI*2); ctx.fillStyle = '#0089ff'; ctx.fill(); ctx.stroke();
+
+        // Draw Pivot Handle (Anchor)
+        const pivot = getShapePivot(shape);
+        ctx.strokeStyle = 'var(--theme-color)';
+        ctx.lineWidth = 2/zoom;
+        ctx.beginPath();
+        // Crosshair
+        ctx.moveTo(pivot.x - 10/zoom, pivot.y); ctx.lineTo(pivot.x + 10/zoom, pivot.y);
+        ctx.moveTo(pivot.x, pivot.y - 10/zoom); ctx.lineTo(pivot.x, pivot.y + 10/zoom);
+        ctx.stroke();
+        // Circle around crosshair
+        ctx.beginPath(); ctx.arc(pivot.x, pivot.y, 5/zoom, 0, Math.PI*2); ctx.stroke();
     }
     ctx.restore();
   };
@@ -1316,17 +2233,17 @@ const ShapeBuilder = ({ onBack }) => {
         if (shapes.length > 0) shapes.forEach((s, i) => drawShape(ctx, s, selectedShapeIndexes.includes(i)));
         if (isDrawing && activeShape) drawShape(ctx, activeShape, false);
         if (isSelectingBoxRef.current && selectionBoxRef.current) { 
-            ctx.fillStyle = 'rgba(0, 137, 255, 0.15)';
+            ctx.fillStyle = 'rgba(0, 137, 255, 0.3)';
             ctx.fillRect(selectionBoxRef.current.x, selectionBoxRef.current.y, selectionBoxRef.current.w, selectionBoxRef.current.h);
             ctx.strokeStyle = '#0089ff'; 
-            ctx.lineWidth = 1/zoom; 
+            ctx.lineWidth = 2/zoom; 
             ctx.setLineDash([]);
             ctx.strokeRect(selectionBoxRef.current.x, selectionBoxRef.current.y, selectionBoxRef.current.w, selectionBoxRef.current.h); 
         }
         ctx.restore();
     };
     drawLoop();
-  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, onionSkin, isPlaying, zoom, pan]);
+  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, onionSkin, isPlaying, zoom, pan, renderTrigger]);
 
   useEffect(() => {
       const container = containerRef.current; if (!container) return;
@@ -1398,6 +2315,11 @@ const ShapeBuilder = ({ onBack }) => {
           <button onClick={joinPoints} title="Join Points / Shapes"><i className="bi bi-share"></i></button>
           <button onClick={groupShapes} title="Group" disabled={selectedShapeIndexes.length < 2}><i className="bi bi-intersect"></i></button>
           <button onClick={ungroupShapes} title="Ungroup" disabled={selectedShapeIndexes.length !== 1 || shapes[selectedShapeIndexes[0]]?.type !== 'group'}><i className="bi bi-exclude"></i></button>
+          <div className="separator" style={{ width: '1px', height: '20px', background: '#333' }} />
+          <button onClick={() => subdivideShape(false)} title="Subdivide (Linear)" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-grid-3x3"></i></button>
+          <button onClick={() => subdivideShape(true)} title="Subdivide (Smooth)" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-bezier"></i></button>
+          <button onClick={decimateShape} title="Decimate (Reduce Points)" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-filter-left"></i></button>
+          <button onClick={mergePointsInShape} title="Merge Overlapping Points" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-node-plus"></i></button>
           <button onClick={importSVG} title="Import SVG"><i className="bi bi-vector-pen"></i></button>
           <button onClick={importClip} title="Import ILDA"><i className="bi bi-folder2-open"></i></button>
           <button onClick={handleImportImage} title="Import Background Image"><i className="bi bi-image"></i></button>
@@ -1419,6 +2341,17 @@ const ShapeBuilder = ({ onBack }) => {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <aside style={{ width: '60px', background: '#1a1a1a', borderRight: '1px solid #333', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 0', gap: '10px' }}>
           <ToolButton active={tool === 'select'} onClick={() => { setTool('select'); setIsDrawing(false); setActiveShape(null); }} icon="bi-cursor" />
+          
+          {tool === 'select' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: '#222', padding: '4px', borderRadius: '4px', border: '1px solid #333' }}>
+                  <button onClick={selectOddPoints} title="Select Odd Points" style={{ padding: '4px', fontSize: '0.7rem' }}>ODD</button>
+                  <button onClick={selectEvenPoints} title="Select Even Points" style={{ padding: '4px', fontSize: '0.7rem' }}>EVN</button>
+                  <button onClick={invertPointSelection} title="Invert Selection" style={{ padding: '4px' }}><i className="bi bi-arrow-left-right"></i></button>
+                  <button onClick={expandPointSelection} title="Expand Selection" style={{ padding: '4px' }}><i className="bi bi-plus-lg"></i></button>
+                  <button onClick={shrinkPointSelection} title="Shrink Selection" style={{ padding: '4px' }}><i className="bi bi-dash-lg"></i></button>
+              </div>
+          )}
+
           <ToolButton active={tool === 'pen'} onClick={() => { setTool('pen'); setIsDrawing(false); setActiveShape(null); }} icon="bi-pencil" />
           <ToolButton active={tool === 'bezier'} onClick={() => { setTool('bezier'); setIsDrawing(false); setActiveShape(null); }} icon="bi-bezier2" />
           <ToolButton active={tool === 'line'} onClick={() => { setTool('line'); setIsDrawing(false); setActiveShape(null); }} icon="bi-slash-lg" />
@@ -1426,8 +2359,37 @@ const ShapeBuilder = ({ onBack }) => {
           <ToolButton active={tool === 'circle'} onClick={() => { setTool('circle'); setIsDrawing(false); setActiveShape(null); }} icon="bi-circle" />
           <ToolButton active={tool === 'polygon'} onClick={() => { setTool('polygon'); setIsDrawing(false); setActiveShape(null); }} icon="bi-pentagon" />
           <ToolButton active={tool === 'star'} onClick={() => { setTool('star'); setIsDrawing(false); setActiveShape(null); }} icon="bi-star" />
-          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
-            <input type="color" value={ensureHex(color)} onChange={(e) => { setColor(e.target.value); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: e.target.value }); }} style={{ width: '30px', height: '30px', border: 'none', background: 'none', cursor: 'pointer' }} />
+          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', paddingBottom: '10px' }}>
+            <input type="color" value={ensureHex(color)} onChange={(e) => { setColor(e.target.value); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: e.target.value }); }} title="Custom Color" style={{ width: '35px', height: '35px', border: '2px solid #333', background: 'none', cursor: 'pointer', marginBottom: '5px' }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
+              {[
+                { name: 'Red', hex: '#ff0000' },
+                { name: 'Orange', hex: '#ff6400' },
+                { name: 'Yellow', hex: '#ffff00' },
+                { name: 'Green', hex: '#00ff00' },
+                { name: 'Cyan', hex: '#00ffff' },
+                { name: 'Blue', hex: '#0000ff' },
+                { name: 'Violette', hex: '#8000ff' },
+                { name: 'Pink', hex: '#ff6496' },
+                { name: 'Magenta', hex: '#ff00ff' },
+                { name: 'White', hex: '#ffffff' }
+              ].map(c => (
+                <button
+                  key={c.hex}
+                  onClick={() => { setColor(c.hex); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: c.hex }); }}
+                  title={c.name}
+                  style={{
+                    width: '18px',
+                    height: '18px',
+                    background: c.hex,
+                    border: color === c.hex ? '2px solid white' : '1px solid #444',
+                    borderRadius: '2px',
+                    padding: 0,
+                    cursor: 'pointer'
+                  }}
+                />
+              ))}
+            </div>
           </div>
         </aside>
 
@@ -1437,14 +2399,38 @@ const ShapeBuilder = ({ onBack }) => {
                 style={{ background: 'transparent' }} />
             {contextMenu.visible && (
                 <div className="context-menu" style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, background: '#222', border: '1px solid #444', borderRadius: '4px', padding: '5px 0', zIndex: 10000 }}>
-                    {contextMenu.target?.type === 'point' && <div className="menu-item" onClick={deletePoint}>Delete Point</div>}
+                    {(contextMenu.target?.type === 'point' || selectedPointIndexes.length > 0) && (
+                        <div className="menu-item" onClick={deletePoint}>Delete {selectedPointIndexes.length > 1 ? 'Points' : 'Point'}</div>
+                    )}
                     {contextMenu.target?.type === 'segment' && (
                         <>
                             <div className="menu-item" onClick={deleteSegment}>Delete Line</div>
                             <div className="menu-item" onClick={splitSegment}>Split Line</div>
                         </>
                     )}
-                    {contextMenu.target?.type === 'shape' && <div className="menu-item" onClick={() => { setFrames(prev => { const nf = [...prev]; nf[currentFrameIndex] = nf[currentFrameIndex].filter((_, idx) => idx !== contextMenu.target.shapeIndex); return nf; }); setContextMenu({ visible: false }); }}>Delete Shape</div>}
+                    {(contextMenu.target?.type === 'shape' || selectedShapeIndexes.length > 0) && (
+                        <>
+                            <div className="menu-item" onClick={() => subdivideShape(false)}>Subdivide (Linear)</div>
+                            <div className="menu-item" onClick={() => subdivideShape(true)}>Subdivide (Smooth)</div>
+                            <div className="menu-item" onClick={decimateShape}>Decimate</div>
+                            <div className="menu-item" onClick={mergePointsInShape}>Merge Points</div>
+                            <div className="menu-item" onClick={addCornerPoints}>Add Corner Points</div>
+                            <div className="menu-item" onClick={resetPivot}>Reset Anchor Point</div>
+                            <div className="separator" style={{ height: '1px', background: '#444', margin: '5px 0' }} />
+                            {selectedShapeIndexes.length === 1 && ['rect', 'circle', 'star', 'line'].includes(shapes[selectedShapeIndexes[0]]?.type) && (
+                                <div className="menu-item" onClick={convertToPoints}>Convert to Points</div>
+                            )}
+                            <div className="menu-item" onClick={() => { 
+                                const newFrames = [...frames]; 
+                                const toDel = selectedShapeIndexes.length > 0 ? selectedShapeIndexes : [contextMenu.target.shapeIndex];
+                                newFrames[currentFrameIndex] = newFrames[currentFrameIndex].filter((_, idx) => !toDel.includes(idx)); 
+                                setFrames(newFrames); 
+                                setSelectedShapeIndexes([]);
+                                setSelectedPointIndexes([]);
+                                setContextMenu({ visible: false }); 
+                            }}>Delete Shape(s)</div>
+                        </>
+                    )}
                     {backgroundImage && <div className="menu-item" onClick={() => { setBackgroundImage(null); setContextMenu({ visible: false }); }}>Clear Background</div>}
                     <div className="separator" style={{ height: '1px', background: '#444', margin: '5px 0' }} />
                     <div className="menu-item" onClick={copyShape}>Copy</div>
@@ -1468,19 +2454,73 @@ const ShapeBuilder = ({ onBack }) => {
         </main>
 
         <aside style={{ width: '240px', background: '#1a1a1a', borderLeft: '1px solid #333', padding: '15px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          
+          <div className="layers-panel" style={{ display: 'flex', flexDirection: 'column', maxHeight: '40%', overflowY: 'auto', borderBottom: '1px solid #333', paddingBottom: '15px' }}>
+              <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  LAYERS
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                      <button onClick={groupShapes} title="Group" disabled={selectedShapeIndexes.length < 2} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-intersect"></i></button>
+                      <button onClick={ungroupShapes} title="Ungroup" disabled={selectedShapeIndexes.length !== 1 || shapes[selectedShapeIndexes[0]]?.type !== 'group'} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-exclude"></i></button>
+                  </div>
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  {shapes.map((s, i) => ({ s, i })).reverse().map(({ s, i }) => (
+                      <div key={i} 
+                           style={{ 
+                               display: 'flex', 
+                               alignItems: 'center', 
+                               padding: '5px', 
+                               background: selectedShapeIndexes.includes(i) ? '#333' : 'transparent', 
+                               borderRadius: '3px',
+                               cursor: 'pointer',
+                               border: selectedShapeIndexes.includes(i) ? '1px solid var(--theme-color)' : '1px solid transparent'
+                           }}
+                           onClick={(e) => {
+                               if (s.locked && !s.hidden) return; // Can't select locked shapes via click? Actually layer panel should allow selecting even if locked to unlock it? 
+                               // Convention: Layer panel selection usually bypasses canvas lock for properties, but canvas interaction is disabled.
+                               // Let's allow selection in layer panel so user can UNLOCK it.
+                               if (!e.shiftKey) setSelectedShapeIndexes([i]);
+                               else setSelectedShapeIndexes(prev => prev.includes(i) ? prev.filter(idx => idx !== i) : [...prev, i]);
+                           }}
+                      >
+                          <div style={{ width: '10px', height: '10px', background: s.color, marginRight: '8px', borderRadius: '2px' }}></div>
+                          <span style={{ fontSize: '0.8rem', color: '#ccc', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {s.type.toUpperCase()} {i}
+                          </span>
+                          <button 
+                              onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  const newFrames = [...frames]; 
+                                  newFrames[currentFrameIndex][i] = { ...s, hidden: !s.hidden }; 
+                                  setFrames(newFrames); 
+                                  recordHistory(newFrames); 
+                              }} 
+                              style={{ background: 'none', border: 'none', padding: '2px', color: s.hidden ? '#555' : '#ccc' }}
+                              title={s.hidden ? "Show" : "Hide"}
+                          >
+                              <i className={`bi ${s.hidden ? 'bi-eye-slash' : 'bi-eye'}`}></i>
+                          </button>
+                          <button 
+                              onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  const newFrames = [...frames]; 
+                                  newFrames[currentFrameIndex][i] = { ...s, locked: !s.locked }; 
+                                  setFrames(newFrames); 
+                                  recordHistory(newFrames); 
+                              }} 
+                              style={{ background: 'none', border: 'none', padding: '2px', color: s.locked ? 'var(--theme-color)' : '#555' }}
+                              title={s.locked ? "Unlock" : "Lock"}
+                          >
+                              <i className={`bi ${s.locked ? 'bi-lock-fill' : 'bi-unlock'}`}></i>
+                          </button>
+                      </div>
+                  ))}
+              </div>
+          </div>
+
           <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', borderBottom: '1px solid #333', paddingBottom: '5px' }}>PROPERTIES</h3>
           
-          {selectedShapeIndexes.length > 1 && (
-              <div className="group-actions" style={{ marginBottom: '15px' }}>
-                  <button className="primary-btn" style={{ width: '100%' }} onClick={groupShapes}>GROUP SELECTED ({selectedShapeIndexes.length})</button>
-              </div>
-          )}
-
-          {selectedShapeIndexes.length === 1 && shapes[selectedShapeIndexes[0]]?.type === 'group' && (
-              <div className="group-actions" style={{ marginBottom: '15px' }}>
-                  <button onClick={ungroupShapes} style={{ width: '100%' }}>UNGROUP</button>
-              </div>
-          )}
+          {/* Removed old group-actions as they are now in the header of layers */}
 
           {selectedShapeIndexes.length > 0 ? (
               <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -1491,6 +2531,11 @@ const ShapeBuilder = ({ onBack }) => {
                   <div className="property-group">
                       <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>COLOR</label>
                       <input type="color" value={ensureHex(shapes[selectedShapeIndexes[0]]?.color || '#ffffff')} onChange={(e) => updateSelectedShape({ color: e.target.value })} style={{ width: '100%', height: '30px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
+                        {['#ff0000', '#ff6400', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8000ff', '#ff6496', '#ff00ff', '#ffffff'].map(c => (
+                            <button key={c} onClick={() => updateSelectedShape({ color: c })} style={{ width: '100%', height: '20px', background: c, border: '1px solid #444', borderRadius: '2px', padding: 0 }} />
+                        ))}
+                      </div>
                   </div>
 
                   <div className="property-group">
@@ -1544,6 +2589,11 @@ const ShapeBuilder = ({ onBack }) => {
               <div className="point-properties" style={{ background: '#222', padding: '10px', borderRadius: '4px', border: '1px solid var(--theme-color)' }}>
                   <label style={{ fontSize: '0.8rem', color: 'var(--theme-color)', display: 'block', marginBottom: '5px' }}>{selectedPointIndexes.length} POINTS SELECTED</label>
                   <input type="color" value={ensureHex(selectedPointColor)} onChange={(e) => updatePointColor(e.target.value)} style={{ width: '100%', height: '40px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
+                    {['#ff0000', '#ff6400', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8000ff', '#ff6496', '#ff00ff', '#ffffff'].map(c => (
+                        <button key={c} onClick={() => updatePointColor(c)} style={{ width: '100%', height: '20px', background: c, border: '1px solid #444', borderRadius: '2px', padding: 0 }} />
+                    ))}
+                  </div>
               </div>
           )}
           
