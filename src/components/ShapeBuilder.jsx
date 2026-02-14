@@ -9,6 +9,7 @@ const ShapeBuilder = ({ onBack }) => {
   const [renderMode, setRenderMode] = useState('simple'); 
   const [isDrawing, setIsDrawing] = useState(false);
   const [frameCount, setFrameCount] = useState(1);
+  const [tempFrameCount, setTempFrameCount] = useState(1);
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [onionSkin, setOnionSkin] = useState(true);
@@ -18,6 +19,7 @@ const ShapeBuilder = ({ onBack }) => {
   const [historyStep, setHistoryStep] = useState(0);
   const [selectedShapeIndexes, setSelectedShapeIndexes] = useState([]); 
   const [selectedPointIndexes, setSelectedPointIndexes] = useState([]); 
+  const [selectedSegmentIndexes, setSelectedSegmentIndexes] = useState([]); 
   const [backgroundImage, setBackgroundImage] = useState(null);
   const [shapeClipboard, setShapeClipboard] = useState(null);
   const [zoom, setZoom] = useState(0.6); 
@@ -31,6 +33,39 @@ const ShapeBuilder = ({ onBack }) => {
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, target: null });
   const [renderTrigger, setRenderTrigger] = useState(0);
 
+  // --- ANIMATION & SYNC STATE ---
+  const [tweenStartFrame, setTweenStartFrame] = useState(0);
+  const [tweenEndFrame, setTweenEndFrame] = useState(0);
+  const [tweenPosition, setTweenPosition] = useState(true);
+  const [tweenColor, setTweenColor] = useState(true);
+  const [timelineStartFrame, setTimelineStartFrame] = useState(0);
+  const [syncMode, setSyncMode] = useState('fps'); // 'fps', 'bpm', 'time'
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const [bpm, setBpm] = useState(120);
+  const [duration, setDuration] = useState(2.0); // seconds for 'time' mode
+  const [fps, setFps] = useState(30);
+  const [beats, setBeats] = useState(8);
+
+  // --- REFS FOR STABLE PLAYBACK ---
+  const syncModeRef = useRef(syncMode);
+  const playbackSpeedRef = useRef(playbackSpeed);
+  const bpmRef = useRef(bpm);
+  const durationRef = useRef(duration);
+  const fpsRef = useRef(fps);
+  const beatsRef = useRef(beats);
+  const frameCountRef = useRef(frameCount);
+  const timelineStartFrameRef = useRef(timelineStartFrame);
+
+  // Update refs when state changes
+  useEffect(() => { syncModeRef.current = syncMode; }, [syncMode]);
+  useEffect(() => { playbackSpeedRef.current = playbackSpeed; }, [playbackSpeed]);
+  useEffect(() => { bpmRef.current = bpm; }, [bpm]);
+  useEffect(() => { durationRef.current = duration; }, [duration]);
+  useEffect(() => { fpsRef.current = fps; }, [fps]);
+  useEffect(() => { beatsRef.current = beats; }, [beats]);
+  useEffect(() => { frameCountRef.current = frameCount; }, [frameCount]);
+  useEffect(() => { timelineStartFrameRef.current = timelineStartFrame; }, [timelineStartFrame]);
+
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const startPosRef = useRef({ x: 0, y: 0 });
@@ -42,6 +77,10 @@ const ShapeBuilder = ({ onBack }) => {
   const isSelectingBoxRef = useRef(false);
   const selectionBoxRef = useRef(null);
   const playbackTimerRef = useRef(null);
+  
+  // Timing refs for playback
+  const playbackLastTimeRef = useRef(performance.now());
+  const playbackAccumulatorRef = useRef(0);
 
   const CANVAS_SIZE = 1000;
   const shapes = frames[currentFrameIndex] || [];
@@ -161,6 +200,12 @@ const ShapeBuilder = ({ onBack }) => {
           return `#${r}${g}${b}`;
       }
       return '#ffffff';
+  };
+
+  const getInvertedColor = (color) => {
+      const { r, g, b } = hexToRgb(ensureHex(color));
+      // Simple RGB inversion
+      return `rgb(${255 - r}, ${255 - g}, ${255 - b})`;
   };
 
   const distToSegment = (p, v, w) => {
@@ -302,7 +347,7 @@ const ShapeBuilder = ({ onBack }) => {
     }
     else if (shape.type === 'circle') {
         const rx = Math.abs(shape.end.x - shape.start.x); const ry = Math.abs(shape.end.y - shape.start.y); const c = shape.color;
-        for (let i = 0; i <= 32; i++) {
+        for (let i = 0; i < 32; i++) {
             const angle = (i / 32) * Math.PI * 2;
             pts.push({ x: shape.start.x + Math.cos(angle) * rx, y: shape.start.y + Math.sin(angle) * ry, color: c });
         }
@@ -317,7 +362,6 @@ const ShapeBuilder = ({ onBack }) => {
             pts.push({ x: shape.start.x + Math.cos(rot) * innerRadius, y: shape.start.y + Math.sin(rot) * (ry / 2.5), color: c });
             rot += step;
         }
-        pts.push({ ...pts[0] });
     }
     else if (shape.type === 'group') {
         shape.shapes.forEach(s => pts.push(...getSampledPoints(s)));
@@ -386,18 +430,18 @@ const ShapeBuilder = ({ onBack }) => {
 
       // Check shape body/segments using sampled points for curves
       const sampled = getSampledPoints(shape);
-      if (shape.type === 'rect') {
-          for (let i = 0; i < sampled.length - 1; i++) {
-              if (distToSegment(mouse, sampled[i], sampled[i+1]) < threshold) return { type: 'segment', index: i };
-          }
-          if (isPointInPoly(mouse, sampled)) return { type: 'shape' };
-      } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'polyline' || shape.type === 'polygon' || shape.type === 'group' || shape.type === 'pen' || shape.type === 'bezier') {
-          for (let i = 0; i < sampled.length - 1; i++) {
-              if (distToSegment(mouse, sampled[i], sampled[i+1]) < threshold) return { type: 'segment', index: i };
-          }
-          if (shape.type === 'polygon' && sampled.length > 2) {
-              if (distToSegment(mouse, sampled[sampled.length-1], sampled[0]) < threshold) return { type: 'segment', index: sampled.length - 1 };
-          }
+      const isClosed = ['rect', 'circle', 'star', 'polygon'].includes(shape.type);
+      
+      for (let i = 0; i < sampled.length - 1; i++) {
+          if (distToSegment(mouse, sampled[i], sampled[i+1]) < threshold) return { type: 'segment', index: i, path: [...pathPrefix, i] };
+      }
+      
+      if (isClosed && sampled.length > 2) {
+          if (distToSegment(mouse, sampled[sampled.length-1], sampled[0]) < threshold) return { type: 'segment', index: sampled.length - 1, path: [...pathPrefix, sampled.length - 1] };
+      }
+
+      if (shape.type === 'rect' || shape.type === 'polygon' || shape.type === 'circle' || shape.type === 'star' || shape.type === 'polyline' || shape.type === 'group' || shape.type === 'pen' || shape.type === 'bezier') {
+          if (isClosed && isPointInPoly(mouse, sampled)) return { type: 'shape' };
           if (getDistance(center, mouse) < threshold * 1.5) return { type: 'shape' };
       } else if (shape.type === 'line') {
           if (distToSegment(mouse, sampled[0], sampled[1]) < threshold) return { type: 'segment', index: 0 };
@@ -471,6 +515,55 @@ const ShapeBuilder = ({ onBack }) => {
           }
       }
       setContextMenu({ visible: true, x: e.clientX, y: e.clientY, target: { type: 'canvas' } });
+  };
+
+  const splitShapeFromPoints = () => {
+      if (selectedShapeIndexes.length !== 1 || selectedPointIndexes.length === 0) return;
+      
+      const sIdx = selectedShapeIndexes[0];
+      const newFrames = [...frames];
+      const currentShapes = [...newFrames[currentFrameIndex]];
+      const sourceShape = currentShapes[sIdx];
+      
+      if (!sourceShape.points) {
+          alert("Only point-based shapes can be split. Convert to points first.");
+          return;
+      }
+
+      // Sort selected indices to maintain order
+      const indicesToExtract = selectedPointIndexes
+          .map(p => Array.isArray(p) ? p[0] : p)
+          .sort((a, b) => a - b);
+
+      const extractedPoints = indicesToExtract.map(idx => ({ ...sourceShape.points[idx] }));
+      const remainingPoints = sourceShape.points.filter((_, idx) => !indicesToExtract.includes(idx));
+
+      if (extractedPoints.length === 0) return;
+
+      // Update source shape
+      if (remainingPoints.length < 2) {
+          // If too few points remain, delete the original
+          currentShapes.splice(sIdx, 1);
+      } else {
+          currentShapes[sIdx] = { ...sourceShape, points: remainingPoints };
+      }
+
+      // Create new shape from extracted points
+      const newShape = {
+          ...sourceShape,
+          type: 'polyline', // Default to polyline for safety
+          points: extractedPoints,
+          rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
+      };
+
+      currentShapes.push(newShape);
+      newFrames[currentFrameIndex] = currentShapes;
+      setFrames(newFrames);
+      recordHistory(newFrames);
+      
+      setSelectedShapeIndexes([currentShapes.length - 1]);
+      setSelectedPointIndexes([]);
+      setContextMenu({ visible: false, x: 0, y: 0, target: null });
   };
 
   const deletePoint = () => {
@@ -585,13 +678,32 @@ const ShapeBuilder = ({ onBack }) => {
 
   const splitSegment = () => {
       if (!contextMenu.target || contextMenu.target.type !== 'segment') return;
-      const { shapeIndex, segmentIndex, pos } = contextMenu.target;
-      const newFrames = [...frames]; const shape = { ...newFrames[currentFrameIndex][shapeIndex] };
+      const { shapeIndex, index: segmentIndex, pos } = contextMenu.target;
+      
+      const newFrames = [...frames];
+      const newShapes = [...newFrames[currentFrameIndex]];
+      const shape = { ...newShapes[shapeIndex] };
+      
       if (shape.points) {
-          const newPts = [...shape.points]; newPts.splice(segmentIndex + 1, 0, { ...pos, color }); shape.points = newPts; newFrames[currentFrameIndex][shapeIndex] = shape;
+          const newPts = [...shape.points];
+          newPts.splice(segmentIndex + 1, 0, { ...pos, color });
+          newShapes[shapeIndex] = { ...shape, points: newPts };
       } else if (shape.type === 'line') {
-          newFrames[currentFrameIndex][shapeIndex] = { type: 'polyline', color: shape.color, renderMode: shape.renderMode, points: [{ x: shape.start.x, y: shape.start.y, color: shape.startColor || shape.color }, { x: pos.x, y: pos.y, color }, { x: shape.end.x, y: shape.end.y, color: shape.endColor || shape.color }], rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
+          newShapes[shapeIndex] = { 
+              type: 'polyline', 
+              color: shape.color, 
+              renderMode: shape.renderMode || 'simple',
+              points: [
+                  { x: shape.start.x, y: shape.start.y, color: shape.startColor || shape.color }, 
+                  { x: pos.x, y: pos.y, color }, 
+                  { x: shape.end.x, y: shape.end.y, color: shape.endColor || shape.color }
+              ], 
+              rotationX: 0, rotationY: 0, rotationZ: 0, 
+              scaleX: 1, scaleY: 1 
+          };
       }
+      
+      newFrames[currentFrameIndex] = newShapes;
       setFrames(newFrames);
       recordHistory(newFrames);
       setContextMenu({ visible: false, x: 0, y: 0, target: null });
@@ -634,6 +746,150 @@ const ShapeBuilder = ({ onBack }) => {
       setFrames(newFrames);
       recordHistory(newFrames);
       setContextMenu({ visible: false, x: 0, y: 0, target: null });
+  };
+
+  const handleSetSyncMode = useCallback((mode) => setSyncMode(mode), []);
+  const handleSetBpm = useCallback((val) => setBpm(val), []);
+  const handleSetFps = useCallback((val) => setFps(val), []);
+  const handleSetDuration = useCallback((val) => setDuration(val), []);
+  const handleSetBeats = useCallback((val) => setBeats(val), []);
+  const handleSetPlaybackSpeed = useCallback((val) => setPlaybackSpeed(val), []);
+
+  const handleNumberWheel = (e, setter, step = 1) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? step : -step;
+      setter(prev => Math.max(0, prev + delta));
+  };
+
+  const handleBpmWheel = (e) => handleNumberWheel(e, setBpm);
+  const handleBeatsWheel = (e) => handleNumberWheel(e, setBeats);
+  const handleDurationWheel = (e) => handleNumberWheel(e, setDuration, 0.1);
+  const handleTweenStartWheel = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1 : -1;
+      setTweenStartFrame(prev => Math.max(0, prev + delta));
+  };
+  const handleTweenEndWheel = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1 : -1;
+      setTweenEndFrame(prev => Math.max(0, prev + delta));
+  };
+  const handleTimelineStartWheel = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1 : -1;
+      setTimelineStartFrame(prev => Math.max(0, Math.min(frameCount - 1, prev + delta)));
+  };
+
+  const tweenFrames = () => {
+      if (tweenStartFrame >= tweenEndFrame) {
+          alert('Start frame must be before end frame');
+          return;
+      }
+      
+      const newFrames = [...frames];
+      const startShapes = frames[tweenStartFrame];
+      const endShapes = frames[tweenEndFrame];
+      
+      if (!startShapes || !endShapes || startShapes.length === 0 || endShapes.length === 0) {
+          alert('Both start and end frames must contain shapes');
+          return;
+      }
+
+      const totalSteps = tweenEndFrame - tweenStartFrame;
+
+      for (let i = 1; i < totalSteps; i++) {
+          const t = i / totalSteps;
+          const frameIdx = tweenStartFrame + i;
+          const interpolatedShapes = [];
+
+          // Try to match shapes by index
+          startShapes.forEach((s1, sIdx) => {
+              const s2 = endShapes[sIdx];
+              if (!s2 || s1.type !== s2.type) {
+                  // If no match or different type, just copy s1 or s2?
+                  // For now, let's just push s1 if it's the first half, else s2
+                  interpolatedShapes.push(t < 0.5 ? JSON.parse(JSON.stringify(s1)) : JSON.parse(JSON.stringify(s2)));
+                  return;
+              }
+
+              const interp = JSON.parse(JSON.stringify(s1));
+
+              // Interpolate Position
+              if (tweenPosition) {
+                  if (s1.start && s2.start) {
+                      interp.start.x = s1.start.x + (s2.start.x - s1.start.x) * t;
+                      interp.start.y = s1.start.y + (s2.start.y - s1.start.y) * t;
+                  }
+                  if (s1.end && s2.end) {
+                      interp.end.x = s1.end.x + (s2.end.x - s1.end.x) * t;
+                      interp.end.y = s1.end.y + (s2.end.y - s1.end.y) * t;
+                  }
+                  if (s1.width !== undefined && s2.width !== undefined) {
+                      interp.width = s1.width + (s2.width - s1.width) * t;
+                  }
+                  if (s1.height !== undefined && s2.height !== undefined) {
+                      interp.height = s1.height + (s2.height - s1.height) * t;
+                  }
+
+                  // Interpolate Transforms
+                  interp.scaleX = (s1.scaleX ?? 1) + ((s2.scaleX ?? 1) - (s1.scaleX ?? 1)) * t;
+                  interp.scaleY = (s1.scaleY ?? 1) + ((s2.scaleY ?? 1) - (s1.scaleY ?? 1)) * t;
+                  interp.rotationX = (s1.rotationX ?? 0) + ((s2.rotationX ?? 0) - (s1.rotationX ?? 0)) * t;
+                  interp.rotationY = (s1.rotationY ?? 0) + ((s2.rotationY ?? 0) - (s1.rotationY ?? 0)) * t;
+                  interp.rotationZ = (s1.rotationZ ?? 0) + ((s2.rotationZ ?? 0) - (s1.rotationZ ?? 0)) * t;
+                  if (s1.rotation !== undefined && s2.rotation !== undefined) {
+                      interp.rotation = s1.rotation + (s2.rotation - s1.rotation) * t;
+                  }
+              }
+
+              // Interpolate Color
+              if (tweenColor) {
+                  const c1 = hexToRgb(s1.color);
+                  const c2 = hexToRgb(s2.color);
+                  const r = Math.round(c1.r + (c2.r - c1.r) * t);
+                  const g = Math.round(c1.g + (c2.g - c1.g) * t);
+                  const b = Math.round(c1.b + (c2.b - c1.b) * t);
+                  interp.color = `rgb(${r},${g},${b})`;
+              }
+
+              // Interpolate Points if applicable
+              if (s1.points && s2.points && s1.points.length === s2.points.length) {
+                  interp.points = s1.points.map((p1, pIdx) => {
+                      const p2 = s2.points[pIdx];
+                      
+                      let resX = p1.x;
+                      let resY = p1.y;
+                      let resZ = (p1.z || 0);
+                      let resCol = p1.color || s1.color;
+
+                      if (tweenPosition) {
+                          resX = p1.x + (p2.x - p1.x) * t;
+                          resY = p1.y + (p2.y - p1.y) * t;
+                          resZ = (p1.z || 0) + ((p2.z || 0) - (p1.z || 0)) * t;
+                      }
+
+                      if (tweenColor) {
+                          const pc1 = hexToRgb(p1.color || s1.color);
+                          const pc2 = hexToRgb(p2.color || s2.color);
+                          const pr = Math.round(pc1.r + (pc2.r - pc1.r) * t);
+                          const pg = Math.round(pc1.g + (pc2.g - pc1.g) * t);
+                          const pb = Math.round(pc1.b + (pc2.b - pc1.b) * t);
+                          resCol = `rgb(${pr},${pg},${pb})`;
+                      }
+
+                      return { x: resX, y: resY, z: resZ, color: resCol };
+                  });
+              }
+
+              interpolatedShapes.push(interp);
+          });
+
+          newFrames[frameIdx] = interpolatedShapes;
+      }
+
+      setFrames(newFrames);
+      recordHistory(newFrames);
+      alert('Interpolation complete!');
   };
 
   const selectOddPoints = () => {
@@ -1426,13 +1682,21 @@ const ShapeBuilder = ({ onBack }) => {
   };
 
   const clearAll = () => {
-    if (confirm('Clear all shapes in this frame?')) {
+    const mode = confirm('Press OK to clear ALL frames in the animation, or CANCEL to clear only the CURRENT frame.');
+    if (mode) {
+        // Clear all frames
+        const cleared = frames.map(() => []);
+        setFrames(cleared);
+        recordHistory(cleared);
+    } else {
+        // Clear only current frame
         const newFrames = [...frames];
         newFrames[currentFrameIndex] = [];
         setFrames(newFrames);
         recordHistory(newFrames);
-        setSelectedShapeIndexes([]); setSelectedPointIndexes([]);
     }
+    setSelectedShapeIndexes([]); 
+    setSelectedPointIndexes([]);
   };
 
   const copyShape = () => { 
@@ -1487,6 +1751,11 @@ const ShapeBuilder = ({ onBack }) => {
           setFrames(JSON.parse(JSON.stringify(history[nextStep])));
       }
   };
+  useEffect(() => {
+      // Record history on frame changes, but with a slight debounce or only on specific actions
+      // For now, let's keep it manual to avoid bloating history
+  }, [frames]);
+
   const updateSelectedShape = (props) => { 
       if (selectedShapeIndexes.length === 0) return; 
       
@@ -1517,13 +1786,9 @@ const ShapeBuilder = ({ onBack }) => {
               ns[idx] = applyPropsToShape(ns[idx], props);
           });
           newFrames[currentFrameIndex] = ns; 
+          recordHistory(newFrames); // Call directly now
           return newFrames;
       });
-      // recordHistory will be called by useEffect or manually after the state is settled
-      // But for simple property changes, we should record it.
-      setTimeout(() => {
-          setFrames(f => { recordHistory(f); return f; });
-      }, 0);
   };
 
   const updatePointColor = (c) => { 
@@ -1570,18 +1835,16 @@ const ShapeBuilder = ({ onBack }) => {
           
           ns[idx] = s; 
           newFrames[currentFrameIndex] = ns; 
+          recordHistory(newFrames); // Call directly
           return newFrames;
       });
-      
-      setTimeout(() => {
-          setFrames(f => { recordHistory(f); return f; });
-      }, 0);
   };
 
   const saveAsClip = async () => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
       try {
-          const ildaFramesData = frames.map(frameShapes => {
+          const exportFrames = frames.slice(timelineStartFrame);
+          const ildaFramesData = exportFrames.map(frameShapes => {
               const pts = []; 
               frameShapes.forEach((s, shapeIdx) => {
                   const mode = s.renderMode || 'simple';
@@ -1607,13 +1870,19 @@ const ShapeBuilder = ({ onBack }) => {
                   }
 
                   if (s.type === 'polygon' || s.type === 'rect' || s.type === 'circle' || s.type === 'star') {
-                      // Close the shape
-                      let segmentMode = mode;
-                      if (mode === 'dashed' && (processed.length - 1) % 2 === 1) segmentMode = 'blanked';
+                      // Close the shape if the last point is not already the same as the first
+                      const first = processed[0];
+                      const last = processed[processed.length-1];
+                      const dist = Math.sqrt(Math.pow(first.x - last.x, 2) + Math.pow(first.y - last.y, 2));
+                      
+                      if (dist > 0.001) {
+                          let segmentMode = mode;
+                          if (mode === 'dashed' && (processed.length - 1) % 2 === 1) segmentMode = 'blanked';
 
-                      const closingPoints = interpolatePoints(processed[processed.length-1], processed[0], segmentMode);
-                      if (closingPoints.length > 1) {
-                          shapePts.push(...closingPoints.slice(1));
+                          const closingPoints = interpolatePoints(processed[processed.length-1], processed[0], segmentMode);
+                          if (closingPoints.length > 1) {
+                              shapePts.push(...closingPoints.slice(1));
+                          }
                       }
                   }
 
@@ -1718,6 +1987,24 @@ const ShapeBuilder = ({ onBack }) => {
                     }
                 }
                 isMovingPointRef.current = true;
+            } else if (bestHit.type === 'segment') {
+                const segPath = bestHit.path || [bestHit.index];
+                if (!e.shiftKey) {
+                    setSelectedSegmentIndexes([segPath]);
+                    setSelectedShapeIndexes([hitIdx]);
+                    setSelectedPointIndexes([]); // Clear point selection when selecting segment
+                } else {
+                    if (selectedShapeIndexes.includes(hitIdx)) {
+                        setSelectedSegmentIndexes(prev => {
+                            const isSelected = prev.some(p => JSON.stringify(p) === JSON.stringify(segPath));
+                            return isSelected ? prev.filter(p => JSON.stringify(p) !== JSON.stringify(segPath)) : [...prev, segPath];
+                        });
+                    } else {
+                        setSelectedShapeIndexes([hitIdx]);
+                        setSelectedSegmentIndexes([segPath]);
+                    }
+                }
+                isMovingShapeRef.current = true; // Allow moving shape by its segment
             } else if (bestHit.type === 'pivot') {
                 isMovingPivotRef.current = true;
             } else {
@@ -1772,6 +2059,38 @@ const ShapeBuilder = ({ onBack }) => {
       if (shape.pivotY !== undefined) updated.pivotY = shape.pivotY + dy;
       
       return updated;
+  }, []);
+
+  const deepUpdate = useCallback((item, path, dX, dY) => {
+      if (path.length === 1) {
+          const idx = path[0];
+          const s = { ...item };
+          if (s.type === 'line') {
+              if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; }
+              else { s.end = { ...s.end, x: s.end.x + dX, y: s.end.y + dY }; }
+          } else if (s.type === 'rect') {
+              if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; s.width -= dX; s.height -= dY; }
+              else if (idx === 1) { s.start = { ...s.start, y: s.start.y + dY }; s.width += dX; s.height -= dY; }
+              else if (idx === 2) { s.width += dX; s.height += dY; }
+              else if (idx === 3) { s.start = { ...s.start, x: s.start.x + dX }; s.width -= dX; s.height += dY; }
+          } else if (s.type === 'circle' || s.type === 'star') {
+              if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; }
+              else if (idx === 1) s.end = { ...s.end, x: s.end.x + dX };
+              else if (idx === 2) s.end = { ...s.end, y: s.end.y + dY };
+          } else if (s.points) {
+              s.points = [...s.points];
+              if (s.points[idx]) {
+                  s.points[idx] = { ...s.points[idx], x: s.points[idx].x + dX, y: s.points[idx].y + dY };
+              }
+          }
+          return s;
+      } else {
+          const [currentIdx, ...rest] = path;
+          const s = { ...item };
+          s.shapes = [...s.shapes];
+          s.shapes[currentIdx] = deepUpdate(s.shapes[currentIdx], rest, dX, dY);
+          return s;
+      }
   }, []);
 
   const draw = (e) => {
@@ -1838,38 +2157,6 @@ const ShapeBuilder = ({ onBack }) => {
             const actualDy = snappedTarget.y - refPoint.y;
 
             if (actualDx !== 0 || actualDy !== 0) {
-                const deepUpdate = (item, path, dX, dY) => {
-                    if (path.length === 1) {
-                        const idx = path[0];
-                        const s = { ...item };
-                        if (s.type === 'line') {
-                            if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; }
-                            else { s.end = { ...s.end, x: s.end.x + dX, y: s.end.y + dY }; }
-                        } else if (s.type === 'rect') {
-                            if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; s.width -= dX; s.height -= dY; }
-                            else if (idx === 1) { s.start = { ...s.start, y: s.start.y + dY }; s.width += dX; s.height -= dY; }
-                            else if (idx === 2) { s.width += dX; s.height += dY; }
-                            else if (idx === 3) { s.start = { ...s.start, x: s.start.x + dX }; s.width -= dX; s.height += dY; }
-                        } else if (s.type === 'circle' || s.type === 'star') {
-                            if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; }
-                            else if (idx === 1) s.end = { ...s.end, x: s.end.x + dX };
-                            else if (idx === 2) s.end = { ...s.end, y: s.end.y + dY };
-                        } else if (s.points) {
-                            s.points = [...s.points];
-                            if (s.points[idx]) {
-                                s.points[idx] = { ...s.points[idx], x: s.points[idx].x + dX, y: s.points[idx].y + dY };
-                            }
-                        }
-                        return s;
-                    } else {
-                        const [currentIdx, ...rest] = path;
-                        const s = { ...item };
-                        s.shapes = [...s.shapes];
-                        s.shapes[currentIdx] = deepUpdate(s.shapes[currentIdx], rest, dX, dY);
-                        return s;
-                    }
-                };
-
                 setFrames(prev => {
                     const nf = [...prev], ns = [...nf[currentFrameIndex]];
                     let shape = { ...ns[selectedShapeIndexes[0]] };
@@ -1919,6 +2206,7 @@ const ShapeBuilder = ({ onBack }) => {
             if (!isShift) {
                 setSelectedShapeIndexes([]);
                 setSelectedPointIndexes([]);
+                setSelectedSegmentIndexes([]);
             }
         } else {
             // If exactly one shape is selected, box selection selects POINTS of that shape
@@ -2046,9 +2334,43 @@ const ShapeBuilder = ({ onBack }) => {
     ctx.lineWidth = (isSelected ? 2.5 : 1.5) / zoom;
     
     // Batch drawing optimization
-    const drawPoly = (pts, closed, mode = 'simple') => {
+    const drawPoly = (pts, closed, mode = 'simple', shapePath = []) => {
         if (!pts || pts.length < 2) return;
         
+        // --- PASS 1: HIGHLIGHTS ---
+        if (selectedSegmentIndexes.length > 0) {
+            ctx.save();
+            ctx.lineWidth = 6 / zoom;
+            ctx.globalAlpha = 0.6; // Increased alpha for better visibility
+            ctx.lineCap = 'round';
+
+            for (let i = 0; i < pts.length - 1; i++) {
+                const segPath = [...shapePath, i];
+                const isSegSelected = selectedSegmentIndexes.some(sel => JSON.stringify(sel) === JSON.stringify(segPath));
+                if (isSegSelected) {
+                    ctx.strokeStyle = getInvertedColor(pts[i].color || shape.color);
+                    ctx.beginPath();
+                    ctx.moveTo(pts[i].x, pts[i].y);
+                    ctx.lineTo(pts[i+1].x, pts[i+1].y);
+                    ctx.stroke();
+                }
+            }
+            if (closed && pts.length > 2) {
+                const iLast = pts.length - 1;
+                const segPath = [...shapePath, iLast];
+                const isSegSelected = selectedSegmentIndexes.some(sel => JSON.stringify(sel) === JSON.stringify(segPath));
+                if (isSegSelected) {
+                    ctx.strokeStyle = getInvertedColor(pts[iLast].color || shape.color);
+                    ctx.beginPath();
+                    ctx.moveTo(pts[iLast].x, pts[iLast].y);
+                    ctx.lineTo(pts[0].x, pts[0].y);
+                    ctx.stroke();
+                }
+            }
+            ctx.restore();
+        }
+
+        // --- PASS 2: ACTUAL LINES ---
         let pendingStroke = false;
         ctx.beginPath();
         if (pts[0]) ctx.moveTo(pts[0].x, pts[0].y);
@@ -2125,19 +2447,31 @@ const ShapeBuilder = ({ onBack }) => {
         }
     };
 
-    const ds = (p1, p2, mode = 'simple') => {
+    const ds = (p1, p2, mode = 'simple', shapePath = []) => {
         if (!p1 || !p2) return;
+
+        // Pass 1: Highlight
+        const segPath = [...shapePath, 0];
+        const isSegSelected = selectedSegmentIndexes.some(sel => JSON.stringify(sel) === JSON.stringify(segPath));
+        if (isSegSelected) {
+            ctx.save();
+            ctx.strokeStyle = getInvertedColor(p1.color || shape.color);
+            ctx.lineWidth = 6 / zoom;
+            ctx.globalAlpha = 0.6;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         if (mode === 'dotted') {
             [p1, p2].forEach(p => {
                 ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color);
                 ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill();
             });
             return;
-        }
-        if (mode === 'dashed') {
-            // Only draw the segment (it's segment 0)
-            // Wait, for a single line, it has 1 segment (index 0). So it's always drawn.
-            // If the user wants dashed lines to mean something else for single segments, we'd need more info.
         }
         const c1 = isOnion ? '#444' : (p1.color || shape.color), c2 = isOnion ? '#444' : (p2.color || shape.color);
         if (c1 === c2) ctx.strokeStyle = c1; else { const g = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y); g.addColorStop(0, c1); g.addColorStop(1, c2); ctx.strokeStyle = g; }
@@ -2151,28 +2485,28 @@ const ShapeBuilder = ({ onBack }) => {
     switch (shape.type) {
         case 'pen': case 'polyline': case 'bezier': { 
             const pts = getSampledPoints(shape);
-            drawPoly(pts, false, mode);
+            drawPoly(pts, false, mode, path);
             break; 
         }
         case 'polygon': {
             const pts = getSampledPoints(shape);
-            drawPoly(pts, true, mode);
+            drawPoly(pts, true, mode, path);
             break;
         }
         case 'line': {
             const pts = getSampledPoints(shape);
-            ds(pts[0], pts[1], mode); 
+            ds(pts[0], pts[1], mode, path); 
             break;
         }
-        case 'rect': { const pts = getSampledPoints(shape); drawPoly(pts, true, mode); break; }
+        case 'rect': { const pts = getSampledPoints(shape); drawPoly(pts, true, mode, path); break; }
         case 'circle': { 
             const pts = getSampledPoints(shape);
-            drawPoly(pts, true, mode);
+            drawPoly(pts, true, mode, path);
             break; 
         }
         case 'star': { 
             const pts = getSampledPoints(shape);
-            drawPoly(pts, true, mode);
+            drawPoly(pts, true, mode, path);
             break; 
         }
     }
@@ -2213,10 +2547,13 @@ const ShapeBuilder = ({ onBack }) => {
     ctx.restore();
   };
 
+  // --- RENDERING LOOP ---
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext('2d'); 
-    const drawLoop = () => {
+    let rafId;
+
+    const render = () => {
         if (!canvasRef.current) return;
         ctx.save(); ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.translate(canvas.width / 2, canvas.height / 2); ctx.scale(zoom, zoom); ctx.translate(-CANVAS_SIZE / 2 + pan.x, -CANVAS_SIZE / 2 + pan.y);
@@ -2229,7 +2566,11 @@ const ShapeBuilder = ({ onBack }) => {
           ctx.beginPath(); ctx.strokeStyle = '#444'; ctx.lineWidth = 1 / zoom; ctx.moveTo(CANVAS_SIZE/2, 0); ctx.lineTo(CANVAS_SIZE/2, CANVAS_SIZE); ctx.moveTo(0, CANVAS_SIZE/2); ctx.lineTo(CANVAS_SIZE, CANVAS_SIZE/2); ctx.stroke();
         }
         if (backgroundImage) { ctx.globalAlpha = 0.3; ctx.drawImage(backgroundImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE); ctx.globalAlpha = 1.0; }
-        if (onionSkin && currentFrameIndex > 0 && !isPlaying) { ctx.globalAlpha = 0.15; frames[currentFrameIndex - 1].forEach(s => drawShape(ctx, s, false, true)); ctx.globalAlpha = 1.0; }
+        if (onionSkin && currentFrameIndex > 0 && !isPlaying && frames[currentFrameIndex - 1]) { 
+            ctx.globalAlpha = 0.15; 
+            frames[currentFrameIndex - 1].forEach(s => drawShape(ctx, s, false, true)); 
+            ctx.globalAlpha = 1.0; 
+        }
         if (shapes.length > 0) shapes.forEach((s, i) => drawShape(ctx, s, selectedShapeIndexes.includes(i)));
         if (isDrawing && activeShape) drawShape(ctx, activeShape, false);
         if (isSelectingBoxRef.current && selectionBoxRef.current) { 
@@ -2241,9 +2582,76 @@ const ShapeBuilder = ({ onBack }) => {
             ctx.strokeRect(selectionBoxRef.current.x, selectionBoxRef.current.y, selectionBoxRef.current.w, selectionBoxRef.current.h); 
         }
         ctx.restore();
+        rafId = requestAnimationFrame(render);
     };
-    drawLoop();
-  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, onionSkin, isPlaying, zoom, pan, renderTrigger]);
+    
+    rafId = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(rafId);
+  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, selectedSegmentIndexes, onionSkin, isPlaying, zoom, pan, renderTrigger]);
+
+  // --- PLAYBACK TIMER ---
+  useEffect(() => {
+      if (!isPlaying || frameCount <= 1) {
+          playbackAccumulatorRef.current = 0;
+          return;
+      }
+
+      let rafId;
+      playbackLastTimeRef.current = performance.now();
+
+      const tick = (now) => {
+          const deltaTime = now - playbackLastTimeRef.current;
+          playbackLastTimeRef.current = now;
+          
+          // Safety: Ignore huge jumps (tab backgrounding) or negative time
+          if (deltaTime > 500 || deltaTime <= 0) {
+              rafId = requestAnimationFrame(tick);
+              return;
+          }
+
+          playbackAccumulatorRef.current += deltaTime;
+
+          const sMode = syncModeRef.current;
+          const sSpeed = Math.max(0.01, playbackSpeedRef.current);
+          const fCount = Math.max(1, frameCountRef.current);
+          const startF = timelineStartFrameRef.current;
+          const activeRange = Math.max(1, fCount - startF);
+          
+          let frameDuration = 33.33; 
+          if (sMode === 'fps') {
+              frameDuration = 1000 / (Math.max(1, fpsRef.current) * sSpeed);
+          } else if (sMode === 'bpm') {
+              const msPerBeat = 60000 / Math.max(1, bpmRef.current);
+              frameDuration = (msPerBeat * Math.max(1, beatsRef.current)) / activeRange / sSpeed;
+          } else if (sMode === 'time') {
+              frameDuration = (Math.max(0.1, durationRef.current) * 1000) / activeRange / sSpeed;
+          }
+
+          // Cap frameDuration to at least 1ms to prevent infinite updates
+          frameDuration = Math.max(1, frameDuration);
+
+          if (playbackAccumulatorRef.current >= frameDuration) {
+              const framesToAdvance = Math.floor(playbackAccumulatorRef.current / frameDuration);
+              if (framesToAdvance > 0) {
+                  setCurrentFrameIndex(prev => {
+                      const next = prev + framesToAdvance;
+                      if (next >= fCount) {
+                          // Loop within the startF -> fCount range
+                          return startF + (next - startF) % activeRange;
+                      }
+                      return next;
+                  });
+                  playbackAccumulatorRef.current -= (framesToAdvance * frameDuration);
+              }
+          }
+          rafId = requestAnimationFrame(tick);
+      };
+
+      rafId = requestAnimationFrame(tick);
+      return () => {
+          if (rafId) cancelAnimationFrame(rafId);
+      };
+  }, [isPlaying, frameCount]);
 
   useEffect(() => {
       const container = containerRef.current; if (!container) return;
@@ -2252,8 +2660,8 @@ const ShapeBuilder = ({ onBack }) => {
   }, [zoom]);
 
   // --- LIFECYCLE ---
+  useEffect(() => { setTempFrameCount(frameCount); }, [frameCount]);
   useEffect(() => { setFrames(p => { const nf = [...p]; if (frameCount > p.length) { for (let i = p.length; i < frameCount; i++) nf.push([]); } else if (frameCount < p.length) return nf.slice(0, frameCount); return nf; }); }, [frameCount]);
-  useEffect(() => { if (isPlaying) playbackTimerRef.current = setInterval(() => setCurrentFrameIndex(p => (p + 1) % frameCount), 1000 / 12); else clearInterval(playbackTimerRef.current); return () => clearInterval(playbackTimerRef.current); }, [isPlaying, frameCount]);
   
   useEffect(() => { 
       const h = (e) => {
@@ -2267,18 +2675,70 @@ const ShapeBuilder = ({ onBack }) => {
   }, [isDrawing, activeShape]);
 
   useEffect(() => {
-    setSelectedShapeIndexes([]);
-    setSelectedPointIndexes([]);
-  }, [currentFrameIndex]);
+    if (!isPlaying) {
+        setSelectedShapeIndexes([]);
+        setSelectedPointIndexes([]);
+        setSelectedSegmentIndexes([]);
+    }
+  }, [currentFrameIndex, isPlaying]);
   
   useEffect(() => {
     const h = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
-      else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redo(); }
-      else if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); copyShape(); }
-      else if ((e.ctrlKey || e.metaKey) && e.key === 'v') { e.preventDefault(); pasteShape(); }
+      // Improved check: Disable shortcuts if any input, textarea, or select is focused
+      const isTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
+      
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') { if (!isTyping) { e.preventDefault(); undo(); } }
+      else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { if (!isTyping) { e.preventDefault(); redo(); } }
+      else if ((e.ctrlKey || e.metaKey) && e.key === 'c') { if (!isTyping) { e.preventDefault(); copyShape(); } }
+      else if ((e.ctrlKey || e.metaKey) && e.key === 'v') { if (!isTyping) { e.preventDefault(); pasteShape(); } }
+      else if (e.key === ' ' || e.code === 'Space') {
+          if (!isTyping) {
+              e.preventDefault();
+              setIsPlaying(prev => !prev);
+          }
+      }
+      else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+          if (!isTyping) {
+              const isMovingSelection = selectedShapeIndexes.length > 0 || selectedPointIndexes.length > 0;
+              
+              if (!isMovingSelection && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+                  e.preventDefault();
+                  if (e.key === 'ArrowLeft') setCurrentFrameIndex(prev => Math.max(0, prev - 1));
+                  else setCurrentFrameIndex(prev => Math.min(frameCount - 1, prev + 1));
+              } else if (isMovingSelection) {
+                  e.preventDefault();
+                  const amount = e.shiftKey ? 10 : 1;
+                  let dx = 0, dy = 0;
+                  if (e.key === 'ArrowLeft') dx = -amount;
+                  else if (e.key === 'ArrowRight') dx = amount;
+                  else if (e.key === 'ArrowUp') dy = -amount;
+                  else if (e.key === 'ArrowDown') dy = amount;
+
+                  setFrames(prev => {
+                      const newFrames = [...prev];
+                      const ns = [...newFrames[currentFrameIndex]];
+                      if (selectedPointIndexes.length > 0 && selectedShapeIndexes.length === 1) {
+                          const sIdx = selectedShapeIndexes[0];
+                          let shape = { ...ns[sIdx] };
+                          selectedPointIndexes.forEach(path => {
+                              const ptPath = Array.isArray(path) ? path : [path];
+                              shape = deepUpdate(shape, ptPath, dx, dy);
+                          });
+                          ns[sIdx] = shape;
+                      } else {
+                          selectedShapeIndexes.forEach(idx => {
+                              if (ns[idx]) ns[idx] = moveShape({ ...ns[idx] }, dx, dy);
+                          });
+                      }
+                      newFrames[currentFrameIndex] = ns;
+                      recordHistory(newFrames);
+                      return newFrames;
+                  });
+              }
+          }
+      }
       else if (e.key === 'Delete' || e.key === 'Backspace') { 
-          if (selectedShapeIndexes.length > 0 && document.activeElement.tagName !== 'INPUT') { 
+          if (!isTyping && selectedShapeIndexes.length > 0) { 
               const newFrames = [...frames];
               newFrames[currentFrameIndex] = newFrames[currentFrameIndex].filter((_, i) => !selectedShapeIndexes.includes(i));
               setFrames(newFrames);
@@ -2289,15 +2749,15 @@ const ShapeBuilder = ({ onBack }) => {
       }
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
-  }, [frames, currentFrameIndex, selectedShapeIndexes, shapeClipboard, history, historyStep]);
+  }, [frames, currentFrameIndex, selectedShapeIndexes, selectedPointIndexes, shapeClipboard, history, historyStep, isPlaying, frameCount, moveShape, deepUpdate]);
 
-  const ToolButton = ({ active, onClick, icon }) => (
+  const ToolButton = React.memo(({ active, onClick, icon }) => (
     <button onClick={onClick} style={{ width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: active ? 'var(--theme-color)' : '#222', color: active ? 'black' : '#888', border: 'none', borderRadius: '4px', fontSize: '1.2rem', padding: 0 }}><i className={`bi ${icon}`}></i></button>
-  );
+  ));
 
-  const ModeButton = ({ active, onClick, children }) => (
+  const ModeButton = React.memo(({ active, onClick, children }) => (
     <button onClick={onClick} style={{ background: active ? '#444' : '#222', color: active ? 'var(--theme-color)' : '#888', border: active ? '1px solid var(--theme-color)' : '1px solid #333', fontSize: '0.7rem', padding: '5px' }}>{children}</button>
-  );
+  ));
 
   const selectedPointColor = (selectedShapeIndexes.length === 1 && shapes[selectedShapeIndexes[0]] && selectedPointIndexes.length > 0) ? (getShapePoints(shapes[selectedShapeIndexes[0]])[selectedPointIndexes[0]]?.color || shapes[selectedShapeIndexes[0]].color) : '#000000';
 
@@ -2400,7 +2860,10 @@ const ShapeBuilder = ({ onBack }) => {
             {contextMenu.visible && (
                 <div className="context-menu" style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, background: '#222', border: '1px solid #444', borderRadius: '4px', padding: '5px 0', zIndex: 10000 }}>
                     {(contextMenu.target?.type === 'point' || selectedPointIndexes.length > 0) && (
-                        <div className="menu-item" onClick={deletePoint}>Delete {selectedPointIndexes.length > 1 ? 'Points' : 'Point'}</div>
+                        <>
+                            <div className="menu-item" onClick={deletePoint}>Delete {selectedPointIndexes.length > 1 ? 'Points' : 'Point'}</div>
+                            <div className="menu-item" onClick={splitShapeFromPoints}>Split to New Shape</div>
+                        </>
                     )}
                     {contextMenu.target?.type === 'segment' && (
                         <>
@@ -2449,13 +2912,32 @@ const ShapeBuilder = ({ onBack }) => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#666' }}><span>FRAME {currentFrameIndex + 1} / {frameCount}</span><label><input type="checkbox" checked={onionSkin} onChange={e => setOnionSkin(e.target.checked)} /> Onion Skin</label></div>
                   <input type="range" min="0" max={frameCount - 1} value={currentFrameIndex} onChange={e => setCurrentFrameIndex(parseInt(e.target.value))} />
               </div>
-              <div className="timeline-settings" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><label style={{ fontSize: '0.8rem', color: '#888' }}>LENGTH:</label><input type="number" min="1" max="999" value={frameCount} onChange={e => setFrameCount(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} /></div>
+              <div className="timeline-settings" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <label style={{ fontSize: '0.8rem', color: '#888' }}>START:</label>
+                      <input type="number" min="1" max={frameCount} value={timelineStartFrame + 1} onChange={e => setTimelineStartFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} onWheel={handleTimelineStartWheel} style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <label style={{ fontSize: '0.8rem', color: '#888' }}>LENGTH:</label>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="999" 
+                        value={tempFrameCount} 
+                        onChange={e => setTempFrameCount(e.target.value)} 
+                        onBlur={() => setFrameCount(Math.max(1, parseInt(tempFrameCount) || 1))}
+                        onKeyDown={e => { if (e.key === 'Enter') setFrameCount(Math.max(1, parseInt(tempFrameCount) || 1)); }}
+                        onWheel={e => handleNumberWheel(e, setFrameCount)} 
+                        style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} 
+                      />
+                  </div>
+              </div>
           </div>
         </main>
 
-        <aside style={{ width: '240px', background: '#1a1a1a', borderLeft: '1px solid #333', padding: '15px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <aside style={{ width: '260px', background: '#1a1a1a', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           
-          <div className="layers-panel" style={{ display: 'flex', flexDirection: 'column', maxHeight: '40%', overflowY: 'auto', borderBottom: '1px solid #333', paddingBottom: '15px' }}>
+          <div className="layers-panel" style={{ display: 'flex', flexDirection: 'column', height: '220px', flexShrink: 0, overflowY: 'auto', borderBottom: '1px solid #333', padding: '15px' }}>
               <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   LAYERS
                   <div style={{ display: 'flex', gap: '5px' }}>
@@ -2476,9 +2958,7 @@ const ShapeBuilder = ({ onBack }) => {
                                border: selectedShapeIndexes.includes(i) ? '1px solid var(--theme-color)' : '1px solid transparent'
                            }}
                            onClick={(e) => {
-                               if (s.locked && !s.hidden) return; // Can't select locked shapes via click? Actually layer panel should allow selecting even if locked to unlock it? 
-                               // Convention: Layer panel selection usually bypasses canvas lock for properties, but canvas interaction is disabled.
-                               // Let's allow selection in layer panel so user can UNLOCK it.
+                               if (s.locked && !s.hidden) return; 
                                if (!e.shiftKey) setSelectedShapeIndexes([i]);
                                else setSelectedShapeIndexes(prev => prev.includes(i) ? prev.filter(idx => idx !== i) : [...prev, i]);
                            }}
@@ -2518,86 +2998,242 @@ const ShapeBuilder = ({ onBack }) => {
               </div>
           </div>
 
-          <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', borderBottom: '1px solid #333', paddingBottom: '5px' }}>PROPERTIES</h3>
-          
-          {/* Removed old group-actions as they are now in the header of layers */}
+          <div className="properties-scroll-container" style={{ flex: 1, overflowY: 'auto', padding: '15px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', borderBottom: '1px solid #333', paddingBottom: '5px' }}>PROPERTIES</h3>
+              
+              <div className="animation-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
+                  <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>TWEENING TOOL</h4>
+                                              <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
+                                                  <div style={{ flex: 1 }}>
+                                                      <label style={{ fontSize: '0.6rem', color: '#888' }}>START FRAME</label>
+                                                      <input 
+                                                        type="number" 
+                                                        value={tweenStartFrame + 1} 
+                                                        onChange={e => setTweenStartFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} 
+                                                        onWheel={handleTweenStartWheel}
+                                                        style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
+                                                      />
+                                                  </div>
+                                                  <div style={{ flex: 1 }}>
+                                                      <label style={{ fontSize: '0.6rem', color: '#888' }}>END FRAME</label>
+                                                      <input 
+                                                        type="number" 
+                                                        value={tweenEndFrame + 1} 
+                                                        onChange={e => setTweenEndFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} 
+                                                        onWheel={handleTweenEndWheel}
+                                                        style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
+                                                      />
+                                                  </div>
+                                              </div>
+                                                            <div style={{ display: 'flex', gap: '10px', marginBottom: '8px', fontSize: '0.7rem', color: '#ccc' }}>
+                                                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                                                    <input type="checkbox" className="sb-checkbox" checked={tweenPosition} onChange={e => setTweenPosition(e.target.checked)} /> POS
+                                                                </label>
+                                                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                                                    <input type="checkbox" className="sb-checkbox" checked={tweenColor} onChange={e => setTweenColor(e.target.checked)} /> COLOR
+                                                                </label>
+                                                            </div>                                              <button onClick={tweenFrames} className="primary-btn" style={{ width: '100%', padding: '5px' }}>INTERPOLATE</button>
+                                          </div>                  
+                                      <div className="sync-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
+                                          <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>PLAYBACK SYNC</h4>
+                                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px', marginBottom: '10px' }}>
+                                              <ModeButton active={syncMode === 'fps'} onClick={() => handleSetSyncMode('fps')}>FPS</ModeButton>
+                                              <ModeButton active={syncMode === 'bpm'} onClick={() => handleSetSyncMode('bpm')}>BPM</ModeButton>
+                                              <ModeButton active={syncMode === 'time'} onClick={() => handleSetSyncMode('time')}>TIME</ModeButton>
+                                          </div>
+                                          
+                                          {syncMode === 'fps' && (
+                                              <div style={{ marginBottom: '8px' }}>
+                                                  <label style={{ fontSize: '0.7rem', color: '#888' }}>FPS: {fps}</label>
+                                                  <input type="range" min="1" max="60" value={fps} onChange={e => handleSetFps(parseInt(e.target.value))} />
+                                              </div>
+                                          )}
+                                          {syncMode === 'bpm' && (
+                                              <div style={{ marginBottom: '8px', display: 'flex', gap: '5px' }}>
+                                                  <div style={{ flex: 1 }}>
+                                                      <label style={{ fontSize: '0.7rem', color: '#888' }}>BPM: {bpm}</label>
+                                                      <input 
+                                                        type="number" 
+                                                        value={bpm} 
+                                                        onChange={e => handleSetBpm(parseInt(e.target.value) || 0)} 
+                                                        onWheel={handleBpmWheel}
+                                                        style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white' }} 
+                                                      />
+                                                  </div>
+                                                  <div style={{ flex: 1 }}>
+                                                      <label style={{ fontSize: '0.7rem', color: '#888' }}>BEATS: {beats}</label>
+                                                      <input 
+                                                        type="number" 
+                                                        value={beats} 
+                                                        onChange={e => handleSetBeats(parseInt(e.target.value) || 1)} 
+                                                        onWheel={handleBeatsWheel}
+                                                        style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white' }} 
+                                                      />
+                                                  </div>
+                                              </div>
+                                          )}
+                                          {syncMode === 'time' && (
+                                              <div style={{ marginBottom: '8px' }}>
+                                                  <label style={{ fontSize: '0.7rem', color: '#888' }}>DURATION (S): {duration}</label>
+                                                  <input 
+                                                    type="number" 
+                                                    step="0.1" 
+                                                    value={duration} 
+                                                    onChange={e => handleSetDuration(parseFloat(e.target.value) || 0)} 
+                                                    onWheel={handleDurationWheel}
+                                                    style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white' }} 
+                                                  />
+                                              </div>
+                                          )}
+                            
+                                          <div style={{ marginTop: '10px' }}>
+                                              <label style={{ fontSize: '0.7rem', color: '#888', display: 'flex', justifyContent: 'space-between' }}>
+                                                  SPEED: <span>{playbackSpeed.toFixed(1)}x</span>
+                                              </label>
+                                              <input type="range" min="0.1" max="4" step="0.1" value={playbackSpeed} onChange={e => handleSetPlaybackSpeed(parseFloat(e.target.value))} />
+                                              <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                                  <button onClick={() => handleSetPlaybackSpeed(0.5)} style={{ flex: 1, fontSize: '0.6rem' }}>0.5x</button>
+                                                  <button onClick={() => handleSetPlaybackSpeed(1.0)} style={{ flex: 1, fontSize: '0.6rem' }}>1.0x</button>
+                                                  <button onClick={() => handleSetPlaybackSpeed(2.0)} style={{ flex: 1, fontSize: '0.6rem' }}>2.0x</button>
+                                              </div>
+                                          </div>
+                                      </div>
 
-          {selectedShapeIndexes.length > 0 ? (
-              <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  <label style={{ fontSize: '0.8rem', color: '#666', display: 'block' }}>
-                      {selectedShapeIndexes.length === 1 ? `TYPE: ${shapes[selectedShapeIndexes[0]]?.type?.toUpperCase()}` : `${selectedShapeIndexes.length} SHAPES SELECTED`}
-                  </label>
-                  
-                  <div className="property-group">
-                      <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>COLOR</label>
-                      <input type="color" value={ensureHex(shapes[selectedShapeIndexes[0]]?.color || '#ffffff')} onChange={(e) => updateSelectedShape({ color: e.target.value })} style={{ width: '100%', height: '30px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
+              {selectedShapeIndexes.length > 0 ? (
+                  <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                      <label style={{ fontSize: '0.8rem', color: '#666', display: 'block' }}>
+                          {selectedShapeIndexes.length === 1 ? `TYPE: ${shapes[selectedShapeIndexes[0]]?.type?.toUpperCase()}` : `${selectedShapeIndexes.length} SHAPES SELECTED`}
+                      </label>
+                      
+                      <div className="property-group">
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>COLOR</label>
+                          <input type="color" value={ensureHex(shapes[selectedShapeIndexes[0]]?.color || '#ffffff')} onChange={(e) => updateSelectedShape({ color: e.target.value })} style={{ width: '100%', height: '30px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
+                            {['#ff0000', '#ff6400', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8000ff', '#ff6496', '#ff00ff', '#ffffff'].map(c => (
+                                <button key={c} onClick={() => updateSelectedShape({ color: c })} style={{ width: '100%', height: '20px', background: c, border: '1px solid #444', borderRadius: '2px', padding: 0 }} />
+                            ))}
+                          </div>
+                      </div>
+
+                      {selectedShapeIndexes.length === 1 && shapes[selectedShapeIndexes[0]] && (['rect', 'circle', 'star', 'line'].includes(shapes[selectedShapeIndexes[0]].type)) && (
+                          <div className="primitive-properties" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', background: '#222', borderRadius: '4px' }}>
+                              <div className="property-group">
+                                  <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>POSITION (X / Y)</label>
+                                  <div style={{ display: 'flex', gap: '5px' }}>
+                                      <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].start?.x || 0)} onChange={(e) => {
+                                          const s = shapes[selectedShapeIndexes[0]];
+                                          if (!s || !s.start) return;
+                                          const dx = (parseInt(e.target.value) || 0) - s.start.x;
+                                          setFrames(prev => {
+                                              const nf = [...prev], ns = [...nf[currentFrameIndex]];
+                                              ns[selectedShapeIndexes[0]] = moveShape({...ns[selectedShapeIndexes[0]]}, dx, 0);
+                                              nf[currentFrameIndex] = ns; return nf;
+                                          });
+                                      }} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                      <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].start?.y || 0)} onChange={(e) => {
+                                          const s = shapes[selectedShapeIndexes[0]];
+                                          if (!s || !s.start) return;
+                                          const dy = (parseInt(e.target.value) || 0) - s.start.y;
+                                          setFrames(prev => {
+                                              const nf = [...prev], ns = [...nf[currentFrameIndex]];
+                                              ns[selectedShapeIndexes[0]] = moveShape({...ns[selectedShapeIndexes[0]]}, 0, dy);
+                                              nf[currentFrameIndex] = ns; return nf;
+                                          });
+                                      }} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                  </div>
+                              </div>
+                              {shapes[selectedShapeIndexes[0]].type === 'rect' && (
+                                  <div className="property-group">
+                                      <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>SIZE (W / H)</label>
+                                      <div style={{ display: 'flex', gap: '5px' }}>
+                                          <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].width || 0)} onChange={(e) => updateSelectedShape({ width: parseInt(e.target.value) || 0 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                          <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].height || 0)} onChange={(e) => updateSelectedShape({ height: parseInt(e.target.value) || 0 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                      </div>
+                                  </div>
+                              )}
+                              {(shapes[selectedShapeIndexes[0]].type === 'circle' || shapes[selectedShapeIndexes[0]].type === 'star') && (
+                                  <div className="property-group">
+                                      <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>RADIUS (X / Y)</label>
+                                      <div style={{ display: 'flex', gap: '5px' }}>
+                                          <input type="number" value={Math.round(Math.abs((shapes[selectedShapeIndexes[0]].end?.x || 0) - (shapes[selectedShapeIndexes[0]].start?.x || 0)))} onChange={(e) => {
+                                              const r = parseInt(e.target.value) || 0;
+                                              const s = shapes[selectedShapeIndexes[0]];
+                                              if (!s || !s.start || !s.end) return;
+                                              updateSelectedShape({ end: { ...s.end, x: s.start.x + r } });
+                                          }} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                          <input type="number" value={Math.round(Math.abs((shapes[selectedShapeIndexes[0]].end?.y || 0) - (shapes[selectedShapeIndexes[0]].start?.y || 0)))} onChange={(e) => {
+                                              const r = parseInt(e.target.value) || 0;
+                                              const s = shapes[selectedShapeIndexes[0]];
+                                              if (!s || !s.start || !s.end) return;
+                                              updateSelectedShape({ end: { ...s.end, y: s.start.y + r } });
+                                          }} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                      </div>
+                                  </div>
+                              )}
+                          </div>
+                      )}
+
+                      <div className="property-group">
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>SCALE X / Y</label>
+                          <div style={{ display: 'flex', gap: '5px' }}>
+                              <input type="number" step="0.1" value={shapes[selectedShapeIndexes[0]]?.scaleX || 1} onChange={(e) => updateSelectedShape({ scaleX: parseFloat(e.target.value) || 1 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
+                              <input type="number" step="0.1" value={shapes[selectedShapeIndexes[0]]?.scaleY || 1} onChange={(e) => updateSelectedShape({ scaleY: parseFloat(e.target.value) || 1 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
+                          </div>
+                      </div>
+
+                      <div className="property-group">
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>ROTATION X / Y / Z (DEG)</label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {['rotationX', 'rotationY', 'rotationZ'].map(axis => {
+                                  const valRad = shapes[selectedShapeIndexes[0]]?.[axis] || 0;
+                                  const valDeg = Math.round((valRad * 180 / Math.PI) * 100) / 100;
+                                  return (
+                                    <div key={axis} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#555', width: '10px' }}>{axis.slice(-1)}</span>
+                                        <input 
+                                            type="range" 
+                                            min="-180" 
+                                            max="180" 
+                                            step="1" 
+                                            value={valDeg} 
+                                            onChange={(e) => updateSelectedShape({ [axis]: parseFloat(e.target.value) * Math.PI / 180 })} 
+                                            style={{ flex: 1 }} 
+                                        />
+                                        <input 
+                                            type="number" 
+                                            value={valDeg} 
+                                            onChange={(e) => updateSelectedShape({ [axis]: (parseFloat(e.target.value) || 0) * Math.PI / 180 })}
+                                            style={{ width: '50px', background: '#111', border: '1px solid #444', color: 'white', padding: '2px', fontSize: '0.7rem' }}
+                                        />
+                                    </div>
+                                  );
+                              })}
+                          </div>
+                      </div>
+
+                      <div className="property-group">
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>RENDER MODE</label>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+                              {['simple', 'dotted', 'dashed', 'points'].map(m => <ModeButton key={m} active={shapes[selectedShapeIndexes[0]]?.renderMode === m} onClick={() => updateSelectedShape({ renderMode: m })}>{m}</ModeButton>)}
+                          </div>
+                      </div>
+                  </div>
+              ) : <p style={{ fontSize: '0.8rem', color: '#555', textAlign: 'center', marginTop: '20px' }}>Select shapes or drag a box to begin.</p>}
+
+              {selectedPointIndexes.length > 0 && selectedShapeIndexes.length === 1 && (
+                  <div className="point-properties" style={{ background: '#222', padding: '10px', borderRadius: '4px', border: '1px solid var(--theme-color)', flexShrink: 0 }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--theme-color)', display: 'block', marginBottom: '5px' }}>{selectedPointIndexes.length} POINTS SELECTED</label>
+                      <input type="color" value={ensureHex(selectedPointColor)} onChange={(e) => updatePointColor(e.target.value)} style={{ width: '100%', height: '40px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
                         {['#ff0000', '#ff6400', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8000ff', '#ff6496', '#ff00ff', '#ffffff'].map(c => (
-                            <button key={c} onClick={() => updateSelectedShape({ color: c })} style={{ width: '100%', height: '20px', background: c, border: '1px solid #444', borderRadius: '2px', padding: 0 }} />
+                            <button key={c} onClick={() => updatePointColor(c)} style={{ width: '100%', height: '20px', background: c, border: '1px solid #444', borderRadius: '2px', padding: 0 }} />
                         ))}
                       </div>
                   </div>
-
-                  <div className="property-group">
-                      <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>SCALE X / Y</label>
-                      <div style={{ display: 'flex', gap: '5px' }}>
-                          <input type="number" step="0.1" value={shapes[selectedShapeIndexes[0]]?.scaleX || 1} onChange={(e) => updateSelectedShape({ scaleX: parseFloat(e.target.value) || 1 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
-                          <input type="number" step="0.1" value={shapes[selectedShapeIndexes[0]]?.scaleY || 1} onChange={(e) => updateSelectedShape({ scaleY: parseFloat(e.target.value) || 1 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
-                      </div>
-                  </div>
-
-                  <div className="property-group">
-                      <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>ROTATION X / Y / Z (DEG)</label>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {['rotationX', 'rotationY', 'rotationZ'].map(axis => {
-                              const valRad = shapes[selectedShapeIndexes[0]]?.[axis] || 0;
-                              const valDeg = Math.round((valRad * 180 / Math.PI) * 100) / 100;
-                              return (
-                                <div key={axis} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                    <span style={{ fontSize: '0.7rem', color: '#555', width: '10px' }}>{axis.slice(-1)}</span>
-                                    <input 
-                                        type="range" 
-                                        min="-180" 
-                                        max="180" 
-                                        step="1" 
-                                        value={valDeg} 
-                                        onChange={(e) => updateSelectedShape({ [axis]: parseFloat(e.target.value) * Math.PI / 180 })} 
-                                        style={{ flex: 1 }} 
-                                    />
-                                    <input 
-                                        type="number" 
-                                        value={valDeg} 
-                                        onChange={(e) => updateSelectedShape({ [axis]: (parseFloat(e.target.value) || 0) * Math.PI / 180 })}
-                                        style={{ width: '50px', background: '#111', border: '1px solid #444', color: 'white', padding: '2px', fontSize: '0.7rem' }}
-                                    />
-                                </div>
-                              );
-                          })}
-                      </div>
-                  </div>
-
-                  <div className="property-group">
-                      <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>RENDER MODE</label>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
-                          {['simple', 'dotted', 'dashed', 'points'].map(m => <ModeButton key={m} active={shapes[selectedShapeIndexes[0]]?.renderMode === m} onClick={() => updateSelectedShape({ renderMode: m })}>{m}</ModeButton>)}
-                      </div>
-                  </div>
-              </div>
-          ) : <p style={{ fontSize: '0.8rem', color: '#555', textAlign: 'center', marginTop: '20px' }}>Select shapes or drag a box to begin.</p>}
-
-          {selectedPointIndexes.length > 0 && selectedShapeIndexes.length === 1 && (
-              <div className="point-properties" style={{ background: '#222', padding: '10px', borderRadius: '4px', border: '1px solid var(--theme-color)' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--theme-color)', display: 'block', marginBottom: '5px' }}>{selectedPointIndexes.length} POINTS SELECTED</label>
-                  <input type="color" value={ensureHex(selectedPointColor)} onChange={(e) => updatePointColor(e.target.value)} style={{ width: '100%', height: '40px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
-                    {['#ff0000', '#ff6400', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8000ff', '#ff6496', '#ff00ff', '#ffffff'].map(c => (
-                        <button key={c} onClick={() => updatePointColor(c)} style={{ width: '100%', height: '20px', background: c, border: '1px solid #444', borderRadius: '2px', padding: 0 }} />
-                    ))}
-                  </div>
-              </div>
-          )}
+              )}
+          </div>
           
-          <div style={{ marginTop: 'auto' }}>
+          <div className="save-container" style={{ padding: '15px', borderTop: '1px solid #333', background: '#1a1a1a' }}>
               <button className="primary-btn" style={{ width: '100%', padding: '12px' }} onClick={saveAsClip} disabled={frames.every(f => f.length === 0) || isExporting}>
                   {isExporting ? 'EXPORTING...' : 'SAVE AS CLIP'}
               </button>
@@ -2613,6 +3249,43 @@ const ShapeBuilder = ({ onBack }) => {
         .context-menu .menu-item:hover { background: var(--theme-color); color: black; }
         input[type="range"] { -webkit-appearance: none; background: #333; height: 4px; border-radius: 2px; width: 100%; }
         input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--theme-color); border-radius: 50%; cursor: pointer; }
+        
+        .sb-checkbox {
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            width: 14px !important;
+            height: 14px !important;
+            min-width: 14px !important;
+            min-height: 14px !important;
+            background: #111 !important;
+            border: 1px solid #444 !important;
+            border-radius: 2px !important;
+            cursor: pointer;
+            position: relative;
+            margin: 0 4px 0 0 !important;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        /* Crucial: Kill the global "OFF/ON" toggle styling */
+        .sb-checkbox:before {
+            content: none !important;
+            display: none !important;
+        }
+        .sb-checkbox:checked {
+            background: var(--theme-color) !important;
+            border-color: var(--theme-color) !important;
+        }
+        .sb-checkbox:checked::after {
+            content: '\\2713';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: black;
+            font-size: 10px;
+            font-weight: bold;
+            display: block !important;
+        }
       `}</style>
     </div>
   );
