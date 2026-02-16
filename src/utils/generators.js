@@ -249,6 +249,20 @@ export function generateSquare(params) {
   }
 }
 
+/**
+ * Generates point data for a parametric triangle.
+ * @param {Object} params Configuration parameters.
+ * @param {number} [params.size] Symmetrical size (overrides width/height).
+ * @param {number} [params.width] Base width.
+ * @param {number} [params.height] Height.
+ * @param {number} [params.pointDensity] Points per segment.
+ * @param {number} [params.x] Center X offset.
+ * @param {number} [params.y] Center Y offset.
+ * @param {number} [params.r] Red component (0-255).
+ * @param {number} [params.g] Green component (0-255).
+ * @param {number} [params.b] Blue component (0-255).
+ * @returns {Object} Object containing an array of points and rendering style.
+ */
 export function generateTriangle(params) {
   try {
     const { size, width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {

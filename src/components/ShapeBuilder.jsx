@@ -2219,9 +2219,13 @@ const ShapeBuilder = ({ onBack }) => {
             const pts = [...updated.points];
             const lastIdx = pts.length - 1;
             pts[lastIdx] = { x, y, color }; // Update end point
-            // Also update control point 2 to be near the end point initially
-            if (lastIdx >= 1) {
-                pts[lastIdx - 1] = { x: x - 20, y: y - 20, color };
+            
+            // For cubic bezier, we have 2 control points per segment.
+            // During drawing, let's keep them near the mouse/start for immediate visual feedback.
+            if (lastIdx >= 2) {
+                // Keep CP1 and CP2 following the mouse until finalized
+                pts[lastIdx - 1] = { x: x - 10, y: y - 10, color };
+                pts[lastIdx - 2] = { x: x - 20, y: y - 20, color };
             }
             updated.points = pts;
         }
@@ -2820,6 +2824,19 @@ const ShapeBuilder = ({ onBack }) => {
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [frames, currentFrameIndex, selectedShapeIndexes, selectedPointIndexes, shapeClipboard, history, historyStep, isPlaying, frameCount, moveShape, deepUpdate]);
 
+  /**
+   * Component for rendering a mode-aware timeline ruler with grid markers and playhead.
+   * @param {Object} props Component props.
+   * @param {number} props.currentFrame Active frame index.
+   * @param {number} props.frameCount Total number of frames.
+   * @param {string} props.syncMode Active sync mode ('fps', 'bpm', 'time').
+   * @param {number} props.bpm Beats per minute for BPM mode.
+   * @param {number} props.beats Number of beats for BPM mode.
+   * @param {number} props.duration Total duration in seconds for Time mode.
+   * @param {number} props.fps Frames per second for FPS mode.
+   * @param {Function} props.onSeek Callback when user clicks to seek.
+   * @param {boolean} props.snapToGrid Whether to snap to contextual grid markers.
+   */
   const TimelineRuler = ({ currentFrame, frameCount, syncMode, bpm, beats, duration, fps, onSeek, snapToGrid }) => {
       const containerRef = useRef(null);
       
