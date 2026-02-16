@@ -54,6 +54,7 @@ self.onmessage = async (event) => {
           generatorDefinition: generator, // Send back the original definition
           currentParams: currentParams, // Send back the params used for generation
           isLive: event.data.isLive, // Pass through the live flag
+          isNdi: event.data.isNdi, // Pass through NDI flag
           isAutoUpdate: event.data.isAutoUpdate, // Pass through auto update flag
           seq: event.data.seq // Pass back sequence number
         });

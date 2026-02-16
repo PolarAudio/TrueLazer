@@ -34,7 +34,6 @@ public:
         p_recv = nullptr;
         stop_thread = true;
         
-        // Initialize triple buffering
         write_idx = 0;
         read_idx = -1;
         new_frame_available = false;
@@ -45,7 +44,7 @@ public:
         target_height = 720;
 
         for (int i = 0; i < 3; i++) {
-            buffers[i].reserve(1920 * 1080 * 4); // Pre-allocate some space
+            buffers[i].reserve(1920 * 1080 * 4);
         }
     }
 
@@ -60,12 +59,9 @@ private:
     NDIlib_find_instance_t p_find;
     NDIlib_recv_instance_t p_recv;
 
-    // Background thread members
     std::thread capture_thread;
     std::atomic<bool> stop_thread;
     
-    // Triple buffering members
-    std::mutex buffer_mutex;
     std::vector<uint8_t> buffers[3];
     int write_idx;
     std::atomic<int> read_idx;
@@ -97,7 +93,6 @@ private:
                 int tw = target_width.load();
                 int th = target_height.load();
 
-                // Determine next write buffer (not the one currently being read)
                 int next_write_idx = (write_idx + 1) % 3;
                 if (next_write_idx == read_idx.load()) {
                     next_write_idx = (next_write_idx + 1) % 3;
@@ -110,20 +105,14 @@ private:
                     float scale_x = (float)video_frame.xres / tw;
                     float scale_y = (float)video_frame.yres / th;
 
+                    uint32_t* dst_ptr = (uint32_t*)current_buffer.data();
+                    const uint8_t* src_data = video_frame.p_data;
+                    int line_stride = video_frame.line_stride_in_bytes;
+
                     for (int y = 0; y < th; y++) {
-                        int src_y = (int)(y * scale_y);
-                        uint8_t* dst_row = &current_buffer[y * tw * 4];
-                        const uint8_t* src_row = &video_frame.p_data[src_y * video_frame.line_stride_in_bytes];
-                        
+                        const uint32_t* src_row = (const uint32_t*)(src_data + (int)(y * scale_y) * line_stride);
                         for (int x = 0; x < tw; x++) {
-                            int src_x = (int)(x * scale_x);
-                            const uint8_t* src_pixel = &src_row[src_x * 4];
-                            uint8_t* dst_pixel = &dst_row[x * 4];
-                            
-                            dst_pixel[0] = src_pixel[0];
-                            dst_pixel[1] = src_pixel[1];
-                            dst_pixel[2] = src_pixel[2];
-                            dst_pixel[3] = src_pixel[3];
+                            dst_ptr[y * tw + x] = src_row[(int)(x * scale_x)];
                         }
                     }
                     frame_width = tw;
@@ -135,7 +124,6 @@ private:
                     frame_height = video_frame.yres;
                 }
                 
-                // Atomic swap to make this the new read buffer
                 write_idx = next_write_idx;
                 read_idx.store(next_write_idx);
                 new_frame_available = true;
@@ -233,10 +221,6 @@ private:
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("width", Napi::Number::New(env, frame_width));
         obj.Set("height", Napi::Number::New(env, frame_height));
-        
-        // Use Copy for now as SharedArrayBuffer implementation is more complex
-        // with the background thread lifecycle. Even with Copy, the latency 
-        // is much lower because the buffer is ready and pre-sized.
         obj.Set("data", Napi::Buffer<uint8_t>::Copy(env, buffer.data(), buffer.size()));
         
         new_frame_available = false;

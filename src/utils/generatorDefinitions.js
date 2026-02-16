@@ -189,8 +189,8 @@ export const generatorDefinitions = [
       sourceName: 'No Source',
       threshold: 128,
       edgeDetection: false,
-      captureWidth: 640,
-      captureHeight: 360,
+      captureWidth: 480,
+      captureHeight: 480,
       x: 0,
       y: 0,
       scale: 1,
@@ -203,6 +203,8 @@ export const generatorDefinitions = [
     },
     paramControls: [
       { id: 'sourceName', label: 'Source Name', type: 'text' },
+      { id: 'captureWidth', label: 'Width', type: 'range', min: 128, max: 1280, step: 1 },
+      { id: 'captureHeight', label: 'Height', type: 'range', min: 128, max: 1280, step: 1 },
       { id: 'threshold', label: 'Threshold', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'edgeDetection', label: 'Edge Detection', type: 'checkbox' },
       { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [

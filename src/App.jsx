@@ -1378,11 +1378,12 @@ const SidePanelContainer = React.memo(({
     }, [previewInterval, previewFrameCountRef]);
 
     // DERIVED PREVIEW DATA - Use Live Ref for immediate feedback
-    const clipSource = liveClipContentsRef?.current || clipContents;
-    const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null ? clipSource[selectedLayerIndex][selectedColIndex] : null;
-    const targetPreviewWorkerId = selectedColIndex !== null 
-        ? (selectedClip?.type === 'ilda' ? selectedClip?.workerId : `generator-${selectedLayerIndex}-${selectedColIndex}`)
-        : (selectedLayerIndex !== null ? (activeClipIndexes[selectedLayerIndex] !== null ? (clipSource[selectedLayerIndex][activeClipIndexes[selectedLayerIndex]]?.type === 'ilda' ? clipSource[selectedLayerIndex][activeClipIndexes[selectedLayerIndex]]?.workerId : `generator-${selectedLayerIndex}-${activeClipIndexes[selectedLayerIndex]}`) : null) : null);
+        const clipSource = liveClipContentsRef?.current || clipContents;
+        const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null ? clipSource[selectedLayerIndex][selectedColIndex] : null;
+        
+        const targetPreviewWorkerId = selectedColIndex !== null 
+            ? (selectedClip?.type === 'ilda' ? selectedClip?.workerId : `generator-${selectedLayerIndex}-${selectedColIndex}`)
+            : (selectedLayerIndex !== null ? (activeClipIndexes[selectedLayerIndex] !== null ? (clipSource[selectedLayerIndex][activeClipIndexes[selectedLayerIndex]]?.type === 'ilda' ? clipSource[selectedLayerIndex][activeClipIndexes[selectedLayerIndex]]?.workerId : `generator-${selectedLayerIndex}-${activeClipIndexes[selectedLayerIndex]}`) : null) : null);
 
     const selectedClipFrame = targetPreviewWorkerId ? liveFramesRef.current[targetPreviewWorkerId] : null;
     const selectedClipProgress = targetPreviewWorkerId ? (progressRef.current[targetPreviewWorkerId] || 0) : 0;
@@ -1716,6 +1717,7 @@ function App() {
     const bpmRef = useRef(state.bpm);
     const selectedLayerIndexRef = useRef(selectedLayerIndex);
     const selectedColIndexRef = useRef(selectedColIndex);
+    const selectedClipRef = useRef(null);
     const getAudioInfoRef = useRef(getAudioInfo);
     const optimizationEnabledRef = useRef(optimizationEnabled);
 
@@ -3473,10 +3475,10 @@ function App() {
                 if (currentName === defaultPattern) {
                     dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
                 }
-            } else {
-                // If it's a live frame update or auto update, signal ready for the next one (for NDI etc)
-                if (window.electronAPI && window.electronAPI.ndiSignalReady) {
-                    window.electronAPI.ndiSignalReady();
+            } else if (e.data.isNdi) {
+                // If it's a live NDI frame update, signal ready for the next one
+                if (window.electronAPI && window.electronAPI.ndiRendererReady) {
+                    window.electronAPI.ndiRendererReady();
                 }
             }
         } else {
@@ -3957,12 +3959,14 @@ function App() {
   }, [activeClipsData, selectedClip]);
 
   // NDI Frame Handling
+  // Dedicated high-frequency NDI frame handler
   useEffect(() => {
       if (!window.electronAPI || !generatorWorker) return;
 
-      const unsubscribe = window.electronAPI.onNdiFrame((frame) => {
+      const handleNdiFrame = (frame) => {
+          let hasProcessed = false;
+          
           // Forward frame to generator worker for processing
-          // Use refs for high-frequency loop to avoid closure staleness and overhead
           activeClipIndexesRef.current.forEach((activeColIndex, layerIndex) => {
               if (activeColIndex === null) return;
               const clip = clipContentsRef.current[layerIndex][activeColIndex];
@@ -3973,28 +3977,40 @@ function App() {
                       colIndex: activeColIndex,
                       generator: clip.generatorDefinition,
                       params: { ...clip.generatorDefinition.defaultParams, ...clip.currentParams },
-                      ndiFrame: frame, // Pass the raw frame data
-                      isLive: true // Flag to indicate this is a live frame update
+                      ndiFrame: frame,
+                      isLive: true,
+                      isNdi: true // Mark as NDI task
                   });
+                  hasProcessed = true;
               }
           });
 
-          // Also handle selected clip preview
-          if (selectedClip?.type === 'generator' && selectedClip?.generatorDefinition?.id === 'ndi-source') {
+          // Handle selected clip preview
+          if (selectedClipRef.current?.type === 'generator' && selectedClipRef.current?.generatorDefinition?.id === 'ndi-source') {
               generatorWorker.postMessage({
                   type: 'generate',
-                  layerIndex: selectedLayerIndex,
-                  colIndex: selectedColIndex,
-                  generator: selectedClip.generatorDefinition,
-                  params: { ...selectedClip.generatorDefinition.defaultParams, ...selectedClip.currentParams },
+                  layerIndex: selectedLayerIndexRef.current,
+                  colIndex: selectedColIndexRef.current,
+                  generator: selectedClipRef.current.generatorDefinition,
+                  params: { ...selectedClipRef.current.generatorDefinition.defaultParams, ...selectedClipRef.current.currentParams },
                   ndiFrame: frame,
-                  isLive: true
+                  isLive: true,
+                  isNdi: true // Mark as NDI task
               });
+              hasProcessed = true;
           }
-      });
 
+          // CRITICAL: Signal that we are ready for the next frame
+          // If we processed any NDI clips, the worker's 'onmessage' listener will call ndiRendererReady
+          // once it finishes generating the frame. This provides true back-pressure.
+          if (!hasProcessed) {
+              window.electronAPI.ndiRendererReady();
+          }
+      };
+
+      const unsubscribe = window.electronAPI.onNdiFrame(handleNdiFrame);
       return () => unsubscribe();
-  }, [activeClipIndexes, clipContents, selectedClip, selectedLayerIndex, selectedColIndex, layers, generatorWorker]);
+  }, [generatorWorker]);
 
   const handleUpdateQuickControl = useCallback((type, index, value) => {
       const collection = type === 'knob' ? 'knobs' : 'buttons';

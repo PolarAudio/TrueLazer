@@ -252,26 +252,6 @@ ipcMain.handle('get-artnet-universes', () => {
 
 ipcMain.on('send-artnet-data', (event, universe, channel, value) => {
   if (artnetSender) {
-    // dmxnet sender.prepChannel(channel, value) then sender.transmit()
-    // OR sender.fillChannels(min, max, value)
-    // We need to set a single channel.
-    // sender.transmit() sends the whole frame.
-    // We need to maintain the frame state? dmxnet sender maintains it.
-    
-    // Note: channel in dmxnet might be 0-indexed or 1-indexed. Usually 0-511.
-    // ShortcutsWindow sends 0-511.
-    
-    // artnetSender.prepChannel(channel, value); 
-    // artnetSender.transmit();
-    // But prepChannel isn't documented in simple examples usually? 
-    // Usually it's: sender.setChannel(channel, value);
-    // Let's assume standard behavior or check docs if available.
-    // Assuming `setChannel(channel, value)` works.
-    
-    // Using a safer approach if method unknown: transmit() takes array?
-    // Looking at dmxnet source/docs (simulated):
-    // sender.prepChannel(channel, value) exists.
-    
     try {
         artnetSender.prepChannel(channel, value);
         artnetSender.transmit();
@@ -283,7 +263,6 @@ ipcMain.on('send-artnet-data', (event, universe, channel, value) => {
 
 ipcMain.on('close-artnet', () => {
   if (artnetInstance) {
-    // artnetInstance.close(); // Not always available
     artnetInstance = null;
     artnetSender = null;
   }
@@ -389,7 +368,6 @@ ipcMain.handle('get-selected-midi-input', () => {
   return store.get('selectedMidiInputId') || '';
 });
 
-// Commented out to avoid issues with schema
 ipcMain.handle('set-loaded-clips', (event, loadedClips) => {
   console.log('Received loadedClips:', loadedClips);
   store.set('loadedClips', loadedClips);
@@ -442,7 +420,6 @@ async function initializeUserData() {
       // 2. Copy default Mapping files
       let mappingSourcePath = path.join(__dirname, 'src');
       if (app.isPackaged) {
-          // Check next to exe (extraFiles location) and resources fallback
           const nextToExe = path.join(path.dirname(process.execPath), 'Mappings');
           const inResources = path.join(process.resourcesPath, 'Mappings');
           if (fs.existsSync(nextToExe)) mappingSourcePath = nextToExe;
@@ -474,7 +451,6 @@ async function initializeUserData() {
   }
 }
 
-// IPC handler to expose the default project path to the renderer
 ipcMain.handle('get-default-project-path', async () => {
   return await getDefaultProjectPath();
 });
@@ -537,7 +513,6 @@ ipcMain.on('save-project', async (event, projectData) => {
       console.error('Failed to save project file:', error);
     }
   } else {
-    // If there's no current path, then we do a "Save As" instead.
     if(mainWindow) mainWindow.webContents.send('save-project-as');
   }
 });
@@ -559,7 +534,6 @@ ipcMain.on('save-project-as', async (event, projectData) => {
   }
 });
 
-// This function needs to be globally accessible
 function sendThumbnailModeToRenderer(mode) {
   if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-thumbnail-render-mode', mode);
@@ -741,7 +715,6 @@ function buildApplicationMenu(mode) {
         {
           label: 'Render Mode',
           submenu: [
-            // New thumbnail render mode options
             { label: 'Thumbnail Still Frame', type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
             { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
             { label: 'Thumbnail Hover Render', type: 'radio', checked: mode === 'hover', click: () => { sendThumbnailModeToRenderer('hover'); } },
@@ -757,8 +730,6 @@ function buildApplicationMenu(mode) {
               ]
             },
             { type: 'separator' },
-
-
             {
               label: 'Beam Alpha',
               submenu: [
@@ -778,7 +749,6 @@ function buildApplicationMenu(mode) {
   Menu.setApplicationMenu(menu);
 }
 
-
 function createWindow() {
   const win = new BrowserWindow({
     width: 1920,
@@ -787,19 +757,17 @@ function createWindow() {
       preload: path.join(__dirname, 'src', 'preload.js'),
       nodeIntegration: true,
       contextIsolation: true,
-      webSecurity: false, // Ensure this is false to allow file:// protocol for media
-      backgroundThrottling: false, // Keep animations and timers running in background
+      webSecurity: false,
+      backgroundThrottling: false,
     },
-    frame: true, // Set to false to remove the default window frame and title bar
+    frame: true,
   });
 
-  // Always open DevTools in the built application to help debug blank screen issues.
   win.webContents.openDevTools();
 
   if (isDev) {
-    win.loadURL('http://localhost:5173'); // Vite development server default port
+    win.loadURL('http://localhost:5173');
   } else {
-    // Use url.format for robust file loading from ASAR
     win.loadURL(url.format({
       pathname: path.join(__dirname, 'dist', 'index.html'),
       protocol: 'file:',
@@ -807,7 +775,6 @@ function createWindow() {
     }));
   }
 
-  // Assign to global mainWindow
   mainWindow = win;
 
   win.on('closed', () => {
@@ -815,27 +782,20 @@ function createWindow() {
     dacCommunication.closeAll();
   });
 
-  // Initial menu build
   buildApplicationMenu(currentThumbnailRenderMode);
 
-  // IPC handlers for thumbnail render mode synchronization
   ipcMain.on('renderer-thumbnail-mode-changed', (event, mode) => {
       currentThumbnailRenderMode = mode;
       buildApplicationMenu(currentThumbnailRenderMode);
   });
 
   ipcMain.on('update-thumbnail-render-mode', (event, mode) => {
-      // This is received from a menu click in the main process itself
-      // We need to send it to the renderer to update its state
       sendThumbnailModeToRenderer(mode);
   });
 
-  // Listener for main process requesting current mode from renderer
   ipcMain.on('request-renderer-thumbnail-mode', (event) => {
     event.sender.send('update-thumbnail-render-mode', currentThumbnailRenderMode);
   });
-
-  // ... existing ipcMain handlers ...
 
   ipcMain.handle('discover-dacs', async (event, timeout, networkInterfaceIp) => {
     return await discoverDacs(timeout, networkInterfaceIp);
@@ -869,7 +829,6 @@ function createWindow() {
   });
 
   ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
-    console.log(`Received show-layer-full-context-menu for layer: ${layerIndex}`);
     const layerFullContextMenu = Menu.buildFromTemplate([
       { label: 'Insert Above', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex); } },
       { label: 'Insert Below', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex); } },
@@ -883,9 +842,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'still',
                 click() {
                     currentThumbnailRenderMode = 'still';
-                    sendThumbnailModeToRenderer('still'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('still');
                     if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-still', layerIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             },
             {
@@ -894,9 +853,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'active',
                 click() {
                     currentThumbnailRenderMode = 'active';
-                    sendThumbnailModeToRenderer('active'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('active');
                     if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-active', layerIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             }
         ]
@@ -917,7 +876,6 @@ function createWindow() {
   });
 
   ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex, currentTriggerStyle = 'normal') => {
-    console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}, style: ${currentTriggerStyle}`); 
     const clipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
       { label: 'Export as ILDA', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'export-ilda', layerIndex, colIndex); } },
@@ -925,24 +883,9 @@ function createWindow() {
       {
         label: 'Trigger Style',
         submenu: [
-          { 
-            label: 'Normal', 
-            type: 'radio', 
-            checked: currentTriggerStyle === 'normal',
-            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } 
-          },
-          { 
-            label: 'Toggle', 
-            type: 'radio', 
-            checked: currentTriggerStyle === 'toggle',
-            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } 
-          },
-          { 
-            label: 'Flash', 
-            type: 'radio', 
-            checked: currentTriggerStyle === 'flash',
-            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); } 
-          },
+          { label: 'Normal', type: 'radio', checked: currentTriggerStyle === 'normal', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } },
+          { label: 'Toggle', type: 'radio', checked: currentTriggerStyle === 'toggle', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } },
+          { label: 'Flash', type: 'radio', checked: currentTriggerStyle === 'flash', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); } },
         ]
       },
       { type: 'separator' },
@@ -955,9 +898,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'still',
                 click() {
                     currentThumbnailRenderMode = 'still';
-                    sendThumbnailModeToRenderer('still'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('still');
                     if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-clip-thumbnail-mode-still', layerIndex, colIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             },
             {
@@ -966,9 +909,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'active',
                 click() {
                     currentThumbnailRenderMode = 'active';
-                    sendThumbnailModeToRenderer('active'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('active');
                     if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-clip-thumbnail-mode-active', layerIndex, colIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             }
         ]
@@ -985,7 +928,6 @@ function createWindow() {
   });
 
   ipcMain.on('show-column-header-clip-context-menu', (event, colIndex) => {
-    console.log(`Received show-column-header-clip-context-menu for column: ${colIndex}`);
     const columnHeaderClipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'update-thumbnail', colIndex }); } },
       { type: 'separator' },
@@ -1006,44 +948,25 @@ function createWindow() {
 
   ipcMain.on('show-quick-assign-context-menu', (event, type, index) => {
     const quickAssignMenu = Menu.buildFromTemplate([
-      { 
-        label: 'Reset Value', 
-        click: () => { 
-            if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); 
-        } 
-      },
-      { 
-        label: 'Clear Assignment', 
-        click: () => { 
-            if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); 
-        } 
-      },
+      { label: 'Reset Value', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); } },
+      { label: 'Clear Assignment', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); } },
     ]);
     quickAssignMenu.popup({ window: mainWindow });
   });
 
-  // Listen for context menu actions from renderer and send back to renderer
   ipcMain.on('context-menu-action', (event, action) => {
-    console.log(`Main process received context menu action: ${JSON.stringify(action)}`);
     if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', action);
   });
 
   ipcMain.handle('open-file-explorer', async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openDirectory'],
-    });
-    if (canceled) {
-      return null;
-    } else {
-      return filePaths[0];
-    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+    return canceled ? null : filePaths[0];
   });
 
   ipcMain.handle('read-file-content', async (event, filePath) => {
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
-      const content = await fs.promises.readFile(fullPath);
-      return content;
+      return await fs.promises.readFile(fullPath);
     } catch (error) {
       console.error('Failed to read file content:', error);
       return null;
@@ -1064,25 +987,22 @@ function createWindow() {
     try {
       const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
       const files = await fs.promises.readdir(fullPath);
-      const ildFiles = files
-        .filter(file => file.toLowerCase().endsWith('.ild'))
-        .map(file => path.join(directoryPath, file));
-      return ildFiles;
+      return files.filter(file => file.toLowerCase().endsWith('.ild')).map(file => path.join(directoryPath, file));
     } catch (error) {
       console.error('Failed to read directory:', error);
       return [];
     }
   });
+
   ipcMain.handle('read-file-as-binary', async (event, filePath) => {
-  try {
-    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
-    const buffer = await fs.promises.readFile(fullPath);
-    // Explicitly return ArrayBuffer
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  } catch (error) {
-    console.error('Error reading file:', error);
-    throw error;
-  }
+    try {
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      const buffer = await fs.promises.readFile(fullPath);
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    } catch (error) {
+      console.error('Error reading file:', error);
+      throw error;
+    }
   });
 
   ipcMain.handle('read-file-for-worker', async (event, filePath, maxBytes) => {
@@ -1098,129 +1018,68 @@ function createWindow() {
       } else {
           buffer = await fs.promises.readFile(fullPath);
       }
-      // Convert Node.js Buffer to ArrayBuffer for transfer to worker
-      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-      return arrayBuffer;
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     } catch (error) {
       console.error(`Error reading file for worker: ${filePath}`, error);
       throw error;
     }
   });
 
-ipcMain.handle('get-system-fonts', async () => {
-  try {
-    const fonts = await getSystemFonts();
-    return fonts;
-  } catch (error) {
-    console.error('Failed to get system fonts:', error);
-    return [];
-  }
-});
+  ipcMain.handle('get-system-fonts', async () => {
+    try { return await getSystemFonts(); } catch (error) { return []; }
+  });
 
-ipcMain.handle('get-project-fonts', async () => {
-  const fontsDir = app.isPackaged
-    ? path.join(process.resourcesPath, 'fonts')
-    : path.join(__dirname, 'src', 'fonts');
-
-  try {
-    // Check if directory exists
+  ipcMain.handle('get-project-fonts', async () => {
+    const fontsDir = app.isPackaged ? path.join(process.resourcesPath, 'fonts') : path.join(__dirname, 'src', 'fonts');
     try {
       await fs.promises.access(fontsDir);
-    } catch {
-      console.warn(`Project fonts directory not found at: ${fontsDir}`);
-      return [];
-    }
-
-    const files = await fs.promises.readdir(fontsDir);
-    const fontFiles = files
-      .filter(file => /\.(ttf|otf|ttc)$/i.test(file))
-      .map(file => ({
-        name: file,
-        path: path.join(fontsDir, file)
-      }));
-    return fontFiles;
-  } catch (error) {
-    console.error('Failed to get project fonts:', error);
-    return [];
-  }
-});
+      const files = await fs.promises.readdir(fontsDir);
+      return files.filter(file => /\.(ttf|otf|ttc)$/i.test(file)).map(file => ({ name: file, path: path.join(fontsDir, file) }));
+    } catch (error) { return []; }
+  });
 
   ipcMain.handle('show-font-file-dialog', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: 'Select Font',
       defaultPath: path.join(__dirname, 'src', 'fonts'),
-      filters: [
-        { name: 'Font Files', extensions: ['ttf', 'otf', 'ttc'] },
-        { name: 'All Files', extensions: ['*'] }
-      ],
+      filters: [{ name: 'Font Files', extensions: ['ttf', 'otf', 'ttc'] }, { name: 'All Files', extensions: ['*'] }],
       properties: ['openFile', 'noResolveAliases']
     });
-    if (canceled || filePaths.length === 0) {
-      return null;
-    }
-    return filePaths[0];
+    return (canceled || filePaths.length === 0) ? null : filePaths[0];
   });
 
   ipcMain.handle('show-audio-file-dialog', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      filters: [
-        { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a'] },
-        { name: 'All Files', extensions: ['*'] }
-      ],
+      filters: [{ name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a'] }, { name: 'All Files', extensions: ['*'] }],
       properties: ['openFile']
     });
-    if (canceled || filePaths.length === 0) {
-      return null;
-    }
-    return filePaths[0];
+    return (canceled || filePaths.length === 0) ? null : filePaths[0];
   });
 
   ipcMain.handle('show-open-dialog', async (event, options) => {
       const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, options);
-      if (canceled || filePaths.length === 0) {
-          return null;
-      }
-      return filePaths[0];
+      return (canceled || filePaths.length === 0) ? null : filePaths[0];
   });
 
   ipcMain.handle('fetch-url-as-arraybuffer', async (event, url) => {
     try {
       const buffer = await new Promise((resolve, reject) => {
         https.get(url, (res) => {
-          // Follow redirects
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             https.get(res.headers.location, (redirectRes) => {
-              if (redirectRes.statusCode < 200 || redirectRes.statusCode >= 300) {
-                return reject(new Error(`Failed to fetch URL: Status Code ${redirectRes.statusCode}`));
-              }
               const chunks = [];
               redirectRes.on('data', chunk => chunks.push(chunk));
-              redirectRes.on('end', () => {
-                const nodeBuffer = Buffer.concat(chunks);
-                const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
-                resolve(arrayBuffer);
-              });
-            }).on('error', (err) => reject(err));
-          } else if (res.statusCode < 200 || res.statusCode >= 300) {
-            return reject(new Error(`Failed to fetch URL: Status Code ${res.statusCode}`));
+              redirectRes.on('end', () => resolve(Buffer.concat(chunks).buffer));
+            });
           } else {
             const chunks = [];
             res.on('data', chunk => chunks.push(chunk));
-            res.on('end', () => {
-              const nodeBuffer = Buffer.concat(chunks);
-              const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
-              resolve(arrayBuffer);
-            });
+            res.on('end', () => resolve(Buffer.concat(chunks).buffer));
           }
-        }).on('error', (err) => {
-          reject(err);
-        });
+        }).on('error', reject);
       });
       return buffer;
-    } catch (error) {
-      console.error(`Failed to fetch URL ${url}:`, error);
-      throw error;
-    }
+    } catch (error) { throw error; }
   });
 
   ipcMain.handle('save-thumbnail', async (event, arrayBuffer, filename) => {
@@ -1228,72 +1087,47 @@ ipcMain.handle('get-project-fonts', async () => {
       const tempPath = path.join(app.getPath('userData'), 'thumbnails');
       await fs.promises.mkdir(tempPath, { recursive: true });
       const filePath = path.join(tempPath, filename);
-      const buffer = Buffer.from(arrayBuffer);
-      await fs.promises.writeFile(filePath, buffer);
+      await fs.promises.writeFile(filePath, Buffer.from(arrayBuffer));
       return filePath;
-    } catch (error) {
-      console.error('Failed to save thumbnail:', error);
-      throw error;
-    }
+    } catch (error) { throw error; }
   });
 
   ipcMain.handle('save-ilda-file', async (event, arrayBuffer, defaultName = 'export.ild') => {
-    const documentsPath = app.getPath('documents');
-    const userIldaPath = path.join(documentsPath, 'TrueLazer', 'ILDA-FILES');
-    
+    const userIldaPath = path.join(app.getPath('documents'), 'TrueLazer', 'ILDA-FILES');
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Export ILDA File',
       defaultPath: path.join(userIldaPath, defaultName),
       filters: [{ name: 'ILDA Files', extensions: ['ild'] }]
     });
-
-    if (canceled || !filePath) {
-      return { success: false, canceled: true };
-    }
-
+    if (canceled || !filePath) return { success: false, canceled: true };
     try {
-      const buffer = Buffer.from(arrayBuffer);
-      await fs.promises.writeFile(filePath, buffer);
+      await fs.promises.writeFile(filePath, Buffer.from(arrayBuffer));
       return { success: true, filePath };
-    } catch (error) {
-      console.error('Failed to save ILDA file:', error);
-      return { success: false, error: error.message };
-    }
+    } catch (error) { return { success: false, error: error.message }; }
   });
 
   ipcMain.handle('delete-thumbnail', async (event, filePath) => {
       try {
           if (!filePath) return { success: false };
-          // Security check: ensure the file is within the thumbnails directory
           const thumbnailsDir = path.join(app.getPath('userData'), 'thumbnails');
-          if (!filePath.startsWith(thumbnailsDir)) {
-              console.warn(`Attempt to delete file outside thumbnails directory: ${filePath}`);
-              return { success: false, error: 'Access denied' };
-          }
-
+          if (!filePath.startsWith(thumbnailsDir)) return { success: false, error: 'Access denied' };
           await fs.promises.unlink(filePath);
           return { success: true };
-      } catch (error) {
-          if (error.code === 'ENOENT') {
-              // File not found, which is fine
-              return { success: true };
-          }
-          console.error('Failed to delete thumbnail:', error);
-          return { success: false, error: error.message };
-      }
+      } catch (error) { return { success: true }; }
   });
 
   // NDI IPC Handlers
-  let ndiCaptureSettings = { width: 1280, height: 720 };
-  let ndiPerformanceData = {
-      totalTime: 0,
-      count: 0,
-      lastReport: Date.now()
-  };
+  let ndiCaptureSettings = { width: 480, height: 480 };
+  let ndiPerformanceData = { totalTime: 0, count: 0, lastReport: Date.now() };
+  let isRendererReadyForNdi = true;
 
   ipcMain.handle('ndi-update-settings', (event, settings) => {
       if (settings.width) ndiCaptureSettings.width = settings.width;
       if (settings.height) ndiCaptureSettings.height = settings.height;
+      // Immediately update active capture resolution
+      if (ndi) {
+          ndi.startCapture(ndiCaptureSettings.width, ndiCaptureSettings.height);
+      }
       return true;
   });
 
@@ -1307,6 +1141,7 @@ ipcMain.handle('get-project-fonts', async () => {
       const success = ndi.createReceiver(sourceName);
       if (success) {
           ndi.startCapture(ndiCaptureSettings.width, ndiCaptureSettings.height);
+          isRendererReadyForNdi = true; 
       }
       return success;
   });
@@ -1320,96 +1155,34 @@ ipcMain.handle('get-project-fonts', async () => {
       if (!ndi) return;
       ndi.stopCapture();
       ndi.destroyReceiver();
-      isRendererReadyForNdi = true; // Reset flow control
+      isRendererReadyForNdi = true; 
       ndiPerformanceData = { totalTime: 0, count: 0, lastReport: Date.now() };
   });
 
-  // Flow control for NDI frames to prevent IPC backlog
-  let isRendererReadyForNdi = true;
   ipcMain.on('ndi-renderer-ready', () => {
       isRendererReadyForNdi = true;
   });
 
   // Background System Stats Loop
-  let lastScaleFactor = 1; // Stateful scaling factor for stability
-
   const sendSystemStats = async () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
           try {
-              // 1. Get Native Main CPU (The "Truth Anchor")
-              const nativeUsage = process.getCPUUsage();
-              let nativeMainCpu = (nativeUsage && typeof nativeUsage.percentCPU === 'number') 
-                  ? nativeUsage.percentCPU 
-                  : 0;
-              if (isNaN(nativeMainCpu)) nativeMainCpu = 0;
-
-              // 2. Get RAM (Private Bytes)
-              const electronMetrics = app.getAppMetrics();
-              let totalMemKB = 0;
-              electronMetrics.forEach(m => {
-                  const mem = m.memory?.privateBytes;
-                  if (typeof mem === 'number') totalMemKB += mem;
-              });
-
-              // 3. Get Child PIDs
               psTree(process.pid, (err, children) => {
-                  // Strictly filter PIDs to ensure they are numbers
-                  const childPids = err ? [] : children
-                      .map(p => parseInt(p.PID))
-                      .filter(pid => !isNaN(pid) && pid > 0);
-                  
-                  // 4. pidusage on Main + Children
-                  pidusage([process.pid, ...childPids], (err, stats) => {
-                      if (err) return;
-
+                  const pids = [process.pid, ...(err ? [] : children.map(p => parseInt(p.PID)).filter(pid => !isNaN(pid)))];
+                  pidusage(pids, (err, stats) => {
+                      if (err || !stats) return;
+                      let totalCpu = 0;
+                      let totalMemKB = 0;
                       const numCores = os.cpus().length || 1;
-                      
-                      // Calculate Main CPU according to pidusage
-                      const mainStat = stats[process.pid];
-                      let pidusageMainNormalized = 0;
-                      if (mainStat && typeof mainStat.cpu === 'number' && !isNaN(mainStat.cpu)) {
-                          pidusageMainNormalized = mainStat.cpu / numCores;
-                      }
-
-                      // 5. Calculate Scaling Factor (Calibration)
-                      let currentFactor = lastScaleFactor;
-                      if (nativeMainCpu > 1.0 && pidusageMainNormalized > 0.1) {
-                          const calculatedFactor = nativeMainCpu / pidusageMainNormalized;
-                          if (Number.isFinite(calculatedFactor) && !isNaN(calculatedFactor)) {
-                              currentFactor = Math.max(0.8, Math.min(4.0, calculatedFactor));
-                              lastScaleFactor = (lastScaleFactor * 0.7) + (currentFactor * 0.3);
-                          }
-                      }
-                      
-                      // Safety: Ensure lastScaleFactor is valid
-                      if (!Number.isFinite(lastScaleFactor) || isNaN(lastScaleFactor)) {
-                          lastScaleFactor = 1;
-                      }
-
-                      // 6. Calculate Child CPU Usage
-                      let childrenCpuRaw = 0;
-                      childPids.forEach(pid => {
-                          const s = stats[pid];
-                          if (s && typeof s.cpu === 'number' && !isNaN(s.cpu)) {
-                              childrenCpuRaw += s.cpu;
-                          }
+                      Object.values(stats).forEach(s => { 
+                          totalCpu += s.cpu; 
+                          totalMemKB += s.memory;
                       });
-                      
-                      const childrenCpuNormalized = (childrenCpuRaw / numCores) * lastScaleFactor;
-
-                      // 7. Total System CPU
-                      let totalCpu = nativeMainCpu + childrenCpuNormalized;
-
-                      // Final Safety Check
-                      if (isNaN(totalCpu) || !Number.isFinite(totalCpu)) {
-                          console.warn("Total CPU was NaN/Infinite, resetting to 0. Components:", { nativeMainCpu, childrenCpuNormalized, lastScaleFactor });
-                          totalCpu = 0;
-                      }
-
+                      const normalizedCpu = totalCpu / numCores;
                       if (mainWindow && !mainWindow.isDestroyed()) {
                           mainWindow.webContents.send('system-stats', {
-                              cpu: totalCpu.toFixed(1),
-                              ram: (totalMemKB / 1024).toFixed(0)
+                              cpu: normalizedCpu.toFixed(1),
+                              ram: (totalMemKB / (1024 * 1024)).toFixed(0)
                           });
                       }
                   });
@@ -1419,51 +1192,36 @@ ipcMain.handle('get-project-fonts', async () => {
           }
       }
   };
-  setInterval(sendSystemStats, 1000); 
-  process.getCPUUsage(); // Prime native tracker
+  setInterval(sendSystemStats, 2000); 
+
+  let ndiFlowControlTimeout = null;
 
   const ndiCaptureLoop = async () => {
       if (ndi && mainWindow && !mainWindow.isDestroyed() && isRendererReadyForNdi) {
-          // Use dynamic capture resolution
-          let frame = null;
-          let latestFrame = null;
-          let drainCount = 0;
-          const maxDrain = 5;
-
-          // Drain queue to get the latest frame
-          do {
-            const start = performance.now();
-            frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
-            const end = performance.now();
-            
-            if (frame) {
-                latestFrame = frame;
-                drainCount++;
-                
-                // Track performance
-                ndiPerformanceData.totalTime += (end - start);
-                ndiPerformanceData.count++;
-            }
-          } while (frame && drainCount < maxDrain);
-
-          // Report telemetry every 5 seconds
-          if (Date.now() - ndiPerformanceData.lastReport > 5000 && ndiPerformanceData.count > 0) {
-              const avg = ndiPerformanceData.totalTime / ndiPerformanceData.count;
-              console.log(`[NDI Performance] Avg Capture Time: ${avg.toFixed(2)}ms (over ${ndiPerformanceData.count} frames)`);
-              mainWindow.webContents.send('ndi-telemetry', { avgCaptureTime: avg });
-              ndiPerformanceData.totalTime = 0;
-              ndiPerformanceData.count = 0;
-              ndiPerformanceData.lastReport = Date.now();
-          }
-
-          if (latestFrame) {
-              isRendererReadyForNdi = false; // Wait for renderer to process
-              mainWindow.webContents.send('ndi-frame', latestFrame);
+          const start = performance.now();
+          const frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
+          const end = performance.now();
+          if (frame) {
+              isRendererReadyForNdi = false; 
+              if (ndiFlowControlTimeout) clearTimeout(ndiFlowControlTimeout);
+              ndiFlowControlTimeout = setTimeout(() => { isRendererReadyForNdi = true; }, 200);
+              const duration = end - start;
+              ndiPerformanceData.totalTime += duration;
+              ndiPerformanceData.count++;
+              if (Date.now() - ndiPerformanceData.lastReport > 5000 && ndiPerformanceData.count > 0) {
+                  const avg = ndiPerformanceData.totalTime / ndiPerformanceData.count;
+                  console.log(`[NDI Performance] Avg Capture Time: ${avg.toFixed(2)}ms (over ${ndiPerformanceData.count} frames) @ ${frame.width}x${frame.height}`);
+                  mainWindow.webContents.send('ndi-telemetry', { avgCaptureTime: avg });
+                  ndiPerformanceData.totalTime = 0;
+                  ndiPerformanceData.count = 0;
+                  ndiPerformanceData.lastReport = Date.now();
+              }
+              mainWindow.webContents.send('ndi-frame', frame);
           }
       }
-      setTimeout(ndiCaptureLoop, 33); // Poll at ~30fps
+      const delay = isRendererReadyForNdi ? 2 : 16; 
+      setTimeout(ndiCaptureLoop, delay);
   };
-
   ndiCaptureLoop();
 }
 

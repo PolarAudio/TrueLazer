@@ -140,7 +140,7 @@ contextBridge.exposeInMainWorld(
                                             ndiCreateReceiver: (sourceName) => ipcRenderer.invoke('ndi-create-receiver', sourceName),
                                             ndiCaptureVideo: () => ipcRenderer.invoke('ndi-capture-video'),
                                             ndiDestroyReceiver: () => ipcRenderer.invoke('ndi-destroy-receiver'),
-                                            ndiSignalReady: () => ipcRenderer.send('ndi-renderer-ready'),
+                                            ndiRendererReady: () => ipcRenderer.send('ndi-renderer-ready'),
                                             onNdiFrame: (callback) => {
                                                 const listener = (event, frame) => callback(frame);
                                                 ipcRenderer.on('ndi-frame', listener);
