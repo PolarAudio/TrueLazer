@@ -1,8 +1,3 @@
 # Project Tracks
 
 This file tracks all major tracks for the project. Each track has its own detailed plan in its respective folder.
-
----
-
-- [x] **Track: Further Shape Builder and Timeline refinements**
-  *Link: [./tracks/shape_builder_refinements_20260216/](./tracks/shape_builder_refinements_20260216/)*
