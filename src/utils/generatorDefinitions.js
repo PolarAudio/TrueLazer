@@ -70,6 +70,42 @@ export const generatorDefinitions = [
     ],
   },
   {
+    id: 'triangle',
+    name: 'Triangle',
+    description: 'Generates a simple triangle.',
+    defaultParams: {
+      width: 1,
+      height: 1,
+      pointDensity: 12,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
+    },
+    paramControls: [
+      { id: 'width', label: 'Width', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
+      { id: 'height', label: 'Height', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 25, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
+    ],
+  },
+  {
     id: 'line',
     name: 'Line',
     description: 'Generates a straight line.',

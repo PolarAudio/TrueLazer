@@ -249,6 +249,48 @@ export function generateSquare(params) {
   }
 }
 
+export function generateTriangle(params) {
+  try {
+    const { width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
+      width: 1,
+      height: 1,
+      pointDensity: 12,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255
+    });
+
+    const corners = [
+      { x: -width / 2 + x, y: -height / 2 + y }, // Bottom-left
+      { x: width / 2 + x, y: -height / 2 + y },  // Bottom-right
+      { x: x, y: height / 2 + y },               // Top-center
+      { x: -width / 2 + x, y: -height / 2 + y }, // Back to start
+    ];
+
+    const points = [];
+    for (let i = 0; i < corners.length - 1; i++) {
+      const start = corners[i];
+      const end = corners[i + 1];
+      for (let j = 0; j < pointDensity; j++) {
+        const t = j / pointDensity;
+        points.push({
+          x: start.x + (end.x - start.x) * t,
+          y: start.y + (end.y - start.y) * t,
+          r, g, b
+        });
+      }
+    }
+    points.push({ ...corners[corners.length - 1], r, g, b });
+
+    return { points: applyRenderingStyle(points, params) };
+  } catch (error) {
+    console.error('Error in generateTriangle:', error);
+    throw error;
+  }
+}
+
 export function generateLine(params) {
   try {
     const { x1, y1, x2, y2, pointDensity, r, g, b } = withDefaults(params, {

@@ -1,4 +1,4 @@
-import { generateCircle, generateSquare, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave } from './generators.js';
+import { generateCircle, generateSquare, generateTriangle, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave } from './generators.js';
 
 self.onmessage = async (event) => {
   const { type, layerIndex, colIndex, generator, params } = event.data;
@@ -18,6 +18,9 @@ self.onmessage = async (event) => {
               break;
             case 'square':
               frames = [generateSquare(currentParams)];
+              break;
+            case 'triangle':
+              frames = [generateTriangle(currentParams)];
               break;
             case 'line':
               frames = [generateLine(currentParams)];
