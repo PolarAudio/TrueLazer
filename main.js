@@ -1285,6 +1285,11 @@ ipcMain.handle('get-project-fonts', async () => {
 
   // NDI IPC Handlers
   let ndiCaptureSettings = { width: 1280, height: 720 };
+  let ndiPerformanceData = {
+      totalTime: 0,
+      count: 0,
+      lastReport: Date.now()
+  };
 
   ipcMain.handle('ndi-update-settings', (event, settings) => {
       if (settings.width) ndiCaptureSettings.width = settings.width;
@@ -1299,7 +1304,11 @@ ipcMain.handle('get-project-fonts', async () => {
 
   ipcMain.handle('ndi-create-receiver', async (event, sourceName) => {
       if (!ndi) return false;
-      return ndi.createReceiver(sourceName);
+      const success = ndi.createReceiver(sourceName);
+      if (success) {
+          ndi.startCapture(ndiCaptureSettings.width, ndiCaptureSettings.height);
+      }
+      return success;
   });
 
   ipcMain.handle('ndi-capture-video', async () => {
@@ -1309,8 +1318,10 @@ ipcMain.handle('get-project-fonts', async () => {
 
   ipcMain.handle('ndi-destroy-receiver', async () => {
       if (!ndi) return;
+      ndi.stopCapture();
       ndi.destroyReceiver();
       isRendererReadyForNdi = true; // Reset flow control
+      ndiPerformanceData = { totalTime: 0, count: 0, lastReport: Date.now() };
   });
 
   // Flow control for NDI frames to prevent IPC backlog
@@ -1421,12 +1432,29 @@ ipcMain.handle('get-project-fonts', async () => {
 
           // Drain queue to get the latest frame
           do {
+            const start = performance.now();
             frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
+            const end = performance.now();
+            
             if (frame) {
                 latestFrame = frame;
                 drainCount++;
+                
+                // Track performance
+                ndiPerformanceData.totalTime += (end - start);
+                ndiPerformanceData.count++;
             }
           } while (frame && drainCount < maxDrain);
+
+          // Report telemetry every 5 seconds
+          if (Date.now() - ndiPerformanceData.lastReport > 5000 && ndiPerformanceData.count > 0) {
+              const avg = ndiPerformanceData.totalTime / ndiPerformanceData.count;
+              console.log(`[NDI Performance] Avg Capture Time: ${avg.toFixed(2)}ms (over ${ndiPerformanceData.count} frames)`);
+              mainWindow.webContents.send('ndi-telemetry', { avgCaptureTime: avg });
+              ndiPerformanceData.totalTime = 0;
+              ndiPerformanceData.count = 0;
+              ndiPerformanceData.lastReport = Date.now();
+          }
 
           if (latestFrame) {
               isRendererReadyForNdi = false; // Wait for renderer to process
@@ -1435,6 +1463,7 @@ ipcMain.handle('get-project-fonts', async () => {
       }
       setTimeout(ndiCaptureLoop, 33); // Poll at ~30fps
   };
+
   ndiCaptureLoop();
 }
 
