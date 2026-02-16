@@ -1,8 +1,3 @@
 # Project Tracks
 
 This file tracks all major tracks for the project. Each track has its own detailed plan in its respective folder.
-
----
-
-- [x] **Track: Fix Bezier curve tool logic**
-  *Link: [./tracks/bezier_tool_fix_20260216/](./tracks/bezier_tool_fix_20260216/)*
