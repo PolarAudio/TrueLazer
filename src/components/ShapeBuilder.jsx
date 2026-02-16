@@ -32,6 +32,7 @@ const ShapeBuilder = ({ onBack }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, target: null });
   const [renderTrigger, setRenderTrigger] = useState(0);
+  const [activeBezierHandleIndex, setActiveBezierHandleIndex] = useState(-1);
 
   // --- ANIMATION & SYNC STATE ---
   const [tweenStartFrame, setTweenStartFrame] = useState(0);
@@ -127,10 +128,10 @@ const ShapeBuilder = ({ onBack }) => {
       const newFrames = [...frames];
       const currentShapes = [...newFrames[currentFrameIndex]];
       
-      // Bake transforms of selected shapes before grouping so they move as one relative to the group
+      // Extract selected shapes WITHOUT baking them, so they keep their own anchors/transforms
       const selected = selectedShapeIndexes
           .sort((a, b) => b - a)
-          .map(idx => bakeTransform(currentShapes.splice(idx, 1)[0]));
+          .map(idx => currentShapes.splice(idx, 1)[0]);
       
       const newGroup = {
           type: 'group',
@@ -230,7 +231,7 @@ const ShapeBuilder = ({ onBack }) => {
   const getShapeCenter = (shape, includeTransform = false) => {
       if (!shape) return { x: 500, y: 500 };
       if (shape.type === 'rect' && !includeTransform) return { x: shape.start.x + shape.width / 2, y: shape.start.y + shape.height / 2 };
-      if ((shape.type === 'circle' || shape.type === 'star') && !includeTransform) return shape.start;
+      if ((shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle') && !includeTransform) return shape.start;
       if (shape.type === 'line' && !includeTransform) return { x: (shape.start.x + shape.end.x) / 2, y: (shape.start.y + shape.end.y) / 2 };
       
       const pts = getShapePoints(shape, includeTransform);
@@ -256,7 +257,7 @@ const ShapeBuilder = ({ onBack }) => {
           ];
           return pts[idx];
       }
-      if (shape.type === 'circle' || shape.type === 'star') {
+      if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle') {
           const pts = [shape.start, { x: shape.end.x, y: shape.start.y }, { x: shape.start.x, y: shape.end.y }];
           return pts[idx];
       }
@@ -274,6 +275,14 @@ const ShapeBuilder = ({ onBack }) => {
   const applyTransformations = useCallback((pts, shape) => {
     if (!pts || pts.length === 0 || !shape) return pts;
     
+    // Recursive handling for groups
+    if (shape.type === 'group' && shape.shapes) {
+        // For groups, we first get the points from children (which might have their own transforms)
+        // Then we apply the group's own transform to that collective set of points.
+        // But wait, getSampledPoints already handles children. 
+        // So we just need to apply this shape's (the group's) transform to the points it was given.
+    }
+
     const pivot = getShapePivot(shape);
     const sX = shape.scaleX ?? 1;
     const sY = shape.scaleY ?? 1;
@@ -323,16 +332,19 @@ const ShapeBuilder = ({ onBack }) => {
     if (shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline') pts = shape.points || [];
     else if (shape.type === 'bezier') {
         const points = (shape.points || []).filter(p => !!p);
-        if (points.length >= 3) {
-            for (let j = 0; j <= points.length - 3; j += 2) {
-                const p0 = points[j], cp = points[j+1], p1 = points[j+2];
-                if (p0 && cp && p1) {
+        if (points.length >= 4) {
+            // Cubic Bezier: 4 points per segment (P0, CP1, CP2, P1)
+            // Continuous: P1 of previous is P0 of next
+            for (let j = 0; j <= points.length - 4; j += 3) {
+                const p0 = points[j], cp1 = points[j+1], cp2 = points[j+2], p1 = points[j+3];
+                if (p0 && cp1 && cp2 && p1) {
                     const startIdx = j === 0 ? 0 : 1;
                     for (let i = startIdx; i <= 20; i++) {
                         const t = i / 20, it = 1 - t;
+                        // Cubic formula: (1-t)^3*P0 + 3(1-t)^2*t*CP1 + 3(1-t)*t^2*CP2 + t^3*P1
                         pts.push({
-                            x: it * it * p0.x + 2 * it * t * cp.x + t * t * p1.x,
-                            y: it * it * p0.y + 2 * it * t * cp.y + t * t * p1.y,
+                            x: Math.pow(it, 3) * p0.x + 3 * Math.pow(it, 2) * t * cp1.x + 3 * it * Math.pow(t, 2) * cp2.x + Math.pow(t, 3) * p1.x,
+                            y: Math.pow(it, 3) * p0.y + 3 * Math.pow(it, 2) * t * cp1.y + 3 * it * Math.pow(t, 2) * cp2.y + Math.pow(t, 3) * p1.y,
                             color: p0.color
                         });
                     }
@@ -363,6 +375,14 @@ const ShapeBuilder = ({ onBack }) => {
             rot += step;
         }
     }
+    else if (shape.type === 'triangle') {
+        const rx = Math.abs(shape.end.x - shape.start.x); const ry = Math.abs(shape.end.y - shape.start.y); const c = shape.color;
+        pts = [
+            { x: shape.start.x - rx, y: shape.start.y + ry, color: c },
+            { x: shape.start.x + rx, y: shape.start.y + ry, color: c },
+            { x: shape.start.x, y: shape.start.y - ry, color: c }
+        ];
+    }
     else if (shape.type === 'group') {
         shape.shapes.forEach(s => pts.push(...getSampledPoints(s)));
     }
@@ -379,7 +399,7 @@ const ShapeBuilder = ({ onBack }) => {
         const c = shape.color; const colors = shape.cornerColors || [c, c, c, c];
         pts = [{ x: shape.start.x, y: shape.start.y, color: colors[0] }, { x: shape.start.x + shape.width, y: shape.start.y, color: colors[1] }, { x: shape.start.x + shape.width, y: shape.start.y + shape.height, color: colors[2] }, { x: shape.start.x, y: shape.start.y + shape.height, color: colors[3] }];
     }
-    else if (shape.type === 'circle' || shape.type === 'star') {
+    else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle') {
         // Return raw control points
         pts = [shape.start, { x: shape.end.x, y: shape.start.y }, { x: shape.start.x, y: shape.end.y }];
     }
@@ -394,25 +414,9 @@ const ShapeBuilder = ({ onBack }) => {
   const isHit = (shape, mouse, isSelected, pointSelection = [], pathPrefix = []) => {
       if (shape.hidden || shape.locked) return null;
       const threshold = 15 / zoom; 
-      const center = getShapeCenter(shape);
-      const pivot = getShapePivot(shape);
       
-      // High-priority hit test for pivot handle (if selected)
-      if (isSelected && getDistance(pivot, mouse) < 15 / zoom) return { type: 'pivot' };
-
-      // High-priority hit test for center handle (if selected)
-      if (isSelected && getDistance(center, mouse) < 20 / zoom) return { type: 'shape' };
-
-      // Recursively check for point hits in groups
-      if (shape.type === 'group') {
-          for (let i = shape.shapes.length - 1; i >= 0; i--) {
-              const hit = isHit(shape.shapes[i], mouse, true, pointSelection, [...pathPrefix, i]);
-              if (hit && hit.type === 'point') return hit;
-          }
-      }
-
       const pts = getShapePoints(shape);
-      // Check points (handles) - skip for groups as we handled it above recursively
+      // Check points (handles) - HIGH PRIORITY
       if (shape.type !== 'group') {
           const hits = [];
           for (let i = 0; i < pts.length; i++) {
@@ -428,6 +432,23 @@ const ShapeBuilder = ({ onBack }) => {
           }
       }
 
+      const center = getShapeCenter(shape);
+      const pivot = getShapePivot(shape);
+      
+      // Pivot handle (if selected)
+      if (isSelected && getDistance(pivot, mouse) < 15 / zoom) return { type: 'pivot' };
+
+      // Center handle (if selected)
+      if (isSelected && getDistance(center, mouse) < 20 / zoom) return { type: 'shape' };
+
+      // Recursively check for point hits in groups
+      if (shape.type === 'group') {
+          for (let i = shape.shapes.length - 1; i >= 0; i--) {
+              const hit = isHit(shape.shapes[i], mouse, true, pointSelection, [...pathPrefix, i]);
+              if (hit && hit.type === 'point') return hit;
+          }
+      }
+
       // Check shape body/segments using sampled points for curves
       const sampled = getSampledPoints(shape);
       const isClosed = ['rect', 'circle', 'star', 'polygon'].includes(shape.type);
@@ -440,12 +461,6 @@ const ShapeBuilder = ({ onBack }) => {
           if (distToSegment(mouse, sampled[sampled.length-1], sampled[0]) < threshold) return { type: 'segment', index: sampled.length - 1, path: [...pathPrefix, sampled.length - 1] };
       }
 
-      if (shape.type === 'rect' || shape.type === 'polygon' || shape.type === 'circle' || shape.type === 'star' || shape.type === 'polyline' || shape.type === 'group' || shape.type === 'pen' || shape.type === 'bezier') {
-          if (isClosed && isPointInPoly(mouse, sampled)) return { type: 'shape' };
-          if (getDistance(center, mouse) < threshold * 1.5) return { type: 'shape' };
-      } else if (shape.type === 'line') {
-          if (distToSegment(mouse, sampled[0], sampled[1]) < threshold) return { type: 'segment', index: 0 };
-      }
       return null;
   };
 
@@ -1869,7 +1884,7 @@ const ShapeBuilder = ({ onBack }) => {
                       }
                   }
 
-                  if (s.type === 'polygon' || s.type === 'rect' || s.type === 'circle' || s.type === 'star') {
+                  if (s.type === 'polygon' || s.type === 'rect' || s.type === 'circle' || s.type === 'star' || s.type === 'triangle') {
                       // Close the shape if the last point is not already the same as the first
                       const first = processed[0];
                       const last = processed[processed.length-1];
@@ -1950,19 +1965,35 @@ const ShapeBuilder = ({ onBack }) => {
     const sx = snapped.x, sy = snapped.y;
     setContextMenu({ visible: false });
     if (tool === 'select') {
-        let hitIdx = -1;
-        let bestHit = null;
-
+        const allHits = [];
         for (let i = shapes.length - 1; i >= 0; i--) {
             const hit = isHit(shapes[i], mouse, selectedShapeIndexes.includes(i), selectedPointIndexes);
             if (hit) {
-                hitIdx = i;
-                bestHit = hit;
-                break;
+                allHits.push({ ...hit, shapeIndex: i });
             }
         }
 
-        if (bestHit) {
+        if (allHits.length > 0) {
+            // Drill-down logic: find the first hit that isn't currently the primary selection
+            let targetHit = allHits[0];
+            
+            // If the top hit is already selected, try to find the next one in the stack
+            const currentMainShapeIdx = selectedShapeIndexes[0];
+            if (allHits.length > 1 && allHits[0].shapeIndex === currentMainShapeIdx) {
+                // If it's a point hit, check if that specific point is selected
+                if (allHits[0].type === 'point') {
+                    const ptPath = allHits[0].path || [allHits[0].index];
+                    const isPtSelected = selectedPointIndexes.some(p => JSON.stringify(p) === JSON.stringify(ptPath));
+                    if (isPtSelected) targetHit = allHits[1];
+                } else {
+                    // Already selected this shape, move to next
+                    targetHit = allHits[1];
+                }
+            }
+
+            const hitIdx = targetHit.shapeIndex;
+            const bestHit = targetHit;
+
             if (bestHit.type === 'point') {
                 const ptPath = bestHit.path || [bestHit.index];
                 if (!e.shiftKey) {
@@ -2024,15 +2055,17 @@ const ShapeBuilder = ({ onBack }) => {
     if (tool === 'polygon' || (tool === 'polyline') || ((tool === 'line' || tool === 'bezier') && continuousDrawing)) {
         if (!activeShape) {
             if (tool === 'bezier') {
-                setActiveShape({ type: 'bezier', color, renderMode, points: [{ x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }], rotation: 0 });
+                // Initialize with 4 points: P0, CP1, CP2, P1
+                setActiveShape({ type: 'bezier', color, renderMode, points: [{ x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }], rotation: 0 });
+                setActiveBezierHandleIndex(3); // Start by dragging the end point
             } else {
                 setActiveShape({ type: tool === 'polygon' ? 'polygon' : 'polyline', color, renderMode, points: [{ x: sx, y: sy, color }, { x: sx, y: sy, color }], rotation: 0 });
             }
         } else {
             if (tool === 'bezier') {
-                // For continuous bezier, we add a control point and a new end point.
-                // The current last point becomes the start of the next segment.
-                setActiveShape(prev => ({ ...prev, points: [...prev.points, { x: sx, y: sy, color }, { x: sx, y: sy, color }] }));
+                // Add a new segment: CP1, CP2, P1 (reusing previous P1 as P0)
+                setActiveShape(prev => ({ ...prev, points: [...prev.points, { x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }] }));
+                setActiveBezierHandleIndex(activeShape.points.length + 2);
             } else {
                 setActiveShape(prev => ({ ...prev, points: [...prev.points, { x: sx, y: sy, color }] }));
             }
@@ -2040,7 +2073,10 @@ const ShapeBuilder = ({ onBack }) => {
     } else {
         const newShape = { type: tool, color, renderMode, start: { x: sx, y: sy }, end: { x: sx, y: sy }, width: 0, height: 0, rotation: 0, scaleX: 1, scaleY: 1, rotationX: 0, rotationY: 0, rotationZ: 0 };
         if (tool === 'pen') newShape.points = [{ x: sx, y: sy, color }, { x: sx, y: sy, color }];
-        else if (tool === 'bezier') newShape.points = [{ x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }];
+        else if (tool === 'bezier') {
+            newShape.points = [{ x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }];
+            setActiveBezierHandleIndex(3);
+        }
         setActiveShape(newShape);
     }
   };
@@ -2073,7 +2109,7 @@ const ShapeBuilder = ({ onBack }) => {
               else if (idx === 1) { s.start = { ...s.start, y: s.start.y + dY }; s.width += dX; s.height -= dY; }
               else if (idx === 2) { s.width += dX; s.height += dY; }
               else if (idx === 3) { s.start = { ...s.start, x: s.start.x + dX }; s.width -= dX; s.height += dY; }
-          } else if (s.type === 'circle' || s.type === 'star') {
+          } else if (s.type === 'circle' || s.type === 'star' || s.type === 'triangle') {
               if (idx === 0) { s.start = { ...s.start, x: s.start.x + dX, y: s.start.y + dY }; }
               else if (idx === 1) s.end = { ...s.end, x: s.end.x + dX };
               else if (idx === 2) s.end = { ...s.end, y: s.end.y + dY };
@@ -2181,18 +2217,17 @@ const ShapeBuilder = ({ onBack }) => {
         if (tool === 'pen') updated.points = [...prev.points, { x, y, color }];
         else if (tool === 'bezier') { 
             const pts = [...updated.points];
-            if (pts.length >= 3) {
-                // Update the current last control point and end point
-                const p0 = pts[pts.length - 3];
-                const p1 = { x: (p0.x + x) / 2, y: (p0.y + y) / 2 }; 
-                pts[pts.length - 2] = { x: p1.x, y: p1.y, color };
-                pts[pts.length - 1] = { x, y, color };
+            const lastIdx = pts.length - 1;
+            pts[lastIdx] = { x, y, color }; // Update end point
+            // Also update control point 2 to be near the end point initially
+            if (lastIdx >= 1) {
+                pts[lastIdx - 1] = { x: x - 20, y: y - 20, color };
             }
             updated.points = pts;
         }
         else if (updated.type === 'polyline' || updated.type === 'polygon') { const pts = [...updated.points]; let tx = x, ty = y; if (isShift) { const p = pts[pts.length - 2]; Math.abs(x - p.x) > Math.abs(y - p.y) ? ty = p.y : tx = p.x; } pts[pts.length - 1] = { x: tx, y: ty, color }; updated.points = pts; }
         else if (tool === 'line') { let tx = x, ty = y; if (isShift) { Math.abs(x-startPosRef.current.x) > Math.abs(y-startPosRef.current.y) ? ty=startPosRef.current.y : tx=startPosRef.current.x; } updated.end = { x: tx, y: ty }; }
-        else if (tool === 'circle' || tool === 'star') { let tx = x, ty = y; if (isShift) { const d = Math.max(Math.abs(x-startPosRef.current.x), Math.abs(y-startPosRef.current.y)); tx=startPosRef.current.x+(x>=startPosRef.current.x?d:-d); ty=startPosRef.current.y+(y>=startPosRef.current.y?d:-d); } updated.end = { x: tx, y: ty }; }
+        else if (tool === 'circle' || tool === 'star' || tool === 'triangle') { let tx = x, ty = y; if (isShift) { const d = Math.max(Math.abs(x-startPosRef.current.x), Math.abs(y-startPosRef.current.y)); tx=startPosRef.current.x+(x>=startPosRef.current.x?d:-d); ty=startPosRef.current.y+(y>=startPosRef.current.y?d:-d); } updated.end = { x: tx, y: ty }; }
         else if (tool === 'rect') { let w = x-startPosRef.current.x, h = y-startPosRef.current.y; if (isShift) { const s = Math.max(Math.abs(w), Math.abs(h)); w = w>0?s:-s; h = h>0?s:-s; } updated.width = w; updated.height = h; }
         return updated;
     });
@@ -2511,16 +2546,50 @@ const ShapeBuilder = ({ onBack }) => {
         }
     }
     if (isSelected && !isOnion) {
-        const actualPts = getShapePoints(shape); actualPts.forEach((p, i) => { 
+        const actualPts = getShapePoints(shape);
+        
+        // Draw Bezier Control Lines
+        if (shape.type === 'bezier') {
+            ctx.save();
+            ctx.setLineDash([5/zoom, 5/zoom]);
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 1/zoom;
+            for (let i = 0; i <= actualPts.length - 4; i += 3) {
+                ctx.beginPath();
+                ctx.moveTo(actualPts[i].x, actualPts[i].y);
+                ctx.lineTo(actualPts[i+1].x, actualPts[i+1].y);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(actualPts[i+2].x, actualPts[i+2].y);
+                ctx.lineTo(actualPts[i+3].x, actualPts[i+3].y);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        actualPts.forEach((p, i) => { 
             const ptPath = [...path, i];
-            // Normalize selectedPointIndexes items to paths for comparison
             const isPointSelected = selectedPointIndexes.some(sel => {
                 const selPath = Array.isArray(sel) ? sel : [sel];
                 return JSON.stringify(selPath) === JSON.stringify(ptPath);
             });
-            ctx.fillStyle = isPointSelected ? 'var(--theme-color)' : 'white'; 
+
+            // Distinguish between anchor points and control points for Bezier
+            let isControlPoint = false;
+            if (shape.type === 'bezier') {
+                isControlPoint = (i % 3 !== 0);
+            }
+
+            ctx.fillStyle = isPointSelected ? 'var(--theme-color)' : (isControlPoint ? '#888' : 'white'); 
             ctx.beginPath(); 
-            ctx.arc(p.x, p.y, 5/zoom, 0, Math.PI*2); 
+            if (isControlPoint) {
+                // Square for control points
+                const s = 4/zoom;
+                ctx.rect(p.x - s, p.y - s, s*2, s*2);
+            } else {
+                // Circle for anchors
+                ctx.arc(p.x, p.y, 5/zoom, 0, Math.PI*2); 
+            }
             ctx.fill(); 
             ctx.strokeStyle = isPointSelected ? 'white' : 'black'; 
             ctx.lineWidth = 1/zoom; 
@@ -2751,6 +2820,98 @@ const ShapeBuilder = ({ onBack }) => {
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [frames, currentFrameIndex, selectedShapeIndexes, selectedPointIndexes, shapeClipboard, history, historyStep, isPlaying, frameCount, moveShape, deepUpdate]);
 
+  const TimelineRuler = ({ currentFrame, frameCount, syncMode, bpm, beats, duration, fps, onSeek, snapToGrid }) => {
+      const containerRef = useRef(null);
+      
+      const getFrameTime = (frameIdx) => {
+          if (syncMode === 'bpm') {
+              const msPerBeat = 60000 / (bpm || 120);
+              const totalDurationMs = msPerBeat * (beats || 8);
+              const frameTimeMs = (frameIdx / frameCount) * totalDurationMs;
+              const beat = Math.floor(frameTimeMs / msPerBeat) + 1;
+              const subBeat = Math.floor(((frameTimeMs % msPerBeat) / msPerBeat) * 4) + 1;
+              return `B${beat}.${subBeat}`;
+          } else if (syncMode === 'time') {
+              const totalDurationMs = (duration || 2) * 1000;
+              const frameTimeMs = (frameIdx / frameCount) * totalDurationMs;
+              const seconds = Math.floor(frameTimeMs / 1000);
+              const ms = Math.floor(frameTimeMs % 1000);
+              return `${seconds}:${ms.toString().padStart(3, '0')}`;
+          }
+          return `F${frameIdx + 1}`;
+      };
+
+      const handleMouseDown = (e) => {
+          if (!containerRef.current) return;
+          const rect = containerRef.current.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          let progress = x / rect.width;
+          let targetFrame = Math.round(progress * (frameCount - 1));
+          
+          if (snapToGrid) {
+              // Contextual snapping logic
+              if (syncMode === 'bpm') {
+                  const framesPerBeat = frameCount / beats;
+                  targetFrame = Math.round(targetFrame / framesPerBeat) * framesPerBeat;
+              } else if (syncMode === 'time') {
+                  const framesPerSecond = frameCount / duration;
+                  targetFrame = Math.round(targetFrame / framesPerSecond) * framesPerSecond;
+              }
+          }
+          
+          onSeek(Math.max(0, Math.min(frameCount - 1, Math.round(targetFrame))));
+      };
+
+      const markers = [];
+      const markerCount = syncMode === 'bpm' ? (beats || 8) : 10;
+      for (let i = 0; i <= markerCount; i++) {
+          const pos = (i / markerCount) * 100;
+          let label = '';
+          if (syncMode === 'bpm') label = `B${i+1}`;
+          else if (syncMode === 'time') label = `${((i/markerCount) * (duration || 2)).toFixed(1)}s`;
+          else label = Math.round((i/markerCount) * frameCount);
+
+          markers.push(
+              <div key={i} style={{ position: 'absolute', left: `${pos}%`, top: 0, bottom: 0, borderLeft: '1px solid #444', pointerEvents: 'none' }}>
+                  <span style={{ fontSize: '0.6rem', color: '#666', marginLeft: '2px' }}>{label}</span>
+              </div>
+          );
+      }
+
+      return (
+          <div 
+            ref={containerRef}
+            onMouseDown={handleMouseDown}
+            style={{ 
+                position: 'relative', 
+                height: '35px', 
+                background: '#111', 
+                borderRadius: '4px', 
+                border: '1px solid #333',
+                cursor: 'pointer',
+                overflow: 'hidden'
+            }}
+          >
+              {markers}
+              <div 
+                style={{ 
+                    position: 'absolute', 
+                    left: `${(currentFrame / (frameCount - 1)) * 100}%`, 
+                    top: 0, 
+                    bottom: 0, 
+                    width: '2px', 
+                    background: 'var(--theme-color)',
+                    boxShadow: '0 0 5px var(--theme-color)',
+                    zIndex: 10
+                }} 
+              />
+              <div style={{ position: 'absolute', right: '5px', bottom: '2px', fontSize: '0.7rem', color: 'var(--theme-color)', fontWeight: 'bold' }}>
+                  {getFrameTime(currentFrame)}
+              </div>
+          </div>
+      );
+  };
+
   const ToolButton = React.memo(({ active, onClick, icon }) => (
     <button onClick={onClick} style={{ width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: active ? 'var(--theme-color)' : '#222', color: active ? 'black' : '#888', border: 'none', borderRadius: '4px', fontSize: '1.2rem', padding: 0 }}><i className={`bi ${icon}`}></i></button>
   ));
@@ -2819,6 +2980,7 @@ const ShapeBuilder = ({ onBack }) => {
           <ToolButton active={tool === 'circle'} onClick={() => { setTool('circle'); setIsDrawing(false); setActiveShape(null); }} icon="bi-circle" />
           <ToolButton active={tool === 'polygon'} onClick={() => { setTool('polygon'); setIsDrawing(false); setActiveShape(null); }} icon="bi-pentagon" />
           <ToolButton active={tool === 'star'} onClick={() => { setTool('star'); setIsDrawing(false); setActiveShape(null); }} icon="bi-star" />
+          <ToolButton active={tool === 'triangle'} onClick={() => { setTool('triangle'); setIsDrawing(false); setActiveShape(null); }} icon="bi-triangle" />
           <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', paddingBottom: '10px' }}>
             <input type="color" value={ensureHex(color)} onChange={(e) => { setColor(e.target.value); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: e.target.value }); }} title="Custom Color" style={{ width: '35px', height: '35px', border: '2px solid #333', background: 'none', cursor: 'pointer', marginBottom: '5px' }} />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
@@ -2909,8 +3071,23 @@ const ShapeBuilder = ({ onBack }) => {
                   <button onClick={duplicateFrame} title="Duplicate Frame"><i className="bi bi-layers-half"></i></button>
               </div>
               <div className="frame-slider-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#666' }}><span>FRAME {currentFrameIndex + 1} / {frameCount}</span><label><input type="checkbox" checked={onionSkin} onChange={e => setOnionSkin(e.target.checked)} /> Onion Skin</label></div>
-                  <input type="range" min="0" max={frameCount - 1} value={currentFrameIndex} onChange={e => setCurrentFrameIndex(parseInt(e.target.value))} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#666' }}>
+                      <span>FRAME {currentFrameIndex + 1} / {frameCount}</span>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={onionSkin} onChange={e => setOnionSkin(e.target.checked)} /> Onion Skin
+                      </label>
+                  </div>
+                  <TimelineRuler 
+                    currentFrame={currentFrameIndex} 
+                    frameCount={frameCount} 
+                    syncMode={syncMode} 
+                    bpm={bpm} 
+                    beats={beats} 
+                    duration={duration} 
+                    fps={fps} 
+                    snapToGrid={snapToGrid}
+                    onSeek={setCurrentFrameIndex} 
+                  />
               </div>
               <div className="timeline-settings" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>

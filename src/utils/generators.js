@@ -251,7 +251,8 @@ export function generateSquare(params) {
 
 export function generateTriangle(params) {
   try {
-    const { width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
+    const { size, width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
+      size: null,
       width: 1,
       height: 1,
       pointDensity: 12,
@@ -262,11 +263,14 @@ export function generateTriangle(params) {
       b: 255
     });
 
+    const w = size !== null ? size : width;
+    const h = size !== null ? size : height;
+
     const corners = [
-      { x: -width / 2 + x, y: -height / 2 + y }, // Bottom-left
-      { x: width / 2 + x, y: -height / 2 + y },  // Bottom-right
-      { x: x, y: height / 2 + y },               // Top-center
-      { x: -width / 2 + x, y: -height / 2 + y }, // Back to start
+      { x: -w / 2 + x, y: -h / 2 + y }, // Bottom-left
+      { x: w / 2 + x, y: -h / 2 + y },  // Bottom-right
+      { x: x, y: h / 2 + y },           // Top-center
+      { x: -w / 2 + x, y: -h / 2 + y }, // Back to start
     ];
 
     const points = [];

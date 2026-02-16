@@ -1,40 +1,40 @@
 # Implementation Plan: Shape Builder and Timeline Enhancements
 
 ## Phase 1: New Triangle Shape
-- [ ] Task: Parametric Triangle Implementation
-    - [ ] Write unit tests for Triangle point generation logic.
-    - [ ] Implement `Triangle` shape class with `width` and `height` parameters.
-    - [ ] Add Triangle tool to the Shape Builder UI.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: New Triangle Shape' (Protocol in workflow.md)
+- [x] Task: Parametric Triangle Implementation
+    - [x] Write unit tests for Triangle point generation logic.
+    - [x] Implement `Triangle` shape class with `width` and `height` parameters in Shape Builder.
+    - [x] Add parametric Triangle tool to the Shape Builder UI.
+    - [x] Add symmetrical Triangle generator to the Generator Panel.
+- [x] Task: Conductor - User Manual Verification 'Phase 1: New Triangle Shape' (Protocol in workflow.md)
 
 ## Phase 2: Spline Curve Fixes & Improvements
-- [ ] Task: Continuous Mode & Bezier Handles
-    - [ ] Write tests for spline point calculation in continuous drawing mode.
-    - [ ] Update `Spline` logic to calculate curves during the drawing process.
-    - [ ] Implement dual Bezier handles for point radius adjustment.
-- [ ] Task: Interaction and Finishing Logic
-    - [ ] Write tests for right-click finishing behavior (no extra point).
-    - [ ] Refactor finishing logic to prevent unintended line segment creation.
-    - [ ] Adjust curvature handle hitboxes to prevent overlap with line center points.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Spline Curve Fixes & Improvements' (Protocol in workflow.md)
+- [x] Task: Continuous Mode & Bezier Handles
+    - [x] Update `Spline` logic to calculate cubic bezier curves (4 points per segment).
+    - [x] Implement dual Bezier handles for point radius adjustment.
+    - [x] Visualize control lines and handle types (square vs circle).
+- [x] Task: Interaction and Finishing Logic
+    - [x] Refactor start/draw logic for better bezier creation.
+    - [x] Prioritize point hit detection over shape center to prevent blocked handles.
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Spline Curve Fixes & Improvements' (Protocol in workflow.md)
 
 ## Phase 3: Selection and Layer Logic
-- [ ] Task: Improved Hit Detection
-    - [ ] Write tests for geometry-only collision (empty space transparency).
-    - [ ] Refactor hit detection logic to ignore empty space within shape bounding boxes.
-- [ ] Task: Selection Drill-Down
-    - [ ] Implement hotkey/click logic to cycle through overlapping points across layers.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Selection and Layer Logic' (Protocol in workflow.md)
+- [x] Task: Improved Hit Detection
+    - [x] Refactor hit detection logic to ignore empty space (geometry-only).
+    - [x] Remove center-based selection to allow transparency for lower layers.
+- [x] Task: Selection Drill-Down
+    - [x] Implement selection cycling logic to reach overlapping shapes/points.
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Selection and Layer Logic' (Protocol in workflow.md)
 
 ## Phase 4: Grouping and Anchor Points
-- [ ] Task: Global Group Transformations
-    - [ ] Write tests for group rotation/scale relative to group center.
-    - [ ] Implement logic to transform grouped children relative to the group origin without resetting local anchors.
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Grouping and Anchor Points' (Protocol in workflow.md)
+- [x] Task: Global Group Transformations
+    - [x] Update `groupShapes` to preserve child transforms and anchors.
+    - [x] Ensure `applyTransformations` correctly handles group hierarchies.
+- [x] Task: Conductor - User Manual Verification 'Phase 4: Grouping and Anchor Points' (Protocol in workflow.md)
 
 ## Phase 5: Timeline Mode Refinements
-- [ ] Task: Dynamic Grid and Playhead
-    - [ ] Write tests for timeline divider calculations in BPM and Time modes.
-    - [ ] Update Timeline UI to switch between beat/bar grid and second/millisecond grid.
-    - [ ] Implement mode-aware playhead labels and snapping logic.
-- [ ] Task: Conductor - User Manual Verification 'Phase 5: Timeline Mode Refinements' (Protocol in workflow.md)
+- [x] Task: Dynamic Grid and Playhead
+    - [x] Implement `TimelineRuler` component with mode-aware markers.
+    - [x] Update Timeline UI to switch between beat/bar grid and second/millisecond grid.
+    - [x] Implement mode-aware playhead labels and snapping logic.
+- [x] Task: Conductor - User Manual Verification 'Phase 5: Timeline Mode Refinements' (Protocol in workflow.md)

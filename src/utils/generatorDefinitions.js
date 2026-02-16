@@ -72,10 +72,9 @@ export const generatorDefinitions = [
   {
     id: 'triangle',
     name: 'Triangle',
-    description: 'Generates a simple triangle.',
+    description: 'Generates a simple symmetrical triangle.',
     defaultParams: {
-      width: 1,
-      height: 1,
+      size: 1,
       pointDensity: 12,
       x: 0,
       y: 0,
@@ -87,8 +86,7 @@ export const generatorDefinitions = [
       blankingSize: 3
     },
     paramControls: [
-      { id: 'width', label: 'Width', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
-      { id: 'height', label: 'Height', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
+      { id: 'size', label: 'Size', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
       { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 25, step: 1 },
       { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
           { label: 'Normal', value: 'normal' },
