@@ -7,7 +7,7 @@ TrueLazer is an ambitious source-available project aiming to create a powerful a
 The primary users are event technicians and lighting designers who are looking for a Resolume-like workflow for laser control. These users value familiarity, ease of use, and professional integration capabilities.
 
 ## Goals
-The immediate focus for the next development phase is the stabilization and optimization of the NDI integration. This is critical to ensure that real-time laser rendering from NDI sources is performant and reliable enough for professional use.
+The NDI integration has been successfully optimized and stabilized, providing high-performance real-time laser rendering with minimal CPU/GPU overhead. Our ongoing focus remains on professional stability and expanding the generative ecosystem.
 
 ## Core Features
 - **Professional Integration:** High priority is placed on robust MIDI, OSC, and DMX/Artnet mapping. This allows users to control the software seamlessly using external hardware and existing show control systems.
