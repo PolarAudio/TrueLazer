@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { framesToIlda } from '../utils/ilda-writer';
 import { parseIldaFile } from '../utils/ilda-parser';
+import { calculateSmoothHandles } from '../utils/geometry';
 
 const ShapeBuilder = ({ onBack }) => {
   // --- STATE ---
@@ -1940,12 +1941,11 @@ const ShapeBuilder = ({ onBack }) => {
           if (activeShape.type === 'polygon' || activeShape.type === 'polyline') {
               finalShape.points = activeShape.points.slice(0, -1);
           } else if (activeShape.type === 'bezier' && continuousDrawing) {
-              // For bezier, we added 2 points on each click. The last segment might be incomplete (just dragging).
-              // Actually startDrawing adds 2 points, and draw() updates them.
-              // If we want to "finish" it, we keep the points as they are since they are already valid.
+              finalShape.anchors = activeShape.anchors.slice(0, -1); // Drop the mouse-following anchor
+              finalShape.points = calculateSmoothHandles(finalShape.anchors, false);
           }
           
-          if (finalShape.points.length > 1) { 
+          if ((finalShape.type === 'bezier' && finalShape.anchors.length > 1) || finalShape.points.length > 1) { 
               const newFrames = [...frames];
               newFrames[currentFrameIndex] = [...(newFrames[currentFrameIndex] || []), finalShape];
               setFrames(newFrames);
@@ -2055,17 +2055,55 @@ const ShapeBuilder = ({ onBack }) => {
     if (tool === 'polygon' || (tool === 'polyline') || ((tool === 'line' || tool === 'bezier') && continuousDrawing)) {
         if (!activeShape) {
             if (tool === 'bezier') {
-                // Initialize with 4 points: P0, CP1, CP2, P1
-                setActiveShape({ type: 'bezier', color, renderMode, points: [{ x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }], rotation: 0 });
-                setActiveBezierHandleIndex(3); // Start by dragging the end point
+                const initialAnchors = [{ x: sx, y: sy, color }];
+                // Initialize with 2 anchors (start and current mouse pos)
+                setActiveShape({ 
+                    type: 'bezier', 
+                    color, 
+                    renderMode, 
+                    isSmooth: true,
+                    anchors: [{ x: sx, y: sy, color }, { x: sx, y: sy, color }],
+                    points: [{ x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }], 
+                    rotation: 0 
+                });
+                setActiveBezierHandleIndex(-1);
             } else {
                 setActiveShape({ type: tool === 'polygon' ? 'polygon' : 'polyline', color, renderMode, points: [{ x: sx, y: sy, color }, { x: sx, y: sy, color }], rotation: 0 });
             }
         } else {
+            // Check for closing click
+            const firstAnchor = activeShape.type === 'bezier' ? activeShape.anchors[0] : activeShape.points[0];
+            const dist = getDistance({ x: sx, y: sy }, firstAnchor);
+            if (dist < 15 / zoom && ((activeShape.type === 'bezier' && activeShape.anchors.length > 2) || (activeShape.points.length > 3))) {
+                // Close shape
+                let finalShape = { ...activeShape };
+                if (activeShape.type === 'bezier') {
+                    finalShape.anchors = activeShape.anchors.slice(0, -1); // Drop the mouse-following anchor
+                    finalShape.closed = true;
+                    finalShape.points = calculateSmoothHandles(finalShape.anchors, true);
+                } else {
+                    finalShape.points = activeShape.points.slice(0, -1);
+                    finalShape.type = 'polygon';
+                }
+                
+                const newFrames = [...frames];
+                newFrames[currentFrameIndex] = [...(newFrames[currentFrameIndex] || []), finalShape];
+                setFrames(newFrames);
+                recordHistory(newFrames);
+                setSelectedShapeIndexes([newFrames[currentFrameIndex].length - 1]);
+                setIsDrawing(false);
+                setActiveShape(null);
+                return;
+            }
+
             if (tool === 'bezier') {
-                // Add a new segment: CP1, CP2, P1 (reusing previous P1 as P0)
-                setActiveShape(prev => ({ ...prev, points: [...prev.points, { x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }] }));
-                setActiveBezierHandleIndex(activeShape.points.length + 2);
+                const newAnchors = [...activeShape.anchors, { x: sx, y: sy, color }];
+                const newPoints = calculateSmoothHandles(newAnchors, false);
+                setActiveShape(prev => ({ 
+                    ...prev, 
+                    anchors: newAnchors,
+                    points: newPoints
+                }));
             } else {
                 setActiveShape(prev => ({ ...prev, points: [...prev.points, { x: sx, y: sy, color }] }));
             }
@@ -2074,8 +2112,11 @@ const ShapeBuilder = ({ onBack }) => {
         const newShape = { type: tool, color, renderMode, start: { x: sx, y: sy }, end: { x: sx, y: sy }, width: 0, height: 0, rotation: 0, scaleX: 1, scaleY: 1, rotationX: 0, rotationY: 0, rotationZ: 0 };
         if (tool === 'pen') newShape.points = [{ x: sx, y: sy, color }, { x: sx, y: sy, color }];
         else if (tool === 'bezier') {
-            newShape.points = [{ x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }, { x: sx, y: sy, color }];
-            setActiveBezierHandleIndex(3);
+            const initialAnchors = [{ x: sx, y: sy, color }, { x: sx, y: sy, color }];
+            const initialPoints = calculateSmoothHandles(initialAnchors, false);
+            newShape.isSmooth = true;
+            newShape.anchors = initialAnchors;
+            newShape.points = initialPoints;
         }
         setActiveShape(newShape);
     }
@@ -2087,6 +2128,7 @@ const ShapeBuilder = ({ onBack }) => {
           updated.shapes = shape.shapes.map(s => moveShape(s, dx, dy));
       } else {
           if (shape.points) updated.points = shape.points.map(p => ({ ...p, x: p.x + dx, y: p.y + dy }));
+          if (shape.anchors) updated.anchors = shape.anchors.map(p => ({ ...p, x: p.x + dx, y: p.y + dy }));
           if (shape.start) updated.start = { ...shape.start, x: shape.start.x + dx, y: shape.start.y + dy };
           if (shape.end) updated.end = { ...shape.end, x: shape.end.x + dx, y: shape.end.y + dy };
       }
@@ -2117,6 +2159,35 @@ const ShapeBuilder = ({ onBack }) => {
               s.points = [...s.points];
               if (s.points[idx]) {
                   s.points[idx] = { ...s.points[idx], x: s.points[idx].x + dX, y: s.points[idx].y + dY };
+                  
+                  if (s.type === 'bezier' && s.isSmooth) {
+                      // If it's a control point, mark it as manual
+                      const isControlPoint = (idx % 3 !== 0);
+                      if (isControlPoint) {
+                          if (!s.manualIndices) s.manualIndices = [];
+                          if (!s.manualIndices.includes(idx)) s.manualIndices.push(idx);
+                      } else {
+                          // If it's an anchor, update the corresponding anchor in 'anchors' array
+                          const anchorIdx = idx / 3;
+                          if (s.anchors && s.anchors[anchorIdx]) {
+                              s.anchors[anchorIdx].x += dX;
+                              s.anchors[anchorIdx].y += dY;
+                              
+                              // Recalculate smooth handles
+                              const smoothPoints = calculateSmoothHandles(s.anchors, s.closed);
+                              
+                              // Merge manual overrides back into smooth points
+                              smoothPoints.forEach((p, pIdx) => {
+                                  if (s.manualIndices && s.manualIndices.includes(pIdx)) {
+                                      // Skip override, keep current manual pos
+                                  } else {
+                                      s.points[pIdx].x = p.x;
+                                      s.points[pIdx].y = p.y;
+                                  }
+                              });
+                          }
+                      }
+                  }
               }
           }
           return s;
@@ -2216,18 +2287,12 @@ const ShapeBuilder = ({ onBack }) => {
         if (!prev) return null; const updated = { ...prev }, isShift = e.shiftKey;
         if (tool === 'pen') updated.points = [...prev.points, { x, y, color }];
         else if (tool === 'bezier') { 
-            const pts = [...updated.points];
-            const lastIdx = pts.length - 1;
-            pts[lastIdx] = { x, y, color }; // Update end point
+            const anchors = [...updated.anchors];
+            const lastIdx = anchors.length - 1;
+            anchors[lastIdx] = { x, y, color }; // Update last anchor point to mouse
             
-            // For cubic bezier, we have 2 control points per segment.
-            // During drawing, let's keep them near the mouse/start for immediate visual feedback.
-            if (lastIdx >= 2) {
-                // Keep CP1 and CP2 following the mouse until finalized
-                pts[lastIdx - 1] = { x: x - 10, y: y - 10, color };
-                pts[lastIdx - 2] = { x: x - 20, y: y - 20, color };
-            }
-            updated.points = pts;
+            updated.anchors = anchors;
+            updated.points = calculateSmoothHandles(anchors, false);
         }
         else if (updated.type === 'polyline' || updated.type === 'polygon') { const pts = [...updated.points]; let tx = x, ty = y; if (isShift) { const p = pts[pts.length - 2]; Math.abs(x - p.x) > Math.abs(y - p.y) ? ty = p.y : tx = p.x; } pts[pts.length - 1] = { x: tx, y: ty, color }; updated.points = pts; }
         else if (tool === 'line') { let tx = x, ty = y; if (isShift) { Math.abs(x-startPosRef.current.x) > Math.abs(y-startPosRef.current.y) ? ty=startPosRef.current.y : tx=startPosRef.current.x; } updated.end = { x: tx, y: ty }; }
