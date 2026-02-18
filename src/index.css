@@ -703,7 +703,7 @@ h3 {
 
 /* Styles for the Laser On/Off Button (checkbox) */
 
-input[type="checkbox"] {
+input[type="checkbox"].laser-toggle {
 	-webkit-appearance: none;
 	-moz-appearance: none;
 	appearance: none;
@@ -718,7 +718,7 @@ input[type="checkbox"] {
 	margin: 0 4px;
 	height: 75%;
 }
-input[type="checkbox"]:before {
+input[type="checkbox"].laser-toggle:before {
 	font-size: 1.5em;
 	content: "OFF";
 	position: relative;
@@ -745,10 +745,10 @@ input[type="checkbox"]:before {
 	align-items: center;
 	height: 100%;
 }
-input[type="checkbox"]:checked {
+input[type="checkbox"].laser-toggle:checked {
 	background: var(--theme-color);
 }
-input[type="checkbox"]:checked:before {
+input[type="checkbox"].laser-toggle:checked:before {
 	content: "ON";
 	left: 0.6em;
 	color: var(--theme-color);
@@ -2198,4 +2198,50 @@ div[data-mappable-id^='quick_btn_'].unassigned:hover {
 	position: absolute;
 	z-index: 2;
 	padding-top: 5px;
+}
+/* Custom Checkbox (TrueLazer Style) */
+input[type="checkbox"].tl-checkbox {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 14px !important;
+  height: 14px !important;
+  border: 1px solid #555 !important;
+  border-radius: 3px !important;
+  background: #111 !important;
+  cursor: pointer !important;
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  vertical-align: middle !important;
+  transition: all 0.1s !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+input[type="checkbox"].tl-checkbox:checked {
+  background: var(--theme-color) !important;
+  border-color: var(--theme-color) !important;
+}
+
+input[type="checkbox"].tl-checkbox:checked::after {
+  content: '\2713' !important;
+  color: black !important;
+  font-size: 10px !important;
+  font-weight: bold !important;
+}
+
+input[type="checkbox"].tl-checkbox:hover {
+  border-color: #888 !important;
+}
+
+input[type="checkbox"].tl-checkbox:focus {
+  outline: none !important;
+  box-shadow: 0 0 3px var(--theme-color) !important;
+}
+
+input[type="checkbox"].tl-checkbox:before,
+input[type="checkbox"].tl-checkbox:after {
+  content: none !important;
+  display: none !important;
 }

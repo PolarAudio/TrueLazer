@@ -80,7 +80,7 @@ const LaserOnOffButton = React.memo(({ isWorldOutputActive, onToggleWorldOutput 
   return (
     <div className="container" draggable onDragStart={handleDragStart}>
       <Mappable id="laser_output">
-          <input type="checkbox" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
+          <input type="checkbox" className="laser-toggle" checked={isWorldOutputActive} onChange={onToggleWorldOutput} />
       </Mappable>
     </div>
   );
@@ -587,6 +587,29 @@ function reducer(state, action) {
       };
       newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] = updatedClip;
       return { ...state, clipContents: newClipContentsWithDac };
+    }
+    case 'SET_CLIP_DAC_GROUP': {
+        const { layerIndex, colIndex, groupDacs } = action.payload;
+        const newClipContents = [...state.clipContents];
+        newClipContents[layerIndex] = [...newClipContents[layerIndex]];
+        const existingClip = newClipContents[layerIndex][colIndex] || {};
+
+        const currentAssignedDacs = existingClip.assignedDacs || [];
+        const dacsToAdd = groupDacs.filter(gd => {
+            return !currentAssignedDacs.some(d => d.ip === gd.ip && d.channel === gd.channel);
+        }).map(gd => ({
+            ...gd,
+            mirrorX: false,
+            mirrorY: false
+        }));
+
+        if (dacsToAdd.length === 0) return state;
+
+        newClipContents[layerIndex][colIndex] = {
+            ...existingClip,
+            assignedDacs: [...currentAssignedDacs, ...dacsToAdd]
+        };
+        return { ...state, clipContents: newClipContents };
     }
     case 'SET_LAYER_DAC': {
         const { layerIndex, dac } = action.payload;
@@ -3848,11 +3871,19 @@ function App() {
 
   const handleDropDac = useCallback((layerIndex, colIndex, dacData) => {
       hasPendingClipUpdate.current = true;
-      dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
+      if (dacData.isGroup) {
+          dispatch({ type: 'SET_CLIP_DAC_GROUP', payload: { layerIndex, colIndex, groupDacs: dacData.channels } });
+      } else {
+          dispatch({ type: 'SET_CLIP_DAC', payload: { layerIndex, colIndex, dac: dacData } });
+      }
   }, []);
 
   const handleDropDacOnLayer = useCallback((layerIndex, dacData) => {
-    dispatch({ type: 'SET_LAYER_DAC', payload: { layerIndex, dac: dacData } });
+    if (dacData.isGroup) {
+        dispatch({ type: 'SET_LAYER_DAC_GROUP', payload: { layerIndex, groupDacs: dacData.channels } });
+    } else {
+        dispatch({ type: 'SET_LAYER_DAC', payload: { layerIndex, dac: dacData } });
+    }
   }, []);
 
   const handleShowLayerFullContextMenu = (layerIndex) => {
@@ -3887,12 +3918,14 @@ function App() {
   }, []);
 
   const handleApplyDacGroup = useCallback((groupDacs) => {
-    if (selectedLayerIndex !== null) {
+    if (selectedLayerIndex !== null && selectedColIndex !== null) {
+        dispatch({ type: 'SET_CLIP_DAC_GROUP', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, groupDacs } });
+    } else if (selectedLayerIndex !== null) {
         dispatch({ type: 'SET_LAYER_DAC_GROUP', payload: { layerIndex: selectedLayerIndex, groupDacs } });
     } else {
-        showNotification("Please select a layer first to apply a DAC group.");
+        showNotification("Please select a layer or clip first to apply a DAC group.");
     }
-  }, [selectedLayerIndex]);
+  }, [selectedLayerIndex, selectedColIndex]);
 
   const handleGeneratorParameterChange = (paramName, newValue) => {
     if (selectedLayerIndex !== null && selectedColIndex !== null) {

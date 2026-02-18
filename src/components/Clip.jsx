@@ -139,7 +139,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onLabelClick(); // Select the clip to show its new settings
             return;
           }
-        } else if (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels)) { // Check if this is DAC data - CHECK THIS BEFORE GENERATOR
+        } else if (parsedData.isGroup || (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels))) { // Check if this is DAC or DAC Group
           if (onDropDac) {
             onDropDac(layerIndex, colIndex, parsedData);
             return;

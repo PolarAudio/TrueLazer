@@ -63,7 +63,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
             onDropEffect(parsedData.id || parsedData.name);
             return;
           }
-        } else if (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels)) {
+        } else if (parsedData.isGroup || (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels))) {
           if (onDropDac) {
             onDropDac(index, parsedData);
             return;

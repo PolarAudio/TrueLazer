@@ -198,6 +198,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                     >
                       <input 
                         type="checkbox" 
+                        className="tl-checkbox"
                         checked={isSelectedForGroup} 
                         onChange={(e) => { e.stopPropagation(); toggleDacSelection(dac, channel.serviceID); }}
                         onClick={(e) => e.stopPropagation()} 
@@ -234,7 +235,16 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
 
         <div className="groups-list">
             {Object.entries(groups).map(([name, groupDacs]) => (
-                <div key={name} className="group-item" style={{ display: 'flex', alignItems: 'center', background: '#2a2a2a', padding: '4px 8px', borderRadius: '4px', marginBottom: '4px', fontSize: '11px' }}>
+                <div 
+                    key={name} 
+                    className="group-item" 
+                    draggable
+                    onDragStart={(e) => {
+                        e.stopPropagation();
+                        e.dataTransfer.setData('application/json', JSON.stringify({ isGroup: true, name, channels: groupDacs }));
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', background: '#2a2a2a', padding: '4px 8px', borderRadius: '4px', marginBottom: '4px', fontSize: '11px', cursor: 'grab' }}
+                >
                     <span style={{ flex: 1 }}>{name} ({groupDacs.length})</span>
                     <div style={{ display: 'flex', gap: '5px' }}>
                         <button 
