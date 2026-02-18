@@ -1,16 +1,16 @@
 # Implementation Plan: Effects & Generators Update (Track 1)
 
-## Phase 1: Shape & Effect Refinements (Triangle & Mirror)
-- [ ] Task: Refactor Triangle Generator for equilateral symmetry
-    - [ ] Write unit tests for vertex calculation symmetry
-    - [ ] Implement new coordinate logic in `src/utils/generators.js`
-    - [ ] Verify generator output matches tests
-- [ ] Task: Implement Mirror Effect axisOffset and planeRotation
-    - [ ] Write unit tests for offset and rotated mirroring math
-    - [ ] Update `applyMirror` in `src/utils/effects.js` to handle new params
-    - [ ] Add parameter definitions to `src/utils/effectDefinitions.js`
-    - [ ] Verify blanking integrity remains intact during rotation
-- [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
+## Phase 1: Shape & Effect Refinements (Triangle & Mirror) [checkpoint: f0a85db]
+- [x] Task: Refactor Triangle Generator for equilateral symmetry
+    - [x] Write unit tests for vertex calculation symmetry
+    - [x] Implement new coordinate logic in `src/utils/generators.js`
+    - [x] Verify generator output matches tests
+- [x] Task: Implement Mirror Effect axisOffset and planeRotation
+    - [x] Write unit tests for offset and rotated mirroring math
+    - [x] Update `applyMirror` in `src/utils/effects.js` to handle new params
+    - [x] Add parameter definitions to `src/utils/effectDefinitions.js`
+    - [x] Verify blanking integrity remains intact during rotation
+- [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
 
 ## Phase 2: Delay Effect Restructuring
 - [ ] Task: Rename Delay 'Frame' mode to 'Segment'
