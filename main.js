@@ -109,6 +109,7 @@ const schema = {
   },
   loadedClips: { type: 'array', default: [] }, // Reverted to original
   clipNames: { type: 'array', default: [] },
+  dacGroups: { type: 'object', default: {} },
   dacOutputSettings: { type: 'object', default: {} },
   sliderValue: { type: 'object', default: {} }, // Placeholder for slider values
   dacAssignment: { type: 'object', default: {} }, // Placeholder for DAC assignments
@@ -376,6 +377,15 @@ ipcMain.handle('save-selected-midi-input', (event, inputId) => {
 
 ipcMain.handle('get-selected-midi-input', () => {
   return store.get('selectedMidiInputId') || '';
+});
+
+ipcMain.handle('get-dac-groups', () => {
+  return store.get('dacGroups') || {};
+});
+
+ipcMain.handle('save-dac-groups', (event, groups) => {
+  store.set('dacGroups', groups);
+  return { success: true };
 });
 
 ipcMain.handle('set-loaded-clips', (event, loadedClips) => {

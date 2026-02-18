@@ -617,6 +617,24 @@ function reducer(state, action) {
         newLayerAssignedDacs[layerIndex] = [...currentDacs, ...dacsToAdd];
         return { ...state, layerAssignedDacs: newLayerAssignedDacs };
     }
+    case 'SET_LAYER_DAC_GROUP': {
+        const { layerIndex, groupDacs } = action.payload;
+        const newLayerAssignedDacs = [...state.layerAssignedDacs];
+        const currentDacs = newLayerAssignedDacs[layerIndex] || [];
+        
+        const dacsToAdd = groupDacs.filter(gd => {
+            return !currentDacs.some(d => d.ip === gd.ip && d.channel === gd.channel);
+        }).map(gd => ({
+            ...gd,
+            mirrorX: false,
+            mirrorY: false
+        }));
+
+        if (dacsToAdd.length === 0) return state;
+
+        newLayerAssignedDacs[layerIndex] = [...currentDacs, ...dacsToAdd];
+        return { ...state, layerAssignedDacs: newLayerAssignedDacs };
+    }
     case 'TOGGLE_CLIP_DAC_MIRROR': {
         const { layerIndex, colIndex, dacIndex, axis } = action.payload;
         const newClipContents = [...state.clipContents];
@@ -3868,6 +3886,14 @@ function App() {
     dispatch({ type: 'SET_DACS', payload: dacs });
   }, []);
 
+  const handleApplyDacGroup = useCallback((groupDacs) => {
+    if (selectedLayerIndex !== null) {
+        dispatch({ type: 'SET_LAYER_DAC_GROUP', payload: { layerIndex: selectedLayerIndex, groupDacs } });
+    } else {
+        showNotification("Please select a layer first to apply a DAC group.");
+    }
+  }, [selectedLayerIndex]);
+
   const handleGeneratorParameterChange = (paramName, newValue) => {
     if (selectedLayerIndex !== null && selectedColIndex !== null) {
       let currentClip = null;
@@ -4832,6 +4858,7 @@ function App() {
                 onDacsDiscovered={handleDacsDiscovered} 
                 dacSettings={dacOutputSettings}
                 onUpdateDacSettings={handleUpdateDacSettings}
+                onApplyGroup={handleApplyDacGroup}
             />
 
 			<SettingsPanel

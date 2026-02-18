@@ -83,6 +83,8 @@ contextBridge.exposeInMainWorld(
 	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+                getDacGroups: () => ipcRenderer.invoke('get-dac-groups'),
+                saveDacGroups: (groups) => ipcRenderer.invoke('save-dac-groups', groups),
                 getUserIldaPath: () => ipcRenderer.invoke('get-user-ilda-path'),
                 getUserMappingsPath: () => ipcRenderer.invoke('get-user-mappings-path'),
                 getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
