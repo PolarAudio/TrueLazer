@@ -12,15 +12,15 @@
     - [x] Verify blanking integrity remains intact during rotation
 - [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
 
-## Phase 2: Delay Effect Restructuring
-- [ ] Task: Rename Delay 'Frame' mode to 'Segment'
-    - [ ] Update all references in `src/utils/effects.js` and `src/utils/effectDefinitions.js`
-    - [ ] Ensure existing project data migration (if applicable) or compatibility
-- [ ] Task: Implement new 'Frame' mode for Delay
-    - [ ] Write unit tests for full-buffer history sampling
-    - [ ] Implement sampling logic in `applyDelay` to use the entire history frame as a unit
-    - [ ] Verify smooth temporal trailing of complex shapes
-- [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
+## Phase 2: Delay Effect Restructuring [checkpoint: 8ec26ed]
+- [x] Task: Rename Delay 'Frame' mode to 'Segment'
+    - [x] Update all references in `src/utils/effects.js` and `src/utils/effectDefinitions.js`
+    - [x] Ensure existing project data migration (if applicable) or compatibility
+- [x] Task: Implement new 'Frame' mode for Delay
+    - [x] Write unit tests for full-buffer history sampling
+    - [x] Implement sampling logic in `applyDelay` to use the entire history frame as a unit
+    - [x] Verify smooth temporal trailing of complex shapes
+- [x] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
 
 ## Phase 3: High-Resolution Waveform Generator
 - [ ] Task: Implement Multi-Bin FFT Data Provider
