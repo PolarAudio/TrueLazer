@@ -9,7 +9,7 @@ export const AudioProvider = ({ children }) => {
     const [analyser, setAnalyser] = useState(null);
     const [externalSource, setExternalSource] = useState(null);
     const [fftSettings, setFftSettings] = useState({
-        source: 'external', // 'clip' or 'external'
+        source: 'external', // 'clip', 'external' or 'system'
         lowRange: [20, 250],
         midRange: [250, 4000],
         highRange: [4000, 20000],
@@ -20,7 +20,14 @@ export const AudioProvider = ({ children }) => {
         smoothingTimeConstant: 0.8
     });
 
+    // Audio State
     const [fftLevels, setFftLevels] = useState({ low: 0, mid: 0, high: 0 });
+    const [devices, setDevices] = useState([]);
+    const [inputDevices, setInputDevices] = useState([]);
+    const [selectedDeviceId, setSelectedDeviceId] = useState('default');
+    const [selectedInputDeviceId, setSelectedInputDeviceId] = useState('default');
+    const [globalVolume, setGlobalVolume] = useState(1.0);
+
     const fftDataRef = useRef(new Uint8Array(0));
     const timeDataRef = useRef(new Uint8Array(0));
     const levelsRef = useRef({ low: 0, mid: 0, high: 0 });
@@ -30,19 +37,45 @@ export const AudioProvider = ({ children }) => {
         peakTimes: { low: 0, mid: 0, high: 0 } // Track when the last peak occurred for hold
     });
 
-    // Audio Output Logic (Migrated from useAudioOutput)
-    const [devices, setDevices] = useState([]);
-    const [selectedDeviceId, setSelectedDeviceId] = useState('default');
-    const [globalVolume, setGlobalVolume] = useState(1.0);
     const audioRefs = useRef({}); // layerIndex -> Audio object
     const sourceRefs = useRef({}); // layerIndex -> MediaElementSourceNode
     const clipVolumesRef = useRef({}); // layerIndex -> clipVolume
+
+    // Persistent settings logic
+    useEffect(() => {
+        const loadSettings = async () => {
+            if (window.electronAPI && window.electronAPI.getAllSettings) {
+                const settings = await window.electronAPI.getAllSettings();
+                if (settings.fftSettings && Object.keys(settings.fftSettings).length > 0) {
+                    setFftSettings(prev => ({ ...prev, ...settings.fftSettings }));
+                }
+                if (settings.selectedAudioInputDeviceId) {
+                    setSelectedInputDeviceId(settings.selectedAudioInputDeviceId);
+                }
+            }
+        };
+        loadSettings();
+    }, []);
+
+    useEffect(() => {
+        if (window.electronAPI && window.electronAPI.setFftSettings) {
+            window.electronAPI.setFftSettings(fftSettings);
+        }
+    }, [fftSettings]);
+
+    useEffect(() => {
+        if (window.electronAPI && window.electronAPI.setSelectedAudioInput) {
+            window.electronAPI.setSelectedAudioInput(selectedInputDeviceId);
+        }
+    }, [selectedInputDeviceId]);
 
     const updateDevices = useCallback(async () => {
         try {
             const allDevices = await navigator.mediaDevices.enumerateDevices();
             const audioOutputs = allDevices.filter(device => device.kind === 'audiooutput');
+            const audioInputs = allDevices.filter(device => device.kind === 'audioinput');
             setDevices(audioOutputs);
+            setInputDevices(audioInputs);
             
             if (window.electronAPI && window.electronAPI.setAudioDevices) {
                 const serializedDevices = audioOutputs.map(d => ({
@@ -251,7 +284,7 @@ export const AudioProvider = ({ children }) => {
 
     // Handle External Audio Source
     useEffect(() => {
-        if (!audioCtx || !analyser || fftSettings.source !== 'external') {
+        if (!audioCtx || !analyser || (fftSettings.source !== 'external' && fftSettings.source !== 'system')) {
             if (externalSource) {
                 externalSource.disconnect();
                 setExternalSource(null);
@@ -263,7 +296,45 @@ export const AudioProvider = ({ children }) => {
         const startExternal = async () => {
             try {
                 if (audioCtx.state === 'suspended') await audioCtx.resume();
-                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                let constraints;
+                if (fftSettings.source === 'system') {
+                    if (window.electronAPI && window.electronAPI.getDesktopAudioSourceId) {
+                        const sourceId = await window.electronAPI.getDesktopAudioSourceId();
+                        if (sourceId) {
+                            constraints = {
+                                audio: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: sourceId
+                                    }
+                                },
+                                video: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: sourceId
+                                    }
+                                }
+                            };
+                        } else {
+                            throw new Error("No desktop audio source found");
+                        }
+                    } else {
+                        throw new Error("System audio capture is not supported in this environment");
+                    }
+                } else {
+                    constraints = { 
+                        audio: selectedInputDeviceId === 'default' ? true : { deviceId: { exact: selectedInputDeviceId } } 
+                    };
+                }
+
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                // If we captured system audio, it comes with a video track that we don't need
+                if (fftSettings.source === 'system') {
+                    stream.getVideoTracks().forEach(track => track.stop());
+                }
+
                 const source = audioCtx.createMediaStreamSource(stream);
                 source.connect(analyser);
                 setExternalSource(source);
@@ -279,7 +350,7 @@ export const AudioProvider = ({ children }) => {
                 stream.getTracks().forEach(track => track.stop());
             }
         };
-    }, [audioCtx, analyser, fftSettings.source]);
+    }, [audioCtx, analyser, fftSettings.source, selectedInputDeviceId]);
 
     // FFT Analysis Loop
     useEffect(() => {
@@ -383,7 +454,9 @@ export const AudioProvider = ({ children }) => {
             connectMediaElement,
             initAudio,
             // Audio System Exports
-            devices, selectedDeviceId, setSelectedDeviceId, globalVolume, setVolume, setClipVolume,
+            devices, selectedDeviceId, setSelectedDeviceId,
+            inputDevices, selectedInputDeviceId, setSelectedInputDeviceId,
+            globalVolume, setVolume, setClipVolume,
             playAudio, stopAudio, pauseAudio, resumeAudio, setPlaybackRate, resetAudio, seekAudio,
             stopAllAudio, pauseAllAudio, resumeAllAudio, resetAllAudio, getAudioInfo
         }}>
@@ -391,52 +464,3 @@ export const AudioProvider = ({ children }) => {
         </AudioContext.Provider>
     );
 };
-/*
-<html>
-  <style>
-    #waveform {
-      cursor: pointer;
-      position: relative;
-    }
-    #hover {
-      position: absolute;
-      left: 0;
-      top: 0;
-      z-index: 10;
-      pointer-events: none;
-      height: 100%;
-      width: 0;
-      mix-blend-mode: overlay;
-      background: rgba(255, 255, 255, 0.5);
-      opacity: 0;
-      transition: opacity 0.2s ease;
-    }
-    #waveform:hover #hover {
-      opacity: 1;
-    }
-    #time,
-    #duration {
-      position: absolute;
-      z-index: 11;
-      top: 50%;
-      margin-top: -1px;
-      transform: translateY(-50%);
-      font-size: 11px;
-      background: rgba(0, 0, 0, 0.75);
-      padding: 2px;
-      color: #ddd;
-    }
-    #time {
-      left: 0;
-    }
-    #duration {
-      right: 0;
-    }
-  </style>
-  <div id="waveform">
-    <div id="time">0:00</div>
-    <div id="duration">0:00</div>
-    <div id="hover"></div>
-  </div>
-</html>
-*/

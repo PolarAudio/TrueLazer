@@ -5,7 +5,10 @@ import RadialKnob from './RadialKnob';
 
 const AudioSettingsWindow = ({ show, onClose, initialTab = 'output' }) => {
     const audioContext = useAudio();
-    const { fftSettings, setFftSettings } = audioContext || {};
+    const { 
+        fftSettings, setFftSettings, 
+        inputDevices, selectedInputDeviceId, setSelectedInputDeviceId 
+    } = audioContext || {};
     const { devices, selectedDeviceId, setSelectedDeviceId, globalVolume, setVolume } = useAudioOutput();
     const [activeTab, setActiveTab] = useState(initialTab);
 
@@ -117,9 +120,29 @@ const AudioSettingsWindow = ({ show, onClose, initialTab = 'output' }) => {
                                     style={{ width: '100%', padding: '5px' }}
                                 >
                                     <option value="external">External (Microphone/Loopback)</option>
+                                    <option value="system">System Audio (Loopback)</option>
                                     <option value="clip">Clip FFT (Audio from active clips)</option>
                                 </select>
                             </div>
+
+                            {fftSettings.source === 'external' && (
+                                <div className="settings-row" style={{ marginBottom: '15px' }}>
+                                    <label style={{ display: 'block', marginBottom: '5px' }}>Input Device</label>
+                                    <select 
+                                        className="param-select" 
+                                        value={selectedInputDeviceId} 
+                                        onChange={(e) => setSelectedInputDeviceId(e.target.value)}
+                                        style={{ width: '100%', padding: '5px' }}
+                                    >
+                                        <option value="default">Default Input</option>
+                                        {inputDevices.map(device => (
+                                            <option key={device.deviceId} value={device.deviceId}>
+                                                {device.label || `Input ${device.deviceId.slice(0, 5)}`}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
 
                             <div className="settings-row" style={{ marginBottom: '15px' }}>
                                 <label style={{ display: 'block', marginBottom: '5px' }}>Calculation Mode</label>

@@ -83,6 +83,8 @@ const schema = {
   artnetMappings: { type: 'object', default: {} },
   keyboardMappings: { type: 'object', default: {} },
   selectedMidiInputId: { type: 'string', default: '' },
+  selectedAudioInputDeviceId: { type: 'string', default: 'default' },
+  fftSettings: { type: 'object', default: {} },
   shortcutsState: {
     type: 'object',
     properties: {
@@ -324,6 +326,14 @@ ipcMain.handle('get-all-settings', (event) => {
 
 ipcMain.handle('set-render-settings', (event, renderSettings) => {
   store.set('renderSettings', renderSettings);
+});
+
+ipcMain.handle('set-fft-settings', (event, fftSettings) => {
+  store.set('fftSettings', fftSettings);
+});
+
+ipcMain.handle('set-selected-audio-input', (event, deviceId) => {
+  store.set('selectedAudioInputDeviceId', deviceId);
 });
 
 ipcMain.handle('set-theme', (event, theme) => {
@@ -1161,6 +1171,13 @@ function createWindow() {
 
   ipcMain.on('ndi-renderer-ready', () => {
       isRendererReadyForNdi = true;
+  });
+
+  ipcMain.handle('get-desktop-audio-source-id', async () => {
+    const { desktopCapturer } = require('electron');
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    // Usually the first screen is what we want for system audio
+    return sources.length > 0 ? sources[0].id : null;
   });
 
   // Background System Stats Loop

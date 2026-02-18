@@ -78,6 +78,8 @@ contextBridge.exposeInMainWorld(
 	            // Settings
 	            getAllSettings: () => ipcRenderer.invoke('get-all-settings'),
 	            setRenderSettings: (settings) => ipcRenderer.invoke('set-render-settings', settings),
+	            setFftSettings: (settings) => ipcRenderer.invoke('set-fft-settings', settings),
+	            setSelectedAudioInput: (deviceId) => ipcRenderer.invoke('set-selected-audio-input', deviceId),
 	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
@@ -101,6 +103,7 @@ contextBridge.exposeInMainWorld(
 	                                          ipcRenderer.on('update-audio-device-id', subscription);
 	                                          return () => ipcRenderer.removeListener('update-audio-device-id', subscription);
 	                                        },
+                                            getDesktopAudioSourceId: () => ipcRenderer.invoke('get-desktop-audio-source-id'),
                                               saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
                                               saveIldaFile: (arrayBuffer, defaultName) => ipcRenderer.invoke('save-ilda-file', arrayBuffer, defaultName),
                                               deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),                                            // ArtNet
