@@ -34,14 +34,14 @@
     - [x] Optimize feedback frequency to avoid MIDI bus saturation
 - [x] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md)
 
-## Phase 4: Special Control Support (Dropdowns & Sliders)
-- [ ] Task: Map Individual Dropdown Items
-    - [ ] Extend mapping logic to allow specific MIDI messages to trigger specific values in a dropdown
-    - [ ] Add "Dropdown Value" selector to the mapping config UI
-- [ ] Task: Advanced Slider Modes
-    - [ ] Implement `RELATIVE` and `FAKE_RELATIVE` (delta-based) slider handling in `MidiContext.jsx`
-    - [ ] Verify `0 TO 1` range mapping for all laser-relevant parameters
-- [ ] Task: Conductor - User Manual Verification 'Phase 4' (Protocol in workflow.md)
+## Phase 4: Special Control Support (Dropdowns & Sliders) [checkpoint: 19932eb]
+- [x] Task: Map Individual Dropdown Items
+    - [x] Extend mapping logic to allow specific MIDI messages to trigger specific values in a dropdown
+    - [x] Add "Dropdown Value" selector to the mapping config UI
+- [x] Task: Advanced Slider Modes
+    - [x] Implement `RELATIVE` and `FAKE_RELATIVE` (delta-based) slider handling in `MidiContext.jsx`
+    - [x] Verify `0 TO 1` range mapping for all laser-relevant parameters
+- [x] Task: Conductor - User Manual Verification 'Phase 4' (Protocol in workflow.md)
 
 ## Phase 5: Persistence & Final Polish
 - [ ] Task: Final Data Migration & Cleanup
