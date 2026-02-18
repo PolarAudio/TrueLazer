@@ -408,23 +408,6 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
         dragHandle={dragHandle}
         headerActions={
             <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                {(isDelay || isChase) && (
-                    <button 
-                        className="mode-toggle-btn" 
-                        onClick={() => onParamChange('mode', isChannelMode ? 'frame' : 'channel')}
-                        style={{ 
-                            fontSize: '9px', 
-                            padding: '2px 5px', 
-                            background: isChannelMode ? '#444' : 'var(--theme-color)', 
-                            border: 'none', 
-                            color: 'white', 
-                            borderRadius: '3px',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        {isChannelMode ? 'CHANNEL' : 'FRAME'}
-                    </button>
-                )}
                 <Mappable id={`${effect.id}_blackout`}>
                     <button 
                         className={`layer-control-button ${!isEnabled ? 'active' : ''}`} 
@@ -477,7 +460,10 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                 if (isDelay && (['customOrder'].includes(control.id))) return null;
                 if (control.showIf) {
                     const shouldShow = Object.entries(control.showIf).every(([key, value]) => {
-                    return effect.params[key] === value;
+                        if (Array.isArray(value)) {
+                            return value.includes(effect.params[key]);
+                        }
+                        return effect.params[key] === value;
                     });
                     if (!shouldShow) return null;
                 }
