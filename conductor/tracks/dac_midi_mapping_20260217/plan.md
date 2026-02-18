@@ -10,29 +10,29 @@
     - [x] Verify quick-assignment logic correctly updates `layerAssignedDacs`
 - [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
 
-## Phase 2: Multi-Mapping Engine Overhaul
-- [ ] Task: Update MIDI Mapping Data Structure
-    - [ ] Modify `midiMappings` format to support arrays of assignments per key (note/cc)
-    - [ ] Add `targetType` (`position`, `selectedLayer`, `thisClip`), `inputDeviceId`, and `outputDeviceId` fields
-- [ ] Task: Implement Multi-Trigger Logic
-    - [ ] Update `MidiContext.jsx` to iterate through all assignments for a received MIDI message
-    - [ ] Ensure correct value resolution for dynamic targets (Selected Layer)
-- [ ] Task: Enhanced Mapping Overlay UI
-    - [ ] Update `MidiMappingOverlay.jsx` to show a list of mappings for the current selection
-    - [ ] Add "Add Assignment" button to allow stacking multiple UI links on one hardware control
-- [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
+## Phase 2: Multi-Mapping Engine Overhaul [checkpoint: 44da270]
+- [x] Task: Update MIDI Mapping Data Structure
+    - [x] Modify `midiMappings` format to support arrays of assignments per key (note/cc)
+    - [x] Add `targetType` (`position`, `selectedLayer`, `thisClip`), `inputDeviceId`, and `outputDeviceId` fields
+- [x] Task: Implement Multi-Trigger Logic
+    - [x] Update `MidiContext.jsx` to iterate through all assignments for a received MIDI message
+    - [x] Ensure correct value resolution for dynamic targets (Selected Layer)
+- [x] Task: Enhanced Mapping Overlay UI
+    - [x] Update `MidiMappingOverlay.jsx` to show a list of mappings for the current selection
+    - [x] Add "Add Assignment" button to allow stacking multiple UI links on one hardware control
+- [x] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
 
-## Phase 3: MIDI Visual Feedback (MIDI Out)
-- [ ] Task: Implement Velocity Mapping Logic
-    - [ ] Create a comprehensive status-to-velocity resolver in `MidiContext.jsx`
-    - [ ] Support all specified statuses: `ACTIVE`, `PREVIEWING`, `EMPTY`, `TRIGGER_STYLE_...`, etc.
-- [ ] Task: Advanced Feedback Config Panel
-    - [ ] Create a detailed sub-panel in the Mapping Overlay for individual assignment feedback rules
-    - [ ] Add support for Toggle, Clip, Slider, and Dropdown feedback modes
-- [ ] Task: Real-time Feedback Loop
-    - [ ] Ensure `MidiFeedbackHandler` correctly triggers updates on state changes (clip activation, transport status)
-    - [ ] Optimize feedback frequency to avoid MIDI bus saturation
-- [ ] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md)
+## Phase 3: MIDI Visual Feedback (MIDI Out) [checkpoint: 5172b7f]
+- [x] Task: Implement Velocity Mapping Logic
+    - [x] Create a comprehensive status-to-velocity resolver in `MidiContext.jsx`
+    - [x] Support all specified statuses: `ACTIVE`, `PREVIEWING`, `EMPTY`, `TRIGGER_STYLE_...`, etc.
+- [x] Task: Advanced Feedback Config Panel
+    - [x] Create a detailed sub-panel in the Mapping Overlay for individual assignment feedback rules
+    - [x] Add support for Toggle, Clip, Slider, and Dropdown feedback modes
+- [x] Task: Real-time Feedback Loop
+    - [x] Ensure `MidiFeedbackHandler` correctly triggers updates on state changes (clip activation, transport status)
+    - [x] Optimize feedback frequency to avoid MIDI bus saturation
+- [x] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md)
 
 ## Phase 4: Special Control Support (Dropdowns & Sliders)
 - [ ] Task: Map Individual Dropdown Items
