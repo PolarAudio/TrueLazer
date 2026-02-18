@@ -13,7 +13,7 @@ The NDI integration has been successfully optimized and stabilized, providing hi
 - **Professional Integration:** High priority is placed on robust MIDI, OSC, and DMX/Artnet mapping. This allows users to control the software seamlessly using external hardware and existing show control systems.
 - **Resolume-Inspired UI:** A familiar deck-based layout with layers and columns, tailored for ILDA content.
 - **DAC Communication:** Seamless integration with IDN and EtherDream DACs for high-performance laser output.
-- **Generative & Effects System:** A robust library of shape generators (including parametric triangles) and real-time effects. Advanced Shape Builder with intelligent auto-smooth Bezier curves, hybrid manual overrides, group transformations, and mode-aware timeline synchronization.
+- **Generative & Effects System:** A robust library of shape generators (including equilateral triangles, real-time audio waveforms, and configurable timers) and advanced real-time effects (like offset/rotated mirroring and temporal frame delays). Advanced Shape Builder with intelligent auto-smooth Bezier curves, hybrid manual overrides, group transformations, and mode-aware timeline synchronization.
 
 ## Non-Functional Requirements
 - **High Stability & Low Latency:** Essential for real-time laser rendering where timing is critical.
