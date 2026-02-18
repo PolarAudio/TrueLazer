@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { generatorDefinitions } from '../utils/generatorDefinitions';
 import CollapsiblePanel from './CollapsiblePanel';
 import RangeSlider from './RangeSlider';
+import DualRangeSlider from './DualRangeSlider';
 import AnimationControls from './AnimationControls';
 
 const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration, uiState, onUpdateUiState }) => {
@@ -76,20 +77,30 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                 {/* Slider / Input */}
                 <div className="control-input-wrapper">
                     {control.type === 'range' ? (
-                        <RangeSlider
-                            min={control.min}
-                            max={control.max}
-                            step={control.step}
-                            value={value}
-                            rangeValue={currentRange}
-                            onChange={(val) => onChange(control.id, val)}
-                            onRangeChange={handleRangeChange}
-                            showRange={expanded}
-                            animSettings={animSettings}
-                            progressRef={progressRef}
-                            workerId={workerId}
-                            clipDuration={clipDuration}
-                        />
+                        control.isRange ? (
+                            <DualRangeSlider
+                                min={control.min}
+                                max={control.max}
+                                step={control.step}
+                                value={value}
+                                onChange={(val) => onChange(control.id, val)}
+                            />
+                        ) : (
+                            <RangeSlider
+                                min={control.min}
+                                max={control.max}
+                                step={control.step}
+                                value={value}
+                                rangeValue={currentRange}
+                                onChange={(val) => onChange(control.id, val)}
+                                onRangeChange={handleRangeChange}
+                                showRange={expanded}
+                                animSettings={animSettings}
+                                progressRef={progressRef}
+                                workerId={workerId}
+                                clipDuration={clipDuration}
+                            />
+                        )
                     ) : control.type === 'number' ? (
                         <input
                             type="number"
@@ -231,7 +242,18 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
         onToggle={handleToggle}
     >
         {generatorDefinition.paramControls
-          .filter(control => !control.condition || control.condition(selectedGeneratorParams))
+          .filter(control => {
+              if (control.condition && !control.condition(selectedGeneratorParams)) return false;
+              if (control.showIf) {
+                  return Object.entries(control.showIf).every(([key, value]) => {
+                      if (Array.isArray(value)) {
+                          return value.includes(selectedGeneratorParams[key]);
+                      }
+                      return selectedGeneratorParams[key] === value;
+                  });
+              }
+              return true;
+          })
           .map(control => {
           // Special case for fontUrl
           if (control.id === 'fontUrl') {

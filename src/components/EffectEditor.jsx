@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { effectDefinitions } from '../utils/effectDefinitions';
 import Mappable from './Mappable';
 import RangeSlider from './RangeSlider';
+import DualRangeSlider from './DualRangeSlider';
 import CollapsiblePanel from './CollapsiblePanel';
 import AnimationControls from './AnimationControls';
 import ColorPicker from './ColorPicker';
@@ -84,24 +85,34 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                 {/* Col 2: Slider (Value & Range) */}
                 <div className="control-input-wrapper" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
                     {control.type === 'range' ? (
-                        <Mappable id={`${effectId}_${control.id}`} style={{width: '100%'}}>
-                            <RangeSlider
+                        control.isRange ? (
+                            <DualRangeSlider
                                 min={control.min}
                                 max={control.max}
                                 step={control.step}
                                 value={value}
-                                rangeValue={currentRange}
-                                onChange={onChange} 
-                                onRangeChange={handleRangeChange} 
-                                showRange={expanded} 
-                                animSettings={animSettings}
-                                progressRef={progressRef}
-                                workerId={workerId}
-                                clipDuration={clipDuration}
-                                bpm={bpm}
-                                getFftLevels={getFftLevels}
+                                onChange={onChange}
                             />
-                        </Mappable>
+                        ) : (
+                            <Mappable id={`${effectId}_${control.id}`} style={{width: '100%'}}>
+                                <RangeSlider
+                                    min={control.min}
+                                    max={control.max}
+                                    step={control.step}
+                                    value={value}
+                                    rangeValue={currentRange}
+                                    onChange={onChange} 
+                                    onRangeChange={handleRangeChange} 
+                                    showRange={expanded} 
+                                    animSettings={animSettings}
+                                    progressRef={progressRef}
+                                    workerId={workerId}
+                                    clipDuration={clipDuration}
+                                    bpm={bpm}
+                                    getFftLevels={getFftLevels}
+                                />
+                            </Mappable>
+                        )
                     ) : control.type === 'text' ? (
                          <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className="param-text-input" />
                     ) : control.type === 'checkbox' ? (
