@@ -7,6 +7,35 @@ export const useMidi = () => {
   return useContext(MidiContext);
 };
 
+const migrateMappings = (loadedMappings) => {
+    if (!loadedMappings || typeof loadedMappings !== 'object') return {};
+    
+    // Check if it's already in the new format
+    // New format keys look like "note:1:60" or "cc:1:10" and values are arrays
+    const keys = Object.keys(loadedMappings);
+    if (keys.length === 0) return {};
+    
+    const firstVal = loadedMappings[keys[0]];
+    if (Array.isArray(firstVal)) return loadedMappings; // Already new format
+
+    console.log("MIDI: Migrating old mapping format to new multi-assignment structure...");
+    const migrated = {};
+    Object.entries(loadedMappings).forEach(([controlId, mapping]) => {
+        if (!mapping || !mapping.type || mapping.channel === undefined || mapping.address === undefined) return;
+        
+        const key = `${mapping.type}:${mapping.channel}:${mapping.address}`;
+        if (!migrated[key]) migrated[key] = [];
+        
+        migrated[key].push({
+            controlId,
+            requiresShift: !!mapping.requiresShift,
+            targetType: 'position',
+            label: mapping.label || `${mapping.requiresShift ? '⇧' : ''}CH${mapping.channel}:${mapping.address}`
+        });
+    });
+    return migrated;
+};
+
 export const MidiProvider = ({ children, onMidiCommand }) => {
   const [midiInitialized, setMidiInitialized] = useState(false);
   const [midiInputs, setMidiInputs] = useState([]);
@@ -42,8 +71,9 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         if (window.electronAPI && window.electronAPI.getMidiMappings) {
             const savedMappings = await window.electronAPI.getMidiMappings();
             if (savedMappings) {
-                console.log("Loaded saved MIDI mappings:", savedMappings);
-                setMappings(savedMappings);
+                const migrated = migrateMappings(savedMappings);
+                console.log("Loaded and migrated MIDI mappings:", migrated);
+                setMappings(migrated);
             }
         }
       } catch (err) {
@@ -98,8 +128,9 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       if (window.electronAPI && window.electronAPI.importMappings) {
           const result = await window.electronAPI.importMappings('midi');
           if (result.success && result.mappings) {
-              setMappings(result.mappings);
-              console.log("MIDI mappings imported.");
+              const migrated = migrateMappings(result.mappings);
+              setMappings(migrated);
+              console.log("MIDI mappings imported and migrated.");
           }
       }
   };
@@ -131,6 +162,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
 
     // We need to find ALL hardware keys that are mapped to this controlId
     Object.entries(mappings).forEach(([key, assignments]) => {
+        if (!Array.isArray(assignments)) return;
         const assignment = assignments.find(a => a.controlId === controlId);
         if (assignment) {
             const [midiType, channelStr, address] = key.split(':');

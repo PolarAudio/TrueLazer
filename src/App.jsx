@@ -4194,12 +4194,28 @@ function App() {
       dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index } });
   }, [state.quickAssigns, handlePlay, handlePause, handleStop, handleToggleWorldOutput, handleClearAllActive]);
 
-  const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon') => {
+  const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon', assignment = null) => {
     // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
     // ALLOW value 0 if it's a clip trigger (to support Flash mode release)
     if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_') && id !== 'bpm_value' && id !== 'bpm_fine_up' && id !== 'bpm_fine_down' && !id.startsWith('quick_') && !id.startsWith('dimmer_')) return;
 
     const normalizedValue = value / maxValue;
+    const targetType = assignment?.targetType || 'position';
+
+    // Helper to resolve the final target context (layer/clip)
+    const getTargetContext = () => {
+        if (targetType === 'selectedLayer') {
+            return { layerIndex: selectedLayerIndexRef.current, colIndex: null };
+        } else if (targetType === 'thisClip') {
+            const parts = id.split('_');
+            if (parts[0] === 'clip' && parts.length >= 3) {
+                return { layerIndex: parseInt(parts[1]), colIndex: parseInt(parts[2]) };
+            }
+        }
+        return null;
+    };
+
+    const targetContext = getTargetContext();
 
     switch (id) {
       case 'transport_play':
@@ -4255,50 +4271,73 @@ function App() {
         }
         break;
       default:
-        // Handle dynamic IDs (e.g. layer_1_blackout)
-        if (id.startsWith('layer_')) {
-             const parts = id.split('_');
-             const layerIndex = parseInt(parts[1]);
+        // Resolve target based on context if dynamic targeting is active
+        let finalId = id;
+        let finalLayerIndex = null;
+        let finalColIndex = null;
+
+        if (targetContext) {
+            finalLayerIndex = targetContext.layerIndex;
+            finalColIndex = targetContext.colIndex;
+            
+            // Rewrite ID to match the actual target position for the shared logic below
+            if (id.startsWith('layer_') || id.startsWith('clip_')) {
+                const parts = id.split('_');
+                const action = parts[parts.length - 1]; // blackout, solo, intensity, etc
+                if (finalColIndex !== null) {
+                    finalId = `clip_${finalLayerIndex}_${finalColIndex}_${action}`;
+                } else {
+                    finalId = `layer_${finalLayerIndex}_${action}`;
+                }
+            }
+        }
+
+        // Handle resolved IDs (either static or dynamic)
+        if (finalId.startsWith('layer_')) {
+             const parts = finalId.split('_');
+             const layerIdx = parseInt(parts[1]);
              const action = parts[2]; // 'blackout', 'solo', 'intensity', 'clear'
 
              if (action === 'blackout' && value > 0) {
-                 dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex } });
+                 dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex: layerIdx } });
              } else if (action === 'solo' && value > 0) {
-                 dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex } });
+                 dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex: layerIdx } });
              } else if (action === 'intensity') {
-                 layerIntensitiesRef.current[layerIndex] = normalizedValue;
-                 debouncedDispatch(`layer_${layerIndex}_intensity`, { type: 'SET_LAYER_INTENSITY', payload: { layerIndex, intensity: normalizedValue } });
+                 layerIntensitiesRef.current[layerIdx] = normalizedValue;
+                 debouncedDispatch(`layer_${layerIdx}_intensity`, { type: 'SET_LAYER_INTENSITY', payload: { layerIndex: layerIdx, intensity: normalizedValue } });
              } else if (action === 'clear' && value > 0) {
-                 handleDeactivateLayerClips(layerIndex);
+                 handleDeactivateLayerClips(layerIdx);
              }
-        } else if (id.startsWith('clip_')) {
-            const parts = id.split('_');
-            const layerIndex = parseInt(parts[1]);
-            const colIndex = parseInt(parts[2]);
-            const isPreview = parts[3] === 'preview';
+        } else if (finalId.startsWith('clip_')) {
+            const parts = finalId.split('_');
+            const layerIdx = parseInt(parts[1]);
+            const colIdx = parseInt(parts[2]);
+            const action = parts[3]; // 'preview' or undefined (trigger)
 
-            if (isPreview) {
-                if (value > 0) handleClipPreview(layerIndex, colIndex);
+            if (action === 'preview') {
+                if (value > 0) handleClipPreview(layerIdx, colIdx);
+            } else if (action === 'intensity') {
+                dispatch({ type: 'SET_CLIP_INTENSITY', payload: { layerIndex: layerIdx, colIndex: colIdx, intensity: normalizedValue } });
             } else {
-                handleActivateClick(layerIndex, colIndex, value > 0);
+                handleActivateClick(layerIdx, colIdx, value > 0);
             }
-        } else if (id.startsWith('column_')) {
-            const parts = id.split('_');
-            const colIndex = parseInt(parts[1]);
+        } else if (finalId.startsWith('column_')) {
+            const parts = finalId.split('_');
+            const colIdx = parseInt(parts[1]);
             if (value > 0) {
-                handleColumnTrigger(colIndex);
+                handleColumnTrigger(colIdx);
             }
-        } else if (id.startsWith('quick_knob_')) {
-            const index = parseInt(id.split('_')[2]);
+        } else if (finalId.startsWith('quick_knob_')) {
+            const index = parseInt(finalId.split('_')[2]);
             handleUpdateQuickControl('knob', index, normalizedValue);
-        } else if (id.startsWith('quick_btn_')) {
-            const index = parseInt(id.split('_')[2]);
+        } else if (finalId.startsWith('quick_btn_')) {
+            const index = parseInt(finalId.split('_')[2]);
             if (value > 0) { // Toggle on press
                 handleToggleQuickButton(index);
             }
-        } else if (id.startsWith('dimmer_')) {
+        } else if (finalId.startsWith('dimmer_')) {
             // Reconstruct the key: dimmer_192_168_1_50:1 -> 192.168.1.50:1
-            const cleanId = id.replace('dimmer_', '').replace(/_/g, '.');
+            const cleanId = finalId.replace('dimmer_', '').replace(/_/g, '.');
             const currentSettings = dacOutputSettings[cleanId] || {};
             dispatch({ 
                 type: 'SET_DAC_OUTPUT_SETTINGS', 
@@ -4310,16 +4349,13 @@ function App() {
         } else {
             // Check if it matches an effect parameter (e.g. rotate_angle)
             // This applies to the CURRENTLY SELECTED CLIP
-            const parts = id.split('_');
+            const parts = finalId.split('_');
             if (parts.length >= 2) {
-                // Try to map to effect param
-                // Format could be "rotate_angle" or "color_r"
-                // We iterate selected clip effects to find a match
                 if (selectedLayerIndex !== null && selectedColIndex !== null) {
                     const clip = clipContents[selectedLayerIndex][selectedColIndex];
                     if (clip && clip.effects) {
                         const effId = parts[0];
-                        const paramId = parts.slice(1).join('_'); // Handle params with underscores
+                        const paramId = parts.slice(1).join('_');
                         
                         const effectIndex = clip.effects.findIndex(e => e.id === effId);
                         if (effectIndex !== -1) {
@@ -4327,7 +4363,6 @@ function App() {
                             const ctrl = def?.paramControls.find(c => c.id === paramId);
                             
                             if (ctrl) {
-                                // Map normalized MIDI (0-1) to param range
                                 let newValue = normalizedValue;
                                 if (ctrl.type === 'range' || ctrl.type === 'number') {
                                     newValue = ctrl.min + (ctrl.max - ctrl.min) * normalizedValue;
