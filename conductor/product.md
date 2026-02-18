@@ -10,9 +10,9 @@ The primary users are event technicians and lighting designers who are looking f
 The NDI integration has been successfully optimized and stabilized, providing high-performance real-time laser rendering with minimal CPU/GPU overhead. Our ongoing focus remains on professional stability and expanding the generative ecosystem.
 
 ## Core Features
-- **Professional Integration:** High priority is placed on robust MIDI, OSC, and DMX/Artnet mapping. This allows users to control the software seamlessly using external hardware and existing show control systems.
+- **Professional Integration:** High priority is placed on robust MIDI, OSC, and DMX/Artnet mapping. Advanced MIDI integration supports multi-mapping (multiple UI controls per button), dynamic targeting (Selected Layer/This Clip), and individual LED feedback rules for professional hardware like the APC40.
+- **DAC Communication:** Seamless integration with IDN and EtherDream DACs for high-performance laser output. Includes **DAC Channel Grouping** for streamlined management of large multi-projector setups.
 - **Resolume-Inspired UI:** A familiar deck-based layout with layers and columns, tailored for ILDA content.
-- **DAC Communication:** Seamless integration with IDN and EtherDream DACs for high-performance laser output.
 - **Generative & Effects System:** A robust library of shape generators (including equilateral triangles, real-time audio waveforms, and configurable timers) and advanced real-time effects (like offset/rotated mirroring and temporal frame delays). Advanced Shape Builder with intelligent auto-smooth Bezier curves, hybrid manual overrides, group transformations, and mode-aware timeline synchronization.
 
 ## Non-Functional Requirements
