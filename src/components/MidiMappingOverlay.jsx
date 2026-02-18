@@ -51,34 +51,44 @@ const MidiMappingOverlay = () => {
   return ReactDOM.createPortal(
     <div className="midi-mapping-global-overlay-container">
       {overlays.map(overlay => {
-        const midiMapping = midiMappings[overlay.id];
-        const artnetMapping = artnetMappings ? artnetMappings[overlay.id] : null;
-        const keyboardMapping = keyboardMappings ? keyboardMappings[overlay.id] : null;
-        
-        const isLearning = (isMidiMapping && midiLearningId === overlay.id) || 
-                           (isArtnetMapping && artnetLearningId === overlay.id) ||
-                           (isKeyboardMapping && keyboardLearningId === overlay.id);
-
         let mappingLabel = null;
-        if (isMidiMapping) {
-            mappingLabel = midiMapping ? midiMapping.label : null;
-        } else if (isArtnetMapping) {
+        const isMidi = isMidiMapping;
+        const isArtnet = isArtnetMapping;
+        const isKeyboard = isKeyboardMapping;
+
+        if (isMidi) {
+            // Find ALL hardware keys that have an assignment for this overlay.id
+            const linkedHardware = Object.entries(midiMappings).filter(([key, assignments]) => 
+                assignments.some(a => a.controlId === overlay.id)
+            );
+            if (linkedHardware.length > 0) {
+                const first = linkedHardware[0][1].find(a => a.controlId === overlay.id);
+                mappingLabel = first.label;
+                if (linkedHardware.length > 1) mappingLabel += ` (+${linkedHardware.length - 1})`;
+            }
+        } else if (isArtnet) {
+            const artnetMapping = artnetMappings ? artnetMappings[overlay.id] : null;
             mappingLabel = artnetMapping ? artnetMapping.label : null;
-        } else if (isKeyboardMapping) {
+        } else if (isKeyboard) {
+            const keyboardMapping = keyboardMappings ? keyboardMappings[overlay.id] : null;
             mappingLabel = keyboardMapping ? keyboardMapping.label : null;
         }
+        
+        const isLearning = (isMidi && midiLearningId === overlay.id) || 
+                           (isArtnet && artnetLearningId === overlay.id) ||
+                           (isKeyboard && keyboardLearningId === overlay.id);
 
         return (
           <div
             key={overlay.id}
-            className={`midi-mapping-label-box ${isLearning ? 'learning' : ''} ${mappingLabel ? 'mapped' : ''} ${isArtnetMapping ? 'artnet-mapping' : ''} ${isKeyboardMapping ? 'keyboard-mapping' : ''}`}
+            className={`midi-mapping-label-box ${isLearning ? 'learning' : ''} ${mappingLabel ? 'mapped' : ''} ${isArtnet ? 'artnet-mapping' : ''} ${isKeyboard ? 'keyboard-mapping' : ''}`}
             style={{
               position: 'fixed',
               top: overlay.rect.top,
               left: overlay.rect.left,
               width: overlay.rect.width,
               height: overlay.rect.height,
-              pointerEvents: 'none', // Let clicks pass through to the Mappable's capture handler
+              pointerEvents: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',

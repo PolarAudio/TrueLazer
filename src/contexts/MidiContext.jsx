@@ -127,22 +127,27 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   }, [selectedMidiInputId, midiInitialized, midiInputs]);
 
   const sendFeedback = useCallback((controlId, value, overrideChannel = null) => {
-    if (!selectedMidiInputId || !midiInitialized) return;
-    const mapping = mappings[controlId];
-    if (mapping && mapping.type === 'note') {
-        // APC40 LEDs respond to Note On with velocity for color/state.
-        // If value is a number, use it directly (0-127).
-        // If boolean, map true->127 (On), false->0 (Off).
-        let velocity = 0;
-        if (typeof value === 'number') {
-            velocity = value;
-        } else {
-            velocity = value ? 127 : 0;
+    if (!midiInitialized) return;
+
+    // We need to find ALL hardware keys that are mapped to this controlId
+    Object.entries(mappings).forEach(([key, assignments]) => {
+        const assignment = assignments.find(a => a.controlId === controlId);
+        if (assignment) {
+            const [midiType, channelStr, address] = key.split(':');
+            if (midiType === 'note') {
+                const channel = overrideChannel !== null ? overrideChannel : parseInt(channelStr);
+                const outputId = assignment.outputDeviceId || selectedMidiInputId;
+                
+                if (outputId && outputId !== 'any') {
+                    let velocity = 0;
+                    if (typeof value === 'number') velocity = Math.round(value * 127);
+                    else velocity = value ? 127 : 0;
+                    
+                    sendNote(outputId, address, velocity, channel);
+                }
+            }
         }
-        
-        const channel = overrideChannel !== null ? overrideChannel : mapping.channel;
-        sendNote(selectedMidiInputId, mapping.address, velocity, channel);
-    }
+    });
   }, [selectedMidiInputId, midiInitialized, mappings]);
 
   // Listen to MIDI events
@@ -160,11 +165,15 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     return cleanup;
   }, [selectedMidiInputId, isMapping, learningId, mappings, midiInputs]); // Added midiInputs to ensure re-binding on hotplug
 
-  // Keep a ref of isMapping for the listener
   const isMappingRef = useRef(isMapping);
   useEffect(() => {
       isMappingRef.current = isMapping;
   }, [isMapping]);
+
+  const getMappingKey = (type, channel, address) => {
+      const midiType = (type === 'noteon' || type === 'noteoff') ? 'note' : 'cc';
+      return `${midiType}:${channel}:${address}`;
+  };
 
   const handleIncomingMidi = (event) => {
     // Check for Shift Key (APC40: CH1 Note D7)
@@ -173,65 +182,67 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         const active = (event.type === 'noteon');
         setIsShiftDown(active);
         isShiftDownRef.current = active;
-        console.log(`Shift ${active ? 'Down' : 'Up'}`);
         return;
     }
 
     // 1. If in "Learn Mode" for a specific ID
     if (isMapping && learningId) {
-      // Don't map the release (noteoff)
       if (event.type === 'noteoff') return;
 
-      // Assign this event to the learningId
       const addressLabel = event.note || event.controller;
       const requiresShift = isShiftDownRef.current;
-      const newMapping = {
-        type: (event.type === 'noteon' || event.type === 'noteoff') ? 'note' : 'cc',
-        channel: event.channel, 
-        address: addressLabel,
+      const key = getMappingKey(event.type, event.channel, addressLabel);
+      
+      const newAssignment = {
+        controlId: learningId,
         requiresShift: requiresShift,
+        targetType: 'position', // Default: 'position', 'selectedLayer', 'thisClip'
+        inputDeviceId: selectedMidiInputId,
+        outputDeviceId: selectedMidiInputId,
         label: `${requiresShift ? '⇧' : ''}CH${event.channel}:${addressLabel}`
       };
       
-      console.log(`Mapped ${learningId} to:`, newMapping);
-      setMappings(prev => ({
-        ...prev,
-        [learningId]: newMapping
-      }));
-      setLearningId(null); // Stop learning for this ID
+      setMappings(prev => {
+          const currentForKey = prev[key] || [];
+          // Avoid duplicate assignments for the SAME controlId on the SAME key
+          if (currentForKey.some(a => a.controlId === learningId)) return prev;
+          return {
+              ...prev,
+              [key]: [...currentForKey, newAssignment]
+          };
+      });
+      setLearningId(null);
       return;
     }
 
-    // 2. Normal Operation: Check if this event maps to any control
-    Object.entries(mappings).forEach(([controlId, mapping]) => {
-      const isNoteMatch = (event.type === 'noteon' || event.type === 'noteoff') && 
-                          mapping.type === 'note' && 
-                          event.note === mapping.address && 
-                          event.channel === mapping.channel;
-      
-      const isCcMatch = event.type === 'controlchange' && 
-                        mapping.type === 'cc' && 
-                        event.controller === mapping.address && 
-                        event.channel === mapping.channel;
-      
-      // Match shift state only for notes (CC usually ignore shift)
-      const shiftMatch = mapping.type === 'cc' || (!!mapping.requiresShift === isShiftDownRef.current);
+    // 2. Normal Operation: Iterate through all assignments for this hardware key
+    const key = getMappingKey(event.type, event.channel, event.note || event.controller);
+    const assignments = mappings[key];
 
-      if ((isNoteMatch || isCcMatch) && shiftMatch) {
-        if (onMidiCommandRef.current) {
-          // Explicitly handle 0 values for CC and NoteOff
-          let val;
-          if (event.type === 'controlchange') {
-              val = event.value ?? 0;
-          } else if (event.type === 'noteoff') {
-              val = 0;
-          } else {
-              val = event.velocity ?? 0;
-          }
-          onMidiCommandRef.current(controlId, val, 127, event.type);
-        }
-      }
-    });
+    if (assignments && assignments.length > 0) {
+        assignments.forEach(assignment => {
+            // Match shift state only for notes
+            const isNote = key.startsWith('note:');
+            const shiftMatch = !isNote || (!!assignment.requiresShift === isShiftDownRef.current);
+            
+            // Device filtering (if specified)
+            const deviceMatch = !assignment.inputDeviceId || assignment.inputDeviceId === 'any' || assignment.inputDeviceId === selectedMidiInputId;
+
+            if (shiftMatch && deviceMatch) {
+                if (onMidiCommandRef.current) {
+                    let val;
+                    if (event.type === 'controlchange') {
+                        val = event.value ?? 0;
+                    } else if (event.type === 'noteoff') {
+                        val = 0;
+                    } else {
+                        val = event.velocity ?? 0;
+                    }
+                    onMidiCommandRef.current(assignment.controlId, val, 127, event.type, assignment);
+                }
+            }
+        });
+    }
   };
 
   const startMapping = () => setIsMapping(true);
@@ -243,7 +254,20 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   const removeMapping = (controlId) => {
       setMappings(prev => {
           const next = { ...prev };
-          delete next[controlId];
+          Object.keys(next).forEach(key => {
+              next[key] = next[key].filter(a => a.controlId !== controlId);
+              if (next[key].length === 0) delete next[key];
+          });
+          return next;
+      });
+  };
+
+  const removeAssignment = (key, controlId) => {
+      setMappings(prev => {
+          if (!prev[key]) return prev;
+          const next = { ...prev };
+          next[key] = next[key].filter(a => a.controlId !== controlId);
+          if (next[key].length === 0) delete next[key];
           return next;
       });
   };
@@ -260,7 +284,8 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     setLearningId,
     mappings,
     setMappings,
-    removeMapping, // Add removeMapping
+    removeMapping,
+    removeAssignment,
     saveMappings,
     exportMappings,
     importMappings,
