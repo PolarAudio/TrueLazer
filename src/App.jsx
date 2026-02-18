@@ -4617,6 +4617,55 @@ function App() {
       }
   }, [clipContentsRef]);
 
+  const MidiFeedbackHandler = React.memo(({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, selectedLayerIndex, selectedColIndex, quickAssigns }) => {
+    const { sendFeedback } = useMidi();
+    
+    useEffect(() => {
+        if (!sendFeedback) return;
+
+        // 1. Update Clip Feedbacks
+        layers.forEach((_, layerIndex) => {
+            columns.forEach((_, colIndex) => {
+                const controlId = `clip_${layerIndex}_${colIndex}`;
+                const isActive = activeClipIndexes[layerIndex] === colIndex;
+                const isPreviewing = selectedLayerIndex === layerIndex && selectedColIndex === colIndex;
+                const hasContent = !!clipContents[layerIndex][colIndex];
+                
+                let status = 'empty';
+                if (isActive) status = 'active';
+                else if (isPreviewing) status = 'previewing';
+                else if (hasContent) status = 'inactive';
+                
+                sendFeedback(controlId, isActive, status);
+            });
+        });
+
+        // 2. Update Transport Feedbacks
+        sendFeedback('transport_play', isPlaying);
+        sendFeedback('transport_stop', !isPlaying);
+
+        // 3. Update Global Feedbacks
+        sendFeedback('blackout', globalBlackout);
+        sendFeedback('laser_output', isWorldOutputActive);
+
+        // 4. Update Layer Feedbacks
+        layers.forEach((_, layerIndex) => {
+            sendFeedback(`layer_${layerIndex}_blackout`, layerBlackouts[layerIndex]);
+            sendFeedback(`layer_${layerIndex}_solo`, layerSolos[layerIndex]);
+        });
+
+        // 5. Quick Assigns
+        if (quickAssigns && quickAssigns.buttons) {
+            quickAssigns.buttons.forEach((btn, i) => {
+                sendFeedback(`quick_btn_${i}`, btn.value);
+            });
+        }
+
+    }, [activeClipIndexes, selectedLayerIndex, selectedColIndex, clipContents, isPlaying, globalBlackout, isWorldOutputActive, layerBlackouts, layerSolos, sendFeedback, quickAssigns]);
+
+    return null;
+  });
+
   return (
     <MidiProvider onMidiCommand={handleMidiCommand}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
@@ -4629,8 +4678,8 @@ function App() {
         isWorldOutputActive={isWorldOutputActive}
         clipContents={clipContents}
         activeClipIndexes={activeClipIndexes}
-        theme={theme}
-        bpm={state.bpm}
+        selectedLayerIndex={selectedLayerIndex}
+        selectedColIndex={selectedColIndex}
         quickAssigns={state.quickAssigns}
     />
     <MidiMappingOverlay />

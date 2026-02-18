@@ -192,6 +192,87 @@ const MidiMappingOverlay = () => {
                                         {midiInputs.map(input => <option key={input.id} value={input.id}>{input.name}</option>)}
                                     </select>
                                 </div>
+
+                                <div className="feedback-settings" style={{ marginTop: '10px', padding: '5px', background: '#111', borderRadius: '3px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                                        <span style={{ fontSize: '9px', color: 'var(--theme-color)', fontWeight: 'bold' }}>FEEDBACK (MIDI OUT)</span>
+                                        <select 
+                                            value={a.feedbackMode || 'toggle'}
+                                            onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackMode', e.target.value)}
+                                            style={{ background: '#000', color: '#fff', border: '1px solid #444', fontSize: '9px' }}
+                                        >
+                                            <option value="toggle">Toggle</option>
+                                            <option value="clip">Clip</option>
+                                            <option value="slider">Slider</option>
+                                            <option value="dropdown">Dropdown</option>
+                                        </select>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+                                        {(!a.feedbackMode || a.feedbackMode === 'toggle' || a.feedbackMode === 'dropdown') && (
+                                            <>
+                                                <div className="vel-input">
+                                                    <label style={{ fontSize: '8px', color: '#666' }}>On Vel</label>
+                                                    <input 
+                                                        type="number" min="0" max="127" 
+                                                        value={a.feedbackConfig?.onVelocity ?? 127}
+                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, onVelocity: parseInt(e.target.value) })}
+                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
+                                                    />
+                                                </div>
+                                                <div className="vel-input">
+                                                    <label style={{ fontSize: '8px', color: '#666' }}>Off Vel</label>
+                                                    <input 
+                                                        type="number" min="0" max="127" 
+                                                        value={a.feedbackConfig?.offVelocity ?? 0}
+                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, offVelocity: parseInt(e.target.value) })}
+                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
+                                                    />
+                                                </div>
+                                            </>
+                                        )}
+                                        {a.feedbackMode === 'clip' && (
+                                            <>
+                                                <div className="vel-input">
+                                                    <label style={{ fontSize: '8px', color: '#666' }}>Active</label>
+                                                    <input 
+                                                        type="number" min="0" max="127" 
+                                                        value={a.feedbackConfig?.activeVelocity ?? 127}
+                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, activeVelocity: parseInt(e.target.value) })}
+                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
+                                                    />
+                                                </div>
+                                                <div className="vel-input">
+                                                    <label style={{ fontSize: '8px', color: '#666' }}>Preview</label>
+                                                    <input 
+                                                        type="number" min="0" max="127" 
+                                                        value={a.feedbackConfig?.previewVelocity ?? 64}
+                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, previewVelocity: parseInt(e.target.value) })}
+                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
+                                                    />
+                                                </div>
+                                                <div className="vel-input">
+                                                    <label style={{ fontSize: '8px', color: '#666' }}>Inactive</label>
+                                                    <input 
+                                                        type="number" min="0" max="127" 
+                                                        value={a.feedbackConfig?.inactiveVelocity ?? 1}
+                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, inactiveVelocity: parseInt(e.target.value) })}
+                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
+                                                    />
+                                                </div>
+                                                <div className="vel-input">
+                                                    <label style={{ fontSize: '8px', color: '#666' }}>Empty</label>
+                                                    <input 
+                                                        type="number" min="0" max="127" 
+                                                        value={a.feedbackConfig?.emptyVelocity ?? 0}
+                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, emptyVelocity: parseInt(e.target.value) })}
+                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
+                                                    />
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         ))
                     ) : (

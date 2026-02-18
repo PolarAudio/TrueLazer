@@ -157,28 +157,50 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     }
   }, [selectedMidiInputId, midiInitialized, midiInputs]);
 
-  const sendFeedback = useCallback((controlId, value, overrideChannel = null) => {
+  const sendFeedback = useCallback((controlId, value, status = 'inactive', overrideChannel = null) => {
     if (!midiInitialized) return;
+
+    // Resolve numerical velocity based on status and feedback settings
+    const resolveVelocity = (assignment, val, stat) => {
+        const mode = assignment.feedbackMode || 'toggle';
+        const cfg = assignment.feedbackConfig || {};
+
+        if (mode === 'clip') {
+            if (stat === 'active') return cfg.activeVelocity ?? 127;
+            if (stat === 'previewing') return cfg.previewVelocity ?? 64;
+            if (stat === 'inactive') return cfg.inactiveVelocity ?? 1;
+            if (stat === 'empty') return cfg.emptyVelocity ?? 0;
+            return 0;
+        } else if (mode === 'slider') {
+            return Math.round(val * 127);
+        } else if (mode === 'dropdown') {
+            // Dropdown might use specific velocities for different items, 
+            // but for now, simple on/off based on if item is selected
+            return val ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
+        } else {
+            // Default: Toggle
+            const is_on = typeof val === 'boolean' ? val : val > 0;
+            return is_on ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
+        }
+    };
 
     // We need to find ALL hardware keys that are mapped to this controlId
     Object.entries(mappings).forEach(([key, assignments]) => {
         if (!Array.isArray(assignments)) return;
-        const assignment = assignments.find(a => a.controlId === controlId);
-        if (assignment) {
-            const [midiType, channelStr, address] = key.split(':');
-            if (midiType === 'note') {
-                const channel = overrideChannel !== null ? overrideChannel : parseInt(channelStr);
-                const outputId = assignment.outputDeviceId || selectedMidiInputId;
-                
-                if (outputId && outputId !== 'any') {
-                    let velocity = 0;
-                    if (typeof value === 'number') velocity = Math.round(value * 127);
-                    else velocity = value ? 127 : 0;
+        assignments.forEach(assignment => {
+            if (assignment.controlId === controlId) {
+                const [midiType, channelStr, address] = key.split(':');
+                if (midiType === 'note') {
+                    const channel = overrideChannel !== null ? overrideChannel : parseInt(channelStr);
+                    const outputId = assignment.outputDeviceId || selectedMidiInputId;
                     
-                    sendNote(outputId, address, velocity, channel);
+                    if (outputId && outputId !== 'any') {
+                        const velocity = resolveVelocity(assignment, value, status);
+                        sendNote(outputId, address, velocity, channel);
+                    }
                 }
             }
-        }
+        });
     });
   }, [selectedMidiInputId, midiInitialized, mappings]);
 
