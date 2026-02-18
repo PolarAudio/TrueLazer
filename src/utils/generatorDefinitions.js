@@ -377,4 +377,52 @@ export const generatorDefinitions = [
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
     ],
   },
+  {
+    id: 'timer',
+    name: 'Timer',
+    description: 'Generates a clock, count-up or count-down visualization.',
+    defaultParams: {
+      mode: 'clock', // 'clock', 'count-up', 'count-down'
+      format: 'MM:SS', // 'HH:MM:SS', 'MM:SS', 'SS.mm'
+      startTime: 60,
+      x: 0,
+      y: 0.3,
+      fontSize: 72,
+      numPoints: 100,
+      fontUrl: 'src/fonts/Geometr415 Blk BT Black.ttf',
+      r: 255,
+      g: 255,
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
+    },
+    paramControls: [
+      { id: 'mode', label: 'Mode', type: 'select', options: [
+          { label: 'Clock', value: 'clock' },
+          { label: 'Count-up', value: 'count-up' },
+          { label: 'Count-down', value: 'count-down' }
+      ]},
+      { id: 'format', label: 'Format', type: 'select', options: [
+          { label: 'HH:MM:SS', value: 'HH:MM:SS' },
+          { label: 'MM:SS', value: 'MM:SS' },
+          { label: 'SS.mm', value: 'SS.mm' }
+      ]},
+      { id: 'startTime', label: 'Start Time (Sec)', type: 'range', min: 1, max: 3600, step: 1, showIf: { mode: 'count-down' } },
+      { id: 'fontUrl', label: 'Fonts', type: 'text' },
+      { id: 'fontSize', label: 'Font Size', type: 'range', min: 10, max: 200, step: 1 },
+      { id: 'numPoints', label: 'Target Points', type: 'range', min: 10, max: 500, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
+    ],
+  },
 ];

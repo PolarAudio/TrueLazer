@@ -2574,7 +2574,19 @@ function App() {
                   const params = clip.currentParams || {};
                   const data = (params.mode === 'waveform') ? timeDataRef.current : fftDataRef.current;
                   const seq = ++generatorRequestSeqRef.current;
-                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data);
+                  const context = {
+                      time: timestamp,
+                      activationTime: clipActivationTimesRef.current[layerIndex] || 0
+                  };
+                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data, context);
+              } else if (generatorId === 'timer') {
+                  const params = clip.currentParams || {};
+                  const seq = ++generatorRequestSeqRef.current;
+                  const context = {
+                      time: timestamp,
+                      activationTime: clipActivationTimesRef.current[layerIndex] || 0
+                  };
+                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, null, context);
               }
           }
 
@@ -3530,13 +3542,13 @@ function App() {
       }
   };
 
-  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params, seq, isAutoUpdate = false, isLive = false, audioData = null) => {
+  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params, seq, isAutoUpdate = false, isLive = false, audioData = null, context = null) => {
     // Create a complete params object to ensure stability
     const completeParams = { ...generatorDefinition.defaultParams, ...params };
     const clipKey = `${layerIndex}-${colIndex}`;
 
     let fontBuffer = null;
-    if (['text', 'ndi-source', 'spout-receiver'].includes(generatorDefinition.id)) {
+    if (['text', 'ndi-source', 'spout-receiver', 'timer'].includes(generatorDefinition.id)) {
       const defaultFontUrl = 'src/fonts/Geometr415 Blk BT Black.ttf';
       let fontUrl = completeParams.fontUrl || defaultFontUrl;
 
@@ -3586,6 +3598,7 @@ function App() {
       params: completeParams, // Pass the complete params
       fontBuffer, 
       audioData,
+      context,
       seq, // Pass sequence number
       isAutoUpdate,
       isLive

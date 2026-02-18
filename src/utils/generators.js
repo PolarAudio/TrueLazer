@@ -682,3 +682,73 @@ export function generateWaveform(params) {
         throw error;
     }
 }
+
+/**
+ * Generates a timer visualization (Clock, Count-up, or Count-down).
+ * @param {Object} params - Generator parameters.
+ * @param {string} [params.mode] - 'clock', 'count-up', 'count-down'.
+ * @param {string} [params.format] - 'HH:MM:SS', 'MM:SS', 'SS.mm'.
+ * @param {number} [params.startTime] - Start time in seconds for count-down.
+ * @param {ArrayBuffer} [fontBuffer] - Buffer for the font.
+ * @param {Object} [context] - Context containing current time and activation time.
+ */
+export async function generateTimer(params, fontBuffer, context = {}) {
+    try {
+        const { mode, format, startTime, x, y, r, g, b, fontSize, numPoints } = withDefaults(params, {
+            mode: 'clock',
+            format: 'MM:SS',
+            startTime: 60, // 1 minute
+            x: 0,
+            y: 0.3,
+            r: 255,
+            g: 255,
+            b: 255,
+            fontSize: 72,
+            numPoints: 100
+        });
+
+        const now = context.time || performance.now();
+        const activationTime = context.activationTime || now;
+        const elapsedMs = now - activationTime;
+        const elapsedSec = elapsedMs / 1000;
+
+        let displaySec = 0;
+        if (mode === 'clock') {
+            const d = new Date();
+            displaySec = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000;
+        } else if (mode === 'count-up') {
+            displaySec = elapsedSec;
+        } else if (mode === 'count-down') {
+            displaySec = Math.max(0, startTime - elapsedSec);
+        }
+
+        const h = Math.floor(displaySec / 3600);
+        const m = Math.floor((displaySec % 3600) / 60);
+        const s = Math.floor(displaySec % 60);
+        const ms = Math.floor((displaySec % 1) * 100);
+
+        let timeStr = '';
+        if (format === 'HH:MM:SS') {
+            timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        } else if (format === 'MM:SS') {
+            const totalMin = h * 60 + m;
+            timeStr = `${totalMin.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        } else if (format === 'SS.mm') {
+            const totalSec = h * 3600 + m * 60 + s;
+            timeStr = `${totalSec.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+        }
+
+        const textParams = {
+            ...params,
+            text: timeStr,
+            x, y, r, g, b,
+            fontSize,
+            numPoints
+        };
+
+        return await generateText(textParams, fontBuffer);
+    } catch (error) {
+        console.error('Error in generateTimer:', error);
+        throw error;
+    }
+}

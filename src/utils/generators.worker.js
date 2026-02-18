@@ -1,7 +1,7 @@
-import { generateCircle, generateSquare, generateTriangle, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave, generateWaveform } from './generators.js';
+import { generateCircle, generateSquare, generateTriangle, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave, generateWaveform, generateTimer } from './generators.js';
 
 self.onmessage = async (event) => {
-  const { type, layerIndex, colIndex, generator, params, audioData } = event.data;
+  const { type, layerIndex, colIndex, generator, params, audioData, context } = event.data;
   // 'generator' here is the full generatorDefinition from App.jsx
 
   try {
@@ -43,6 +43,9 @@ self.onmessage = async (event) => {
               break;
             case 'waveform':
               frames = [generateWaveform(currentParams)];
+              break;
+            case 'timer':
+              frames = [await generateTimer(currentParams, event.data.fontBuffer, context)];
               break;
             default:
               frames = [{ points: [] }];
