@@ -195,6 +195,19 @@ const MidiMappingOverlay = () => {
 
                                 <div className="feedback-settings" style={{ marginTop: '10px', padding: '5px', background: '#111', borderRadius: '3px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                                        <span style={{ fontSize: '9px', color: 'var(--theme-color)', fontWeight: 'bold' }}>CONTROL MODE</span>
+                                        <select 
+                                            value={a.controlMode || 'absolute'}
+                                            onChange={(e) => updateAssignment(a.key, a.controlId, 'controlMode', e.target.value)}
+                                            style={{ background: '#000', color: '#fff', border: '1px solid #444', fontSize: '9px' }}
+                                        >
+                                            <option value="absolute">Absolute</option>
+                                            <option value="relative">Relative (Encoder)</option>
+                                            <option value="fake_relative">Fake Relative (Knob)</option>
+                                        </select>
+                                    </div>
+
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
                                         <span style={{ fontSize: '9px', color: 'var(--theme-color)', fontWeight: 'bold' }}>FEEDBACK (MIDI OUT)</span>
                                         <select 
                                             value={a.feedbackMode || 'toggle'}

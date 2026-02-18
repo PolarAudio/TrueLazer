@@ -120,9 +120,11 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                          <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} className="param-checkbox" />
                         </Mappable>
                     ) : control.type === 'select' ? (
-                        <select value={value} onChange={(e) => onChange(e.target.value)} className="param-select">
-                            {control.options.map(option => <option key={option} value={option}>{option}</option>)}
-                        </select>
+                        <Mappable id={`${effectId}_${control.id}`}>
+                            <select value={value} onChange={(e) => onChange(e.target.value)} className="param-select">
+                                {control.options.map(option => <option key={option} value={option}>{option}</option>)}
+                            </select>
+                        </Mappable>
                     ) : null}
                 </div>
 

@@ -1576,6 +1576,7 @@ function App() {
   const lastFrameFetchTimeRef = useRef({});
   const frameIndexesRef = useRef({});
   const workerLoadedFontsRef = useRef(new Set()); // Track fonts already sent to worker
+  const lastMidiValuesRef = useRef({}); // For 'fake_relative' mode mapping
 
   const [initialSettings, setInitialSettings] = useState(null);
   const [initialSettingsLoaded, setInitialSettingsLoaded] = useState(false);
@@ -4197,9 +4198,27 @@ function App() {
   const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon', assignment = null) => {
     // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
     // ALLOW value 0 if it's a clip trigger (to support Flash mode release)
-    if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_') && id !== 'bpm_value' && id !== 'bpm_fine_up' && id !== 'bpm_fine_down' && !id.startsWith('quick_') && !id.startsWith('dimmer_')) return;
+    if (value === 0 && !id.endsWith('_intensity') && id !== 'master_intensity' && id !== 'master_speed' && !id.startsWith('clip_') && id !== 'bpm_value' && id !== 'bpm_fine_up' && id !== 'bpm_fine_down' && !id.startsWith('quick_') && !id.startsWith('dimmer_') && !id.includes('_item_')) return;
 
-    const normalizedValue = value / maxValue;
+    let normalizedValue = value / maxValue;
+    const controlMode = assignment?.controlMode || 'absolute';
+
+    // Process Control Mode (Absolute vs Relative vs Fake Relative)
+    if (type === 'controlchange') {
+        if (controlMode === 'relative') {
+            // APC40 Style Relative (1-10 positive, 127-118 negative)
+            let delta = 0;
+            if (value <= 10) delta = value * 0.01;
+            else if (value >= 118) delta = (value - 128) * 0.01;
+            normalizedValue = delta; 
+        } else if (controlMode === 'fake_relative') {
+            const hwKey = assignment?.key || id;
+            const lastVal = lastMidiValuesRef.current[hwKey] ?? value;
+            lastMidiValuesRef.current[hwKey] = value;
+            normalizedValue = (value - lastVal) / maxValue;
+        }
+    }
+
     const targetType = assignment?.targetType || 'position';
 
     // Helper to resolve the final target context (layer/clip)
@@ -4234,12 +4253,15 @@ function App() {
         if (value > 0) handleClearAllActive();
         break;
       case 'master_intensity':
-        masterIntensityRef.current = normalizedValue;
-        debouncedDispatch('master_intensity', { type: 'SET_MASTER_INTENSITY', payload: normalizedValue });
+        if (controlMode === 'absolute') masterIntensityRef.current = normalizedValue;
+        else masterIntensityRef.current = Math.max(0, Math.min(1, masterIntensityRef.current + normalizedValue));
+        debouncedDispatch('master_intensity', { type: 'SET_MASTER_INTENSITY', payload: masterIntensityRef.current });
         break;
       case 'master_speed':
-        // Map 0-1 to 1-120 FPS
-        const newFps = Math.max(1, Math.round(normalizedValue * 120));
+        const currentSpeedNorm = (playbackFpsRef.current - 1) / 119;
+        let newSpeedNorm = normalizedValue;
+        if (controlMode !== 'absolute') newSpeedNorm = Math.max(0, Math.min(1, currentSpeedNorm + normalizedValue));
+        const newFps = Math.max(1, Math.round(newSpeedNorm * 119 + 1));
         debouncedDispatch('master_speed', { type: 'SET_RENDER_SETTING', payload: { setting: 'playbackFps', value: newFps } });
         break;
       case 'laser_output':
@@ -4247,12 +4269,14 @@ function App() {
         break;
       case 'bpm_value':
         if (type === 'controlchange') {
-            // Check for relative encoder behavior (APC40 style)
-            // If value is small (1, 2...) it's +, if large (127, 126...) it's -
             let delta = 0;
-            if (value <= 10) delta = value; // Right turn
-            else if (value >= 118) delta = value - 128; // Left turn (127 -> -1)
-
+            if (controlMode === 'absolute') {
+                // Legacy hardcoded relative behavior for BPM (backward compatibility)
+                if (value <= 10) delta = value;
+                else if (value >= 118) delta = value - 128;
+            } else {
+                delta = Math.round(normalizedValue * 100);
+            }
             if (delta !== 0) {
                 dispatch({ type: 'SET_BPM', payload: Math.max(1, Math.min(999, (state.bpm || 120) + delta)) });
             }
@@ -4292,7 +4316,27 @@ function App() {
             }
         }
 
-        // Handle resolved IDs (either static or dynamic)
+        // 2. Handle Individual Dropdown Item Mapping
+        if (finalId.includes('_item_')) {
+            if (value === 0) return;
+            const [baseId, itemValue] = finalId.split('_item_');
+            const parts = baseId.split('_');
+            if (parts.length >= 2 && selectedLayerIndex !== null && selectedColIndex !== null) {
+                const effId = parts[0];
+                const paramId = parts.slice(1).join('_');
+                const clip = clipContents[selectedLayerIndex][selectedColIndex];
+                const effectIndex = clip?.effects?.findIndex(e => e.id === effId);
+                if (effectIndex !== -1) {
+                    dispatch({ 
+                        type: 'UPDATE_EFFECT_PARAMETER', 
+                        payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, paramName: paramId, newValue: itemValue } 
+                    });
+                }
+            }
+            return;
+        }
+
+        // 3. Handle the command using the resolved ID
         if (finalId.startsWith('layer_')) {
              const parts = finalId.split('_');
              const layerIdx = parseInt(parts[1]);
@@ -4303,8 +4347,10 @@ function App() {
              } else if (action === 'solo' && value > 0) {
                  dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex: layerIdx } });
              } else if (action === 'intensity') {
-                 layerIntensitiesRef.current[layerIdx] = normalizedValue;
-                 debouncedDispatch(`layer_${layerIdx}_intensity`, { type: 'SET_LAYER_INTENSITY', payload: { layerIndex: layerIdx, intensity: normalizedValue } });
+                 let targetVal = normalizedValue;
+                 if (controlMode !== 'absolute') targetVal = Math.max(0, Math.min(1, (layerIntensitiesRef.current[layerIdx] || 0) + normalizedValue));
+                 layerIntensitiesRef.current[layerIdx] = targetVal;
+                 debouncedDispatch(`layer_${layerIdx}_intensity`, { type: 'SET_LAYER_INTENSITY', payload: { layerIndex: layerIdx, intensity: targetVal } });
              } else if (action === 'clear' && value > 0) {
                  handleDeactivateLayerClips(layerIdx);
              }
@@ -4365,7 +4411,15 @@ function App() {
                             if (ctrl) {
                                 let newValue = normalizedValue;
                                 if (ctrl.type === 'range' || ctrl.type === 'number') {
-                                    newValue = ctrl.min + (ctrl.max - ctrl.min) * normalizedValue;
+                                    const currentVal = clip.effects[effectIndex].params[paramId] ?? ctrl.min;
+                                    if (controlMode === 'absolute') {
+                                        newValue = ctrl.min + (normalizedValue * (ctrl.max - ctrl.min));
+                                    } else {
+                                        const deltaActual = normalizedValue * (ctrl.max - ctrl.min);
+                                        newValue = currentVal + deltaActual;
+                                    }
+                                    newValue = Math.max(ctrl.min, Math.min(ctrl.max, newValue));
+                                    if (ctrl.step) newValue = Math.round(newValue / ctrl.step) * ctrl.step;
                                 } else if (ctrl.type === 'checkbox') {
                                     newValue = normalizedValue > 0.5;
                                 }
