@@ -601,3 +601,74 @@ export function generateSinewave(params) {
     throw error;
   }
 }
+
+/**
+ * Generates a waveform or spectrum visualization based on audio data.
+ * @param {Object} params - Generator parameters.
+ * @param {string} [params.mode] - Visualization mode: 'bars', 'waveform', 'spectrum'.
+ * @param {number} [params.width] - Overall width of the visualization.
+ * @param {number} [params.height] - Overall height multiplier.
+ * @param {number} [params.numBins] - Number of frequency bins or time samples to display.
+ * @param {Uint8Array} [params.audioData] - Raw audio data (FFT or time domain).
+ */
+export function generateWaveform(params) {
+    try {
+        const { mode, width, height, numBins, x, y, r, g, b, audioData } = withDefaults(params, {
+            mode: 'bars',
+            width: 2.0,
+            height: 1.0,
+            numBins: 32,
+            x: 0,
+            y: 0,
+            r: 255,
+            g: 255,
+            b: 255,
+            audioData: null
+        });
+
+        const points = [];
+        const startX = -width / 2;
+        const data = audioData || new Uint8Array(numBins).fill(mode === 'waveform' ? 128 : 0);
+        const dataLen = data.length;
+
+        if (mode === 'bars') {
+            // Candle Bar Mode
+            for (let i = 0; i < numBins; i++) {
+                const t = i / (numBins - 1 || 1);
+                const curX = startX + t * width + x;
+                const dataIdx = Math.floor((i / numBins) * dataLen);
+                const val = (data[dataIdx] / 255) * height;
+
+                // Vertical Bar: Bottom to Top
+                points.push({ x: curX, y: -height / 2 + y, r: 0, g: 0, b: 0, blanking: true }); // Jump to bottom
+                points.push({ x: curX, y: -height / 2 + y, r, g, b }); // Start bar
+                points.push({ x: curX, y: -height / 2 + val + y, r, g, b }); // End bar
+                points.push({ x: curX, y: -height / 2 + val + y, r: 0, g: 0, b: 0, blanking: true }); // Blank end
+            }
+        } else if (mode === 'waveform') {
+            // Time Domain Waveform (Oscilloscope)
+            for (let i = 0; i < numBins; i++) {
+                const t = i / (numBins - 1 || 1);
+                const curX = startX + t * width + x;
+                const dataIdx = Math.floor((i / numBins) * dataLen);
+                // Time domain data is centered around 128
+                const val = ((data[dataIdx] - 128) / 128) * (height / 2);
+                points.push({ x: curX, y: val + y, r, g, b });
+            }
+        } else if (mode === 'spectrum') {
+            // Continuous Spectrum Line
+            for (let i = 0; i < numBins; i++) {
+                const t = i / (numBins - 1 || 1);
+                const curX = startX + t * width + x;
+                const dataIdx = Math.floor((i / numBins) * dataLen);
+                const val = (data[dataIdx] / 255) * height;
+                points.push({ x: curX, y: -height / 2 + val + y, r, g, b });
+            }
+        }
+
+        return { points: applyRenderingStyle(points, params) };
+    } catch (error) {
+        console.error('Error in generateWaveform:', error);
+        throw error;
+    }
+}

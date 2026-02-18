@@ -335,4 +335,44 @@ export const generatorDefinitions = [
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
     ],
   },
+  {
+    id: 'waveform',
+    name: 'Waveform',
+    description: 'Generates a real-time audio visualization.',
+    defaultParams: {
+      mode: 'bars', // 'bars', 'waveform', 'spectrum'
+      width: 2.0,
+      height: 1.0,
+      numBins: 32,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
+    },
+    paramControls: [
+      { id: 'mode', label: 'Visualization Mode', type: 'select', options: [
+          { label: 'Candle Bar', value: 'bars' },
+          { label: 'Waveform (Osc)', value: 'waveform' },
+          { label: 'Spectrum Line', value: 'spectrum' }
+      ]},
+      { id: 'numBins', label: 'Resolution', type: 'range', min: 8, max: 128, step: 1 },
+      { id: 'width', label: 'Width', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
+      { id: 'height', label: 'Height', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
+    ],
+  },
 ];

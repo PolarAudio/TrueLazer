@@ -1508,7 +1508,7 @@ function App() {
   const ildaParserWorker = useIldaParserWorker();
   const thumbnailWorker = useThumbnailWorker();
     const generatorWorker = useGeneratorWorker();
-    const { fftLevels, getFftLevels } = useAudio() || {};
+    const { fftLevels, getFftLevels, fftDataRef, timeDataRef } = useAudio() || {};
 
   const {
     devices: audioDevices,
@@ -2568,6 +2568,14 @@ function App() {
                       regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, resolvedParams, seq, true);
                   }
               }
+
+              // Real-time re-generation for audio-reactive generators
+              if (generatorId === 'waveform') {
+                  const params = clip.currentParams || {};
+                  const data = (params.mode === 'waveform') ? timeDataRef.current : fftDataRef.current;
+                  const seq = ++generatorRequestSeqRef.current;
+                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data);
+              }
           }
 
           if (frameIndexesRef.current[workerId] !== targetIndex || !liveFramesRef.current[workerId]) {
@@ -3522,7 +3530,7 @@ function App() {
       }
   };
 
-  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params, seq, isAutoUpdate = false, isLive = false) => {
+  const regenerateGeneratorClip = async (layerIndex, colIndex, generatorDefinition, params, seq, isAutoUpdate = false, isLive = false, audioData = null) => {
     // Create a complete params object to ensure stability
     const completeParams = { ...generatorDefinition.defaultParams, ...params };
     const clipKey = `${layerIndex}-${colIndex}`;
@@ -3577,6 +3585,7 @@ function App() {
       generator: generatorDefinition,
       params: completeParams, // Pass the complete params
       fontBuffer, 
+      audioData,
       seq, // Pass sequence number
       isAutoUpdate,
       isLive

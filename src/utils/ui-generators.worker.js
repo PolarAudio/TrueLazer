@@ -1,13 +1,14 @@
-import { generateCircle, generateSquare, generateTriangle, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave } from './generators.js';
+import { generateCircle, generateSquare, generateTriangle, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave, generateWaveform } from './generators.js';
 
 self.onmessage = async (event) => {
-  const { type, layerIndex, colIndex, generator, params } = event.data;
+  const { type, layerIndex, colIndex, generator, params, audioData } = event.data;
   // 'generator' here is the full generatorDefinition from App.jsx
 
   try {
     let frames;
     // Use incoming params if they exist, otherwise fall back to defaults
     let currentParams = params || generator.defaultParams;
+    if (audioData) currentParams = { ...currentParams, audioData };
 
     switch (type) {
       case 'generate': // Change this from 'generate-frame'
@@ -39,6 +40,9 @@ self.onmessage = async (event) => {
               break;
             case 'sinewave':
               frames = [generateSinewave(currentParams)];
+              break;
+            case 'waveform':
+              frames = [generateWaveform(currentParams)];
               break;
             default:
               frames = [{ points: [] }];

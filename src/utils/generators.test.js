@@ -69,3 +69,44 @@ describe('generateTriangle', () => {
     expect(d20).toBeCloseTo(size, 5);
   });
 });
+
+describe('generateWaveform', () => {
+  it('should generate points for bars mode', () => {
+    const params = {
+      mode: 'bars',
+      numBins: 10,
+      width: 2,
+      height: 1,
+      audioData: new Uint8Array(10).fill(255)
+    };
+    const result = import('./generators').then(m => m.generateWaveform(params));
+    // Each bar has 2 jump points (blanked) + 2 line points = 4 points per bin
+    return result.then(res => {
+        expect(res.points.length).toBe(40);
+    });
+  });
+
+  it('should generate points for waveform mode', () => {
+    const params = {
+      mode: 'waveform',
+      numBins: 50,
+      audioData: new Uint8Array(50).fill(128)
+    };
+    const result = import('./generators').then(m => m.generateWaveform(params));
+    return result.then(res => {
+        expect(res.points.length).toBe(50);
+    });
+  });
+
+  it('should generate points for spectrum mode', () => {
+    const params = {
+      mode: 'spectrum',
+      numBins: 32,
+      audioData: new Uint8Array(32).fill(100)
+    };
+    const result = import('./generators').then(m => m.generateWaveform(params));
+    return result.then(res => {
+        expect(res.points.length).toBe(32);
+    });
+  });
+});

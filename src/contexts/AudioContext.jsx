@@ -22,6 +22,7 @@ export const AudioProvider = ({ children }) => {
 
     const [fftLevels, setFftLevels] = useState({ low: 0, mid: 0, high: 0 });
     const fftDataRef = useRef(new Uint8Array(0));
+    const timeDataRef = useRef(new Uint8Array(0));
     const levelsRef = useRef({ low: 0, mid: 0, high: 0 });
     const lastLevelsRef = useRef({ 
         low: 0, mid: 0, high: 0, 
@@ -217,6 +218,7 @@ export const AudioProvider = ({ children }) => {
         node.fftSize = 2048; // Increased for better resolution, especially if 'peak' mode is used
         node.smoothingTimeConstant = fftSettings.smoothingTimeConstant;
         fftDataRef.current = new Uint8Array(node.frequencyBinCount);
+        timeDataRef.current = new Uint8Array(node.frequencyBinCount);
         
         if (ctx.state === 'suspended') {
             await ctx.resume();
@@ -286,6 +288,7 @@ export const AudioProvider = ({ children }) => {
         let animationFrameId;
         const analyze = () => {
             analyser.getByteFrequencyData(fftDataRef.current);
+            analyser.getByteTimeDomainData(timeDataRef.current);
             
             const sampleRate = audioCtx.sampleRate;
             const binCount = analyser.frequencyBinCount;
@@ -374,6 +377,8 @@ export const AudioProvider = ({ children }) => {
             setFftSettings,
             fftLevels: levelsRef.current, // Keep for React components
             fftLevelsRef: levelsRef, // Add this for animation loops
+            fftDataRef: fftDataRef, // Expose raw FFT data array
+            timeDataRef: timeDataRef, // Expose raw time-domain data array
             getFftLevels: () => levelsRef.current, // Add helper
             connectMediaElement,
             initAudio,
