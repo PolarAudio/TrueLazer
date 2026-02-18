@@ -41,4 +41,31 @@ describe('generateTriangle', () => {
     expect(result.points[2]).toMatchObject({ x: 1, y: 2 });
     expect(result.points[3]).toMatchObject({ x: 0, y: 0 });
   });
+
+  it('should generate an equilateral triangle when size is provided', () => {
+    const size = 2;
+    const params = {
+      size: size,
+      pointDensity: 1,
+      x: 0,
+      y: 0
+    };
+    const result = generateTriangle(params);
+    
+    // Calculate distances between vertices
+    const p0 = result.points[0];
+    const p1 = result.points[1];
+    const p2 = result.points[2];
+
+    const dist = (a, b) => Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+
+    const d01 = dist(p0, p1);
+    const d12 = dist(p1, p2);
+    const d20 = dist(p2, p0);
+
+    // All sides should be equal to 'size'
+    expect(d01).toBeCloseTo(size, 5);
+    expect(d12).toBeCloseTo(size, 5);
+    expect(d20).toBeCloseTo(size, 5);
+  });
 });

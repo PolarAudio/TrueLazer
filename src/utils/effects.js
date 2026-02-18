@@ -483,20 +483,48 @@ function applyStrobe(points, numPoints, params, time) {
 }
 
 function applyMirror(points, numPoints, params) {
-  const { mode, additive = true } = params;
+  const { mode, additive = true, axisOffset = 0, planeRotation = 0 } = params;
   if (mode === 'none' || numPoints === 0) return points;
   
-  let newBuffer;
-  const distributions = points._channelDistributions;
+  const angleRad = planeRotation * Math.PI / 180;
 
-  const filterPoint = (x, y, mode) => {
+  const rotatePoint = (x, y, angle) => {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      return { x: x * cos - y * sin, y: x * sin + y * cos };
+  };
+
+  const getMirroredCoords = (x, y) => {
+      let px = x, py = y;
+      if (angleRad !== 0) {
+          const rot = rotatePoint(x, y, -angleRad);
+          px = rot.x; py = rot.y;
+      }
+      if (mode === 'x-' || mode === 'x+') px = 2 * axisOffset - px;
+      else if (mode === 'y-' || mode === 'y+') py = 2 * axisOffset - py;
+      if (angleRad !== 0) {
+          const rot = rotatePoint(px, py, angleRad);
+          px = rot.x; py = rot.y;
+      }
+      return { x: px, y: py };
+  };
+
+  const filterPoint = (x, y) => {
       if (additive) return true;
-      if (mode === 'x+') return x >= 0;
-      if (mode === 'x-') return x <= 0;
-      if (mode === 'y+') return y >= 0;
-      if (mode === 'y-') return y <= 0;
+      let px = x, py = y;
+      if (angleRad !== 0) {
+          const rot = rotatePoint(x, y, -angleRad);
+          px = rot.x; py = rot.y;
+      }
+      if (mode === 'x+') return px >= axisOffset;
+      if (mode === 'x-') return px <= axisOffset;
+      if (mode === 'y+') return py >= axisOffset;
+      if (mode === 'y-') return py <= axisOffset;
       return true;
   };
+
+  let newBuffer;
+  const distributions = points._channelDistributions;
 
   if (distributions) {
       newBuffer = new Float32Array((numPoints * 2 + distributions.size * 2 + 50) * 8);
@@ -513,7 +541,7 @@ function applyMirror(points, numPoints, params) {
           // 1. Original (filtered)
           for (let i = 0; i < sliceNumPoints; i++) {
               const off = sliceStart + i * 8;
-              const isIn = filterPoint(points[off], points[off+1], mode);
+              const isIn = filterPoint(points[off], points[off+1]);
               if (isIn) {
                   if (!lastWasIn && keptInSlice > 0) {
                       newBuffer.set(points.subarray(off, off + 8), currentOffset);
@@ -530,32 +558,43 @@ function applyMirror(points, numPoints, params) {
           }
 
           if (keptInSlice > 0) {
-              // 2. Bridge
+              // 2. Bridge (at current position, blanked)
               const lastKeptOff = currentOffset - 8;
               newBuffer.set(newBuffer.subarray(lastKeptOff, lastKeptOff + 8), currentOffset);
               newBuffer[currentOffset + 6] = 1;
               newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
               currentOffset += 8;
 
-              // 3. Mirrored
+              // 3. Mirrored (with shifted blanking)
               let lastWasInMirror = true;
               let mirrorKeptCount = 0;
               for (let i = sliceNumPoints - 1; i >= 0; i--) {
                   const off = sliceStart + i * 8;
-                  const isIn = filterPoint(points[off], points[off+1], mode);
+                  const isIn = filterPoint(points[off], points[off+1]);
                   if (isIn) {
+                      // Bridge within mirrored part (if a point was filtered out)
                       if (!lastWasInMirror && mirrorKeptCount > 0) {
                           newBuffer.set(points.subarray(off, off + 8), currentOffset);
-                          if (mode === 'x-' || mode === 'x+') newBuffer[currentOffset] = -newBuffer[currentOffset];
-                          else if (mode === 'y-' || mode === 'y+') newBuffer[currentOffset+1] = -newBuffer[currentOffset+1];
+                          const m = getMirroredCoords(newBuffer[currentOffset], newBuffer[currentOffset+1]);
+                          newBuffer[currentOffset] = m.x; newBuffer[currentOffset+1] = m.y;
                           newBuffer[currentOffset + 6] = 1;
                           newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
                           currentOffset += 8;
                       }
+
                       newBuffer.set(points.subarray(off, off + 8), currentOffset);
                       const dstOff = currentOffset;
-                      if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
-                      else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff+1] = -newBuffer[dstOff+1];
+                      const m = getMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
+                      newBuffer[dstOff] = m.x; newBuffer[dstOff+1] = m.y;
+                      
+                      // BLANKING SHIFT: Mirrored segment blanking comes from the original's next point
+                      if (i === sliceNumPoints - 1) {
+                          newBuffer[dstOff + 6] = 1; // First mirrored point always blanked
+                          newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0;
+                      } else {
+                          newBuffer[dstOff + 6] = points[off + 8 + 6];
+                      }
+
                       currentOffset += 8;
                       mirrorKeptCount++;
                   }
@@ -576,7 +615,7 @@ function applyMirror(points, numPoints, params) {
 
       for (let i = 0; i < numPoints; i++) {
           const off = i * 8;
-          const isIn = filterPoint(points[off], points[off+1], mode);
+          const isIn = filterPoint(points[off], points[off+1]);
           if (isIn) {
               if (!lastWasIn && keptPoints > 0) {
                   newBuffer.set(points.subarray(off, off + 8), currentOffset);
@@ -593,30 +632,43 @@ function applyMirror(points, numPoints, params) {
       }
 
       if (keptPoints > 0) {
+          // 2. Bridge (at current position, blanked)
           const lastKeptOff = currentOffset - 8;
           newBuffer.set(newBuffer.subarray(lastKeptOff, lastKeptOff + 8), currentOffset);
-          newBuffer[currentOffset+6] = 1;
-          newBuffer[currentOffset+3] = 0; newBuffer[currentOffset+4] = 0; newBuffer[currentOffset+5] = 0;
+          newBuffer[currentOffset + 6] = 1;
+          newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
           currentOffset += 8;
 
+          // 3. Mirrored (with shifted blanking)
           let lastWasInMirror = true;
           let mirrorKeptCount = 0;
           for (let i = numPoints - 1; i >= 0; i--) {
               const off = i * 8;
-              const isIn = filterPoint(points[off], points[off+1], mode);
+              const isIn = filterPoint(points[off], points[off+1]);
               if (isIn) {
+                  // Bridge within mirrored part (if a point was filtered out)
                   if (!lastWasInMirror && mirrorKeptCount > 0) {
                       newBuffer.set(points.subarray(off, off + 8), currentOffset);
-                      if (mode === 'x-' || mode === 'x+') newBuffer[currentOffset] = -newBuffer[currentOffset];
-                      else if (mode === 'y-' || mode === 'y+') newBuffer[currentOffset + 1] = -newBuffer[currentOffset + 1];
+                      const m = getMirroredCoords(newBuffer[currentOffset], newBuffer[currentOffset+1]);
+                      newBuffer[currentOffset] = m.x; newBuffer[currentOffset+1] = m.y;
                       newBuffer[currentOffset+6] = 1;
                       newBuffer[currentOffset+3] = 0; newBuffer[currentOffset+4] = 0; newBuffer[currentOffset+5] = 0;
                       currentOffset += 8;
                   }
+
                   newBuffer.set(points.subarray(off, off + 8), currentOffset);
                   const dstOff = currentOffset;
-                  if (mode === 'x-' || mode === 'x+') newBuffer[dstOff] = -newBuffer[dstOff];
-                  else if (mode === 'y-' || mode === 'y+') newBuffer[dstOff + 1] = -newBuffer[dstOff + 1];
+                  const m = getMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
+                  newBuffer[dstOff] = m.x; newBuffer[dstOff+1] = m.y;
+
+                  // BLANKING SHIFT: Mirrored segment blanking comes from the original's next point
+                  if (i === numPoints - 1) {
+                      newBuffer[dstOff + 6] = 1; // First mirrored point always blanked
+                      newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0;
+                  } else {
+                      newBuffer[dstOff + 6] = points[off + 8 + 6];
+                  }
+
                   currentOffset += 8;
                   mirrorKeptCount++;
               }
@@ -686,10 +738,12 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
         for (let i = 0; i < numPoints; i++) {
             let step = 0;
             const norm = i / numPoints;
-            if (delayDirection === 'left_to_right') step = Math.floor(norm * (steps - 1));
-            else if (delayDirection === 'right_to_left') step = Math.floor((1 - norm) * (steps - 1));
-            else if (delayDirection === 'center_to_out') step = Math.floor(Math.abs(norm - 0.5) * 2 * (steps - 1));
-            else if (delayDirection === 'out_to_center') step = Math.floor((1 - Math.abs(norm - 0.5) * 2) * (steps - 1));
+            if (delayDirection === 'left_to_right') step = Math.floor(norm * steps);
+            else if (delayDirection === 'right_to_left') step = Math.floor((1 - norm) * steps);
+            else if (delayDirection === 'center_to_out') step = Math.floor(Math.abs(norm - 0.5) * 2 * steps);
+            else if (delayDirection === 'out_to_center') step = Math.floor((1 - Math.abs(norm - 0.5) * 2) * steps);
+            step = Math.min(steps - 1, Math.max(0, step));
+
             const idx = step * delayAmount;
             const echo = (idx < history.length) ? history[idx] : null;
             const factor = Math.pow(decay, step);
@@ -712,19 +766,36 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
                 newPoints[off+3] = echo[echoOff+3] * factor; 
                 newPoints[off+4] = echo[echoOff+4] * factor; 
                 newPoints[off+5] = echo[echoOff+5] * factor;
-                newPoints[off+6] = echo[echoOff+6]; 
+                
+                // CRITICAL: Preserve blanking from current frame (e.g. Mirror bridges) 
+                // OR use the blanking from the echo frame.
+                const inputBlanked = points[off+6] > 0.5;
+                newPoints[off+6] = inputBlanked ? 1 : echo[echoOff+6]; 
+                if (newPoints[off+6] > 0.5) {
+                    newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0;
+                }
+
                 newPoints[off+7] = echo[echoOff+7];
 
-                // Detect boundary with next point to force blanking
-                if (i < numPoints - 1) {
-                    const nextNorm = (i + 1) / numPoints;
-                    let nextStep = 0;
-                    if (delayDirection === 'left_to_right') nextStep = Math.floor(nextNorm * (steps - 1));
-                    else if (delayDirection === 'right_to_left') nextStep = Math.floor((1 - nextNorm) * (steps - 1));
-                    else if (delayDirection === 'center_to_out') nextStep = Math.floor(Math.abs(nextNorm - 0.5) * 2 * (steps - 1));
-                    else if (delayDirection === 'out_to_center') nextStep = Math.floor((1 - Math.abs(nextNorm - 0.5) * 2) * (steps - 1));
-                    if (nextStep !== step) {
-                        newPoints[off+6] = 1; // Force blanking at the step transition
+                // 2-POINT BLANKING BRIDGE for step transitions
+                if (i > 0) {
+                    const prevNorm = (i - 1) / numPoints;
+                    let prevStep = 0;
+                    if (delayDirection === 'left_to_right') prevStep = Math.floor(prevNorm * steps);
+                    else if (delayDirection === 'right_to_left') prevStep = Math.floor((1 - prevNorm) * steps);
+                    else if (delayDirection === 'center_to_out') prevStep = Math.floor(Math.abs(prevNorm - 0.5) * 2 * steps);
+                    else if (delayDirection === 'out_to_center') prevStep = Math.floor((1 - Math.abs(prevNorm - 0.5) * 2) * steps);
+                    prevStep = Math.min(steps - 1, Math.max(0, prevStep));
+                    
+                    if (prevStep !== step) {
+                        // 1. Blank the destination point
+                        newPoints[off+6] = 1; 
+                        newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0;
+
+                        // 2. Blank the source point (previous point)
+                        const prevOff = (i - 1) * 8;
+                        newPoints[prevOff+6] = 1;
+                        newPoints[prevOff+3] = 0; newPoints[prevOff+4] = 0; newPoints[prevOff+5] = 0;
                     }
                 }
             } else {
@@ -829,20 +900,34 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             
             const off = i * 8;
             newPoints.set(points.subarray(off, off + 8), off);
+            
+            // Apply chase intensity
             newPoints[off+3] *= intensity; newPoints[off+4] *= intensity; newPoints[off+5] *= intensity;
-            if (intensity < 0.05) newPoints[off+6] = 1;
+            
+            // CRITICAL: Preserve blanking if the current point is already blanked (e.g. Mirror bridge)
+            if (intensity < 0.05 || points[off+6] > 0.5) {
+                newPoints[off+6] = 1;
+                newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0;
+            }
 
-            // Detect boundary
-            if (i < numPoints - 1) {
-                const nextNorm = (i + 1) / numPoints;
-                let nextStepIndex = 0;
-                if (direction === 'left_to_right') nextStepIndex = Math.min(steps - 1, Math.floor(nextNorm * steps));
-                else if (direction === 'right_to_left') nextStepIndex = Math.min(steps - 1, Math.floor((1 - nextNorm) * steps));
-                else if (direction === 'center_to_out') nextStepIndex = Math.min(steps - 1, Math.floor(Math.abs(nextNorm - 0.5) * 2 * steps));
-                else if (direction === 'out_to_center') nextStepIndex = Math.min(steps - 1, Math.floor((1 - Math.abs(nextNorm - 0.5) * 2) * steps));
+            // 2-POINT BLANKING BRIDGE for chase step transitions
+            if (i > 0) {
+                const prevNorm = (i - 1) / numPoints;
+                let prevStepIndex = 0;
+                if (direction === 'left_to_right') prevStepIndex = Math.min(steps - 1, Math.floor(prevNorm * steps));
+                else if (direction === 'right_to_left') prevStepIndex = Math.min(steps - 1, Math.floor((1 - prevNorm) * steps));
+                else if (direction === 'center_to_out') prevStepIndex = Math.min(steps - 1, Math.floor(Math.abs(prevNorm - 0.5) * 2 * steps));
+                else if (direction === 'out_to_center') prevStepIndex = Math.min(steps - 1, Math.floor((1 - Math.abs(prevNorm - 0.5) * 2) * steps));
                 
-                if (nextStepIndex !== stepIndex) {
-                    newPoints[off + 6] = 1; // Mark boundary
+                if (prevStepIndex !== stepIndex) {
+                    // 1. Blank the destination point
+                    newPoints[off+6] = 1; 
+                    newPoints[off+3] = 0; newPoints[off+4] = 0; newPoints[off+5] = 0;
+
+                    // 2. Blank the source point (previous point)
+                    const prevOff = (i - 1) * 8;
+                    newPoints[prevOff+6] = 1;
+                    newPoints[prevOff+3] = 0; newPoints[prevOff+4] = 0; newPoints[prevOff+5] = 0;
                 }
             }
         }

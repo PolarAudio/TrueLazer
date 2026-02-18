@@ -234,10 +234,14 @@ export const effectDefinitions = [
     defaultParams: {
       mode: 'none', 
       additive: true,
+      axisOffset: 0,
+      planeRotation: 0,
     },
     paramControls: [
       { id: 'mode', label: 'Mirror Mode', type: 'select', options: ['none', 'x+', 'x-', 'y+', 'y-'] },
       { id: 'additive', label: 'Additive', type: 'checkbox' },
+      { id: 'axisOffset', label: 'Axis Offset', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'planeRotation', label: 'Plane Rotation', type: 'range', min: 0, max: 360, step: 1 },
     ],
   },
 ];

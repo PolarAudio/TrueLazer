@@ -278,7 +278,7 @@ export function generateTriangle(params) {
     });
 
     const w = size !== null ? size : width;
-    const h = size !== null ? size : height;
+    const h = size !== null ? (w * Math.sqrt(3) / 2) : height;
 
     const corners = [
       { x: -w / 2 + x, y: -h / 2 + y }, // Bottom-left
