@@ -71,18 +71,26 @@ describe('generateTriangle', () => {
 });
 
 describe('generateWaveform', () => {
-  it('should generate points for bars mode', () => {
+  it('should generate points for bars mode with freqRange', () => {
     const params = {
       mode: 'bars',
-      numBins: 10,
+      numBins: 2,
       width: 2,
       height: 1,
-      audioData: new Uint8Array(10).fill(255)
+      freqRange: [0.5, 1.0],
+      audioData: new Uint8Array([0, 0, 255, 255]) // 4 bins
     };
     const result = import('./generators').then(m => m.generateWaveform(params));
-    // Each bar has 2 jump points (blanked) + 2 line points = 4 points per bin
+    // freqRange [0.5, 1.0] means indices [2, 3] which are both 255.
+    // numBins 2 means it will sample index 2 and index 3.
     return result.then(res => {
-        expect(res.points.length).toBe(40);
+        expect(res.points.length).toBe(8); // 4 points per bin * 2 bins
+        // Check Y coordinates of peak points (bar ends)
+        // Offset is dataIdx 2 and 3. Both are 255.
+        // val = (255/255) * 1 = 1.0
+        // y = -0.5 + 1.0 = 0.5
+        expect(res.points[2].y).toBeCloseTo(0.5);
+        expect(res.points[6].y).toBeCloseTo(0.5);
     });
   });
 

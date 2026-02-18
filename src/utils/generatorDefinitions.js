@@ -344,6 +344,7 @@ export const generatorDefinitions = [
       width: 2.0,
       height: 1.0,
       numBins: 32,
+      freqRange: [0, 1],
       x: 0,
       y: 0,
       r: 255,
@@ -359,6 +360,7 @@ export const generatorDefinitions = [
           { label: 'Waveform (Osc)', value: 'waveform' },
           { label: 'Spectrum Line', value: 'spectrum' }
       ]},
+      { id: 'freqRange', label: 'Frequency Range', type: 'range', min: 0, max: 1, step: 0.01, isRange: true, default: [0, 1], showIf: { mode: ['bars', 'spectrum'] } },
       { id: 'numBins', label: 'Resolution', type: 'range', min: 8, max: 128, step: 1 },
       { id: 'width', label: 'Width', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
       { id: 'height', label: 'Height', type: 'range', min: 0.1, max: 2.0, step: 0.01 },

@@ -613,11 +613,12 @@ export function generateSinewave(params) {
  */
 export function generateWaveform(params) {
     try {
-        const { mode, width, height, numBins, x, y, r, g, b, audioData } = withDefaults(params, {
+        const { mode, width, height, numBins, freqRange, x, y, r, g, b, audioData } = withDefaults(params, {
             mode: 'bars',
             width: 2.0,
             height: 1.0,
             numBins: 32,
+            freqRange: [0, 1],
             x: 0,
             y: 0,
             r: 255,
@@ -631,12 +632,21 @@ export function generateWaveform(params) {
         const data = audioData || new Uint8Array(numBins).fill(mode === 'waveform' ? 128 : 0);
         const dataLen = data.length;
 
+        // Calculate start and end indices based on freqRange
+        let startIdx = 0;
+        let endIdx = dataLen;
+        if (mode !== 'waveform' && Array.isArray(freqRange) && freqRange.length === 2) {
+            startIdx = Math.floor(freqRange[0] * dataLen);
+            endIdx = Math.floor(freqRange[1] * dataLen);
+        }
+        const effectiveLen = Math.max(1, endIdx - startIdx);
+
         if (mode === 'bars') {
             // Candle Bar Mode
             for (let i = 0; i < numBins; i++) {
                 const t = i / (numBins - 1 || 1);
                 const curX = startX + t * width + x;
-                const dataIdx = Math.floor((i / numBins) * dataLen);
+                const dataIdx = startIdx + Math.floor((i / numBins) * effectiveLen);
                 const val = (data[dataIdx] / 255) * height;
 
                 // Vertical Bar: Bottom to Top
@@ -660,7 +670,7 @@ export function generateWaveform(params) {
             for (let i = 0; i < numBins; i++) {
                 const t = i / (numBins - 1 || 1);
                 const curX = startX + t * width + x;
-                const dataIdx = Math.floor((i / numBins) * dataLen);
+                const dataIdx = startIdx + Math.floor((i / numBins) * effectiveLen);
                 const val = (data[dataIdx] / 255) * height;
                 points.push({ x: curX, y: -height / 2 + val + y, r, g, b });
             }
