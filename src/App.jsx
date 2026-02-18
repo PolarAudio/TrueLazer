@@ -1534,6 +1534,7 @@ function App() {
 
   const lastFrameFetchTimeRef = useRef({});
   const frameIndexesRef = useRef({});
+  const workerLoadedFontsRef = useRef(new Set()); // Track fonts already sent to worker
 
   const [initialSettings, setInitialSettings] = useState(null);
   const [initialSettingsLoaded, setInitialSettingsLoaded] = useState(false);
@@ -3457,7 +3458,6 @@ function App() {
                 const key = `${layerIndex}-${colIndex}`;
                 const lastProcessed = latestProcessedSeqRef.current.get(key) || 0;
                 if (seq < lastProcessed) {
-                    console.log(`[App.jsx] Discarding stale response: seq ${seq} < ${lastProcessed}`);
                     return;
                 }
                 latestProcessedSeqRef.current.set(key, seq);
@@ -3548,9 +3548,10 @@ function App() {
     const clipKey = `${layerIndex}-${colIndex}`;
 
     let fontBuffer = null;
+    let fontUrl = null;
     if (['text', 'ndi-source', 'spout-receiver', 'timer'].includes(generatorDefinition.id)) {
       const defaultFontUrl = 'src/fonts/Geometr415 Blk BT Black.ttf';
-      let fontUrl = completeParams.fontUrl || defaultFontUrl;
+      fontUrl = completeParams.fontUrl || defaultFontUrl;
 
       // Migration for old projects with dead URLs
       const deadUrls = [
@@ -3596,13 +3597,17 @@ function App() {
       colIndex,
       generator: generatorDefinition,
       params: completeParams, // Pass the complete params
-      fontBuffer, 
+      fontBuffer: (fontUrl && !workerLoadedFontsRef.current.has(fontUrl)) ? fontBuffer : null, 
       audioData,
       context,
       seq, // Pass sequence number
       isAutoUpdate,
       isLive
     };
+
+    if (fontUrl && fontBuffer) {
+        workerLoadedFontsRef.current.add(fontUrl);
+    }
     
     // We only transfer the buffer if we just loaded it (it's not cached yet)
     // Actually, simpler to never transfer the font buffer as it's small and reusable.
@@ -3611,7 +3616,6 @@ function App() {
     // Throttling Logic
     if (generatorProcessingMap.current.get(clipKey)) {
         // Worker is busy for this clip, queue this request (replacing any previous pending)
-        console.log(`[App.jsx] Generator ${clipKey} busy, queuing seq ${seq}`);
         generatorPendingMap.current.set(clipKey, { message, transferables });
     } else {
         // Worker is free, send immediately

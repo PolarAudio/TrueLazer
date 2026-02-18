@@ -58,22 +58,7 @@ function applyRenderingStyle(points, params) {
 
 export async function generateText(params, fontBuffer) {
   try {
-    if (!fontBuffer) {
-      throw new Error('A font buffer is required to generate text.');
-    }
-    
-    const fontKey = `${fontBuffer.byteLength}_${new Uint8Array(fontBuffer.slice(0, 100)).join('')}`;
-    
-    let font = parsedFontCache.get(fontKey);
-    if (!font) {
-        font = opentype.parse(fontBuffer);
-        parsedFontCache.set(fontKey, font);
-        if (parsedFontCache.size > 10) {
-            const firstKey = parsedFontCache.keys().next().value;
-            parsedFontCache.delete(firstKey);
-        }
-    }
-    const { text, x, y, r, g, b, fontSize, numPoints } = withDefaults(params, {
+    const { text, x, y, r, g, b, fontSize, numPoints, fontUrl } = withDefaults(params, {
       text: 'TrueLazer',
       x: 0,
       y: 0.3,
@@ -83,6 +68,22 @@ export async function generateText(params, fontBuffer) {
       fontSize: 72,
       numPoints: 100
     });
+
+    const fontKey = fontUrl || (fontBuffer ? `${fontBuffer.byteLength}_${new Uint8Array(fontBuffer.slice(0, 100)).join('')}` : null);
+    if (!fontKey) {
+        throw new Error('A font buffer or URL is required to generate text.');
+    }
+    
+    let font = parsedFontCache.get(fontKey);
+    if (!font) {
+        if (!fontBuffer) throw new Error(`Font buffer missing for ${fontUrl} and not in cache.`);
+        font = opentype.parse(fontBuffer);
+        parsedFontCache.set(fontKey, font);
+        if (parsedFontCache.size > 10) {
+            const firstKey = parsedFontCache.keys().next().value;
+            parsedFontCache.delete(firstKey);
+        }
+    }
 
     const path = font.getPath(text, 0, 0, fontSize);
     const commands = path.commands;
@@ -542,7 +543,7 @@ export async function generateNdiSource(params, fontBuffer, ndiFrame = null) {
 
 export async function generateSpoutReceiver(params, fontBuffer) {
     try {
-        const { sourceName, x, y, r, g, b, scale } = withDefaults(params, {
+        const { sourceName, x, y, r, g, b, scale, fontUrl } = withDefaults(params, {
             sourceName: 'Spout Input',
             x: 0,
             y: 0,
@@ -557,7 +558,8 @@ export async function generateSpoutReceiver(params, fontBuffer) {
             text: sourceName || 'Spout Input',
             x, y, r, g, b,
             fontSize: 72 * scale,
-            numPoints: 100
+            numPoints: 100,
+            fontUrl
         };
         
         return await generateText(textParams, fontBuffer);
@@ -694,7 +696,7 @@ export function generateWaveform(params) {
  */
 export async function generateTimer(params, fontBuffer, context = {}) {
     try {
-        const { mode, format, startTime, x, y, r, g, b, fontSize, numPoints } = withDefaults(params, {
+        const { mode, format, startTime, x, y, r, g, b, fontSize, numPoints, fontUrl } = withDefaults(params, {
             mode: 'clock',
             format: 'MM:SS',
             startTime: 60, // 1 minute
@@ -744,7 +746,8 @@ export async function generateTimer(params, fontBuffer, context = {}) {
             text: timeStr,
             x, y, r, g, b,
             fontSize,
-            numPoints
+            numPoints,
+            fontUrl
         };
 
         return await generateText(textParams, fontBuffer);
