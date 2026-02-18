@@ -726,12 +726,12 @@ function applyMove(points, numPoints, params, time) {
 }
 
 function applyDelay(points, numPoints, params, effectStates, instanceId, context) {
-    const { mode = 'frame', delayAmount, decay, delayDirection, useCustomOrder, customOrder, playstyle = 'repeat', steps = 10 } = params;
+    const { mode = 'segment', delayAmount, decay, delayDirection, useCustomOrder, customOrder, playstyle = 'repeat', steps = 10 } = params;
     if (!effectStates.has(instanceId)) effectStates.set(instanceId, []);
     const history = effectStates.get(instanceId);
     history.unshift(new Float32Array(points));
 
-    if (mode === 'frame') {
+    if (mode === 'segment') {
         const maxHistory = delayAmount * steps + 1;
         if (history.length > maxHistory) history.length = maxHistory;
         const newPoints = new Float32Array(points.length);
@@ -805,6 +805,66 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
         }
         if (points._channelDistributions) newPoints._channelDistributions = points._channelDistributions;
         return newPoints;
+    } else if (mode === 'frame') {
+        const numEchoes = steps;
+        const maxHistory = delayAmount * numEchoes + 1;
+        if (history.length > maxHistory) history.length = maxHistory;
+
+        const echoes = [];
+        for (let k = 0; k < numEchoes; k++) {
+            const index = k * delayAmount;
+            const echoPoints = (index < history.length) ? history[index] : null;
+            echoes.push({
+                points: echoPoints,
+                factor: Math.pow(decay, k)
+            });
+        }
+
+        // Calculate total points needed: (original points * numEchoes) + (numEchoes - 1) bridges
+        const totalPointsPerEcho = points.length / 8;
+        const totalPointsNeeded = (totalPointsPerEcho * numEchoes) + (numEchoes > 0 ? numEchoes - 1 : 0);
+        const newPoints = new Float32Array(totalPointsNeeded * 8);
+        let currentOffset = 0;
+
+        for (let k = 0; k < echoes.length; k++) {
+            const echo = echoes[k];
+            const src = echo.points || points;
+            const factor = echo.factor;
+            const srcNumPoints = src.length / 8;
+
+            // Copy echo points
+            for (let i = 0; i < srcNumPoints; i++) {
+                const srcOff = i * 8;
+                const dstOff = currentOffset + i * 8;
+                newPoints[dstOff] = src[srcOff];
+                newPoints[dstOff+1] = src[srcOff+1];
+                newPoints[dstOff+2] = src[srcOff+2];
+                newPoints[dstOff+3] = src[srcOff+3] * factor;
+                newPoints[dstOff+4] = src[srcOff+4] * factor;
+                newPoints[dstOff+5] = src[srcOff+5] * factor;
+                newPoints[dstOff+6] = src[srcOff+6];
+                newPoints[dstOff+7] = src[srcOff+7];
+            }
+            currentOffset += srcNumPoints * 8;
+
+            // Add blanked bridge point after echo (except for the very last one)
+            if (k < echoes.length - 1) {
+                const lastSrcOff = (srcNumPoints - 1) * 8;
+                const bridgeOff = currentOffset;
+                newPoints[bridgeOff] = src[lastSrcOff];
+                newPoints[bridgeOff+1] = src[lastSrcOff+1];
+                newPoints[bridgeOff+2] = src[lastSrcOff+2];
+                newPoints[bridgeOff+3] = 0;
+                newPoints[bridgeOff+4] = 0;
+                newPoints[bridgeOff+5] = 0;
+                newPoints[bridgeOff+6] = 1;
+                newPoints[bridgeOff+7] = 0;
+                currentOffset += 8;
+            }
+        }
+
+        if (points._channelDistributions) newPoints._channelDistributions = points._channelDistributions;
+        return newPoints;
     } else {
         const { assignedDacs } = context || {};
         let channelDelayMap = new Map();
@@ -861,7 +921,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
-    const { mode = 'frame', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playstyle = 'loop' } = params;
+    const { mode = 'segment', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playstyle = 'loop' } = params;
     const { progress = 0, clipDuration = 1, syncSettings = {} } = context;
     
     // Check if THIS specific parameter ('speed') is synced
@@ -869,7 +929,7 @@ export function applyChase(points, numPoints, params, time, context = {}) {
     const isSpeedSynced = !!syncSettings[instancePrefix + 'speed'];
     const useSync = (progress !== undefined && clipDuration > 0) || isSpeedSynced;
 
-    if (mode === 'frame') {
+    if (mode === 'segment') {
         const steps = paramSteps;
         // If synced, map 0..1 progress to 0..steps. If free, map 1s to 1 step.
         let t = (useSync ? (progress * steps) : (time * 0.001)) * speed;

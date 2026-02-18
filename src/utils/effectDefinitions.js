@@ -150,7 +150,7 @@ export const effectDefinitions = [
     type: 'effect',
     description: 'Frame or Channel based delay effect.',
     defaultParams: {
-      mode: 'frame', // 'frame' or 'channel'
+      mode: 'segment', // 'segment', 'frame' or 'channel'
       playstyle: 'repeat', // 'once', 'repeat', 'bounce'
       useCustomOrder: false, 
       delayDirection: 'left_to_right', 
@@ -161,11 +161,11 @@ export const effectDefinitions = [
       enabled: true,
     },
     paramControls: [
-      { id: 'mode', label: 'Mode', type: 'select', options: ['frame', 'channel'] },
+      { id: 'mode', label: 'Mode', type: 'select', options: ['segment', 'frame', 'channel'] },
       { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat'] },
       { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox', showIf: { mode: 'channel' } },
       { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
-      { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 20, step: 1, showIf: { mode: 'frame' } },
+      { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 20, step: 1, showIf: { mode: ['segment', 'frame'] } },
       { id: 'delayAmount', label: 'Delay Time', type: 'range', min: 1, max: 60, step: 1 },
       { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
     ],

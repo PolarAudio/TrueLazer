@@ -72,3 +72,45 @@ describe('applyMirror', () => {
     expect(pts2[2].y).toBeCloseTo(-1);
   });
 });
+
+describe('applyDelay', () => {
+  const mockFrame = (points) => ({
+    points: new Float32Array(points.flatMap(p => [p.x, p.y, 0, 255, 255, 255, 0, 0])),
+    isTypedArray: true,
+    instanceId: 'test-delay'
+  });
+
+  const getPoints = (frame) => {
+    const pts = [];
+    for (let i = 0; i < frame.points.length / 8; i++) {
+      pts.push({ x: frame.points[i * 8], y: frame.points[i * 8 + 1] });
+    }
+    return pts;
+  };
+
+  it('should handle new frame mode by concatenating full history frames', () => {
+    const effectStates = new Map();
+    const effects = [{
+      id: 'delay',
+      instanceId: 'd1',
+      params: { mode: 'frame', delayAmount: 1, steps: 2, decay: 1.0, delayDirection: 'left_to_right' }
+    }];
+
+    // Frame 1: Point at (0,0)
+    const f1 = mockFrame([{ x: 0, y: 0 }]);
+    applyEffects(f1, effects, { effectStates });
+
+    // Frame 2: Point at (1,1)
+    const f2 = mockFrame([{ x: 1, y: 1 }]);
+    const result = applyEffects(f2, effects, { effectStates });
+    const pts = getPoints(result);
+
+    // In 'frame' mode with steps=2, output should be:
+    // [Frame 2 point, Bridge, Frame 1 point]
+    // Total 3 points
+    
+    expect(pts.length).toBe(3);
+    expect(pts[0].x).toBeCloseTo(1);
+    expect(pts[2].x).toBeCloseTo(0); 
+  });
+});
