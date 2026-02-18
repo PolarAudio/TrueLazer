@@ -707,8 +707,9 @@ export async function generateTimer(params, fontBuffer, context = {}) {
             numPoints: 100
         });
 
-        const now = context.time || performance.now();
-        const activationTime = context.activationTime || now;
+        const ctx = context || {};
+        const now = ctx.time || performance.now();
+        const activationTime = ctx.activationTime || now;
         const elapsedMs = now - activationTime;
         const elapsedSec = elapsedMs / 1000;
 

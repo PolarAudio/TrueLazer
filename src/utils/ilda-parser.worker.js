@@ -265,24 +265,6 @@ async function renderThumbnailToBitmap(points, width = 128, height = 128) {
         lastX = screenX;
         lastY = screenY;
     }
-
-    // Final Closure: If the last point is lit and close to the first point, draw the connection
-    if (points.length > 2) {
-        const pFirst = points[0];
-        const pLast = points[points.length - 1];
-        if (!pLast.blanking) {
-            const firstX = (pFirst.x + 1) * 0.5 * width;
-            const firstY = (1 - (pFirst.y + 1) * 0.5) * height;
-            const dist = Math.sqrt(Math.pow(firstX - lastX, 2) + Math.pow(firstY - lastY, 2));
-            if (dist < width * 0.02) { // 2% threshold
-                ctx.beginPath();
-                ctx.moveTo(lastX, lastY);
-                ctx.lineTo(firstX, firstY);
-                ctx.strokeStyle = `rgb(${pLast.r},${pLast.g},${pLast.b})`;
-                ctx.stroke();
-            }
-        }
-    }
     
     return canvas.transferToImageBitmap();
 }

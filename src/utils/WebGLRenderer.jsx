@@ -266,7 +266,7 @@ export class WebGLRenderer {
                                  newPts[i].b *= dacSettings.dimmer;
                              }
                          }
-                         processedFrame = { ...frame, points: newPts, isTypedArray: t };
+                         processedFrame = { ...frame, points: newPts, isTypedArray: isT };
                     }
                     frameToDraw = applyOutputProcessing(processedFrame, dacSettings);
                 }
@@ -393,7 +393,13 @@ export class WebGLRenderer {
 
           for (let i = 1; i < pointsToDraw; i++) {
             const point = getPointData(i);
-            if (point.blanking) {
+            
+            // Detect wrap-around the frame buffer
+            const currIdx = (startIndex + i) % numPoints;
+            const prevIdx = (startIndex + i - 1) % numPoints;
+            const isWrap = currIdx < prevIdx;
+
+            if (point.blanking || isWrap) {
               if (currentSegmentPositions.length > 0) {
                 this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
                 currentSegmentPositions = [];
@@ -456,6 +462,14 @@ export class WebGLRenderer {
 
       for (let i = 1; i < pointsToDraw; i++) {
         const point = getPointData(i);
+        
+        // Detect wrap-around
+        const isWrap = ((startIndex + i) % numPoints) < ((startIndex + i - 1) % numPoints);
+        if (isWrap) {
+            prevPoint = point;
+            continue;
+        }
+
         if (!point.blanking) {
           trianglePositions.push(0, 0, prevPoint.x, prevPoint.y, point.x, point.y);
           

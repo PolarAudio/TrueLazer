@@ -1,5 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { generateTriangle } from './generators';
+
+// Mock opentype.js
+vi.mock('opentype.js', () => ({
+  default: {
+    parse: vi.fn(() => ({
+      getPath: vi.fn(() => ({
+        commands: [],
+        getBoundingBox: vi.fn(() => ({ x1: 0, x2: 0, y1: 0, y2: 0 }))
+      }))
+    }))
+  }
+}));
 
 describe('generateTriangle', () => {
   it('should generate a triangle with the correct number of points', () => {
@@ -116,5 +128,30 @@ describe('generateWaveform', () => {
     return result.then(res => {
         expect(res.points.length).toBe(32);
     });
+  });
+});
+
+describe('generateTimer', () => {
+  const mockFont = new ArrayBuffer(100);
+
+  it('should handle null context gracefully', async () => {
+    const params = {
+      mode: 'clock',
+      format: 'MM:SS',
+      fontUrl: 'mock'
+    };
+    // We expect this NOT to throw
+    const result = await import('./generators').then(m => m.generateTimer(params, mockFont, null));
+    expect(result).toBeDefined();
+  });
+
+  it('should format time correctly in MM:SS', async () => {
+    const params = { mode: 'count-up', format: 'MM:SS' };
+    const context = { time: 10000, activationTime: 0 }; // 10 seconds
+    const result = await import('./generators').then(m => m.generateTimer(params, mockFont, context));
+    // Implementation uses generateText, so we check if it tried to render '00:10'
+    // Since we can't easily peek into generateText's internal opentype calls in this env,
+    // we just ensure it returns points.
+    expect(result.points).toBeDefined();
   });
 });

@@ -1195,6 +1195,34 @@ const ShapeBuilder = ({ onBack }) => {
       return newPoints;
   };
 
+  const toggleShapeClosure = () => {
+    if (selectedShapeIndexes.length === 0) return;
+    
+    const newFrames = [...frames];
+    const currentShapes = [...newFrames[currentFrameIndex]];
+    let changed = false;
+
+    selectedShapeIndexes.forEach(idx => {
+        const shape = { ...currentShapes[idx] };
+        if (shape.type === 'polyline') {
+            shape.type = 'polygon';
+            currentShapes[idx] = shape;
+            changed = true;
+        } else if (shape.type === 'polygon') {
+            shape.type = 'polyline';
+            currentShapes[idx] = shape;
+            changed = true;
+        }
+    });
+
+    if (changed) {
+        newFrames[currentFrameIndex] = currentShapes;
+        setFrames(newFrames);
+        recordHistory(newFrames);
+    }
+    setContextMenu({ visible: false, x: 0, y: 0, target: null });
+  };
+
   const subdivideShape = (smooth = false) => {
       if (selectedShapeIndexes.length === 0) return;
       
@@ -1203,11 +1231,16 @@ const ShapeBuilder = ({ onBack }) => {
       let changed = false;
 
       // Helper to check if a segment between i and i+1 should be subdivided
-      const shouldSubdivideSegment = (i, len, selectedIndices) => {
-          if (!selectedIndices || selectedIndices.length === 0) return true; // No selection -> all
+      const shouldSubdivideSegment = (i, len, selectedIndices, selectedSegIndices) => {
+          // If NO point AND NO segment selection for this shape, return true (full shape mode)
+          if (selectedIndices.length === 0 && selectedSegIndices.length === 0) return true;
+          
+          // Check if segment is explicitly selected
+          if (selectedSegIndices.includes(i)) return true;
+
+          // Check if both points of the segment are selected
           const idx1 = i;
           const idx2 = (i + 1) % len;
-          // Check if both points of the segment are selected
           return selectedIndices.includes(idx1) && selectedIndices.includes(idx2);
       };
 
@@ -1216,19 +1249,22 @@ const ShapeBuilder = ({ onBack }) => {
           
           // Get selected point indices for this shape
           let selectedIndices = [];
-          if (selectedPointIndexes.length > 0) {
-              selectedPointIndexes.forEach(p => {
-                  const path = Array.isArray(p) ? p : [p];
-                  // Assuming top level shape or need recursive check? 
-                  // For simple shapes, path is [index].
-                  // For now let's handle simple top level shapes.
-                  if (path.length === 1) selectedIndices.push(path[0]);
-              });
-          }
+          selectedPointIndexes.forEach(p => {
+              const path = Array.isArray(p) ? p : [p];
+              if (path.length === 1) selectedIndices.push(path[0]);
+          });
+
+          // Get selected segment indices for this shape
+          let selectedSegIndices = [];
+          selectedSegmentIndexes.forEach(s => {
+              const path = Array.isArray(s) ? s : [s];
+              if (path.length === 1) selectedSegIndices.push(path[0]);
+          });
 
           if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
-              // Custom subdivision logic based on selection
-              if (selectedIndices.length > 0) {
+              const hasSelection = selectedIndices.length > 0 || selectedSegIndices.length > 0;
+              
+              if (hasSelection) {
                   const oldPts = shape.points;
                   const newPts = [];
                   const closed = shape.type === 'polygon';
@@ -1242,17 +1278,15 @@ const ShapeBuilder = ({ onBack }) => {
                       
                       newPts.push(oldPts[i]);
                       
-                      if (shouldSubdivideSegment(i, len, selectedIndices)) {
+                      if (shouldSubdivideSegment(i, len, selectedIndices, selectedSegIndices)) {
                           const p1 = oldPts[i];
                           const p2 = oldPts[(i + 1) % len];
                           
                           if (smooth) {
-                              // Catmull-Rom logic for single point insert
                               const getP = (k) => oldPts[(k + len) % len];
                               const p0 = closed ? getP(i - 1) : (i > 0 ? oldPts[i - 1] : p1); 
                               const p3 = closed ? getP(i + 2) : (i < len - 2 ? oldPts[i + 2] : p2);
 
-                              // Same weights as before for t=0.5
                               const w0 = -0.0625, w1 = 0.5625, w2 = 0.5625, w3 = -0.0625;
                               const x = w0 * p0.x + w1 * p1.x + w2 * p2.x + w3 * p3.x;
                               const y = w0 * p0.y + w1 * p1.y + w2 * p2.y + w3 * p3.y;
@@ -1275,16 +1309,34 @@ const ShapeBuilder = ({ onBack }) => {
                   changed = true;
               }
           } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect') {
-              // Convert to polygon first
+              // ... existing logic for primitives ...
+              const hasSelection = selectedIndices.length > 0 || selectedSegIndices.length > 0;
               const sampled = getSampledPoints(shape);
-              const newShape = {
-                  type: 'polygon',
-                  color: shape.color,
-                  renderMode: shape.renderMode,
-                  points: subdividePoints(sampled, smooth, true), 
-                  rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
-              };
-              currentShapes[idx] = newShape;
+              
+              if (hasSelection) {
+                  // Convert to polygon and subdivide only selection
+                  const newPts = [];
+                  const len = sampled.length;
+                  for (let i = 0; i < len; i++) {
+                      newPts.push(sampled[i]);
+                      if (shouldSubdivideSegment(i, len, selectedIndices, selectedSegIndices)) {
+                          const p1 = sampled[i];
+                          const p2 = sampled[(i + 1) % len];
+                          if (smooth) {
+                              const getP = (k) => sampled[(k + len) % len];
+                              const p0 = getP(i - 1); const p3 = getP(i + 2);
+                              const x = -0.0625*p0.x + 0.5625*p1.x + 0.5625*p2.x - 0.0625*p3.x;
+                              const y = -0.0625*p0.y + 0.5625*p1.y + 0.5625*p2.y - 0.0625*p3.y;
+                              newPts.push({ x, y, color: p1.color });
+                          } else {
+                              newPts.push({ x: (p1.x+p2.x)/2, y: (p1.y+p2.y)/2, color: p1.color });
+                          }
+                      }
+                  }
+                  currentShapes[idx] = { ...shape, type: 'polygon', points: newPts, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
+              } else {
+                  currentShapes[idx] = { ...shape, type: 'polygon', points: subdividePoints(sampled, smooth, true), rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
+              }
               changed = true;
           }
       });
@@ -1307,11 +1359,27 @@ const ShapeBuilder = ({ onBack }) => {
           
           // Get selected point indices for this shape
           let selectedIndices = [];
-          if (selectedPointIndexes.length > 0) {
-              selectedPointIndexes.forEach(p => {
-                  const path = Array.isArray(p) ? p : [p];
-                  if (path.length === 1) selectedIndices.push(path[0]);
+          selectedPointIndexes.forEach(p => {
+              const path = Array.isArray(p) ? p : [p];
+              if (path.length === 1) selectedIndices.push(path[0]);
+          });
+
+          // Get selected segment indices for this shape
+          let selectedSegIndices = [];
+          selectedSegmentIndexes.forEach(s => {
+              const path = Array.isArray(s) ? s : [s];
+              if (path.length === 1) selectedSegIndices.push(path[0]);
+          });
+
+          // For decimation, if segments are selected, we treat their points as selected
+          if (selectedSegIndices.length > 0) {
+              const pts = (shape.type === 'polyline' || shape.type === 'polygon' || shape.type === 'pen') ? shape.points : getSampledPoints(shape);
+              selectedSegIndices.forEach(sIdx => {
+                  selectedIndices.push(sIdx);
+                  selectedIndices.push((sIdx + 1) % pts.length);
               });
+              // Deduplicate
+              selectedIndices = Array.from(new Set(selectedIndices));
           }
 
           if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
@@ -1362,6 +1430,7 @@ const ShapeBuilder = ({ onBack }) => {
           setFrames(newFrames);
           recordHistory(newFrames);
           if (selectedPointIndexes.length > 0) setSelectedPointIndexes([]);
+          if (selectedSegmentIndexes.length > 0) setSelectedSegmentIndexes([]);
       }
   };
 
@@ -3117,6 +3186,11 @@ const ShapeBuilder = ({ onBack }) => {
                     )}
                     {(contextMenu.target?.type === 'shape' || selectedShapeIndexes.length > 0) && (
                         <>
+                            {selectedShapeIndexes.some(idx => shapes[idx]?.type === 'polyline' || shapes[idx]?.type === 'polygon') && (
+                                <div className="menu-item" onClick={toggleShapeClosure}>
+                                    {selectedShapeIndexes.every(idx => shapes[idx]?.type === 'polygon') ? 'Open Shape' : 'Close Shape'}
+                                </div>
+                            )}
                             <div className="menu-item" onClick={() => subdivideShape(false)}>Subdivide (Linear)</div>
                             <div className="menu-item" onClick={() => subdivideShape(true)}>Subdivide (Smooth)</div>
                             <div className="menu-item" onClick={decimateShape}>Decimate</div>

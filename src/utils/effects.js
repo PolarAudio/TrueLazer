@@ -487,34 +487,40 @@ function applyMirror(points, numPoints, params) {
   if (mode === 'none' || numPoints === 0) return points;
   
   const angleRad = planeRotation * Math.PI / 180;
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
 
-  const rotatePoint = (x, y, angle) => {
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      return { x: x * cos - y * sin, y: x * sin + y * cos };
-  };
-
-  const getMirroredCoords = (x, y) => {
+  // Helper to mirror coordinates in place on a temporary point object
+  const tempCoord = { x: 0, y: 0 };
+  const updateMirroredCoords = (x, y) => {
       let px = x, py = y;
+      
+      // 1. Rotate to axis-aligned
       if (angleRad !== 0) {
-          const rot = rotatePoint(x, y, -angleRad);
-          px = rot.x; py = rot.y;
+          const rx = x * cosA + y * sinA;
+          const ry = -x * sinA + y * cosA;
+          px = rx; py = ry;
       }
+
+      // 2. Mirror
       if (mode === 'x-' || mode === 'x+') px = 2 * axisOffset - px;
       else if (mode === 'y-' || mode === 'y+') py = 2 * axisOffset - py;
+
+      // 3. Rotate back
       if (angleRad !== 0) {
-          const rot = rotatePoint(px, py, angleRad);
-          px = rot.x; py = rot.y;
+          const rx = px * cosA - py * sinA;
+          const ry = px * sinA + py * cosA;
+          px = rx; py = ry;
       }
-      return { x: px, y: py };
+      tempCoord.x = px; tempCoord.y = py;
   };
 
   const filterPoint = (x, y) => {
       if (additive) return true;
       let px = x, py = y;
       if (angleRad !== 0) {
-          const rot = rotatePoint(x, y, -angleRad);
-          px = rot.x; py = rot.y;
+          px = x * cosA + y * sinA;
+          py = -x * sinA + y * cosA;
       }
       if (mode === 'x+') return px >= axisOffset;
       if (mode === 'x-') return px <= axisOffset;
@@ -575,8 +581,8 @@ function applyMirror(points, numPoints, params) {
                       // Bridge within mirrored part (if a point was filtered out)
                       if (!lastWasInMirror && mirrorKeptCount > 0) {
                           newBuffer.set(points.subarray(off, off + 8), currentOffset);
-                          const m = getMirroredCoords(newBuffer[currentOffset], newBuffer[currentOffset+1]);
-                          newBuffer[currentOffset] = m.x; newBuffer[currentOffset+1] = m.y;
+                          updateMirroredCoords(newBuffer[currentOffset], newBuffer[currentOffset+1]);
+                          newBuffer[currentOffset] = tempCoord.x; newBuffer[currentOffset+1] = tempCoord.y;
                           newBuffer[currentOffset + 6] = 1;
                           newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
                           currentOffset += 8;
@@ -584,8 +590,8 @@ function applyMirror(points, numPoints, params) {
 
                       newBuffer.set(points.subarray(off, off + 8), currentOffset);
                       const dstOff = currentOffset;
-                      const m = getMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
-                      newBuffer[dstOff] = m.x; newBuffer[dstOff+1] = m.y;
+                      updateMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
+                      newBuffer[dstOff] = tempCoord.x; newBuffer[dstOff+1] = tempCoord.y;
                       
                       // BLANKING SHIFT: Mirrored segment blanking comes from the original's next point
                       if (i === sliceNumPoints - 1) {
@@ -649,8 +655,8 @@ function applyMirror(points, numPoints, params) {
                   // Bridge within mirrored part (if a point was filtered out)
                   if (!lastWasInMirror && mirrorKeptCount > 0) {
                       newBuffer.set(points.subarray(off, off + 8), currentOffset);
-                      const m = getMirroredCoords(newBuffer[currentOffset], newBuffer[currentOffset+1]);
-                      newBuffer[currentOffset] = m.x; newBuffer[currentOffset+1] = m.y;
+                      updateMirroredCoords(newBuffer[currentOffset], newBuffer[currentOffset+1]);
+                      newBuffer[currentOffset] = tempCoord.x; newBuffer[currentOffset+1] = tempCoord.y;
                       newBuffer[currentOffset+6] = 1;
                       newBuffer[currentOffset+3] = 0; newBuffer[currentOffset+4] = 0; newBuffer[currentOffset+5] = 0;
                       currentOffset += 8;
@@ -658,8 +664,8 @@ function applyMirror(points, numPoints, params) {
 
                   newBuffer.set(points.subarray(off, off + 8), currentOffset);
                   const dstOff = currentOffset;
-                  const m = getMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
-                  newBuffer[dstOff] = m.x; newBuffer[dstOff+1] = m.y;
+                  updateMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
+                  newBuffer[dstOff] = tempCoord.x; newBuffer[dstOff+1] = tempCoord.y;
 
                   // BLANKING SHIFT: Mirrored segment blanking comes from the original's next point
                   if (i === numPoints - 1) {
@@ -820,9 +826,13 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
             });
         }
 
-        // Calculate total points needed: (original points * numEchoes) + (numEchoes - 1) bridges
-        const totalPointsPerEcho = points.length / 8;
-        const totalPointsNeeded = (totalPointsPerEcho * numEchoes) + (numEchoes > 0 ? numEchoes - 1 : 0);
+        // Calculate precise total points needed by summing all echo sizes
+        let totalPointsNeeded = 0;
+        for (let k = 0; k < echoes.length; k++) {
+            const src = echoes[k].points || points;
+            totalPointsNeeded += (src.length / 8);
+            if (k < echoes.length - 1) totalPointsNeeded += 1; // Bridge
+        }
         const newPoints = new Float32Array(totalPointsNeeded * 8);
         let currentOffset = 0;
 
