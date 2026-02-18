@@ -1,14 +1,14 @@
 # Implementation Plan: DAC Grouping & Advanced MIDI Mapping (Track 2)
 
-## Phase 1: DAC Channel Grouping
-- [ ] Task: Implement DAC Group Data Structure
-    - [ ] Update `electron-store` schema in `main.js` to include `dacGroups`
-    - [ ] Create utility methods for adding/removing/renaming groups
-- [ ] Task: Create DAC Grouping UI
-    - [ ] Add "Groups" section to `DacPanel.jsx`
-    - [ ] Implement "Add to Group" and "Apply Group" functionality
-    - [ ] Verify quick-assignment logic correctly updates `layerAssignedDacs`
-- [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
+## Phase 1: DAC Channel Grouping [checkpoint: 66fcec8]
+- [x] Task: Implement DAC Group Data Structure
+    - [x] Update `electron-store` schema in `main.js` to include `dacGroups`
+    - [x] Create utility methods for adding/removing/renaming groups
+- [x] Task: Create DAC Grouping UI
+    - [x] Add "Groups" section to `DacPanel.jsx`
+    - [x] Implement "Add to Group" and "Apply Group" functionality
+    - [x] Verify quick-assignment logic correctly updates `layerAssignedDacs`
+- [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
 
 ## Phase 2: Multi-Mapping Engine Overhaul
 - [ ] Task: Update MIDI Mapping Data Structure
