@@ -1183,6 +1183,49 @@ function createWindow() {
       isRendererReadyForNdi = true;
   });
 
+  ipcMain.handle('get-presets', async (event, type, subType) => {
+    try {
+      // type: 'effect' or 'generator', subType: 'color', 'circle', etc.
+      const presetsPath = path.join(app.getPath('userData'), 'presets', type, subType);
+      await fs.promises.mkdir(presetsPath, { recursive: true });
+      const files = await fs.promises.readdir(presetsPath);
+      const presets = await Promise.all(files.filter(f => f.endsWith('.json')).map(async (file) => {
+        const content = await fs.promises.readFile(path.join(presetsPath, file), 'utf8');
+        return JSON.parse(content);
+      }));
+      return presets;
+    } catch (error) {
+      console.error('Error getting presets:', error);
+      return [];
+    }
+  });
+
+  ipcMain.handle('save-preset', async (event, type, subType, preset) => {
+    try {
+      const presetsPath = path.join(app.getPath('userData'), 'presets', type, subType);
+      await fs.promises.mkdir(presetsPath, { recursive: true });
+      const fileName = `${preset.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+      const filePath = path.join(presetsPath, fileName);
+      await fs.promises.writeFile(filePath, JSON.stringify(preset, null, 2));
+      return { success: true, filePath };
+    } catch (error) {
+      console.error('Error saving preset:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('delete-preset', async (event, type, subType, presetName) => {
+    try {
+      const fileName = `${presetName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+      const filePath = path.join(app.getPath('userData'), 'presets', type, subType, fileName);
+      await fs.promises.unlink(filePath);
+      return { success: true };
+    } catch (error) {
+      console.error('Error deleting preset:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('get-desktop-audio-source-id', async () => {
     const { desktopCapturer } = require('electron');
     const sources = await desktopCapturer.getSources({ types: ['screen'] });
