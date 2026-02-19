@@ -7,7 +7,7 @@
 - [x] Task: Implement Layer Footprint Logic
     - [x] Create a "fixed-patch" processor that maps Layer 1-5 to sequential footprints (start channel 11)
     - [x] Implement range-based clip triggers (0-10 Off, 11-20 Clip 1, etc.)
-- [~] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
 
 ## Phase 2: DMX Monitor & UI Enhancements
 - [ ] Task: Create DMX Monitor Component
