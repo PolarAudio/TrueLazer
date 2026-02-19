@@ -1,13 +1,23 @@
-import { generateCircle, generateSquare, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver } from './generators.js';
+import { generateCircle, generateSquare, generateTriangle, generateLine, generateText, generateStar, generateNdiSource, generateSpoutReceiver, generateSinewave, generateWaveform, generateTimer } from './generators.js';
+
+const fontCache = new Map(); // Cache font buffers by URL to avoid redundant copies
 
 self.onmessage = async (event) => {
-  const { type, layerIndex, colIndex, generator, params } = event.data;
+  const { type, layerIndex, colIndex, generator, params, audioData, context, fontBuffer } = event.data;
   // 'generator' here is the full generatorDefinition from App.jsx
 
   try {
     let frames;
     // Use incoming params if they exist, otherwise fall back to defaults
     let currentParams = params || generator.defaultParams;
+    if (audioData) currentParams = { ...currentParams, audioData };
+
+    // Font Caching Logic
+    const fontUrl = currentParams.fontUrl || generator?.defaultParams?.fontUrl;
+    if (fontBuffer) {
+        fontCache.set(fontUrl, fontBuffer);
+    }
+    const activeFontBuffer = fontBuffer || fontCache.get(fontUrl);
 
     switch (type) {
       case 'generate': // Change this from 'generate-frame'
@@ -19,20 +29,32 @@ self.onmessage = async (event) => {
             case 'square':
               frames = [generateSquare(currentParams)];
               break;
+            case 'triangle':
+              frames = [generateTriangle(currentParams)];
+              break;
             case 'line':
               frames = [generateLine(currentParams)];
               break;
             case 'text':
-              frames = [await generateText(currentParams, event.data.fontBuffer)];
+              frames = [await generateText(currentParams, activeFontBuffer)];
               break;
             case 'star':
               frames = [generateStar(currentParams)];
               break;
             case 'ndi-source':
-              frames = [await generateNdiSource(currentParams, event.data.fontBuffer, event.data.ndiFrame)];
+              frames = [await generateNdiSource(currentParams, activeFontBuffer, event.data.ndiFrame)];
               break;
             case 'spout-receiver':
-              frames = [await generateSpoutReceiver(currentParams, event.data.fontBuffer)];
+              frames = [await generateSpoutReceiver(currentParams, activeFontBuffer)];
+              break;
+            case 'sinewave':
+              frames = [generateSinewave(currentParams)];
+              break;
+            case 'waveform':
+              frames = [generateWaveform(currentParams)];
+              break;
+            case 'timer':
+              frames = [await generateTimer(currentParams, activeFontBuffer, context)];
               break;
             default:
               frames = [{ points: [] }];
@@ -51,6 +73,7 @@ self.onmessage = async (event) => {
           generatorDefinition: generator, // Send back the original definition
           currentParams: currentParams, // Send back the params used for generation
           isLive: event.data.isLive, // Pass through the live flag
+          isAutoUpdate: event.data.isAutoUpdate, // Pass through auto update flag
           seq: event.data.seq // Pass back sequence number
         });
         break;

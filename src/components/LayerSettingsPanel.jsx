@@ -12,9 +12,24 @@ const LayerSettingsPanel = ({
     onRemoveDac,
     onAddEffect,
     onRemoveEffect,
-    onParamChange 
+    onParamChange,
+    uiState,
+    onUpdateUiState
 }) => {
     const [dacStatuses, setDacStatuses] = useState({});
+
+    const collapsedPanels = uiState?.collapsedPanels || {};
+
+    const togglePanel = (panelId, val) => {
+        if (onUpdateUiState) {
+            onUpdateUiState({
+                collapsedPanels: {
+                    ...collapsedPanels,
+                    [panelId]: val
+                }
+            });
+        }
+    };
 
     useEffect(() => {
         if (window.electronAPI && window.electronAPI.onDacStatus) {
@@ -30,8 +45,7 @@ const LayerSettingsPanel = ({
 
     if (selectedLayerIndex === null) return (
         <div className="settings-panel-base">
-            <div className="settings-card-header"><h4>Layer Settings</h4></div>
-            <div className="settings-card-content"><p className="info-text">Select a layer to edit settings</p></div>
+            <p className="info-text">Select a layer to edit settings</p>
         </div>
     );
 
@@ -55,11 +69,13 @@ const LayerSettingsPanel = ({
 
     return (
         <div className="settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
-             <h3>Layer Settings</h3>
-
              {/* Assigned DACs Section */}
              {assignedDacs && assignedDacs.length > 0 && (
-                <CollapsiblePanel title="Assigned DACs">
+                <CollapsiblePanel 
+                    title="Assigned DACs"
+                    isCollapsed={!!collapsedPanels['dacs']}
+                    onToggle={(val) => togglePanel('dacs', val)}
+                >
                     <ul className="assigned-dacs-list">
                     {assignedDacs.map((dac, index) => {
                         const status = dacStatuses[dac.ip];
@@ -95,7 +111,11 @@ const LayerSettingsPanel = ({
              )}
 
              {/* Autopilot Section */}
-             <CollapsiblePanel title={`Layer ${selectedLayerIndex + 1} Autopilot`}>
+             <CollapsiblePanel 
+                title={`Layer ${selectedLayerIndex + 1} Autopilot`}
+                isCollapsed={!!collapsedPanels['autopilot']}
+                onToggle={(val) => togglePanel('autopilot', val)}
+             >
                  <div className="param-editor">
                     <label>Mode</label>
                     <div className="clip-playback-settings">
@@ -120,19 +140,46 @@ const LayerSettingsPanel = ({
              </CollapsiblePanel>
 
              {/* Layer Effects Section */}
-             <CollapsiblePanel title="Layer Effects">
+             <CollapsiblePanel 
+                title="Layer Effects"
+                isCollapsed={!!collapsedPanels['effects']}
+                onToggle={(val) => togglePanel('effects', val)}
+             >
                  <div className="layer-effects-list" style={{ minHeight: '50px' }}>
                  {layerEffects && layerEffects.length > 0 ? (
                      layerEffects.map((effect, index) => (
-                         <EffectEditor
-                             key={effect.instanceId || index}
-                             effect={effect}
-                             onRemove={() => onRemoveEffect(index)}
-                             onParamChange={(paramId, val) => onParamChange(index, paramId, val)}
-                             syncSettings={{}} 
-                             onSetParamSync={() => {}} 
-                             context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect' }}
-                         />
+                         <div key={effect.instanceId || index} style={{ marginBottom: '4px' }}>
+                            <EffectEditor
+                                effect={effect}
+                                onRemove={() => onRemoveEffect(index)}
+                                onParamChange={(paramId, val) => onParamChange(index, paramId, val)}
+                                syncSettings={{}} 
+                                onSetParamSync={() => {}} 
+                                context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect' }}
+                                uiState={uiState}
+                                onUpdateUiState={onUpdateUiState}
+                                dragHandle={
+                                    <div 
+                                        draggable
+                                        onDragStart={(e) => {
+                                            // Handle reordering logic if needed, 
+                                            // currently LayerSettingsPanel doesn't seem to have onReorder
+                                            e.dataTransfer.setData('application/json', JSON.stringify({
+                                                type: 'effect-reorder',
+                                                index: index,
+                                                layerIndex: selectedLayerIndex
+                                            }));
+                                        }}
+                                        style={{ cursor: 'grab', marginRight: '5px', display: 'flex', alignItems: 'center', color: '#666' }}
+                                        title="Drag to reorder"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/>
+                                        </svg>
+                                    </div>
+                                }
+                            />
+                         </div>
                      ))
                  ) : (
                      <div className="info-text" style={{padding: '20px', border: '1px dashed #444', borderRadius: '5px'}}>

@@ -2,15 +2,22 @@ import React, { useState, useEffect } from 'react';
 import RadialKnob from './RadialKnob';
 import Mappable from './Mappable';
 
-const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}, onUpdateDacSettings }) => {
+const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}, onUpdateDacSettings, onApplyGroup }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [selectedDac, setSelectedDac] = useState(null);
   const [networkInterfaces, setNetworkInterfaces] = useState([]);
   const [selectedNetworkInterface, setSelectedNetworkInterface] = useState(null);
+  const [groups, setGroups] = useState({});
+  const [newGroupName, setNewGroupName] = useState('');
+  const [selectedForGroup, setSelectedForGroup] = useState([]); // Array of {ip, channel, type, hostName}
   const scanInProgressRef = React.useRef(false);
 
   useEffect(() => {
-    // Call the exposed API from preload script
+    // Load groups
+    if (window.electronAPI && window.electronAPI.getDacGroups) {
+        window.electronAPI.getDacGroups().then(setGroups);
+    }
+    // Load interfaces
     if (window.electronAPI) {
       window.electronAPI.getNetworkInterfaces().then(interfaces => {
         setNetworkInterfaces(interfaces);
@@ -92,12 +99,53 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
     e.dataTransfer.setData('application/json', JSON.stringify(dacWithAllChannels));
   };
 
+  const toggleDacSelection = (dac, channelId) => {
+    const isSelected = selectedForGroup.some(item => item.ip === dac.ip && item.channel === channelId);
+    if (isSelected) {
+        setSelectedForGroup(selectedForGroup.filter(item => !(item.ip === dac.ip && item.channel === channelId)));
+    } else {
+        setSelectedForGroup([...selectedForGroup, { 
+            ip: dac.ip, 
+            channel: channelId, 
+            type: dac.type, 
+            hostName: dac.hostName,
+            unitID: dac.unitID 
+        }]);
+    }
+  };
+
+  const saveGroup = async () => {
+    if (!newGroupName.trim() || selectedForGroup.length === 0) return;
+    const newGroups = { ...groups, [newGroupName.trim()]: selectedForGroup };
+    setGroups(newGroups);
+    if (window.electronAPI && window.electronAPI.saveDacGroups) {
+        await window.electronAPI.saveDacGroups(newGroups);
+    }
+    setNewGroupName('');
+    setSelectedForGroup([]);
+  };
+
+  const deleteGroup = async (name) => {
+    const newGroups = { ...groups };
+    delete newGroups[name];
+    setGroups(newGroups);
+    if (window.electronAPI && window.electronAPI.saveDacGroups) {
+        await window.electronAPI.saveDacGroups(newGroups);
+    }
+  };
+
+  const applyGroup = (groupData) => {
+    if (onApplyGroup) {
+        onApplyGroup(groupData);
+    }
+  };
+
   return (
     <div className="dac-panel">
       <div className="settings-card-header"><h4>DACs</h4></div>
       <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px'}}>
         <div style={{flex:1, display:'flex'}}>
-            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', marginBottom: 2}}>
+            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', marginBottom: 2}}>
               {networkInterfaces.map(iface => (
                 <option key={iface.address} value={iface.address}>
                   {iface.name} ({iface.address})
@@ -137,23 +185,83 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
             <div className="dac-ip">{dac.hostName || dac.ip} ({dac.ip})</div>
             <div className="dac-channels">
               {dac.channels && dac.channels.length > 0 ? (
-                dac.channels.map((channel) => (
-                  <div
-                    key={`${dac.unitID || dac.ip}-${channel.serviceID}`}
-                    className={`dac-channel-item ${selectedDac && (selectedDac.unitID === dac.unitID || selectedDac.ip === dac.ip) && selectedDac.channel === channel.serviceID ? 'selected' : ''}`}
-                    onClick={() => handleDacClick(dac, channel.serviceID)}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, dac, channel.serviceID)}
-                  >
-                    Channel {channel.serviceID} ({channel.name})
-                  </div>
-                ))
+                dac.channels.map((channel) => {
+                  const isSelectedForGroup = selectedForGroup.some(item => item.ip === dac.ip && item.channel === channel.serviceID);
+                  return (
+                    <div
+                      key={`${dac.unitID || dac.ip}-${channel.serviceID}`}
+                      className={`dac-channel-item ${selectedDac && (selectedDac.unitID === dac.unitID || selectedDac.ip === dac.ip) && selectedDac.channel === channel.serviceID ? 'selected' : ''}`}
+                      onClick={() => handleDacClick(dac, channel.serviceID)}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, dac, channel.serviceID)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+                    >
+                      <input 
+                        type="checkbox" 
+                        className="tl-checkbox"
+                        checked={isSelectedForGroup} 
+                        onChange={(e) => { e.stopPropagation(); toggleDacSelection(dac, channel.serviceID); }}
+                        onClick={(e) => e.stopPropagation()} 
+                      />
+                      <span style={{ flex: 1 }}>Channel {channel.serviceID} ({channel.name})</span>
+                    </div>
+                  );
+                })
               ) : (
                 <div className="dac-channel-item no-channels">No channels found</div>
               )}
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="dac-groups-section" style={{ padding: '10px', borderTop: '1px solid #444', marginTop: '10px' }}>
+        <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#888' }}>DAC Groups</h4>
+        
+        <div className="new-group-form" style={{ display: 'flex', gap: '5px', marginBottom: '10px' }}>
+            <input 
+                type="text" 
+                placeholder="Group Name..." 
+                value={newGroupName} 
+                onChange={(e) => setNewGroupName(e.target.value)}
+                style={{ flex: 1, background: '#111', border: '1px solid #444', color: '#fff', fontSize: '11px', padding: '2px 5px', borderRadius: '3px' }}
+            />
+            <button 
+                onClick={saveGroup}
+                disabled={!newGroupName.trim() || selectedForGroup.length === 0}
+                style={{ fontSize: '10px', padding: '2px 8px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px', cursor: 'pointer' }}
+            >Save</button>
+        </div>
+
+        <div className="groups-list">
+            {Object.entries(groups).map(([name, groupDacs]) => (
+                <div 
+                    key={name} 
+                    className="group-item" 
+                    draggable
+                    onDragStart={(e) => {
+                        e.stopPropagation();
+                        e.dataTransfer.setData('application/json', JSON.stringify({ isGroup: true, name, channels: groupDacs }));
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', background: '#2a2a2a', padding: '4px 8px', borderRadius: '4px', marginBottom: '4px', fontSize: '11px', cursor: 'grab' }}
+                >
+                    <span style={{ flex: 1 }}>{name} ({groupDacs.length})</span>
+                    <div style={{ display: 'flex', gap: '5px' }}>
+                        <button 
+                            onClick={() => applyGroup(groupDacs)}
+                            style={{ background: 'var(--theme-color)', border: 'none', color: '#000', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', fontSize: '10px' }}
+                        >Apply</button>
+                        <button 
+                            onClick={() => deleteGroup(name)}
+                            style={{ background: '#444', border: 'none', color: '#ccc', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', fontSize: '10px' }}
+                        >×</button>
+                    </div>
+                </div>
+            ))}
+            {Object.keys(groups).length === 0 && (
+                <div style={{ fontSize: '10px', color: '#666', fontStyle: 'italic' }}>No groups defined.</div>
+            )}
+        </div>
       </div>
       
       {dacs.length > 0 && (

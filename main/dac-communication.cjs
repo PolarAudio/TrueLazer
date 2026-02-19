@@ -1,5 +1,5 @@
 const idn = require('./idn-communication.cjs');
-const etherdream = require('./etherdream-communication.jsx');
+const etherdream = require('./etherdream-communication.cjs');
 
 let globalStatusCallback = null;
 
@@ -30,16 +30,16 @@ function getDacServices(ip, localIp, timeout = 1000, type) {
     return idn.getDacServices(ip, localIp, timeout);
 }
 
-function sendFrame(ip, channel, frame, fps, type) {
-    if (!frame || !frame.points) {
-        console.error(`[DacComm] Invalid frame for ${ip}:`, frame);
+function sendFrame(ip, channel, points, fps, type, options) {
+    if (!points) {
+        console.error(`[DacComm] Invalid points for ${ip}`);
         return;
     }
 
     if (type === 'EtherDream') {
-        return etherdream.sendFrame(ip, channel, frame, fps);
+        return etherdream.sendFrame(ip, channel, points, fps, options);
     }
-    return idn.sendFrame(ip, channel, frame, fps);
+    return idn.sendFrame(ip, channel, points, fps);
 }
 
 function stopSending(ip, type) {

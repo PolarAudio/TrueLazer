@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import IldaThumbnail from './IldaThumbnail';
+import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
 
 const Clip = ({
@@ -20,7 +21,8 @@ const Clip = ({
   thumbnailRenderMode,
   liveFrame,
   stillFrame,
-  onClipHover
+  onClipHover,
+  onThumbnailError
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -95,9 +97,14 @@ const handleFilePathDrop = async (filePath, fileName) => {
   try {
     // Use readFileAsBinary instead of readFileContent
     if (window.electronAPI && window.electronAPI.readFileAsBinary) {
-      const uint8Array = await window.electronAPI.readFileAsBinary(filePath);
-      // Convert Uint8Array to ArrayBuffer - this is much simpler!
-      const arrayBuffer = uint8Array.slice().buffer;
+      const arrayBuffer = await window.electronAPI.readFileAsBinary(filePath);
+      
+      if (!arrayBuffer || !(arrayBuffer instanceof ArrayBuffer)) {
+          console.error('[Clip.jsx] readFileAsBinary did not return an ArrayBuffer:', arrayBuffer);
+          onUnsupportedFile("Error reading file: Invalid data format received.");
+          return;
+      }
+
       console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFilePathDrop): ${arrayBuffer.byteLength}`);
       ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, filePath, layerIndex, colIndex }, [arrayBuffer]);
     } else {
@@ -132,7 +139,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
             onLabelClick(); // Select the clip to show its new settings
             return;
           }
-        } else if (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels)) { // Check if this is DAC data - CHECK THIS BEFORE GENERATOR
+        } else if (parsedData.isGroup || (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels))) { // Check if this is DAC or DAC Group
           if (onDropDac) {
             onDropDac(layerIndex, colIndex, parsedData);
             return;
@@ -182,8 +189,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
       <Mappable id={`clip_${layerIndex}_${colIndex}`}>
         <div 
             className="clip-thumbnail" 
-            onMouseDown={() => onActivateClick(true)}
-            onMouseUp={() => onActivateClick(false)}
+            onMouseDown={(e) => { if (e.button === 0) onActivateClick(true); }}
+            onMouseUp={(e) => { if (e.button === 0) onActivateClick(false); }}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
             style={{ overflow: 'hidden' }} // Ensure image fits
@@ -199,15 +206,16 @@ const handleFilePathDrop = async (filePath, fileName) => {
                     ) : (
                         /* Still Frame Mode */
                         /* If we have a generated thumbnail path, use it for efficiency */
-                        (clipContent?.thumbnailPath && !isActive) ? (
+                        (clipContent?.thumbnailPath) ? (
                             <img 
                                 src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
                                 alt="thumbnail" 
+                                onError={() => onThumbnailError && onThumbnailError(layerIndex, colIndex)}
                                 style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
                             />
                         ) : (
-                            /* Fallback to WebGL rendering of still frame if no image yet, or if we want to show it */
-                            stillFrame && <IldaThumbnail frame={stillFrame} effects={clipContent?.effects} />
+                            /* Fallback to 2D Canvas rendering of still frame (much lighter than WebGL) */
+                            stillFrame && <StaticIldaThumbnail frame={stillFrame} />
                         )
                     )}
 

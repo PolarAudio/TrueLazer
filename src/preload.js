@@ -4,13 +4,18 @@ contextBridge.exposeInMainWorld(
   'electronAPI', {
     discoverDacs: (timeout, networkInterfaceIp) => ipcRenderer.invoke('discover-dacs', timeout, networkInterfaceIp),
     getDacServices: (ip, localIp, type) => ipcRenderer.invoke('get-dac-services', ip, localIp, type),
-    sendFrame: (ip, channel, frame, fps, type) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps, type),
+    sendFrame: (ip, channel, frame, fps, type, options) => ipcRenderer.invoke('send-frame', ip, channel, frame, fps, type, options),
     startDacOutput: (ip, type) => ipcRenderer.invoke('start-dac-output', ip, type),
     stopDacOutput: (ip, type) => ipcRenderer.invoke('stop-dac-output', ip, type),
     onDacStatus: (callback) => {
         const listener = (event, data) => callback(data);
         ipcRenderer.on('dac-status', listener);
         return () => ipcRenderer.removeListener('dac-status', listener);
+    },
+    onSystemStats: (callback) => {
+        const listener = (event, data) => callback(data);
+        ipcRenderer.on('system-stats', listener);
+        return () => ipcRenderer.removeListener('system-stats', listener);
     },
     getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
     send: (channel, data) => ipcRenderer.send(channel, data),
@@ -27,9 +32,9 @@ contextBridge.exposeInMainWorld(
     showLayerFullContextMenu: (index) => ipcRenderer.send('show-layer-full-context-menu', index),
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
     showClipContextMenu: (...args) => ipcRenderer.send('show-clip-context-menu', ...args),
-    showColumnHeaderClipContextMenu: (colIndex) => ipcRenderer.send('show-column-header-clip-context-menu', colIndex),
-    sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action),
-    onContextMenuActionFromMain: (callback) => {
+      showColumnHeaderClipContextMenu: (colIndex) => ipcRenderer.send('show-column-header-clip-context-menu', colIndex),
+      showQuickAssignContextMenu: (type, index) => ipcRenderer.send('show-quick-assign-context-menu', type, index),
+      sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action),    onContextMenuActionFromMain: (callback) => {
       ipcRenderer.on('context-menu-action-from-main', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('context-menu-action-from-main', callback);
     },
@@ -55,6 +60,7 @@ contextBridge.exposeInMainWorld(
     },
     openFileExplorer: () => ipcRenderer.invoke('open-file-explorer'),
     readIldFiles: (directoryPath) => ipcRenderer.invoke('read-ild-files', directoryPath),
+    checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
 	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
 	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
@@ -72,25 +78,34 @@ contextBridge.exposeInMainWorld(
 	            // Settings
 	            getAllSettings: () => ipcRenderer.invoke('get-all-settings'),
 	            setRenderSettings: (settings) => ipcRenderer.invoke('set-render-settings', settings),
+	            setFftSettings: (settings) => ipcRenderer.invoke('set-fft-settings', settings),
+	            setSelectedAudioInput: (deviceId) => ipcRenderer.invoke('set-selected-audio-input', deviceId),
 	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+                getDacGroups: () => ipcRenderer.invoke('get-dac-groups'),
+                saveDacGroups: (groups) => ipcRenderer.invoke('save-dac-groups', groups),
+                getUserIldaPath: () => ipcRenderer.invoke('get-user-ilda-path'),
+                getUserMappingsPath: () => ipcRenderer.invoke('get-user-mappings-path'),
                 getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
                 saveMidiMappings: (mappings) => ipcRenderer.invoke('save-midi-mappings', mappings),
                 getKeyboardMappings: () => ipcRenderer.invoke('get-keyboard-mappings'),
                 saveKeyboardMappings: (mappings) => ipcRenderer.invoke('save-keyboard-mappings', mappings),
 	            	            getDefaultProjectPath: () => ipcRenderer.invoke('get-default-project-path'),
-	                                        readFileForWorker: (filePath) => ipcRenderer.invoke('read-file-for-worker', filePath),
+	                                        readFileForWorker: (filePath, maxBytes) => ipcRenderer.invoke('read-file-for-worker', filePath, maxBytes),
 	                                        fetchUrlAsArrayBuffer: (url) => ipcRenderer.invoke('fetch-url-as-arraybuffer', url),
 	                                        showAudioFileDialog: () => ipcRenderer.invoke('show-audio-file-dialog'),
                                             showOpenDialog: (options) => ipcRenderer.invoke('show-open-dialog', options),
 	                                        showFontFileDialog: () => ipcRenderer.invoke('show-font-file-dialog'),
+	                                        getSystemFonts: () => ipcRenderer.invoke('get-system-fonts'),
+                                            getProjectFonts: () => ipcRenderer.invoke('get-project-fonts'),
 	                                        setAudioDevices: (devices) => ipcRenderer.send('set-audio-devices', devices),
 	                                        onUpdateAudioDeviceId: (callback) => {
 	                                          const subscription = (event, deviceId) => callback(deviceId);
 	                                          ipcRenderer.on('update-audio-device-id', subscription);
 	                                          return () => ipcRenderer.removeListener('update-audio-device-id', subscription);
 	                                        },
+                                            getDesktopAudioSourceId: () => ipcRenderer.invoke('get-desktop-audio-source-id'),
                                               saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
                                               saveIldaFile: (arrayBuffer, defaultName) => ipcRenderer.invoke('save-ilda-file', arrayBuffer, defaultName),
                                               deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),                                            // ArtNet
@@ -130,7 +145,7 @@ contextBridge.exposeInMainWorld(
                                             ndiCreateReceiver: (sourceName) => ipcRenderer.invoke('ndi-create-receiver', sourceName),
                                             ndiCaptureVideo: () => ipcRenderer.invoke('ndi-capture-video'),
                                             ndiDestroyReceiver: () => ipcRenderer.invoke('ndi-destroy-receiver'),
-                                            ndiSignalReady: () => ipcRenderer.send('ndi-renderer-ready'),
+                                            ndiRendererReady: () => ipcRenderer.send('ndi-renderer-ready'),
                                             onNdiFrame: (callback) => {
                                                 const listener = (event, frame) => callback(frame);
                                                 ipcRenderer.on('ndi-frame', listener);

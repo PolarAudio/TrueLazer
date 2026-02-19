@@ -5,16 +5,27 @@ export const generatorDefinitions = [
     description: 'Generates a simple circle.',
     defaultParams: {
       radius: 0.5,
-      numPoints: 100,
+      numPoints: 50,
       x: 0,
       y: 0,
       r: 255,
       g: 255,
-      b: 255
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
     },
     paramControls: [
       { id: 'radius', label: 'Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
-      { id: 'numPoints', label: 'Number of Points', type: 'range', min: 3, max: 360, step: 1 },
+      { id: 'numPoints', label: 'Number of Points', type: 'range', min: 3, max: 100, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -29,17 +40,62 @@ export const generatorDefinitions = [
     defaultParams: {
       width: 1,
       height: 1,
-      pointDensity: 25, // Points per side
+      pointDensity: 12,
       x: 0,
       y: 0,
       r: 255,
       g: 255,
       b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
     },
     paramControls: [
       { id: 'width', label: 'Width', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
       { id: 'height', label: 'Height', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
-      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 100, step: 1 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 25, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
+    ],
+  },
+  {
+    id: 'triangle',
+    name: 'Triangle',
+    description: 'Generates a simple symmetrical triangle.',
+    defaultParams: {
+      size: 1,
+      pointDensity: 12,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
+    },
+    paramControls: [
+      { id: 'size', label: 'Size', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 25, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -60,13 +116,24 @@ export const generatorDefinitions = [
       r: 255,
       g: 255,
       b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
     },
     paramControls: [
       { id: 'x1', label: 'X1', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y1', label: 'Y1', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'x2', label: 'X2', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y2', label: 'Y2', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
-      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 2, max: 200, step: 1 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 2, max: 100, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
@@ -79,21 +146,32 @@ export const generatorDefinitions = [
     defaultParams: {
       text: 'TrueLazer',
       x: 0,
-      y: 0,
+      y: 0.3,
       fontSize: 72,
-      numPoints: 200, // Target number of points
-      fontUrl: 'src/fonts/arial.ttf', // Default to internal Arial font
+      numPoints: 100,
+      fontUrl: 'src/fonts/Geometr415 Blk BT Black.ttf',
       r: 255,
       g: 255,
       b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
     },
     paramControls: [
       { id: 'text', label: 'Text Content', type: 'text' },
+      { id: 'fontUrl', label: 'Fonts', type: 'text' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'fontSize', label: 'Font Size', type: 'range', min: 10, max: 200, step: 1 },
-      { id: 'numPoints', label: 'Target Points', type: 'range', min: 10, max: 1000, step: 1 },
-      { id: 'fontUrl', label: 'Font URL', type: 'text' }, // New param control
+      { id: 'numPoints', label: 'Target Points', type: 'range', min: 10, max: 300, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
@@ -106,19 +184,30 @@ export const generatorDefinitions = [
     defaultParams: {
       outerRadius: 0.5,
       innerRadius: 0.2,
-      numSpikes: 5, // Number of spikes on the star
-      pointDensity: 10, // Points per segment
+      numSpikes: 5,
+      pointDensity: 5,
       x: 0,
       y: 0,
       r: 255,
       g: 255,
       b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
     },
     paramControls: [
       { id: 'outerRadius', label: 'Outer Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
       { id: 'innerRadius', label: 'Inner Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
       { id: 'numSpikes', label: 'Number of Spikes', type: 'range', min: 3, max: 20, step: 1 },
-      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 50, step: 1 },
+      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 20, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -134,21 +223,32 @@ export const generatorDefinitions = [
       sourceName: 'No Source',
       threshold: 128,
       edgeDetection: false,
-      captureWidth: 1280,
-      captureHeight: 720,
+      captureWidth: 480,
+      captureHeight: 480,
       x: 0,
       y: 0,
       scale: 1,
       r: 255,
       g: 255,
-      b: 255
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
     },
     paramControls: [
       { id: 'sourceName', label: 'Source Name', type: 'text' },
+      { id: 'captureWidth', label: 'Width', type: 'range', min: 128, max: 1280, step: 1 },
+      { id: 'captureHeight', label: 'Height', type: 'range', min: 128, max: 1280, step: 1 },
       { id: 'threshold', label: 'Threshold', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'edgeDetection', label: 'Edge Detection', type: 'checkbox' },
-      { id: 'captureWidth', label: 'Capture Width', type: 'range', min: 64, max: 1280, step: 8 },
-      { id: 'captureHeight', label: 'Capture Height', type: 'range', min: 64, max: 720, step: 8 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'scale', label: 'Scale', type: 'range', min: 0.1, max: 2.0, step: 0.1 },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
@@ -170,13 +270,154 @@ export const generatorDefinitions = [
       scale: 1,
       r: 255,
       g: 255,
-      b: 255
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
     },
     paramControls: [
       { id: 'sourceName', label: 'Sender Name', type: 'text' },
       { id: 'threshold', label: 'Threshold', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'edgeDetection', label: 'Edge Detection', type: 'checkbox' },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'scale', label: 'Scale', type: 'range', min: 0.1, max: 2.0, step: 0.1 },
+      { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
+    ],
+  },
+  {
+    id: 'sinewave',
+    name: 'Sine Wave',
+    description: 'Generates a customizable sine wave.',
+    defaultParams: {
+      amplitude: 0.5,
+      frequency: 1,
+      phase: 0,
+      width: 2.0,
+      numPoints: 50,
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
+    },
+    paramControls: [
+      { id: 'amplitude', label: 'Amplitude', type: 'range', min: 0.0, max: 1.0, step: 0.01 },
+      { id: 'frequency', label: 'Frequency', type: 'range', min: 0.1, max: 10.0, step: 0.1 },
+      { id: 'phase', label: 'Phase', type: 'range', min: 0, max: Math.PI * 2, step: 0.01 },
+      { id: 'width', label: 'Width', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
+      { id: 'numPoints', label: 'Number of Points', type: 'range', min: 10, max: 100, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
+      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
+    ],
+  },
+  {
+    id: 'waveform',
+    name: 'Waveform',
+    description: 'Generates a real-time audio visualization.',
+    defaultParams: {
+      mode: 'bars', // 'bars', 'waveform', 'spectrum'
+      width: 2.0,
+      height: 1.0,
+      numBins: 32,
+      freqRange: [0, 1],
+      x: 0,
+      y: 0,
+      r: 255,
+      g: 255,
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
+    },
+    paramControls: [
+      { id: 'mode', label: 'Visualization Mode', type: 'select', options: [
+          { label: 'Candle Bar', value: 'bars' },
+          { label: 'Waveform (Osc)', value: 'waveform' },
+          { label: 'Spectrum Line', value: 'spectrum' }
+      ]},
+      { id: 'freqRange', label: 'Frequency Range', type: 'range', min: 0, max: 1, step: 0.01, isRange: true, default: [0, 1], showIf: { mode: ['bars', 'spectrum'] } },
+      { id: 'numBins', label: 'Resolution', type: 'range', min: 8, max: 128, step: 1 },
+      { id: 'width', label: 'Width', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
+      { id: 'height', label: 'Height', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
+      { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
+      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
+    ],
+  },
+  {
+    id: 'timer',
+    name: 'Timer',
+    description: 'Generates a clock, count-up or count-down visualization.',
+    defaultParams: {
+      mode: 'clock', // 'clock', 'count-up', 'count-down'
+      format: 'MM:SS', // 'HH:MM:SS', 'MM:SS', 'SS.mm'
+      startTime: 60,
+      x: 0,
+      y: 0.3,
+      fontSize: 72,
+      numPoints: 100,
+      fontUrl: 'src/fonts/Geometr415 Blk BT Black.ttf',
+      r: 255,
+      g: 255,
+      b: 255,
+      renderingStyle: 'normal',
+      thickness: 1,
+      blankingSize: 3
+    },
+    paramControls: [
+      { id: 'mode', label: 'Mode', type: 'select', options: [
+          { label: 'Clock', value: 'clock' },
+          { label: 'Count-up', value: 'count-up' },
+          { label: 'Count-down', value: 'count-down' }
+      ]},
+      { id: 'format', label: 'Format', type: 'select', options: [
+          { label: 'HH:MM:SS', value: 'HH:MM:SS' },
+          { label: 'MM:SS', value: 'MM:SS' },
+          { label: 'SS.mm', value: 'SS.mm' }
+      ]},
+      { id: 'startTime', label: 'Start Time (Sec)', type: 'range', min: 1, max: 3600, step: 1, showIf: { mode: 'count-down' } },
+      { id: 'fontUrl', label: 'Fonts', type: 'text' },
+      { id: 'fontSize', label: 'Font Size', type: 'range', min: 10, max: 200, step: 1 },
+      { id: 'numPoints', label: 'Target Points', type: 'range', min: 10, max: 500, step: 1 },
+      { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
+          { label: 'Normal', value: 'normal' },
+          { label: 'Dotted', value: 'dotted' },
+          { label: 'Blanked', value: 'blanked' },
+          { label: 'Dots', value: 'dots' }
+      ]},
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },

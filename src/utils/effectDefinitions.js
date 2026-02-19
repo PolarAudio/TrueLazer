@@ -47,9 +47,10 @@ export const effectDefinitions = [
     id: 'color',
     name: 'Color',
     type: 'color',
-    description: 'Changes the color of the shape with solid or rainbow modes.',
+    description: 'Changes the color of the shape with solid, rainbow or custom palette modes.',
     defaultParams: {
       mode: 'solid',
+      color: '#ffffff',
       r: 255,
       g: 255,
       b: 255,
@@ -57,16 +58,26 @@ export const effectDefinitions = [
       rainbowSpread: 1.0,
       rainbowOffset: 0,
       rainbowPalette: 'rainbow',
+      paletteColors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00'],
+      paletteSize: 4,
+      paletteSpread: 1.0,
+      hue: 0,
+      saturation: 0,
+      brightness: 1.0,
+      enabled: true,
     },
     paramControls: [
-      { id: 'mode', label: 'Mode', type: 'select', options: ['solid', 'rainbow'] },
-      { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1, showIf: { mode: 'solid' } },
-      { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1, showIf: { mode: 'solid' } },
-      { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1, showIf: { mode: 'solid' } },
-      { id: 'cycleSpeed', label: 'Cycle Speed', type: 'range', min: 0, max: 10, step: 0.1 },
+      { id: 'mode', label: 'Mode', type: 'select', options: ['solid', 'rainbow', 'palette'] },
+      { id: 'color', label: 'Color', type: 'color', showIf: { mode: 'solid' } },
+      { id: 'hue', label: 'Hue', type: 'range', min: 0, max: 1, step: 0.001, showIf: { mode: 'hsv_advanced' } },
+      { id: 'saturation', label: 'Saturation', type: 'range', min: 0, max: 1, step: 0.001, showIf: { mode: 'hsv_advanced' } },
+      { id: 'brightness', label: 'Brightness', type: 'range', min: 0, max: 1, step: 0.001, showIf: { mode: 'hsv_advanced' } },
+      { id: 'paletteSize', label: 'Palette Size', type: 'range', min: 2, max: 16, step: 1, showIf: { mode: 'palette' } },
+      { id: 'paletteSpread', label: 'Spread', type: 'range', min: 0.1, max: 10.0, step: 0.1, showIf: { mode: 'palette' } },
+      { id: 'cycleSpeed', label: 'Cycle Speed', type: 'range', min: 0, max: 10, step: 0.1, showIf: { mode: ['rainbow', 'palette'] } },
       { id: 'rainbowSpread', label: 'Rainbow Spread', type: 'range', min: 0.1, max: 10.0, step: 0.1, showIf: { mode: 'rainbow' } },
-      { id: 'rainbowOffset', label: 'Rainbow Offset', type: 'range', min: 0, max: 360, step: 1, showIf: { mode: 'rainbow' } },
-      { id: 'rainbowPalette', label: 'Palette', type: 'select', options: ['rainbow', 'fire', 'ice', 'cyber'], showIf: { mode: 'rainbow' } },
+      { id: 'rainbowOffset', label: 'Offset', type: 'range', min: 0, max: 360, step: 1, showIf: { mode: ['rainbow', 'palette'] } },
+      { id: 'rainbowPalette', label: 'Preset', type: 'select', options: ['rainbow', 'fire', 'ice', 'cyber'], showIf: { mode: 'rainbow' } },
     ],
   },
   {
@@ -137,19 +148,24 @@ export const effectDefinitions = [
     id: 'delay',
     name: 'Delay',
     type: 'effect',
-    description: 'Channel-based delay effect.',
+    description: 'Frame or Channel based delay effect.',
     defaultParams: {
-      useCustomOrder: false, // false = Auto (Linear/Directional), true = Custom
+      mode: 'segment', // 'segment', 'frame' or 'channel'
+      playstyle: 'repeat', // 'once', 'repeat', 'bounce'
+      useCustomOrder: false, 
       delayDirection: 'left_to_right', 
       delayAmount: 5,
       decay: 0.8,
-      customOrder: [], // Array of assigned channel indices
+      steps: 10,
+      customOrder: [], 
+      enabled: true,
     },
     paramControls: [
-      // Custom Order and Mode UI will be handled in EffectEditor.jsx
-      // We list generic controls here that don't need special UI logic, or can be overridden
-      { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+      { id: 'mode', label: 'Mode', type: 'select', options: ['segment', 'frame', 'channel'] },
+      { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat'] },
+      { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox', showIf: { mode: 'channel' } },
       { id: 'delayDirection', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
+      { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 20, step: 1, showIf: { mode: ['segment', 'frame'] } },
       { id: 'delayAmount', label: 'Delay Time', type: 'range', min: 1, max: 60, step: 1 },
       { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
     ],
@@ -158,8 +174,10 @@ export const effectDefinitions = [
     id: 'chase',
     name: 'Chase',
     type: 'effect',
-    description: 'Step-based chase effect.',
+    description: 'Frame or Channel based chase effect.',
     defaultParams: {
+        mode: 'segment',
+        playstyle: 'repeat',
         steps: 4,
         decay: 0.8,
         speed: 1.0,
@@ -167,13 +185,16 @@ export const effectDefinitions = [
         direction: 'left_to_right',
         useCustomOrder: false,
         customOrder: [],
+        enabled: true,
     },
     paramControls: [
-        { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1 },
+        { id: 'mode', label: 'Mode', type: 'select', options: ['segment', 'channel'] },
+        { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat', 'bounce'] },
+        { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1, showIf: { mode: 'segment' } },
         { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
         { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 5.0, step: 0.1 },
         { id: 'overlap', label: 'Overlap', type: 'range', min: 1, max: 4, step: 1 },
-        { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox' },
+        { id: 'useCustomOrder', label: 'Custom Order', type: 'checkbox', showIf: { mode: 'channel' } },
         { id: 'direction', label: 'Direction', type: 'select', options: ['center_to_out', 'out_to_center', 'left_to_right', 'right_to_left'], showIf: { useCustomOrder: false } },
     ]
   },
@@ -184,9 +205,11 @@ export const effectDefinitions = [
     description: 'Controls the blanking of the laser output.',
     defaultParams: {
       blankingInterval: 0, 
+      spacing: 0,
     },
     paramControls: [
       { id: 'blankingInterval', label: 'Blanking Interval', type: 'range', min: 0, max: 10, step: 1 },
+      { id: 'spacing', label: 'Spacing', type: 'range', min: 0, max: 20, step: 1 },
     ],
   },
   {
@@ -210,9 +233,15 @@ export const effectDefinitions = [
     description: 'Mirrors the shape from the center.',
     defaultParams: {
       mode: 'none', 
+      additive: true,
+      axisOffset: 0,
+      planeRotation: 0,
     },
     paramControls: [
       { id: 'mode', label: 'Mirror Mode', type: 'select', options: ['none', 'x+', 'x-', 'y+', 'y-'] },
+      { id: 'additive', label: 'Additive', type: 'checkbox' },
+      { id: 'axisOffset', label: 'Axis Offset', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'planeRotation', label: 'Plane Rotation', type: 'range', min: 0, max: 360, step: 1 },
     ],
   },
 ];

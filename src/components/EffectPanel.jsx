@@ -8,7 +8,6 @@ const EffectPanel = () => {
 
   return (
     <div className="effect-panel">
-      <h3>Effects</h3>
       {effectDefinitions.map(effect => (
         <div 
           key={effect.id}

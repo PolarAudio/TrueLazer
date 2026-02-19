@@ -36,7 +36,6 @@ const GeneratorPanel = () => {
 
   return (
     <div className="generator-panel">
-      <h3>Generators</h3>
       <div className="generator-list">
         {generatorDefinitions.filter(g => g.id !== 'ndi-source' && g.id !== 'spout-receiver').map((generator) => (
           <div

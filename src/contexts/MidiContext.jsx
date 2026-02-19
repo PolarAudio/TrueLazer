@@ -7,6 +7,35 @@ export const useMidi = () => {
   return useContext(MidiContext);
 };
 
+const migrateMappings = (loadedMappings) => {
+    if (!loadedMappings || typeof loadedMappings !== 'object') return {};
+    
+    // Check if it's already in the new format
+    // New format keys look like "note:1:60" or "cc:1:10" and values are arrays
+    const keys = Object.keys(loadedMappings);
+    if (keys.length === 0) return {};
+    
+    const firstVal = loadedMappings[keys[0]];
+    if (Array.isArray(firstVal)) return loadedMappings; // Already new format
+
+    console.log("MIDI: Migrating old mapping format to new multi-assignment structure...");
+    const migrated = {};
+    Object.entries(loadedMappings).forEach(([controlId, mapping]) => {
+        if (!mapping || !mapping.type || mapping.channel === undefined || mapping.address === undefined) return;
+        
+        const key = `${mapping.type}:${mapping.channel}:${mapping.address}`;
+        if (!migrated[key]) migrated[key] = [];
+        
+        migrated[key].push({
+            controlId,
+            requiresShift: !!mapping.requiresShift,
+            targetType: 'position',
+            label: mapping.label || `${mapping.requiresShift ? '⇧' : ''}CH${mapping.channel}:${mapping.address}`
+        });
+    });
+    return migrated;
+};
+
 export const MidiProvider = ({ children, onMidiCommand }) => {
   const [midiInitialized, setMidiInitialized] = useState(false);
   const [midiInputs, setMidiInputs] = useState([]);
@@ -30,32 +59,21 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       try {
         await initializeMidi();
         setMidiInitialized(true);
-        const inputs = getMidiInputs();
-        setMidiInputs(inputs);
+        setMidiInputs(getMidiInputs());
         
-        // Listen for connection changes
+        // Listen for connection changes (hotplugging)
         listenToStateChange(() => {
             console.log("MIDI Device change detected, refreshing inputs...");
             setMidiInputs(getMidiInputs());
         });
-        
-        if (window.electronAPI && window.electronAPI.getSelectedMidiInput) {
-            const savedInputId = await window.electronAPI.getSelectedMidiInput();
-            if (savedInputId && inputs.some(i => i.id === savedInputId)) {
-                setSelectedMidiInputId(savedInputId);
-            } else if (inputs.length > 0) {
-                if (!selectedMidiInputId) setSelectedMidiInputId(inputs[0].id);
-            }
-        } else if (inputs.length > 0) {
-           if (!selectedMidiInputId) setSelectedMidiInputId(inputs[0].id);
-        }
 
         // Load saved mappings from store
         if (window.electronAPI && window.electronAPI.getMidiMappings) {
             const savedMappings = await window.electronAPI.getMidiMappings();
             if (savedMappings) {
-                console.log("Loaded saved MIDI mappings:", savedMappings);
-                setMappings(savedMappings);
+                const migrated = migrateMappings(savedMappings);
+                console.log("Loaded and migrated MIDI mappings:", migrated);
+                setMappings(migrated);
             }
         }
       } catch (err) {
@@ -64,6 +82,34 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     };
     init();
   }, []);
+
+  // Reactive Auto-Selection for MIDI Inputs
+  useEffect(() => {
+      const autoSelect = async () => {
+          if (!midiInitialized || midiInputs.length === 0) return;
+          
+          let targetId = selectedMidiInputId;
+          
+          // 1. If none selected, try to load saved preference
+          if (!targetId && window.electronAPI?.getSelectedMidiInput) {
+              const savedId = await window.electronAPI.getSelectedMidiInput();
+              if (savedId && midiInputs.some(i => i.id === savedId)) {
+                  targetId = savedId;
+              }
+          }
+          
+          // 2. If still none, or the current selected is missing from hardware, pick first available
+          if (!targetId || !midiInputs.some(i => i.id === targetId)) {
+              targetId = midiInputs[0].id;
+          }
+          
+          if (targetId !== selectedMidiInputId) {
+              console.log(`MIDI: Auto-selecting input: ${targetId}`);
+              setSelectedMidiInputId(targetId);
+          }
+      };
+      autoSelect();
+  }, [midiInitialized, midiInputs, selectedMidiInputId]);
 
   const saveMappings = async () => {
       if (window.electronAPI && window.electronAPI.saveMidiMappings) {
@@ -82,8 +128,9 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       if (window.electronAPI && window.electronAPI.importMappings) {
           const result = await window.electronAPI.importMappings('midi');
           if (result.success && result.mappings) {
-              setMappings(result.mappings);
-              console.log("MIDI mappings imported.");
+              const migrated = migrateMappings(result.mappings);
+              setMappings(migrated);
+              console.log("MIDI mappings imported and migrated.");
           }
       }
   };
@@ -110,29 +157,58 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     }
   }, [selectedMidiInputId, midiInitialized, midiInputs]);
 
-  const sendFeedback = useCallback((controlId, value, overrideChannel = null) => {
-    if (!selectedMidiInputId || !midiInitialized) return;
-    const mapping = mappings[controlId];
-    if (mapping && mapping.type === 'note') {
-        // APC40 LEDs respond to Note On with velocity for color/state.
-        // If value is a number, use it directly (0-127).
-        // If boolean, map true->127 (On), false->0 (Off).
-        let velocity = 0;
-        if (typeof value === 'number') {
-            velocity = value;
+  const sendFeedback = useCallback((controlId, value, status = 'inactive', overrideChannel = null) => {
+    if (!midiInitialized) return;
+
+    // Resolve numerical velocity based on status and feedback settings
+    const resolveVelocity = (assignment, val, stat) => {
+        const mode = assignment.feedbackMode || 'toggle';
+        const cfg = assignment.feedbackConfig || {};
+
+        if (mode === 'clip') {
+            if (stat === 'active') return cfg.activeVelocity ?? 127;
+            if (stat === 'previewing') return cfg.previewVelocity ?? 64;
+            if (stat === 'inactive') return cfg.inactiveVelocity ?? 1;
+            if (stat === 'empty') return cfg.emptyVelocity ?? 0;
+            return 0;
+        } else if (mode === 'slider') {
+            return Math.round(val * 127);
+        } else if (mode === 'dropdown') {
+            // Dropdown might use specific velocities for different items, 
+            // but for now, simple on/off based on if item is selected
+            return val ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
         } else {
-            velocity = value ? 127 : 0;
+            // Default: Toggle
+            const is_on = typeof val === 'boolean' ? val : val > 0;
+            return is_on ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
         }
-        
-        const channel = overrideChannel !== null ? overrideChannel : mapping.channel;
-        sendNote(selectedMidiInputId, mapping.address, velocity, channel);
-    }
+    };
+
+    // We need to find ALL hardware keys that are mapped to this controlId
+    Object.entries(mappings).forEach(([key, assignments]) => {
+        if (!Array.isArray(assignments)) return;
+        assignments.forEach(assignment => {
+            if (assignment.controlId === controlId) {
+                const [midiType, channelStr, address] = key.split(':');
+                if (midiType === 'note') {
+                    const channel = overrideChannel !== null ? overrideChannel : parseInt(channelStr);
+                    const outputId = assignment.outputDeviceId || selectedMidiInputId;
+                    
+                    if (outputId && outputId !== 'any') {
+                        const velocity = resolveVelocity(assignment, value, status);
+                        sendNote(outputId, address, velocity, channel);
+                    }
+                }
+            }
+        });
+    });
   }, [selectedMidiInputId, midiInitialized, mappings]);
 
   // Listen to MIDI events
   useEffect(() => {
     let cleanup = () => {};
     if (selectedMidiInputId) {
+      console.log(`(Re)binding MIDI listener for: ${selectedMidiInputId}`);
       cleanup = listenToMidiInput(selectedMidiInputId, (event) => {
         if (isMappingRef.current) {
             setLastMidiEvent(event);
@@ -141,13 +217,17 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       });
     }
     return cleanup;
-  }, [selectedMidiInputId, isMapping, learningId, mappings]); // Re-bind listener if key state changes
+  }, [selectedMidiInputId, isMapping, learningId, mappings, midiInputs]); // Added midiInputs to ensure re-binding on hotplug
 
-  // Keep a ref of isMapping for the listener
   const isMappingRef = useRef(isMapping);
   useEffect(() => {
       isMappingRef.current = isMapping;
   }, [isMapping]);
+
+  const getMappingKey = (type, channel, address) => {
+      const midiType = (type === 'noteon' || type === 'noteoff') ? 'note' : 'cc';
+      return `${midiType}:${channel}:${address}`;
+  };
 
   const handleIncomingMidi = (event) => {
     // Check for Shift Key (APC40: CH1 Note D7)
@@ -156,65 +236,67 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         const active = (event.type === 'noteon');
         setIsShiftDown(active);
         isShiftDownRef.current = active;
-        console.log(`Shift ${active ? 'Down' : 'Up'}`);
         return;
     }
 
     // 1. If in "Learn Mode" for a specific ID
     if (isMapping && learningId) {
-      // Don't map the release (noteoff)
       if (event.type === 'noteoff') return;
 
-      // Assign this event to the learningId
       const addressLabel = event.note || event.controller;
       const requiresShift = isShiftDownRef.current;
-      const newMapping = {
-        type: (event.type === 'noteon' || event.type === 'noteoff') ? 'note' : 'cc',
-        channel: event.channel, 
-        address: addressLabel,
+      const key = getMappingKey(event.type, event.channel, addressLabel);
+      
+      const newAssignment = {
+        controlId: learningId,
         requiresShift: requiresShift,
+        targetType: 'position', // Default: 'position', 'selectedLayer', 'thisClip'
+        inputDeviceId: selectedMidiInputId,
+        outputDeviceId: selectedMidiInputId,
         label: `${requiresShift ? '⇧' : ''}CH${event.channel}:${addressLabel}`
       };
       
-      console.log(`Mapped ${learningId} to:`, newMapping);
-      setMappings(prev => ({
-        ...prev,
-        [learningId]: newMapping
-      }));
-      setLearningId(null); // Stop learning for this ID
+      setMappings(prev => {
+          const currentForKey = prev[key] || [];
+          // Avoid duplicate assignments for the SAME controlId on the SAME key
+          if (currentForKey.some(a => a.controlId === learningId)) return prev;
+          return {
+              ...prev,
+              [key]: [...currentForKey, newAssignment]
+          };
+      });
+      setLearningId(null);
       return;
     }
 
-    // 2. Normal Operation: Check if this event maps to any control
-    Object.entries(mappings).forEach(([controlId, mapping]) => {
-      const isNoteMatch = (event.type === 'noteon' || event.type === 'noteoff') && 
-                          mapping.type === 'note' && 
-                          event.note === mapping.address && 
-                          event.channel === mapping.channel;
-      
-      const isCcMatch = event.type === 'controlchange' && 
-                        mapping.type === 'cc' && 
-                        event.controller === mapping.address && 
-                        event.channel === mapping.channel;
-      
-      // Match shift state only for notes (CC usually ignore shift)
-      const shiftMatch = mapping.type === 'cc' || (!!mapping.requiresShift === isShiftDownRef.current);
+    // 2. Normal Operation: Iterate through all assignments for this hardware key
+    const key = getMappingKey(event.type, event.channel, event.note || event.controller);
+    const assignments = mappings[key];
 
-      if ((isNoteMatch || isCcMatch) && shiftMatch) {
-        if (onMidiCommandRef.current) {
-          // Explicitly handle 0 values for CC and NoteOff
-          let val;
-          if (event.type === 'controlchange') {
-              val = event.value ?? 0;
-          } else if (event.type === 'noteoff') {
-              val = 0;
-          } else {
-              val = event.velocity ?? 0;
-          }
-          onMidiCommandRef.current(controlId, val, 127, event.type);
-        }
-      }
-    });
+    if (assignments && assignments.length > 0) {
+        assignments.forEach(assignment => {
+            // Match shift state only for notes
+            const isNote = key.startsWith('note:');
+            const shiftMatch = !isNote || (!!assignment.requiresShift === isShiftDownRef.current);
+            
+            // Device filtering (if specified)
+            const deviceMatch = !assignment.inputDeviceId || assignment.inputDeviceId === 'any' || assignment.inputDeviceId === selectedMidiInputId;
+
+            if (shiftMatch && deviceMatch) {
+                if (onMidiCommandRef.current) {
+                    let val;
+                    if (event.type === 'controlchange') {
+                        val = event.value ?? 0;
+                    } else if (event.type === 'noteoff') {
+                        val = 0;
+                    } else {
+                        val = event.velocity ?? 0;
+                    }
+                    onMidiCommandRef.current(assignment.controlId, val, 127, event.type, assignment);
+                }
+            }
+        });
+    }
   };
 
   const startMapping = () => setIsMapping(true);
@@ -226,7 +308,20 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   const removeMapping = (controlId) => {
       setMappings(prev => {
           const next = { ...prev };
-          delete next[controlId];
+          Object.keys(next).forEach(key => {
+              next[key] = next[key].filter(a => a.controlId !== controlId);
+              if (next[key].length === 0) delete next[key];
+          });
+          return next;
+      });
+  };
+
+  const removeAssignment = (key, controlId) => {
+      setMappings(prev => {
+          if (!prev[key]) return prev;
+          const next = { ...prev };
+          next[key] = next[key].filter(a => a.controlId !== controlId);
+          if (next[key].length === 0) delete next[key];
           return next;
       });
   };
@@ -243,7 +338,8 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     setLearningId,
     mappings,
     setMappings,
-    removeMapping, // Add removeMapping
+    removeMapping,
+    removeAssignment,
     saveMappings,
     exportMappings,
     importMappings,

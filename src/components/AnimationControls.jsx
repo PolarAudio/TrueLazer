@@ -129,10 +129,27 @@ const AnimationControls = ({ animSettings, onChange }) => {
                         <button className={`speed-control-button ${syncMode === 'fps' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'fps' ? null : 'fps')} style={{flex:1, padding:0, fontSize:'10px'}}>F</button>
                         <button className={`speed-control-button ${syncMode === 'timeline' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'timeline' ? null : 'timeline')} style={{flex:1, padding:0, fontSize:'10px'}}>T</button>
                         <button className={`speed-control-button ${syncMode === 'bpm' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'bpm' ? null : 'bpm')} style={{flex:1, padding:0, fontSize:'10px'}}>B</button>
+                        <button className={`speed-control-button ${syncMode === 'fft' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'fft' ? null : 'fft')} style={{flex:1, padding:0, fontSize:'10px'}}>FFT</button>
                     </div>
             </div>
 
             {/* Submenus for Sync Modes */}
+            {syncMode === 'fft' && (
+                <div className="anim-sub-settings" style={{ marginTop: '5px', padding: '2px', background: 'rgba(0,0,0,0.2)' }}>
+                    <div className="control-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px' }}>
+                        <label style={{color: '#aaa', marginRight: '5px'}}>Range</label>
+                        <select 
+                            value={animSettings?.fftRange || 'low'} 
+                            onChange={(e) => update('fftRange', e.target.value)}
+                            style={{ fontSize: '10px', background: '#333', border: '1px solid #555', color: 'white' }}
+                        >
+                            <option value="low">Low</option>
+                            <option value="mid">Mid</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+            )}
             {syncMode === 'timeline' && (
                 <div className="anim-sub-settings" style={{ marginTop: '5px', padding: '2px', background: 'rgba(0,0,0,0.2)' }}>
                     <div className="control-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px' }}>

@@ -1,5 +1,6 @@
 import { applyEffects, applyOutputProcessing } from './effects.js';
 import { effectDefinitions } from './effectDefinitions';
+import { optimizePoints } from './optimizer.js';
 
 export class WebGLRenderer {
   constructor(canvas, type) {
@@ -17,6 +18,7 @@ export class WebGLRenderer {
     this.positionBuffer = null;
     this.colorBuffer = null;
     this.alphaBuffer = null;
+    this.alphaBufferData = new Float32Array(131072); // Max points buffer for reuse
 
     this.lastPointDrawTime = 0; // Tracks the last time points were drawn
 
@@ -175,14 +177,14 @@ export class WebGLRenderer {
     }
 
     if (this.type === 'world') {
-      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings, data.previewTime);
+      this.renderWorld(data.worldData, data.previewScanRate, data.layerIntensities, data.masterIntensity, data.dacSettings, data.previewTime, data.fftLevels, data.optimizationEnabled);
     }
     else {
-      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings, data.bpm, data.clipDuration, data.progress, data.previewTime);
+      this.renderSingle(data.ildaFrames, data.previewScanRate, data.intensity, data.effects, data.syncSettings, data.bpm, data.clipDuration, data.progress, data.previewTime, data.fftLevels, data.effectStates, data.optimizationEnabled);
     }
   }
 
-  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}, bpm = 120, clipDuration = 1, progressOverride = null, previewTime = null) {
+  renderSingle(ildaFrames, previewScanRate, intensity, effects, syncSettings = {}, bpm = 120, clipDuration = 1, progressOverride = null, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -199,7 +201,7 @@ export class WebGLRenderer {
     const progress = progressOverride !== null ? progressOverride : (frameIndex / ildaFrames.length);
     const time = previewTime !== null ? previewTime : performance.now();
 
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration);
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -207,7 +209,7 @@ export class WebGLRenderer {
     }
   }
 
-  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings, previewTime = null) {
+  renderWorld(worldData, previewScanRate, layerIntensities, masterIntensity, dacSettings, previewTime = null, fftLevels = { low: 0, mid: 0, high: 0 }, optimizationEnabled = true) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     
@@ -238,7 +240,7 @@ export class WebGLRenderer {
             // Skip rendering if intensity is effectively zero
             if (finalIntensity > 0.001) {
                 const progress = clip.progress !== undefined ? clip.progress : (this.frameIndexes[layerIndex] % clip.frames.length) / clip.frames.length;
-                const { syncSettings = {}, bpm = 120, clipDuration = 1 } = clip;
+                const { syncSettings = {}, bpm = 120, clipDuration = 1, effectStates = null } = clip;
                 
                 // If dacSettings provided, we apply them.
                 // In exact copy mode, we might want to apply settings after merge, but here we apply per layer for simplicity if we don't want to refactor the draw loop.
@@ -270,7 +272,7 @@ export class WebGLRenderer {
                 }
 
                 // Pass layerIndex, progress and time to draw
-                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration);
+                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
             }
         }
       }
@@ -315,7 +317,7 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true) {
     const gl = this.gl;
     if (!frame || !frame.points) return;
 
@@ -329,12 +331,19 @@ export class WebGLRenderer {
     // BUT, the existing manual mapping here (lines 323-338 in original) handles only range/number types
     // and calculates `newParams`.
     // If we remove it, we rely entirely on `applyEffects`.
-    // Let's rely on `applyEffects` which we just updated to be robust.
-    // So we pass original `effects` and let `applyEffects` do the work.
+    // Let's rely on 'applyEffects' which we just updated to be robust.
+    // So we pass original 'effects' and let 'applyEffects' do the work.
     
+    // Optimize BEFORE effects (Option 3 match)
+    let frameToProcess = frame;
+    if (optimizationEnabled) {
+        const optimizedPoints = optimizePoints(frame.points);
+        frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
+    }
+
     // Apply effects before drawing
     // We pass syncSettings and bpm in the context
-    const modifiedFrame = applyEffects(frame, effects, { progress, time, syncSettings, bpm, clipDuration });
+    const modifiedFrame = applyEffects(frameToProcess, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates });
     const points = modifiedFrame.points;
     const isTyped = modifiedFrame.isTypedArray;
     const numPoints = isTyped ? (points.length / 8) : points.length;
@@ -377,26 +386,54 @@ export class WebGLRenderer {
       const drawPoints = beamRenderMode === 'points' || beamRenderMode === 'both';
       const drawLines = beamRenderMode === 'lines' || beamRenderMode === 'both';
       
-      let currentSegmentPositions = [];
-      let currentSegmentColors = [];
-      
-      for (let i = 0; i < pointsToDraw; i++) {
-        const point = getPointData(i);
-        if (point.blanking) {
-          if (currentSegmentPositions.length > 0) {
-            if (drawLines) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
-            if (drawPoints) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, true);
-            currentSegmentPositions = [];
-            currentSegmentColors = [];
+      if (drawLines) {
+          let currentSegmentPositions = [];
+          let currentSegmentColors = [];
+          let prevPoint = getPointData(0);
+
+          for (let i = 1; i < pointsToDraw; i++) {
+            const point = getPointData(i);
+            
+            // Detect wrap-around the frame buffer
+            const currIdx = (startIndex + i) % numPoints;
+            const prevIdx = (startIndex + i - 1) % numPoints;
+            const isWrap = currIdx < prevIdx;
+
+            if (point.blanking || isWrap) {
+              if (currentSegmentPositions.length > 0) {
+                this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
+                currentSegmentPositions = [];
+                currentSegmentColors = [];
+              }
+            } else {
+              // Beam to this point is ON. The segment starts at prevPoint.
+              if (currentSegmentPositions.length === 0) {
+                currentSegmentPositions.push(prevPoint.x, prevPoint.y);
+                currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+              }
+              currentSegmentPositions.push(point.x, point.y);
+              currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+            }
+            prevPoint = point;
           }
-          continue;
-        }
-        currentSegmentPositions.push(point.x, point.y);
-        currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+          if (currentSegmentPositions.length > 0) {
+            this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
+          }
       }
-      if (currentSegmentPositions.length > 0) {
-        if (drawLines) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
-        if (drawPoints) this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, true);
+
+      if (drawPoints) {
+          const pts = [];
+          const cols = [];
+          for (let i = 0; i < pointsToDraw; i++) {
+            const point = getPointData(i);
+            if (!point.blanking) {
+              pts.push(point.x, point.y);
+              cols.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+            }
+          }
+          if (pts.length > 0) {
+            this._drawSegment(new Float32Array(pts), new Float32Array(cols), 1.0, pts.length / 2, true);
+          }
       }
     };
 
@@ -425,16 +462,21 @@ export class WebGLRenderer {
 
       for (let i = 1; i < pointsToDraw; i++) {
         const point = getPointData(i);
-        if (!prevPoint.blanking && !point.blanking) {
+        
+        // Detect wrap-around
+        const isWrap = ((startIndex + i) % numPoints) < ((startIndex + i - 1) % numPoints);
+        if (isWrap) {
+            prevPoint = point;
+            continue;
+        }
+
+        if (!point.blanking) {
           trianglePositions.push(0, 0, prevPoint.x, prevPoint.y, point.x, point.y);
           
-          const color1 = [prevPoint.r / 255 * intensity, prevPoint.g / 255 * intensity, prevPoint.b / 255 * intensity];
+          const color1 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
           const color2 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
           
-          // Center is average of full intensity colors
-          const centerColor = [(color1[0] + color2[0]) / 2, (color1[1] + color2[1]) / 2, (color1[2] + color2[2]) / 2];
-          
-          // Fade edges to simulate density drop-off (Halo effect)
+          const centerColor = [color1[0], color1[1], color1[2]];
           const edgeFade = 0.3;
           const fadedColor1 = [color1[0] * edgeFade, color1[1] * edgeFade, color1[2] * edgeFade];
           const fadedColor2 = [color2[0] * edgeFade, color2[1] * edgeFade, color2[2] * edgeFade];
@@ -483,7 +525,12 @@ export class WebGLRenderer {
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    if (this.alphaBufferData.length < numPoints) {
+        this.alphaBufferData = new Float32Array(numPoints * 2);
+    }
+    this.alphaBufferData.fill(alpha, 0, numPoints);
+    const alphas = this.alphaBufferData.subarray(0, numPoints);
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
     gl.enableVertexAttribArray(this.alphaAttributeLocation);
@@ -510,7 +557,12 @@ export class WebGLRenderer {
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    if (this.alphaBufferData.length < numPoints) {
+        this.alphaBufferData = new Float32Array(numPoints * 2);
+    }
+    this.alphaBufferData.fill(alpha, 0, numPoints);
+    const alphas = this.alphaBufferData.subarray(0, numPoints);
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
     gl.enableVertexAttribArray(this.alphaAttributeLocation);
@@ -537,7 +589,12 @@ export class WebGLRenderer {
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    const alphas = new Float32Array(Array(numPoints).fill(alpha));
+    if (this.alphaBufferData.length < numPoints) {
+        this.alphaBufferData = new Float32Array(numPoints * 2);
+    }
+    this.alphaBufferData.fill(alpha, 0, numPoints);
+    const alphas = this.alphaBufferData.subarray(0, numPoints);
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
     gl.enableVertexAttribArray(this.alphaAttributeLocation);
@@ -556,5 +613,9 @@ export class WebGLRenderer {
 
   destroy() {
     cancelAnimationFrame(this.animationFrameId);
+    if (this.gl) {
+        const ext = this.gl.getExtension('WEBGL_losing_context');
+        if (ext) ext.loseContext();
+    }
   }
 }

@@ -1,0 +1,8 @@
+{
+  "track_id": "ndi_optimization_20260216",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-02-16T10:33:00Z",
+  "updated_at": "2026-02-16T10:33:00Z",
+  "description": "Optimize NDI performance and stabilize real-time rendering."
+}

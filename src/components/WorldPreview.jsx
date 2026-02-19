@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorker } from '../contexts/WorkerContext';
 
-const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime = 0, onToggleBeamEffect, onCycleDisplayMode }) => {
+const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime = 0, fftLevels = { low: 0, mid: 0, high: 0 }, optimizationEnabled = true, onToggleBeamEffect, onCycleDisplayMode }) => {
   const canvasRef = useRef(null);
   const worker = useWorker();
   const canvasId = useRef(`world-preview-${Math.random()}`);
@@ -18,7 +18,7 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
         id: canvasId.current,
         canvas: offscreen,
         type: 'world',
-        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, previewTime }
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, previewTime, fftLevels, optimizationEnabled }
       }
     }, [offscreen]);
 
@@ -31,7 +31,7 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
   useEffect(() => {
     if (!worker) return;
 
-    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects, layerIndex, syncSettings, bpm, clipDuration, progress }]) => ({
+    const transformedWorldData = Object.entries(activeFrames).map(([workerId, { frame, effects, layerIndex, syncSettings, bpm, clipDuration, progress, effectStates }]) => ({
       frames: [frame],
       effects: effects,
       workerId: workerId,
@@ -39,17 +39,18 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
       syncSettings,
       bpm,
       clipDuration,
-      progress // Pass progress
+      progress, // Pass progress
+      effectStates // Pass effectStates
     }));
 
     worker.postMessage({
       action: 'update',
       payload: {
         id: canvasId.current,
-        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime }
+        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels, optimizationEnabled }
       }
     });
-  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime]);
+  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels, optimizationEnabled]);
 
   return (
     <div className="world-preview">

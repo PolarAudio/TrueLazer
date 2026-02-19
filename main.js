@@ -2,8 +2,12 @@ import { app, BrowserWindow, Menu, ipcMain, dialog } from 'electron';
 import url, { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import fs from 'fs';
+import os from 'os';
+import pidusage from 'pidusage';
+import psTree from 'ps-tree';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
+import getSystemFonts from 'get-system-fonts';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
@@ -79,6 +83,8 @@ const schema = {
   artnetMappings: { type: 'object', default: {} },
   keyboardMappings: { type: 'object', default: {} },
   selectedMidiInputId: { type: 'string', default: '' },
+  selectedAudioInputDeviceId: { type: 'string', default: 'default' },
+  fftSettings: { type: 'object', default: {} },
   shortcutsState: {
     type: 'object',
     properties: {
@@ -103,6 +109,7 @@ const schema = {
   },
   loadedClips: { type: 'array', default: [] }, // Reverted to original
   clipNames: { type: 'array', default: [] },
+  dacGroups: { type: 'object', default: {} },
   dacOutputSettings: { type: 'object', default: {} },
   sliderValue: { type: 'object', default: {} }, // Placeholder for slider values
   dacAssignment: { type: 'object', default: {} }, // Placeholder for DAC assignments
@@ -191,33 +198,41 @@ ipcMain.handle('save-artnet-mappings', (event, mappings) => {
 });
 
 ipcMain.handle('export-mappings', async (event, mappings, type) => {
-  const defaultPath = path.join(app.getPath('documents'), `TrueLazer_${type}_Mappings.json`);
-  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-    defaultPath,
-    filters: [{ name: 'JSON Files', extensions: ['json'] }],
-    title: `Export ${type.toUpperCase()} Mappings`
-  });
+    const documentsPath = app.getPath('documents');
+    const userMappingsPath = path.join(documentsPath, 'TrueLazer', 'Mappings');
+    const defaultPath = path.join(userMappingsPath, `TrueLazer_${type}_Mappings.json`);
+    
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: `Export ${type.toUpperCase()} Mappings`,
+      defaultPath,
+      filters: [{ name: 'JSON Files', extensions: ['json'] }]
+    });
 
-  if (!canceled && filePath) {
+    if (canceled || !filePath) return false;
+
     try {
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
       await fs.promises.writeFile(filePath, JSON.stringify(mappings, null, 2));
-      return { success: true };
+      return true;
     } catch (error) {
       console.error(`Failed to export ${type} mappings:`, error);
-      return { success: false, error: error.message };
+      return false;
     }
-  }
-  return { success: false, canceled: true };
-});
-
-ipcMain.handle('import-mappings', async (event, type) => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-    filters: [{ name: 'JSON Files', extensions: ['json'] }],
-    properties: ['openFile'],
-    title: `Import ${type.toUpperCase()} Mappings`
   });
 
-  if (!canceled && filePaths.length > 0) {
+  ipcMain.handle('import-mappings', async (event, type) => {
+    const documentsPath = app.getPath('documents');
+    const userMappingsPath = path.join(documentsPath, 'TrueLazer', 'Mappings');
+    
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: `Import ${type.toUpperCase()} Mappings`,
+      defaultPath: userMappingsPath,
+      filters: [{ name: 'JSON Files', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+
+    if (canceled || filePaths.length === 0) return { success: false };
+
     try {
       const data = await fs.promises.readFile(filePaths[0], 'utf-8');
       const mappings = JSON.parse(data);
@@ -226,9 +241,7 @@ ipcMain.handle('import-mappings', async (event, type) => {
       console.error(`Failed to import ${type} mappings:`, error);
       return { success: false, error: error.message };
     }
-  }
-  return { success: false, canceled: true };
-});
+  });
 
 // Commented out to avoid issues with schema
 
@@ -242,26 +255,6 @@ ipcMain.handle('get-artnet-universes', () => {
 
 ipcMain.on('send-artnet-data', (event, universe, channel, value) => {
   if (artnetSender) {
-    // dmxnet sender.prepChannel(channel, value) then sender.transmit()
-    // OR sender.fillChannels(min, max, value)
-    // We need to set a single channel.
-    // sender.transmit() sends the whole frame.
-    // We need to maintain the frame state? dmxnet sender maintains it.
-    
-    // Note: channel in dmxnet might be 0-indexed or 1-indexed. Usually 0-511.
-    // ShortcutsWindow sends 0-511.
-    
-    // artnetSender.prepChannel(channel, value); 
-    // artnetSender.transmit();
-    // But prepChannel isn't documented in simple examples usually? 
-    // Usually it's: sender.setChannel(channel, value);
-    // Let's assume standard behavior or check docs if available.
-    // Assuming `setChannel(channel, value)` works.
-    
-    // Using a safer approach if method unknown: transmit() takes array?
-    // Looking at dmxnet source/docs (simulated):
-    // sender.prepChannel(channel, value) exists.
-    
     try {
         artnetSender.prepChannel(channel, value);
         artnetSender.transmit();
@@ -273,7 +266,6 @@ ipcMain.on('send-artnet-data', (event, universe, channel, value) => {
 
 ipcMain.on('close-artnet', () => {
   if (artnetInstance) {
-    // artnetInstance.close(); // Not always available
     artnetInstance = null;
     artnetSender = null;
   }
@@ -337,6 +329,14 @@ ipcMain.handle('set-render-settings', (event, renderSettings) => {
   store.set('renderSettings', renderSettings);
 });
 
+ipcMain.handle('set-fft-settings', (event, fftSettings) => {
+  store.set('fftSettings', fftSettings);
+});
+
+ipcMain.handle('set-selected-audio-input', (event, deviceId) => {
+  store.set('selectedAudioInputDeviceId', deviceId);
+});
+
 ipcMain.handle('set-theme', (event, theme) => {
   store.set('theme', theme);
 });
@@ -379,7 +379,15 @@ ipcMain.handle('get-selected-midi-input', () => {
   return store.get('selectedMidiInputId') || '';
 });
 
-// Commented out to avoid issues with schema
+ipcMain.handle('get-dac-groups', () => {
+  return store.get('dacGroups') || {};
+});
+
+ipcMain.handle('save-dac-groups', (event, groups) => {
+  store.set('dacGroups', groups);
+  return { success: true };
+});
+
 ipcMain.handle('set-loaded-clips', (event, loadedClips) => {
   console.log('Received loadedClips:', loadedClips);
   store.set('loadedClips', loadedClips);
@@ -399,16 +407,101 @@ async function getDefaultProjectPath() {
   }
 }
 
-// IPC handler to expose the default project path to the renderer
+async function initializeUserData() {
+  const documentsPath = app.getPath('documents');
+  const userDataPath = path.join(documentsPath, 'TrueLazer');
+  const userIldaPath = path.join(userDataPath, 'ILDA-FILES');
+  const userMappingsPath = path.join(userDataPath, 'Mappings');
+  
+  try {
+      await fs.promises.mkdir(userDataPath, { recursive: true });
+      await fs.promises.mkdir(userIldaPath, { recursive: true });
+      await fs.promises.mkdir(userMappingsPath, { recursive: true });
+
+      // 1. Copy default ILDA assets
+      const resourcePath = app.isPackaged 
+          ? path.join(process.resourcesPath, 'ILDA-FILES')
+          : path.join(__dirname, 'src', 'ILDA-FILE-FORMAT-FILES');
+
+      if (fs.existsSync(resourcePath)) {
+          const sourceFiles = await fs.promises.readdir(resourcePath);
+          for (const file of sourceFiles) {
+              const srcFile = path.join(resourcePath, file);
+              const destFile = path.join(userIldaPath, file);
+              try {
+                  await fs.promises.access(destFile);
+              } catch {
+                  const stat = await fs.promises.stat(srcFile);
+                  if (stat.isFile()) await fs.promises.copyFile(srcFile, destFile);
+              }
+          }
+      }
+
+      // 2. Copy default Mapping files
+      let mappingSourcePath = path.join(__dirname, 'src');
+      if (app.isPackaged) {
+          const nextToExe = path.join(path.dirname(process.execPath), 'Mappings');
+          const inResources = path.join(process.resourcesPath, 'Mappings');
+          if (fs.existsSync(nextToExe)) mappingSourcePath = nextToExe;
+          else if (fs.existsSync(inResources)) mappingSourcePath = inResources;
+      }
+
+      console.log(`[Init] Checking for default mappings in: ${mappingSourcePath}`);
+
+      if (fs.existsSync(mappingSourcePath)) {
+          const mappingFiles = await fs.promises.readdir(mappingSourcePath);
+          for (const file of mappingFiles) {
+              if (file.toLowerCase().endsWith('mappings.json')) {
+                  const srcFile = path.join(mappingSourcePath, file);
+                  const destFile = path.join(userMappingsPath, file);
+                  try {
+                      await fs.promises.access(destFile);
+                  } catch {
+                      console.log(`[Init] Copying default mapping: ${file}`);
+                      await fs.promises.copyFile(srcFile, destFile);
+                  }
+              }
+          }
+      }
+
+      return { userIldaPath, userMappingsPath };
+  } catch (e) {
+      console.warn("Could not initialize user data:", e);
+      return { userIldaPath, userMappingsPath };
+  }
+}
+
 ipcMain.handle('get-default-project-path', async () => {
   return await getDefaultProjectPath();
 });
 
+ipcMain.handle('get-user-ilda-path', async () => {
+    const documentsPath = app.getPath('documents');
+    return path.join(documentsPath, 'TrueLazer', 'ILDA-FILES');
+});
+
+ipcMain.handle('get-user-mappings-path', async () => {
+    const documentsPath = app.getPath('documents');
+    return path.join(documentsPath, 'TrueLazer', 'Mappings');
+});
+
 let currentProjectpath = null;
+
+function updateWindowTitle() {
+  if (!mainWindow) return;
+  const baseTitle = 'TrueLazer';
+  if (currentProjectpath) {
+    const projectName = path.basename(currentProjectpath, '.tlp');
+    mainWindow.setTitle(`${baseTitle} - ${projectName}`);
+  } else {
+    mainWindow.setTitle(`${baseTitle} - New Project`);
+  }
+}
 
 // IPC handlers for project management
 ipcMain.on('new-project', (event) => {
   currentProjectpath = null;
+  updateWindowTitle();
   if(mainWindow) mainWindow.webContents.send('new-project');
 });
 
@@ -421,6 +514,7 @@ ipcMain.on('open-project', async (event) => {
   });
   if (!canceled && filePaths.length > 0) {
     currentProjectpath = filePaths[0];
+    updateWindowTitle();
     try {
       const data = await fs.promises.readFile(currentProjectpath, 'utf-8');
       if(mainWindow) mainWindow.webContents.send('load-project-data', JSON.parse(data));
@@ -434,11 +528,11 @@ ipcMain.on('save-project', async (event, projectData) => {
   if (currentProjectpath) {
     try {
       await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
+      updateWindowTitle();
     } catch (error) {
       console.error('Failed to save project file:', error);
     }
   } else {
-    // If there's no current path, then we do a "Save As" instead.
     if(mainWindow) mainWindow.webContents.send('save-project-as');
   }
 });
@@ -451,6 +545,7 @@ ipcMain.on('save-project-as', async (event, projectData) => {
   });
   if (!canceled && filePath) {
     currentProjectpath = filePath;
+    updateWindowTitle();
     try {
       await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
     } catch (error) {
@@ -459,7 +554,6 @@ ipcMain.on('save-project-as', async (event, projectData) => {
   }
 });
 
-// This function needs to be globally accessible
 function sendThumbnailModeToRenderer(mode) {
   if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-thumbnail-render-mode', mode);
@@ -471,8 +565,12 @@ function buildApplicationMenu(mode) {
     {
       label: 'TrueLazer',
       submenu: [
-        { label: 'About', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
-        { type: 'separator' },
+                { label: 'About', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
+                { type: 'separator' },
+        		{ label: 'Shape Builder', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'shapeBuilder'); } },
+        		{ type: 'separator' },
+        		{ label: 'Timeline Editor', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'timeline'); } },
+        		{ type: 'separator' },
         { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => { if(mainWindow) mainWindow.webContents.send('new-project'); } },
         { label: 'Open Project', accelerator: 'CmdOrCtrl+O', click: () => { ipcMain.emit('open-project'); } },
         { label: 'Save Project', accelerator: 'CmdOrCtrl+S', click: () => { if(mainWindow) mainWindow.webContents.send('save-project'); } },
@@ -486,18 +584,28 @@ function buildApplicationMenu(mode) {
       submenu: [
         { label: 'General', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
         {
-          label: 'Audio Output',
-          submenu: audioDevices.length > 0 
-            ? audioDevices.map(device => ({
-                label: device.label || `Device ${device.deviceId.slice(0, 5)}`,
-                type: 'radio',
-                checked: currentAudioDeviceId === device.deviceId,
-                click: () => {
-                  currentAudioDeviceId = device.deviceId;
-                  if(mainWindow) mainWindow.webContents.send('update-audio-device-id', device.deviceId);
-                }
-              }))
-            : [{ label: 'No devices found', enabled: false }]
+          label: 'Audio Settings',
+          submenu: [
+            {
+              label: 'Audio Output',
+              submenu: audioDevices.length > 0 
+                ? [
+                    ...audioDevices.map(device => ({
+                        label: device.label || `Device ${device.deviceId.slice(0, 5)}`,
+                        type: 'radio',
+                        checked: currentAudioDeviceId === device.deviceId,
+                        click: () => {
+                          currentAudioDeviceId = device.deviceId;
+                          if(mainWindow) mainWindow.webContents.send('update-audio-device-id', device.deviceId);
+                        }
+                    })),
+                    { type: 'separator' },
+                    { label: 'Audio Output Settings...', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-output'); } }
+                  ]
+                : [{ label: 'No devices found', enabled: false }]
+            },
+            { label: 'FFT Settings...', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-fft'); } }
+          ]
         }
       ],
     },
@@ -627,7 +735,6 @@ function buildApplicationMenu(mode) {
         {
           label: 'Render Mode',
           submenu: [
-            // New thumbnail render mode options
             { label: 'Thumbnail Still Frame', type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
             { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
             { label: 'Thumbnail Hover Render', type: 'radio', checked: mode === 'hover', click: () => { sendThumbnailModeToRenderer('hover'); } },
@@ -643,8 +750,6 @@ function buildApplicationMenu(mode) {
               ]
             },
             { type: 'separator' },
-
-
             {
               label: 'Beam Alpha',
               submenu: [
@@ -664,7 +769,6 @@ function buildApplicationMenu(mode) {
   Menu.setApplicationMenu(menu);
 }
 
-
 function createWindow() {
   const win = new BrowserWindow({
     width: 1920,
@@ -673,19 +777,17 @@ function createWindow() {
       preload: path.join(__dirname, 'src', 'preload.js'),
       nodeIntegration: true,
       contextIsolation: true,
-      webSecurity: false, // Ensure this is false to allow file:// protocol for media
-      backgroundThrottling: false, // Keep animations and timers running in background
+      webSecurity: false,
+      backgroundThrottling: false,
     },
-    frame: true, // Set to false to remove the default window frame and title bar
+    frame: true,
   });
 
-  // Always open DevTools in the built application to help debug blank screen issues.
   win.webContents.openDevTools();
 
   if (isDev) {
-    win.loadURL('http://localhost:5173'); // Vite development server default port
+    win.loadURL('http://localhost:5173');
   } else {
-    // Use url.format for robust file loading from ASAR
     win.loadURL(url.format({
       pathname: path.join(__dirname, 'dist', 'index.html'),
       protocol: 'file:',
@@ -693,7 +795,6 @@ function createWindow() {
     }));
   }
 
-  // Assign to global mainWindow
   mainWindow = win;
 
   win.on('closed', () => {
@@ -701,27 +802,20 @@ function createWindow() {
     dacCommunication.closeAll();
   });
 
-  // Initial menu build
   buildApplicationMenu(currentThumbnailRenderMode);
 
-  // IPC handlers for thumbnail render mode synchronization
   ipcMain.on('renderer-thumbnail-mode-changed', (event, mode) => {
       currentThumbnailRenderMode = mode;
       buildApplicationMenu(currentThumbnailRenderMode);
   });
 
   ipcMain.on('update-thumbnail-render-mode', (event, mode) => {
-      // This is received from a menu click in the main process itself
-      // We need to send it to the renderer to update its state
       sendThumbnailModeToRenderer(mode);
   });
 
-  // Listener for main process requesting current mode from renderer
   ipcMain.on('request-renderer-thumbnail-mode', (event) => {
     event.sender.send('update-thumbnail-render-mode', currentThumbnailRenderMode);
   });
-
-  // ... existing ipcMain handlers ...
 
   ipcMain.handle('discover-dacs', async (event, timeout, networkInterfaceIp) => {
     return await discoverDacs(timeout, networkInterfaceIp);
@@ -731,8 +825,8 @@ function createWindow() {
     return await getDacServices(ip, localIp, 1000, type);
   });
 
-  ipcMain.handle('send-frame', async (event, ip, channel, frame, fps, type) => {
-    sendFrame(ip, channel, frame, fps, type);
+  ipcMain.handle('send-frame', async (event, ip, channel, points, fps, type, options) => {
+    sendFrame(ip, channel, points, fps, type, options);
   });
 
   ipcMain.handle('start-dac-output', async (event, ip, type) => {
@@ -755,7 +849,6 @@ function createWindow() {
   });
 
   ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
-    console.log(`Received show-layer-full-context-menu for layer: ${layerIndex}`);
     const layerFullContextMenu = Menu.buildFromTemplate([
       { label: 'Insert Above', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex); } },
       { label: 'Insert Below', click: () => { if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex); } },
@@ -769,9 +862,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'still',
                 click() {
                     currentThumbnailRenderMode = 'still';
-                    sendThumbnailModeToRenderer('still'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('still');
                     if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-still', layerIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             },
             {
@@ -780,9 +873,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'active',
                 click() {
                     currentThumbnailRenderMode = 'active';
-                    sendThumbnailModeToRenderer('active'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('active');
                     if(mainWindow) mainWindow.webContents.send('layer-full-context-command', 'set-layer-thumbnail-mode-active', layerIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             }
         ]
@@ -796,13 +889,13 @@ function createWindow() {
 
   ipcMain.on('show-column-context-menu', (event, index) => {
     const columnContextMenu = Menu.buildFromTemplate([
+      { label: 'Duplicate', click: () => { if(mainWindow) mainWindow.webContents.send('menu-action', 'column-duplicate'); } },
       { label: 'Rename Column', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-column', index: index }); } },
     ]);
     columnContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex, currentTriggerStyle = 'normal') => {
-    console.log(`Received show-clip-context-menu for layer: ${layerIndex}, column: ${colIndex}, style: ${currentTriggerStyle}`); 
     const clipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
       { label: 'Export as ILDA', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'export-ilda', layerIndex, colIndex); } },
@@ -810,24 +903,9 @@ function createWindow() {
       {
         label: 'Trigger Style',
         submenu: [
-          { 
-            label: 'Normal', 
-            type: 'radio', 
-            checked: currentTriggerStyle === 'normal',
-            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } 
-          },
-          { 
-            label: 'Toggle', 
-            type: 'radio', 
-            checked: currentTriggerStyle === 'toggle',
-            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } 
-          },
-          { 
-            label: 'Flash', 
-            type: 'radio', 
-            checked: currentTriggerStyle === 'flash',
-            click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); } 
-          },
+          { label: 'Normal', type: 'radio', checked: currentTriggerStyle === 'normal', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } },
+          { label: 'Toggle', type: 'radio', checked: currentTriggerStyle === 'toggle', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } },
+          { label: 'Flash', type: 'radio', checked: currentTriggerStyle === 'flash', click: () => { if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); } },
         ]
       },
       { type: 'separator' },
@@ -840,9 +918,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'still',
                 click() {
                     currentThumbnailRenderMode = 'still';
-                    sendThumbnailModeToRenderer('still'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('still');
                     if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-clip-thumbnail-mode-still', layerIndex, colIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             },
             {
@@ -851,9 +929,9 @@ function createWindow() {
                 checked: currentThumbnailRenderMode === 'active',
                 click() {
                     currentThumbnailRenderMode = 'active';
-                    sendThumbnailModeToRenderer('active'); // Send to renderer to update state
+                    sendThumbnailModeToRenderer('active');
                     if(mainWindow) mainWindow.webContents.send('clip-context-command', 'set-clip-thumbnail-mode-active', layerIndex, colIndex);
-                    buildApplicationMenu(currentThumbnailRenderMode); // Rebuild main menu
+                    buildApplicationMenu(currentThumbnailRenderMode);
                 }
             }
         ]
@@ -870,7 +948,6 @@ function createWindow() {
   });
 
   ipcMain.on('show-column-header-clip-context-menu', (event, colIndex) => {
-    console.log(`Received show-column-header-clip-context-menu for column: ${colIndex}`);
     const columnHeaderClipContextMenu = Menu.buildFromTemplate([
       { label: 'Update Thumbnail', click: () => { if(mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'update-thumbnail', colIndex }); } },
       { type: 'separator' },
@@ -889,31 +966,40 @@ function createWindow() {
     buildApplicationMenu(currentThumbnailRenderMode);
   });
 
-  // Listen for context menu actions from renderer and send back to renderer
+  ipcMain.on('show-quick-assign-context-menu', (event, type, index) => {
+    const quickAssignMenu = Menu.buildFromTemplate([
+      { label: 'Reset Value', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); } },
+      { label: 'Clear Assignment', click: () => { if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); } },
+    ]);
+    quickAssignMenu.popup({ window: mainWindow });
+  });
+
   ipcMain.on('context-menu-action', (event, action) => {
-    console.log(`Main process received context menu action: ${JSON.stringify(action)}`);
     if(mainWindow) mainWindow.webContents.send('context-menu-action-from-main', action);
   });
 
   ipcMain.handle('open-file-explorer', async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openDirectory'],
-    });
-    if (canceled) {
-      return null;
-    } else {
-      return filePaths[0];
-    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+    return canceled ? null : filePaths[0];
   });
 
   ipcMain.handle('read-file-content', async (event, filePath) => {
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
-      const content = await fs.promises.readFile(fullPath);
-      return content;
+      return await fs.promises.readFile(fullPath);
     } catch (error) {
       console.error('Failed to read file content:', error);
       return null;
+    }
+  });
+
+  ipcMain.handle('check-file-exists', async (event, filePath) => {
+    try {
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      await fs.promises.access(fullPath, fs.constants.F_OK);
+      return true;
+    } catch (error) {
+      return false;
     }
   });
 
@@ -921,115 +1007,99 @@ function createWindow() {
     try {
       const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
       const files = await fs.promises.readdir(fullPath);
-      const ildFiles = files
-        .filter(file => file.toLowerCase().endsWith('.ild'))
-        .map(file => path.join(directoryPath, file));
-      return ildFiles;
+      return files.filter(file => file.toLowerCase().endsWith('.ild')).map(file => path.join(directoryPath, file));
     } catch (error) {
       console.error('Failed to read directory:', error);
       return [];
     }
   });
-  ipcMain.handle('read-file-as-binary', async (event, filePath) => {
-  try {
-    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
-    const buffer = await fs.promises.readFile(fullPath);
-    return buffer;
-  } catch (error) {
-    console.error('Error reading file:', error);
-    throw error;
-  }
-  });
 
-  ipcMain.handle('read-file-for-worker', async (event, filePath) => {
+  ipcMain.handle('read-file-as-binary', async (event, filePath) => {
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
       const buffer = await fs.promises.readFile(fullPath);
-      // Convert Node.js Buffer to ArrayBuffer for transfer to worker
-      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-      return arrayBuffer;
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    } catch (error) {
+      console.error('Error reading file:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('read-file-for-worker', async (event, filePath, maxBytes) => {
+    try {
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      let buffer;
+      if (maxBytes) {
+          const fileHandle = await fs.promises.open(fullPath, 'r');
+          const allocSize = Math.min(maxBytes, (await fileHandle.stat()).size);
+          const { buffer: chunk } = await fileHandle.read(Buffer.alloc(allocSize), 0, allocSize, 0);
+          await fileHandle.close();
+          buffer = chunk;
+      } else {
+          buffer = await fs.promises.readFile(fullPath);
+      }
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     } catch (error) {
       console.error(`Error reading file for worker: ${filePath}`, error);
       throw error;
     }
   });
 
+  ipcMain.handle('get-system-fonts', async () => {
+    try { return await getSystemFonts(); } catch (error) { return []; }
+  });
+
+  ipcMain.handle('get-project-fonts', async () => {
+    const fontsDir = app.isPackaged ? path.join(process.resourcesPath, 'fonts') : path.join(__dirname, 'src', 'fonts');
+    try {
+      await fs.promises.access(fontsDir);
+      const files = await fs.promises.readdir(fontsDir);
+      return files.filter(file => /\.(ttf|otf|ttc)$/i.test(file)).map(file => ({ name: file, path: path.join(fontsDir, file) }));
+    } catch (error) { return []; }
+  });
+
   ipcMain.handle('show-font-file-dialog', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: 'Select Font',
       defaultPath: path.join(__dirname, 'src', 'fonts'),
-      filters: [
-        { name: 'Font Files', extensions: ['ttf', 'otf', 'ttc'] },
-        { name: 'All Files', extensions: ['*'] }
-      ],
+      filters: [{ name: 'Font Files', extensions: ['ttf', 'otf', 'ttc'] }, { name: 'All Files', extensions: ['*'] }],
       properties: ['openFile', 'noResolveAliases']
     });
-    if (canceled || filePaths.length === 0) {
-      return null;
-    }
-    return filePaths[0];
+    return (canceled || filePaths.length === 0) ? null : filePaths[0];
   });
 
   ipcMain.handle('show-audio-file-dialog', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      filters: [
-        { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a'] },
-        { name: 'All Files', extensions: ['*'] }
-      ],
+      filters: [{ name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a'] }, { name: 'All Files', extensions: ['*'] }],
       properties: ['openFile']
     });
-    if (canceled || filePaths.length === 0) {
-      return null;
-    }
-    return filePaths[0];
+    return (canceled || filePaths.length === 0) ? null : filePaths[0];
   });
 
   ipcMain.handle('show-open-dialog', async (event, options) => {
       const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, options);
-      if (canceled || filePaths.length === 0) {
-          return null;
-      }
-      return filePaths[0];
+      return (canceled || filePaths.length === 0) ? null : filePaths[0];
   });
 
   ipcMain.handle('fetch-url-as-arraybuffer', async (event, url) => {
     try {
       const buffer = await new Promise((resolve, reject) => {
         https.get(url, (res) => {
-          // Follow redirects
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             https.get(res.headers.location, (redirectRes) => {
-              if (redirectRes.statusCode < 200 || redirectRes.statusCode >= 300) {
-                return reject(new Error(`Failed to fetch URL: Status Code ${redirectRes.statusCode}`));
-              }
               const chunks = [];
               redirectRes.on('data', chunk => chunks.push(chunk));
-              redirectRes.on('end', () => {
-                const nodeBuffer = Buffer.concat(chunks);
-                const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
-                resolve(arrayBuffer);
-              });
-            }).on('error', (err) => reject(err));
-          } else if (res.statusCode < 200 || res.statusCode >= 300) {
-            return reject(new Error(`Failed to fetch URL: Status Code ${res.statusCode}`));
+              redirectRes.on('end', () => resolve(Buffer.concat(chunks).buffer));
+            });
           } else {
             const chunks = [];
             res.on('data', chunk => chunks.push(chunk));
-            res.on('end', () => {
-              const nodeBuffer = Buffer.concat(chunks);
-              const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength);
-              resolve(arrayBuffer);
-            });
+            res.on('end', () => resolve(Buffer.concat(chunks).buffer));
           }
-        }).on('error', (err) => {
-          reject(err);
-        });
+        }).on('error', reject);
       });
       return buffer;
-    } catch (error) {
-      console.error(`Failed to fetch URL ${url}:`, error);
-      throw error;
-    }
+    } catch (error) { throw error; }
   });
 
   ipcMain.handle('save-thumbnail', async (event, arrayBuffer, filename) => {
@@ -1037,64 +1107,47 @@ function createWindow() {
       const tempPath = path.join(app.getPath('userData'), 'thumbnails');
       await fs.promises.mkdir(tempPath, { recursive: true });
       const filePath = path.join(tempPath, filename);
-      const buffer = Buffer.from(arrayBuffer);
-      await fs.promises.writeFile(filePath, buffer);
+      await fs.promises.writeFile(filePath, Buffer.from(arrayBuffer));
       return filePath;
-    } catch (error) {
-      console.error('Failed to save thumbnail:', error);
-      throw error;
-    }
+    } catch (error) { throw error; }
   });
 
   ipcMain.handle('save-ilda-file', async (event, arrayBuffer, defaultName = 'export.ild') => {
+    const userIldaPath = path.join(app.getPath('documents'), 'TrueLazer', 'ILDA-FILES');
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Export ILDA File',
-      defaultPath: defaultName,
+      defaultPath: path.join(userIldaPath, defaultName),
       filters: [{ name: 'ILDA Files', extensions: ['ild'] }]
     });
-
-    if (canceled || !filePath) {
-      return { success: false, canceled: true };
-    }
-
+    if (canceled || !filePath) return { success: false, canceled: true };
     try {
-      const buffer = Buffer.from(arrayBuffer);
-      await fs.promises.writeFile(filePath, buffer);
+      await fs.promises.writeFile(filePath, Buffer.from(arrayBuffer));
       return { success: true, filePath };
-    } catch (error) {
-      console.error('Failed to save ILDA file:', error);
-      return { success: false, error: error.message };
-    }
+    } catch (error) { return { success: false, error: error.message }; }
   });
 
   ipcMain.handle('delete-thumbnail', async (event, filePath) => {
       try {
           if (!filePath) return { success: false };
-          // Security check: ensure the file is within the thumbnails directory
           const thumbnailsDir = path.join(app.getPath('userData'), 'thumbnails');
-          if (!filePath.startsWith(thumbnailsDir)) {
-              console.warn(`Attempt to delete file outside thumbnails directory: ${filePath}`);
-              return { success: false, error: 'Access denied' };
-          }
-
+          if (!filePath.startsWith(thumbnailsDir)) return { success: false, error: 'Access denied' };
           await fs.promises.unlink(filePath);
           return { success: true };
-      } catch (error) {
-          if (error.code === 'ENOENT') {
-              // File not found, which is fine
-              return { success: true };
-          }
-          console.error('Failed to delete thumbnail:', error);
-          return { success: false, error: error.message };
-      }
+      } catch (error) { return { success: true }; }
   });
 
   // NDI IPC Handlers
-  let ndiCaptureSettings = { width: 1280, height: 720 };
+  let ndiCaptureSettings = { width: 480, height: 480 };
+  let ndiPerformanceData = { totalTime: 0, count: 0, lastReport: Date.now() };
+  let isRendererReadyForNdi = true;
 
   ipcMain.handle('ndi-update-settings', (event, settings) => {
       if (settings.width) ndiCaptureSettings.width = settings.width;
       if (settings.height) ndiCaptureSettings.height = settings.height;
+      // Immediately update active capture resolution
+      if (ndi) {
+          ndi.startCapture(ndiCaptureSettings.width, ndiCaptureSettings.height);
+      }
       return true;
   });
 
@@ -1105,7 +1158,12 @@ function createWindow() {
 
   ipcMain.handle('ndi-create-receiver', async (event, sourceName) => {
       if (!ndi) return false;
-      return ndi.createReceiver(sourceName);
+      const success = ndi.createReceiver(sourceName);
+      if (success) {
+          ndi.startCapture(ndiCaptureSettings.width, ndiCaptureSettings.height);
+          isRendererReadyForNdi = true; 
+      }
+      return success;
   });
 
   ipcMain.handle('ndi-capture-video', async () => {
@@ -1115,45 +1173,87 @@ function createWindow() {
 
   ipcMain.handle('ndi-destroy-receiver', async () => {
       if (!ndi) return;
+      ndi.stopCapture();
       ndi.destroyReceiver();
-      isRendererReadyForNdi = true; // Reset flow control
+      isRendererReadyForNdi = true; 
+      ndiPerformanceData = { totalTime: 0, count: 0, lastReport: Date.now() };
   });
 
-  // Flow control for NDI frames to prevent IPC backlog
-  let isRendererReadyForNdi = true;
   ipcMain.on('ndi-renderer-ready', () => {
       isRendererReadyForNdi = true;
   });
 
-  // Background NDI Capture Loop
-  const ndiCaptureLoop = async () => {
-      if (ndi && mainWindow && !mainWindow.isDestroyed() && isRendererReadyForNdi) {
-          // Use dynamic capture resolution
-          let frame = null;
-          let latestFrame = null;
-          let drainCount = 0;
-          const maxDrain = 5;
+  ipcMain.handle('get-desktop-audio-source-id', async () => {
+    const { desktopCapturer } = require('electron');
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    // Usually the first screen is what we want for system audio
+    return sources.length > 0 ? sources[0].id : null;
+  });
 
-          // Drain queue to get the latest frame
-          do {
-            frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
-            if (frame) {
-                latestFrame = frame;
-                drainCount++;
-            }
-          } while (frame && drainCount < maxDrain);
-
-          if (latestFrame) {
-              isRendererReadyForNdi = false; // Wait for renderer to process
-              mainWindow.webContents.send('ndi-frame', latestFrame);
+  // Background System Stats Loop
+  const sendSystemStats = async () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+          try {
+              psTree(process.pid, (err, children) => {
+                  const pids = [process.pid, ...(err ? [] : children.map(p => parseInt(p.PID)).filter(pid => !isNaN(pid)))];
+                  pidusage(pids, (err, stats) => {
+                      if (err || !stats) return;
+                      let totalCpu = 0;
+                      let totalMemKB = 0;
+                      const numCores = os.cpus().length || 1;
+                      Object.values(stats).forEach(s => { 
+                          totalCpu += s.cpu; 
+                          totalMemKB += s.memory;
+                      });
+                      const normalizedCpu = totalCpu / numCores;
+                      if (mainWindow && !mainWindow.isDestroyed()) {
+                          mainWindow.webContents.send('system-stats', {
+                              cpu: normalizedCpu.toFixed(1),
+                              ram: (totalMemKB / (1024 * 1024)).toFixed(0)
+                          });
+                      }
+                  });
+              });
+          } catch (e) {
+              console.error("Error in system stats:", e);
           }
       }
-      setTimeout(ndiCaptureLoop, 33); // Poll at ~30fps
+  };
+  setInterval(sendSystemStats, 2000); 
+
+  let ndiFlowControlTimeout = null;
+
+  const ndiCaptureLoop = async () => {
+      if (ndi && mainWindow && !mainWindow.isDestroyed() && isRendererReadyForNdi) {
+          const start = performance.now();
+          const frame = ndi.captureVideo(ndiCaptureSettings.width, ndiCaptureSettings.height); 
+          const end = performance.now();
+          if (frame) {
+              isRendererReadyForNdi = false; 
+              if (ndiFlowControlTimeout) clearTimeout(ndiFlowControlTimeout);
+              ndiFlowControlTimeout = setTimeout(() => { isRendererReadyForNdi = true; }, 200);
+              const duration = end - start;
+              ndiPerformanceData.totalTime += duration;
+              ndiPerformanceData.count++;
+              if (Date.now() - ndiPerformanceData.lastReport > 5000 && ndiPerformanceData.count > 0) {
+                  const avg = ndiPerformanceData.totalTime / ndiPerformanceData.count;
+                  console.log(`[NDI Performance] Avg Capture Time: ${avg.toFixed(2)}ms (over ${ndiPerformanceData.count} frames) @ ${frame.width}x${frame.height}`);
+                  mainWindow.webContents.send('ndi-telemetry', { avgCaptureTime: avg });
+                  ndiPerformanceData.totalTime = 0;
+                  ndiPerformanceData.count = 0;
+                  ndiPerformanceData.lastReport = Date.now();
+              }
+              mainWindow.webContents.send('ndi-frame', frame);
+          }
+      }
+      const delay = isRendererReadyForNdi ? 2 : 16; 
+      setTimeout(ndiCaptureLoop, delay);
   };
   ndiCaptureLoop();
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await initializeUserData();
   createWindow();
 
   app.on('activate', () => {
