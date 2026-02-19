@@ -95,26 +95,58 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
 
     // 1. If in "Learn Mode" for a specific ID
     if (isMapping && learningId) {
-      // For Art-Net, we usually map based on a value threshold or just any change
-      // Only map if value > 0 to avoid mapping the "idle" state
       if (value === 0) return;
-
-      const newMapping = {
-        universe,
-        channel,
-        label: `U${universe}:CH${channel + 1}` // 1-indexed for display
-      };
-      
-      console.log(`Mapped ${learningId} to Art-Net:`, newMapping);
-      setMappings(prev => ({
-        ...prev,
-        [learningId]: newMapping
-      }));
-      setLearningId(null); // Stop learning for this ID
+      const newMapping = { universe, channel, label: `U${universe}:CH${channel + 1}` };
+      setMappings(prev => ({ ...prev, [learningId]: newMapping }));
+      setLearningId(null);
       return;
     }
 
-    // 2. Normal Operation: Check if this event maps to any control
+    // 2. Fixed Footprint Logic (Hybrid)
+    if (universe === 0) {
+        if (channel < 10) {
+            // Master Section (CH 1-10)
+            if (channel === 0) onArtnetCommandRef.current('master_intensity', value);
+            else if (channel === 1) onArtnetCommandRef.current(value >= 128 ? 'blackout_on' : 'blackout_off', value);
+            else if (channel === 2) {
+                const pageIdx = Math.min(7, Math.floor(value / 32));
+                onArtnetCommandRef.current(`middle_bar_page_${pageIdx}`, value);
+            }
+            else if (channel === 3) {
+                if (value >= 1 && value <= 85) onArtnetCommandRef.current('transport_play', value);
+                else if (value >= 86 && value <= 170) onArtnetCommandRef.current('transport_pause', value);
+                else if (value >= 171 && value <= 255) onArtnetCommandRef.current('transport_stop', value);
+            }
+            return;
+        } else if (channel >= 10 && channel < 110) {
+            // Layer Footprints (20 channels per layer, starting at CH 11)
+            const layerIdx = Math.floor((channel - 10) / 20);
+            const offset = (channel - 10) % 20;
+            
+            if (offset === 0) onArtnetCommandRef.current(`layer_${layerIdx}_intensity`, value);
+            else if (offset === 1) {
+                if (value >= 1 && value <= 64) onArtnetCommandRef.current(`layer_${layerIdx}_blackout_toggle`, value);
+                else if (value >= 65 && value <= 128) onArtnetCommandRef.current(`layer_${layerIdx}_solo_toggle`, value);
+                else if (value >= 129 && value <= 192) onArtnetCommandRef.current(`layer_${layerIdx}_autopilot_forward`, value);
+                else if (value >= 193) onArtnetCommandRef.current(`layer_${layerIdx}_autopilot_off`, value);
+            }
+            else if (offset === 2) {
+                // Range-based clip trigger: 0-10 Off, 11-20 Clip 1, 21-30 Clip 2...
+                if (value > 10) {
+                    const colIdx = Math.min(7, Math.floor((value - 11) / 10));
+                    onArtnetCommandRef.current(`clip_${layerIdx}_${colIdx}`, value);
+                } else {
+                    onArtnetCommandRef.current(`layer_${layerIdx}_clear`, value);
+                }
+            }
+            else if (offset === 3) onArtnetCommandRef.current(`layer_${layerIdx}_speed`, value);
+            
+            // Channels 5-20 are reserved/free for custom mapping
+            return;
+        }
+    }
+
+    // 3. Normal Operation: Custom Mappings
     Object.entries(mappings).forEach(([controlId, mapping]) => {
       if (mapping.universe === universe && mapping.channel === channel) {
         if (onArtnetCommandRef.current) {

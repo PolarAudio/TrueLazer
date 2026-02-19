@@ -295,7 +295,7 @@ function reducer(state, action) {
 
         if (newClipNames[pageIdx][layerIndex]) {
             newClipNames[pageIdx][layerIndex] = [...newClipNames[pageIdx][layerIndex]];
-            newClipNames[pageIdx][colIndex] = name;
+            newClipNames[pageIdx][layerIndex][colIndex] = name;
         }
         return { ...state, clipNames: newClipNames };
     }
@@ -621,16 +621,18 @@ function reducer(state, action) {
       return { ...state, clipClipboard: action.payload };
 	}
     case 'SET_CLIP_DAC': {
+      const pageIdx = state.activePageId;
       const newClipContentsWithDac = [...state.clipContents];
-      // Ensure the layer array exists and create a new copy of it
-      if (!newClipContentsWithDac[action.payload.layerIndex]) {
-          console.error(`Reducer Error: Layer array at index ${action.payload.layerIndex} is undefined. Action:`, action);
+      newClipContentsWithDac[pageIdx] = [...newClipContentsWithDac[pageIdx]];
+      
+      if (!newClipContentsWithDac[pageIdx][action.payload.layerIndex]) {
+          console.error(`Reducer Error: Layer array at index ${action.payload.layerIndex} on page ${pageIdx} is undefined.`);
           return state;
       }
-      newClipContentsWithDac[action.payload.layerIndex] = [...newClipContentsWithDac[action.payload.layerIndex]];
+      newClipContentsWithDac[pageIdx][action.payload.layerIndex] = [...newClipContentsWithDac[pageIdx][action.payload.layerIndex]];
 
       // Get the existing clip, create a new copy of it, and then modify its dac
-      const existingClip = newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] || {};
+      const existingClip = newClipContentsWithDac[pageIdx][action.payload.layerIndex][action.payload.colIndex] || {};
 
       let currentAssignedDacs = existingClip.assignedDacs || [];
       
@@ -659,7 +661,7 @@ function reducer(state, action) {
           ...existingClip,
           assignedDacs: [...currentAssignedDacs, ...dacsToAdd],
       };
-      newClipContentsWithDac[action.payload.layerIndex][action.payload.colIndex] = updatedClip;
+      newClipContentsWithDac[pageIdx][action.payload.layerIndex][action.payload.colIndex] = updatedClip;
       return { ...state, clipContents: newClipContentsWithDac };
     }
     case 'SET_CLIP_DAC_GROUP': {
@@ -4343,6 +4345,21 @@ function App() {
         else masterIntensityRef.current = Math.max(0, Math.min(1, masterIntensityRef.current + normalizedValue));
         debouncedDispatch('master_intensity', { type: 'SET_MASTER_INTENSITY', payload: masterIntensityRef.current });
         break;
+      case 'blackout_on':
+        if (!globalBlackoutRef.current) dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
+        break;
+      case 'blackout_off':
+        if (globalBlackoutRef.current) dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
+        break;
+      case 'transport_play':
+        if (!isPlayingRef.current) handlePlay();
+        break;
+      case 'transport_pause':
+        if (isPlayingRef.current) handlePause();
+        break;
+      case 'transport_stop':
+        handleStop();
+        break;
       case 'master_speed':
         const currentSpeedNorm = (playbackFpsRef.current - 1) / 119;
         let newSpeedNorm = normalizedValue;
@@ -4439,8 +4456,16 @@ function App() {
 
              if (action === 'blackout' && value > 0) {
                  dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex: layerIdx } });
+             } else if (action === 'blackout' && parts[3] === 'toggle' && value > 0) {
+                 dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex: layerIdx } });
              } else if (action === 'solo' && value > 0) {
                  dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex: layerIdx } });
+             } else if (action === 'solo' && parts[3] === 'toggle' && value > 0) {
+                 dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex: layerIdx } });
+             } else if (action === 'autopilot') {
+                 const mode = parts[3];
+                 if (mode === 'forward' && value > 0) dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: layerIdx, mode: 'forward' } });
+                 else if (mode === 'off' && value > 0) dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: layerIdx, mode: 'off' } });
              } else if (action === 'intensity') {
                  let targetVal = normalizedValue;
                  if (controlMode !== 'absolute') targetVal = Math.max(0, Math.min(1, (layerIntensitiesRef.current[layerIdx] || 0) + normalizedValue));
