@@ -1204,15 +1204,15 @@ function reducer(state, action) {
 }
 
 const THEME_COLORS = {
-    'orange': { full: 60, dim: 10 }, // Orange
-    'yellow': { full: 74, dim: 15 }, // Yellow
-    'cyan': { full: 36, dim: 35 }, // Cyan
-    'light-blue': { full: 41, dim: 43 }, // Light-Blue
-    'blue': { full: 45, dim: 47 }, // Blue
-    'magenta': { full: 53, dim: 55 }, // Magenta
-    'red': { full: 5, dim: 7 }, // Red
-    'green': { full: 21, dim: 23 }, // Green
-    'white': { full: 3, dim: 1 }, // White/Gray
+    'orange': { full: 96, dim: 10 }, // Vibrant Orange / Orange Dark
+    'yellow': { full: 13, dim: 15 }, // Yellow / Yellow Very Dark
+    'cyan': { full: 33, dim: 35 }, // Cyan / Cyan Very Dark
+    'light-blue': { full: 37, dim: 39 }, // Sky / Sky Very Dark
+    'blue': { full: 45, dim: 47 }, // Blue / Blue Very Dark
+    'magenta': { full: 53, dim: 55 }, // Magenta / Magenta Very Dark
+    'red': { full: 5, dim: 7 }, // Red / Red Very Dark
+    'green': { full: 21, dim: 23 }, // Green / Green Very Dark
+    'white': { full: 119, dim: 1 }, // Pure White / Grey Dark
 };
 
 const generateThumbnail = async (frame, effects, layerIndex, colIndex, optimizationEnabled = true) => {
@@ -1469,9 +1469,8 @@ const SidePanelContainer = React.memo(({
     liveClipContentsRef,
 		
     optimizationEnabled,
-		
-    onRegisterPreset // Add this
-		
+    onRegisterPreset, // Add this
+    activePageId // Add this
 }) => {
     const [tick, setTick] = useState(0);
     const lastPreviewTimeRef = useRef(0);
@@ -1495,7 +1494,7 @@ const SidePanelContainer = React.memo(({
 
     // DERIVED PREVIEW DATA - Use Live Ref for immediate feedback
         const clipSource = liveClipContentsRef?.current || clipContents;
-        const pageIdx = state.activePageId;
+        const pageIdx = activePageId;
         const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null ? clipSource[pageIdx]?.[selectedLayerIndex]?.[selectedColIndex] : null;
         
         const activeInfo = selectedLayerIndex !== null ? activeClipIndexes[selectedLayerIndex] : null;
@@ -1711,6 +1710,7 @@ function App() {
     ildaFrames,
     selectedIldaWorkerId,
     selectedIldaTotalFrames,
+    bpm, // Add this
     showBeamEffect,
     beamAlpha,
     fadeAlpha,
@@ -1722,12 +1722,20 @@ function App() {
     optimizationEnabled,
     activeClipIndexes,
     isPlaying,
+    isStopped, // Add this
     isWorldOutputActive,
+    activePageId,
+    numPages,
     selectedGeneratorId,
     selectedGeneratorParams,
-    thumbnailRenderMode, // Add this
+    thumbnailRenderMode,
     theme,
     dacOutputSettings,
+    fileBrowserViewMode, // Add this
+    fileBrowserPath, // Add this
+    layerUiStates,
+    settingsPanelCollapsed, // Add this
+    quickAssigns
   } = state;
 
   const activeClipsData = useMemo(() => layers.map((_, layerIndex) => {
@@ -4762,11 +4770,13 @@ function App() {
       }
   }, [clipContentsRef]);
 
-  const MidiFeedbackHandler = React.memo(({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, selectedLayerIndex, selectedColIndex, quickAssigns, activePageId }) => {
+  const MidiFeedbackHandler = React.memo(({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, selectedLayerIndex, selectedColIndex, quickAssigns, activePageId, theme }) => {
     const { sendFeedback } = useMidi();
     
     useEffect(() => {
         if (!sendFeedback) return;
+
+        const colors = THEME_COLORS[theme] || THEME_COLORS['orange'];
 
         // 1. Update Clip Feedbacks
         const pageIdx = activePageId;
@@ -4788,8 +4798,8 @@ function App() {
         });
 
         // 2. Update Transport Feedbacks
-        sendFeedback('transport_play', isPlaying);
-        sendFeedback('transport_stop', !isPlaying);
+        sendFeedback('transport_play', isPlaying ? colors.full : colors.dim);
+        sendFeedback('transport_stop', !isPlaying ? colors.full : colors.dim);
 
         // 3. Update Global Feedbacks
         sendFeedback('blackout', globalBlackout);
@@ -4804,11 +4814,11 @@ function App() {
         // 5. Quick Assigns
         if (quickAssigns && quickAssigns.buttons) {
             quickAssigns.buttons.forEach((btn, i) => {
-                sendFeedback(`quick_btn_${i}`, btn.value);
+                sendFeedback(`quick_btn_${i}`, btn.value ? colors.full : 0);
             });
         }
 
-    }, [activeClipIndexes, selectedLayerIndex, selectedColIndex, clipContents, isPlaying, globalBlackout, isWorldOutputActive, layerBlackouts, layerSolos, sendFeedback, quickAssigns]);
+    }, [activeClipIndexes, selectedLayerIndex, selectedColIndex, clipContents, isPlaying, globalBlackout, isWorldOutputActive, layerBlackouts, layerSolos, sendFeedback, quickAssigns, theme]);
 
     return null;
   });
@@ -4827,8 +4837,9 @@ function App() {
                 activeClipIndexes={activeClipIndexes}
                 selectedLayerIndex={selectedLayerIndex}
                 selectedColIndex={selectedColIndex}
-                quickAssigns={state.quickAssigns}
-                activePageId={state.activePageId}
+                quickAssigns={quickAssigns}
+                activePageId={activePageId}
+                theme={theme}
             />    <MidiMappingOverlay />
     {currentPage === 'main' ? (
     <div className="app">
@@ -4865,7 +4876,7 @@ function App() {
         <div className="main-content">
             <div className="top-bar-left-area">
               <CompositionControls
-                masterIntensity={state.masterIntensity}
+                masterIntensity={masterIntensity}
                 onMasterIntensityChange={(value) => dispatch({ type: 'SET_MASTER_INTENSITY', payload: value })}
                 onClearAllActive={handleClearAllActive}
                 isGlobalBlackout={globalBlackout}
@@ -4892,7 +4903,7 @@ function App() {
                   activeClipData={activeClipDataForLayer}
                   liveFrame={liveFrameForLayer}
                   thumbnailRenderMode={thumbnailRenderMode} // Add this prop
-                  intensity={state.layerIntensities[layerIndex]}
+                  intensity={layerIntensities[layerIndex]}
                   onIntensityChange={(value) => dispatch({ type: 'SET_LAYER_INTENSITY', payload: { layerIndex, intensity: value } })}
                   onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
                   onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
@@ -4920,7 +4931,7 @@ function App() {
               {layers.map((layerName, layerIndex) => (
                 <div key={layerIndex} className="layer-row">
                   {columns.map((colName, colIndex) => {
-                    const pageIdx = state.activePageId;
+                    const pageIdx = activePageId;
                     const currentClipContent = clipContents?.[pageIdx]?.[layerIndex]?.[colIndex];
 
                     // Determine workerId for this clip to fetch frames
@@ -4973,7 +4984,7 @@ function App() {
                 clipContents={clipContents}
                 activeClipIndexes={activeClipIndexes}
                 layerEffects={layerEffects}
-                bpm={state.bpm}
+                bpm={bpm}
                 playbackFps={playbackFps}
                 selectedLayerIndex={selectedLayerIndex}
                 selectedColIndex={selectedColIndex}
@@ -5008,11 +5019,12 @@ function App() {
                 liveClipContentsRef={liveClipContentsRef}
                 optimizationEnabled={optimizationEnabled}
                 onRegisterPreset={handleRegisterPreset}
+                activePageId={activePageId}
             />
             <div className="middle-bar">
                 <div className="middle-bar-left-area">
                     <BPMControls
-                        bpm={state.bpm}
+                        bpm={bpm}
                         onBpmChange={(newBpm) => dispatch({ type: 'SET_BPM', payload: newBpm })}
                     />
                 </div>
@@ -5022,20 +5034,20 @@ function App() {
                             onPause={handlePause}
                             onStop={handleStop}
                             isPlaying={isPlaying}
-                            isStopped={state.isStopped}
+                            isStopped={isStopped}
                         />
 						<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
                     </div>
 				<div className="middle-bar-right-area">
                     <div className="page-navigation">
-                        {Array.from({ length: state.numPages || 8 }).map((_, i) => (
+                        {Array.from({ length: numPages || 8 }).map((_, i) => (
                             <Mappable key={i} id={`middle_bar_page_${i}`}>
                                 <button 
-                                    className={`page-btn ${state.activePageId === i ? 'active' : ''}`}
+                                    className={`page-btn ${activePageId === i ? 'active' : ''}`}
                                     onClick={() => dispatch({ type: 'SET_ACTIVE_PAGE', payload: i })}
                                     style={{
-                                        background: state.activePageId === i ? 'var(--theme-color)' : '#333',
-                                        color: state.activePageId === i ? '#000' : '#ccc',
+                                        background: activePageId === i ? 'var(--theme-color)' : '#333',
+                                        color: activePageId === i ? '#000' : '#ccc',
                                         border: 'none',
                                         padding: '2px 8px',
                                         margin: '0 2px',
@@ -5061,11 +5073,11 @@ function App() {
                 </div>
                 <div className="bottom-panel-tab-content-1">
                     {activeBottomTab_1 === 'files' && <FileBrowser 
-                        viewMode={state.fileBrowserViewMode}
+                        viewMode={fileBrowserViewMode}
                         onViewModeChange={(mode) => dispatch({ type: 'SET_FILE_BROWSER_VIEW_MODE', payload: mode })}
-                        path={state.fileBrowserPath}
+                        path={fileBrowserPath}
                         onPathChange={(newPath) => dispatch({ type: 'SET_FILE_BROWSER_PATH', payload: newPath })}
-                        onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex, pageId: state.activePageId })} 
+                        onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex, pageId: activePageId })} 
                     />}
                     {activeBottomTab_1 === 'generators' && <GeneratorPanel />}
                     {activeBottomTab_1 === 'effects' && <EffectPanel />}
@@ -5083,7 +5095,7 @@ function App() {
 						selectedColIndex={selectedColIndex}
 						clip={selectedClip}
 						audioInfo={getAudioInfo(selectedLayerIndex)}
-						bpm={state.bpm}
+						bpm={bpm}
 						getFftLevels={getFftLevels}
 						onAssignAudio={async () => {
 							const filePath = await window.electronAPI.showAudioFileDialog();
@@ -5116,16 +5128,16 @@ function App() {
 					/>}
 					{activeBottomTab_2 === 'layer' && <LayerSettingsPanel
 						selectedLayerIndex={selectedLayerIndex}
-						autopilotMode={selectedLayerIndex !== null ? state.layerAutopilots[selectedLayerIndex] : 'off'}
+						autopilotMode={selectedLayerIndex !== null ? layerAutopilots[selectedLayerIndex] : 'off'}
 						onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
 						layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
-						assignedDacs={selectedLayerIndex !== null && state.layerAssignedDacs ? state.layerAssignedDacs[selectedLayerIndex] : []}
+						assignedDacs={selectedLayerIndex !== null && layerAssignedDacs ? layerAssignedDacs[selectedLayerIndex] : []}
 						onToggleDacMirror={(layerIndex, dacIndex, axis) => dispatch({ type: 'TOGGLE_LAYER_DAC_MIRROR', payload: { layerIndex, dacIndex, axis } })}
 						onRemoveDac={(layerIndex, dacIndex) => dispatch({ type: 'REMOVE_LAYER_DAC', payload: { layerIndex, dacIndex } })}
 						onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
 						onRemoveEffect={(index) => selectedLayerIndex !== null && dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex: index } })}
 						onParamChange={(effectIndex, paramName, val) => selectedLayerIndex !== null && dispatch({ type: 'UPDATE_LAYER_EFFECT_PARAMETER', payload: { layerIndex: selectedLayerIndex, effectIndex, paramName, newValue: val } })}
-						uiState={selectedLayerIndex !== null ? state.layerUiStates[selectedLayerIndex] : {}}
+						uiState={selectedLayerIndex !== null ? layerUiStates[selectedLayerIndex] : {}}
 						onUpdateUiState={(uiState) => dispatch({ type: 'UPDATE_LAYER_UI_STATE', payload: { layerIndex: selectedLayerIndex, uiState } })}
 						onRegisterPreset={handleRegisterPreset}
 					/>}
@@ -5145,7 +5157,7 @@ function App() {
               enabledShortcuts={enabledShortcuts}
               onOpenOutputSettings={() => setShowOutputSettingsWindow(true)}
               onOpenShortcutsSettings={() => setShowShortcutsWindow(true)}
-              quickAssigns={state.quickAssigns}
+              quickAssigns={quickAssigns}
               renderSettings={{
                   showBeamEffect,
                   beamAlpha,
@@ -5155,7 +5167,7 @@ function App() {
                   worldShowBeamEffect,
                   worldBeamRenderMode,
                   settingsPanelCollapsed: state.settingsPanelCollapsed,
-                  optimizationEnabled: state.optimizationEnabled
+                  optimizationEnabled: optimizationEnabled
               }}
               onSetRenderSetting={(setting, value) => {
                   if (setting === 'optimizationEnabled') {

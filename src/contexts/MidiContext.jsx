@@ -191,12 +191,13 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
             if (assignment.controlId === controlId) {
                 const [midiType, channelStr, address] = key.split(':');
                 if (midiType === 'note') {
-                    const channel = overrideChannel !== null ? overrideChannel : parseInt(channelStr);
+                    // Use blinkMode + 1 as the channel (WebMidi is 1-indexed)
+                    const targetChannel = overrideChannel !== null ? overrideChannel : (assignment.blinkMode !== undefined ? (assignment.blinkMode + 1) : parseInt(channelStr));
                     const outputId = assignment.outputDeviceId || selectedMidiInputId;
                     
                     if (outputId && outputId !== 'any') {
                         const velocity = resolveVelocity(assignment, value, status);
-                        sendNote(outputId, address, velocity, channel);
+                        sendNote(outputId, address, velocity, targetChannel);
                     }
                 }
             }
@@ -247,13 +248,30 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       const requiresShift = isShiftDownRef.current;
       const key = getMappingKey(event.type, event.channel, addressLabel);
       
+      // Determine Context-Aware Defaults
+      let feedbackMode = 'toggle';
+      let feedbackConfig = { onVelocity: 127, offVelocity: 0 };
+
+      if (learningId.startsWith('clip_')) {
+          feedbackMode = 'clip';
+          feedbackConfig = { activeVelocity: 127, previewVelocity: 64, inactiveVelocity: 1, emptyVelocity: 0 };
+      } else if (learningId.includes('intensity') || learningId.includes('speed') || learningId.includes('dimmer') || learningId.includes('knob')) {
+          feedbackMode = 'slider';
+      } else if (learningId.includes('_item_')) {
+          feedbackMode = 'dropdown';
+          feedbackConfig = { onVelocity: 127, offVelocity: 0 };
+      }
+
       const newAssignment = {
         controlId: learningId,
         requiresShift: requiresShift,
         targetType: 'position', // Default: 'position', 'selectedLayer', 'thisClip'
         inputDeviceId: selectedMidiInputId,
         outputDeviceId: selectedMidiInputId,
-        label: `${requiresShift ? '⇧' : ''}CH${event.channel}:${addressLabel}`
+        label: `${requiresShift ? '⇧' : ''}CH${event.channel}:${addressLabel}`,
+        feedbackMode,
+        feedbackConfig,
+        blinkMode: 0 // Static
       };
       
       setMappings(prev => {

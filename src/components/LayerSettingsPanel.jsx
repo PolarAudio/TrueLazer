@@ -14,7 +14,8 @@ const LayerSettingsPanel = ({
     onRemoveEffect,
     onParamChange,
     uiState,
-    onUpdateUiState
+    onUpdateUiState,
+    onRegisterPreset // Add this
 }) => {
     const [dacStatuses, setDacStatuses] = useState({});
 
@@ -158,6 +159,7 @@ const LayerSettingsPanel = ({
                                 context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect' }}
                                 uiState={uiState}
                                 onUpdateUiState={onUpdateUiState}
+                                onRegisterPreset={onRegisterPreset}
                                 dragHandle={
                                     <div 
                                         draggable

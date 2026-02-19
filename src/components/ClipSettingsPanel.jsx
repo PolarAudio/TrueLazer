@@ -28,7 +28,8 @@ const ClipSettingsPanel = ({
   onGeneratorParameterChange,
   onUpdateClipUiState,
   progressRef,
-  onAudioError
+  onAudioError,
+  onRegisterPreset // Add this
 }) => {
   const [dacStatuses, setDacStatuses] = useState({});
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
@@ -256,6 +257,7 @@ const ClipSettingsPanel = ({
           getFftLevels={getFftLevels}
           uiState={uiState}
           onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
+          onRegisterPreset={onRegisterPreset}
         />
       )}
 
@@ -288,6 +290,7 @@ const ClipSettingsPanel = ({
                   getFftLevels={getFftLevels}
                   uiState={uiState}
                   onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
+                  onRegisterPreset={onRegisterPreset}
                   dragHandle={
                     <div 
                         draggable

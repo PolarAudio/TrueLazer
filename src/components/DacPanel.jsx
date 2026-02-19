@@ -143,9 +143,9 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
   return (
     <div className="dac-panel">
       <div className="settings-card-header"><h4>DACs</h4></div>
-      <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px'}}>
-        <div style={{flex:1, display:'flex'}}>
-            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', marginBottom: 2}}>
+      <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px', alignItems: 'center'}}>
+        <div style={{flex:1, display:'flex', gap: '2px'}}>
+            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{flex: 1, background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', fontSize: '11px', padding: '2px 5px', border: '1px solid #444'}}>
               {networkInterfaces.map(iface => (
                 <option key={iface.address} value={iface.address}>
                   {iface.name} ({iface.address})
@@ -153,6 +153,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
               ))}
             </select>
             <button 
+                className="refresh-interfaces-btn"
                 onClick={() => {
                      if (window.electronAPI) {
                         window.electronAPI.getNetworkInterfaces().then(interfaces => {
@@ -163,17 +164,34 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                         });
                      }
                 }}
-                style={{fontSize: '9px', padding: '2px', background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', borderRadius: '5px'}}
+                style={{fontSize: '9px', padding: '2px 5px', background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', borderRadius: '3px'}}
+                title="Refresh Interfaces"
             >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
 					<path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
 					<path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
 				</svg>
             </button>
         </div>
-        <label style={{display:'flex', alignItems:'center', fontSize: '10px'}}>
-          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} disabled={isScanning} style={{ height: '100%'}} />
-        </label>
+        <button 
+            className={`scan-dacs-btn ${isScanning ? 'active scanning' : ''}`}
+            onClick={() => setIsScanning(true)}
+            disabled={isScanning}
+            style={{
+                background: isScanning ? 'var(--theme-color)' : '#333',
+                color: isScanning ? '#000' : '#ccc',
+                border: '1px solid #555',
+                borderRadius: '3px',
+                padding: '2px 10px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                cursor: isScanning ? 'default' : 'pointer',
+                textTransform: 'uppercase',
+                minWidth: '60px'
+            }}
+        >
+            {isScanning ? 'SCANNING...' : 'SCAN'}
+        </button>
       </div>
       <div className="dac-list">
         {dacs.map((dac) => (

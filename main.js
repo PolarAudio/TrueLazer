@@ -517,7 +517,25 @@ ipcMain.on('open-project', async (event) => {
     updateWindowTitle();
     try {
       const data = await fs.promises.readFile(currentProjectpath, 'utf-8');
-      if(mainWindow) mainWindow.webContents.send('load-project-data', JSON.parse(data));
+      const projectData = JSON.parse(data);
+
+      // Portability: Restore embedded presets from project into local user presets
+      if (projectData.projectPresets) {
+          console.log("Presets: Restoring embedded presets from project...");
+          for (const [type, subTypes] of Object.entries(projectData.projectPresets)) {
+              for (const [subType, presets] of Object.entries(subTypes)) {
+                  const presetsPath = path.join(app.getPath('userData'), 'presets', type, subType);
+                  await fs.promises.mkdir(presetsPath, { recursive: true });
+                  for (const [name, preset] of Object.entries(presets)) {
+                      const fileName = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+                      const filePath = path.join(presetsPath, fileName);
+                      await fs.promises.writeFile(filePath, JSON.stringify(preset, null, 2));
+                  }
+              }
+          }
+      }
+
+      if(mainWindow) mainWindow.webContents.send('load-project-data', projectData);
     } catch (error) {
       console.error('Failed to open project file:', error);
     }

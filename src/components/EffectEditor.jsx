@@ -6,6 +6,7 @@ import DualRangeSlider from './DualRangeSlider';
 import CollapsiblePanel from './CollapsiblePanel';
 import AnimationControls from './AnimationControls';
 import ColorPicker from './ColorPicker';
+import { PresetSelector } from './PresetSelector';
 
 const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, paramKey }) => {
 // ... existing EffectParameter ...
@@ -129,7 +130,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                 </div>
 
                 {/* Col 3: Value Display */}
-                 {control.type === 'range' && (
+                 {control.type === 'range' && !control.isRange && (
                     <input
                         type="number"
                         value={typeof value === 'number' ? value.toFixed(2) : value}
@@ -379,7 +380,7 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
     );
 };
 
-const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle }) => {
+const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle, onRegisterPreset }) => {
   if (!effect) return null;
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
   if (!effectDefinition) return null;
@@ -440,6 +441,17 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
             </div>
         }
     >
+        <PresetSelector 
+            type="effect" 
+            subType={effect.id} 
+            currentParams={effect.params}
+            onRegisterPreset={onRegisterPreset}
+            onApplyPreset={(params) => {
+                Object.entries(params).forEach(([key, val]) => {
+                    onParamChange(key, val);
+                });
+            }}
+        />
         {isColor ? (
             <ColorEffectEditor 
                 effect={effect}

@@ -1,18 +1,18 @@
 # Implementation Plan: Presets, Paging & MIDI Refinement (Track 3)
 
 ## Phase 1: Preset System Architecture
-- [ ] Task: Create Preset Persistence Layer
-    - [ ] Update `main.js` to handle `presets/` folder creation and file management
-    - [ ] Implement IPC handlers `get-presets`, `save-preset`, `delete-preset`
-- [ ] Task: Embed Presets in Project Data
+- [x] Task: Create Preset Persistence Layer
+    - [x] Update `main.js` to handle `presets/` folder creation and file management
+    - [x] Implement IPC handlers `get-presets`, `save-preset`, `delete-preset`
+- [~] Task: Embed Presets in Project Data
     - [ ] Update project save/load logic to include used preset configurations
 - [ ] Task: UI - Preset Dropdown & Management
     - [ ] Create `PresetSelector` component with "Save" and "Delete" actions
     - [ ] Integrate `PresetSelector` into `EffectEditor.jsx` and `GeneratorSettingsPanel.jsx`
-- [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
 
 ## Phase 2: Clip Deck Pagination
-- [ ] Task: Extend Application State for Paging
+- [~] Task: Extend Application State for Paging
     - [ ] Update `reducer` to support `activePageId` and hierarchical `clipContents`
     - [ ] Ensure `clipNames` and `thumbnailFrameIndexes` are also page-aware
 - [ ] Task: Implement Navigation UI

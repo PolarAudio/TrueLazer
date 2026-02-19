@@ -1,15 +1,23 @@
 import React, { useState, useEffect } from 'react';
 
+/**
+ * Component for selecting, saving, and deleting presets for effects and generators.
+ * @param {Object} props - Component props.
+ * @param {string} props.type - The type of preset ('effect' or 'generator').
+ * @param {string} props.subType - The specific effect or generator ID (e.g., 'color', 'circle').
+ * @param {Object} props.currentParams - The current parameter values to be saved as a preset.
+ * @param {function(Object)} props.onApplyPreset - Callback triggered when a preset is selected.
+ * @param {function(string, string, Object)} props.onRegisterPreset - Callback to register the preset in the project state.
+ * @return {React.ReactElement} The PresetSelector component.
+ */
 const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegisterPreset }) => {
     const [presets, setPresets] = useState([]);
     const [selectedPresetName, setSelectedPresetName] = useState('');
-    const [isSaving, setIsSaving] = useState(false);
-    const [newPresetName, setNewGroupName] = useState('');
 
     const loadPresets = async () => {
         if (window.electronAPI && window.electronAPI.getPresets) {
             const loaded = await window.electronAPI.getPresets(type, subType);
-            setPresets(loaded);
+            setPresets(loaded || []);
         }
     };
 
@@ -18,12 +26,12 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
     }, [type, subType]);
 
     const handleSave = async () => {
-        const name = prompt("Enter preset name:");
+        const name = prompt('Enter preset name:');
         if (!name) return;
 
         const preset = {
             name,
-            params: currentParams
+            params: currentParams,
         };
 
         if (window.electronAPI && window.electronAPI.savePreset) {
@@ -100,4 +108,4 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
     );
 };
 
-export default PresetSelector;
+export { PresetSelector };
