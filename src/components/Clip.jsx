@@ -7,6 +7,7 @@ const Clip = ({
   clipName,
   layerIndex,
   colIndex,
+  pageId, // Add pageId
   onDropGenerator,
   onDropEffect,
   clipContent,
@@ -70,7 +71,7 @@ const Clip = ({
       try {
         const arrayBuffer = await file.arrayBuffer();
         console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFileDrop): ${arrayBuffer.byteLength}`);
-        ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, filePath: file.path, layerIndex, colIndex }, [arrayBuffer]);
+        ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName: droppedFileName, filePath: file.path, layerIndex, colIndex, pageId }, [arrayBuffer]);
       } catch (error) {
         console.error('[Clip.jsx] handleFileDrop - Error reading file:', error);
         onUnsupportedFile(`Error reading file: ${error.message}`);
@@ -106,7 +107,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
       }
 
       console.log(`[Clip.jsx] ArrayBuffer byteLength before posting to worker (handleFilePathDrop): ${arrayBuffer.byteLength}`);
-      ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, filePath, layerIndex, colIndex }, [arrayBuffer]);
+      ildaParserWorker.postMessage({ type: 'parse-ilda', arrayBuffer, fileName, filePath, layerIndex, colIndex, pageId }, [arrayBuffer]);
     } else {
       onUnsupportedFile("Binary file access not available");
     }
