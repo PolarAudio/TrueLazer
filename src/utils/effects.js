@@ -593,12 +593,19 @@ function applyMirror(points, numPoints, params) {
                       updateMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
                       newBuffer[dstOff] = tempCoord.x; newBuffer[dstOff+1] = tempCoord.y;
                       
-                      // BLANKING SHIFT: Mirrored segment blanking comes from the original's next point
+                      // METADATA SHIFT: Mirrored segment properties (color, blanking, intensity) 
+                      // must come from the original's next point to preserve segment visibility in reverse.
                       if (i === sliceNumPoints - 1) {
                           newBuffer[dstOff + 6] = 1; // First mirrored point always blanked
-                          newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0;
+                          newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0; // Zero color
+                          newBuffer[dstOff + 7] = 0; // Zero intensity
                       } else {
+                          // Copy R, G, B, Blanking, Intensity from the next point in the original sequence
+                          newBuffer[dstOff + 3] = points[off + 8 + 3];
+                          newBuffer[dstOff + 4] = points[off + 8 + 4];
+                          newBuffer[dstOff + 5] = points[off + 8 + 5];
                           newBuffer[dstOff + 6] = points[off + 8 + 6];
+                          newBuffer[dstOff + 7] = points[off + 8 + 7];
                       }
 
                       currentOffset += 8;
@@ -667,12 +674,19 @@ function applyMirror(points, numPoints, params) {
                   updateMirroredCoords(newBuffer[dstOff], newBuffer[dstOff+1]);
                   newBuffer[dstOff] = tempCoord.x; newBuffer[dstOff+1] = tempCoord.y;
 
-                  // BLANKING SHIFT: Mirrored segment blanking comes from the original's next point
+                  // METADATA SHIFT: Mirrored segment properties (color, blanking, intensity) 
+                  // must come from the original's next point to preserve segment visibility in reverse.
                   if (i === numPoints - 1) {
                       newBuffer[dstOff + 6] = 1; // First mirrored point always blanked
-                      newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0;
+                      newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0; // Zero color
+                      newBuffer[dstOff + 7] = 0; // Zero intensity
                   } else {
+                      // Copy R, G, B, Blanking, Intensity from the next point in the original sequence
+                      newBuffer[dstOff + 3] = points[off + 8 + 3];
+                      newBuffer[dstOff + 4] = points[off + 8 + 4];
+                      newBuffer[dstOff + 5] = points[off + 8 + 5];
                       newBuffer[dstOff + 6] = points[off + 8 + 6];
+                      newBuffer[dstOff + 7] = points[off + 8 + 7];
                   }
 
                   currentOffset += 8;
