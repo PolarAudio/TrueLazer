@@ -1,6 +1,6 @@
 # Implementation Plan: Art-Net/DMX Expanding (Track 4)
 
-## Phase 1: Fixed DMX Personalities Engine
+## Phase 1: Fixed DMX Personalities Engine [checkpoint: 3cfd15a]
 - [x] Task: Implement Master Section Handlers
     - [x] Update `ArtnetContext.jsx` to process hardcoded "Master Section" channels (1-10)
     - [x] Link Master Intensity, Global Blackout, Page Select, and Transport to application actions
