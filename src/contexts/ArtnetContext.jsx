@@ -80,101 +80,78 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
   const [learningId, setLearningId] = useState(null);
   const [mappings, setMappings] = useState({}); // { controlId: { universe, channel, label } }
   const [lastDmxEvent, setLastDmxEvent] = useState(null);
+  const [dmxData, setDmxData] = useState({}); // { universe: Uint8Array(512) }
+  const [universeFilter, setUniverseFilter] = useState(0);
 
   const onArtnetCommandRef = useRef(onArtnetCommand);
   useEffect(() => {
     onArtnetCommandRef.current = onArtnetCommand;
   }, [onArtnetCommand]);
 
-  // Initialize Art-Net and Load Mappings
-  useEffect(() => {
-    const init = async () => {
-      try {
-        if (window.electronAPI && window.electronAPI.initializeArtnet) {
-            const result = await window.electronAPI.initializeArtnet();
-            if (result.success) {
-                setArtnetInitialized(true);
-                console.log("Art-Net initialized for mapping");
-            }
-        }
-
-        // Load saved mappings from store
-        if (window.electronAPI && window.electronAPI.getArtnetMappings) {
-            const savedMappings = await window.electronAPI.getArtnetMappings();
-            if (savedMappings) {
-                console.log("Loaded saved Art-Net mappings:", savedMappings);
-                setMappings(savedMappings);
-            }
-        }
-      } catch (err) {
-        console.error("Art-Net Init Failed:", err);
-      }
-    };
-    init();
-  }, []);
-
-  const saveMappings = async () => {
-      if (window.electronAPI && window.electronAPI.saveArtnetMappings) {
-          await window.electronAPI.saveArtnetMappings(mappings);
-          console.log("Art-Net mappings saved.");
-      }
-  };
-
-  const exportMappings = async () => {
-      if (window.electronAPI && window.electronAPI.exportMappings) {
-          await window.electronAPI.exportMappings(mappings, 'artnet');
-      }
-  };
-
-  const importMappings = async () => {
-      if (window.electronAPI && window.electronAPI.importMappings) {
-          const result = await window.electronAPI.importMappings('artnet');
-          if (result.success && result.mappings) {
-              setMappings(result.mappings);
-              console.log("Art-Net mappings imported.");
-          }
-      }
-  };
+  // ... exists ...
 
   // Listen to Art-Net events from main process
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onArtnetDataReceived) {
         const cleanup = window.electronAPI.onArtnetDataReceived((data) => {
             // data: { universe, channel, value }
-            // Only update state (triggering re-render) if we are in mapping mode
-            // or if we want to show the last signal in the UI.
+            
+            // 1. Update DMX Monitor Data
+            setDmxData(prev => {
+                const current = prev[data.universe] || new Uint8Array(512);
+                if (current[data.channel] === data.value) return prev;
+                const next = new Uint8Array(current);
+                next[data.channel] = data.value;
+                return { ...prev, [data.universe]: next };
+            });
+
+            // 2. Mapping Feedback
             if (isMappingRef.current) {
                 setLastDmxEvent(data);
             }
+
+            // 3. Process Logic
             handleIncomingArtnet(data);
         });
         return cleanup;
     }
-  }, [isMapping, learningId, mappings]);
+  }, []); // Only run once on mount
 
-  // Keep a ref of isMapping for the listener
-  const isMappingRef = useRef(isMapping);
-  useEffect(() => {
-      isMappingRef.current = isMapping;
-  }, [isMapping]);
+  // ... exists ...
 
-  const handleIncomingArtnet = (data) => {
-    processArtnetLogic(
-        data, 
-        mappings, 
-        onArtnetCommandRef.current, 
-        isMapping, 
-        learningId, 
-        setMappings, 
-        setLearningId
-    );
+  const autoPatchFixedFootprint = () => {
+      // The fixed footprint is actually hardcoded in processArtnetLogic, 
+      // but we can add UI labels for them by creating "virtual" mappings 
+      // or just letting the user know they are reserved.
+      // However, for "Hybrid" mapping, we want to allow users to see them in the overlay.
+      
+      const newMappings = {};
+      // Master (CH 1-10)
+      newMappings['master_intensity'] = { universe: 0, channel: 0, label: 'U0:CH1 (Fixed)' };
+      newMappings['blackout'] = { universe: 0, channel: 1, label: 'U0:CH2 (Fixed)' };
+      newMappings['middle_bar_page'] = { universe: 0, channel: 2, label: 'U0:CH3 (Fixed)' };
+      newMappings['transport'] = { universe: 0, channel: 3, label: 'U0:CH4 (Fixed)' };
+
+      // Layers (CH 11-110)
+      for (let i = 0; i < 5; i++) {
+          const startCh = 10 + (i * 20);
+          newMappings[`layer_${i}_intensity`] = { universe: 0, channel: startCh, label: `U0:CH${startCh + 1} (Fixed)` };
+          newMappings[`layer_${i}_controls`] = { universe: 0, channel: startCh + 1, label: `U0:CH${startCh + 2} (Fixed)` };
+          newMappings[`layer_${i}_trigger`] = { universe: 0, channel: startCh + 2, label: `U0:CH${startCh + 3} (Fixed)` };
+          newMappings[`layer_${i}_speed`] = { universe: 0, channel: startCh + 3, label: `U0:CH${startCh + 4} (Fixed)` };
+      }
+
+      setMappings(prev => ({ ...prev, ...newMappings }));
+      console.log("Auto-patched fixed DMX footprints.");
   };
 
-  const startMapping = () => setIsMapping(true);
-  const stopMapping = () => {
-      setIsMapping(false);
-      setLearningId(null);
-  }
+  const removeMapping = (controlId) => {
+      setMappings(prev => {
+          const next = { ...prev };
+          delete next[controlId];
+          return next;
+      });
+  };
 
   const value = {
     artnetInitialized,
@@ -185,10 +162,15 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
     setLearningId,
     mappings,
     setMappings,
+    removeMapping,
     saveMappings,
     exportMappings,
     importMappings,
-    lastDmxEvent
+    lastDmxEvent,
+    dmxData,
+    universeFilter,
+    setUniverseFilter,
+    autoPatchFixedFootprint
   };
 
   return (

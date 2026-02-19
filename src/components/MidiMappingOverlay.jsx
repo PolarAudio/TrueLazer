@@ -16,7 +16,13 @@ const MidiMappingOverlay = () => {
     midiInputs,
     selectedMidiInputId
   } = useMidi();
-  const { isMapping: isArtnetMapping, mappings: artnetMappings, learningId: artnetLearningId } = useArtnet() || {};
+  const { 
+      isMapping: isArtnetMapping, 
+      mappings: artnetMappings, 
+      learningId: artnetLearningId,
+      universeFilter,
+      setUniverseFilter
+  } = useArtnet() || {};
   const { isMapping: isKeyboardMapping, mappings: keyboardMappings, learningId: keyboardLearningId } = useKeyboard() || {};
 
   const isMapping = isMidiMapping || isArtnetMapping || isKeyboardMapping;
@@ -86,6 +92,38 @@ const MidiMappingOverlay = () => {
 
   return ReactDOM.createPortal(
     <div className="midi-mapping-global-overlay-container">
+      {/* Universe Filter Bar (Art-Net Only) */}
+      {isArtnetMapping && (
+          <div style={{
+              position: 'fixed',
+              top: '10px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: '#1a1a1a',
+              border: '1px solid var(--theme-color)',
+              borderRadius: '5px',
+              padding: '5px 15px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              zIndex: 10002,
+              boxShadow: '0 0 20px rgba(0,0,0,0.8)'
+          }}>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--theme-color)' }}>DMX MAPPING FILTER</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <label style={{ fontSize: '10px', color: '#888' }}>Universe:</label>
+                  <input 
+                    type="number" 
+                    min="0" max="255" 
+                    value={universeFilter} 
+                    onChange={(e) => setUniverseFilter(parseInt(e.target.value) || 0)}
+                    style={{ width: '50px', background: '#000', color: '#fff', border: '1px solid #444', textAlign: 'center', fontSize: '11px' }}
+                  />
+              </div>
+              <span style={{ fontSize: '9px', color: '#666' }}>Showing only mappings for U{universeFilter}</span>
+          </div>
+      )}
+
       {overlays.map(overlay => {
         let mappingLabel = null;
         const isMidi = isMidiMapping;
@@ -104,7 +142,10 @@ const MidiMappingOverlay = () => {
             }
         } else if (isArtnet) {
             const artnetMapping = artnetMappings ? artnetMappings[overlay.id] : null;
-            mappingLabel = artnetMapping ? artnetMapping.label : null;
+            // Only show label if it matches the current universe filter
+            if (artnetMapping && artnetMapping.universe === universeFilter) {
+                mappingLabel = artnetMapping.label;
+            }
         } else if (isKeyboard) {
             const keyboardMapping = keyboardMappings ? keyboardMappings[overlay.id] : null;
             mappingLabel = keyboardMapping ? keyboardMapping.label : null;

@@ -10,13 +10,13 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
 
 ## Phase 2: DMX Monitor & UI Enhancements
-- [ ] Task: Create DMX Monitor Component
-    - [ ] Build a 16x32 grid UI to visualize 512 channels of real-time data
-    - [ ] Update Art-Net settings window to include this monitor
-- [ ] Task: Universe Filtering & List Management
-    - [ ] Add `universeFilter` state to `ArtnetContext`
-    - [ ] Update the mapping overlay UI to support filtering by universe
-- [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
+- [x] Task: Create DMX Monitor Component
+    - [x] Build a 16x32 grid UI to visualize 512 channels of real-time data
+    - [x] Update Art-Net settings window to include this monitor
+- [x] Task: Universe Filtering & List Management
+    - [x] Add `universeFilter` state to `ArtnetContext`
+    - [x] Update the mapping overlay UI to support filtering by universe
+- [~] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
 
 ## Phase 3: Performance & Integration
 - [ ] Task: Main Process Art-Net Optimization

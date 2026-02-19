@@ -4,6 +4,7 @@ import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
 import { initializeArtnet, getArtnetUniverses, sendArtnetData, closeArtnet } from '../utils/artnet';
 import { initializeOsc, sendOscMessage, addOscMessageListener, closeOsc } from '../utils/osc';
+import { DmxMonitor } from './DmxMonitor';
 
 const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
   const { 
@@ -21,7 +22,8 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
       isMapping: isArtnetMapping,
       startMapping: startArtnetMapping,
       stopMapping: stopArtnetMapping,
-      learningId: artnetLearningId
+      learningId: artnetLearningId,
+      autoPatchFixedFootprint
   } = useArtnet() || {};
 
   const {
@@ -233,6 +235,13 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                 <button onClick={toggleArtnetLearnMode} style={{ marginLeft: '10px', backgroundColor: isArtnetMapping ? 'var(--theme-color)' : '' }}>
                   {isArtnetMapping ? 'Stop Mapping' : 'Start Mapping'}
                 </button>
+                <button 
+                    onClick={autoPatchFixedFootprint} 
+                    style={{ marginLeft: '10px', background: '#444', color: '#fff', border: '1px solid #555', cursor: 'pointer', borderRadius: '3px', padding: '2px 8px', fontSize: '11px' }}
+                    title="Auto-patch standard 110-channel layout (Master + 5 Layers)"
+                >
+                    Auto-Patch
+                </button>
               </div>
 
               {isArtnetMapping && (
@@ -253,6 +262,10 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                   <input type="number" id="artnetValue" min="0" max="255" value={artnetValue} onChange={handleArtnetValueChange} />
                 </div>
                 <button onClick={handleSendArtnetData}>Send Art-Net Data</button>
+              </div>
+
+              <div style={{ marginTop: '20px' }}>
+                <DmxMonitor />
               </div>
             </div>
           )}
