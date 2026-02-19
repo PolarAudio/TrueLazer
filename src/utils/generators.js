@@ -735,9 +735,8 @@ export async function generateTimer(params, fontBuffer, context = {}) {
             timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         } else if (format === 'MM:SS') {
             timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-        } else if (format === 'SS.mm' || format === 'SS:mm') {
-            const separator = format.includes(':') ? ':' : '.';
-            timeStr = `${s.toString().padStart(2, '0')}${separator}${ms.toString().padStart(2, '0')}`;
+        } else if (format === 'SS.mm') {
+            timeStr = `${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
         }
 
         const textParams = {
