@@ -11,7 +11,115 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
     const safeMin = min !== undefined ? min : 0;
     const safeMax = max !== undefined ? max : 1;
 
-    // ... exists ...
+    // rangeValue is [low, high] for the animation bounds
+    const currentRangeMin = rangeValue && rangeValue[0] !== undefined ? rangeValue[0] : safeMin;
+    const currentRangeMax = rangeValue && rangeValue[1] !== undefined ? rangeValue[1] : safeMax;
+    
+    // value is the main current value (static)
+    const currentValue = value !== undefined ? value : safeMin;
+
+    const getPercentage = (val) => {
+        const range = safeMax - safeMin;
+        if (range === 0) return 0;
+        return ((val - safeMin) / range) * 100;
+    };
+
+    // Animation Loop for Visual Feedback
+    useEffect(() => {
+        let animationFrameId;
+
+        const updateVisuals = () => {
+            if (dragging === 'value') {
+                 // If dragging, visual is handled by state/props updates
+                 animationFrameId = requestAnimationFrame(updateVisuals);
+                 return;
+            }
+
+            let displayValue = currentValue;
+
+            if (animSettings && animSettings.syncMode && progressRef && progressRef.current) {
+                // Determine current progress
+                const currentProgress = (workerId && progressRef.current[workerId] !== undefined) 
+                    ? progressRef.current[workerId] 
+                    : 0;
+                
+                const context = {
+                    progress: currentProgress,
+                    time: performance.now(),
+                    clipDuration: clipDuration || 1,
+                    bpm: bpm || 120,
+                    fftLevels: getFftLevels ? getFftLevels() : { low: 0, mid: 0, high: 0 }
+                };
+
+                displayValue = resolveParam(null, currentValue, animSettings, context, safeMin, safeMax);
+            }
+
+            // Update DOM directly
+            const pct = getPercentage(displayValue);
+            if (valueHandleRef.current) {
+                valueHandleRef.current.style.left = `${pct}%`;
+            }
+            if (valueFillRef.current) {
+                valueFillRef.current.style.width = `${pct}%`;
+            }
+
+            animationFrameId = requestAnimationFrame(updateVisuals);
+        };
+
+        animationFrameId = requestAnimationFrame(updateVisuals);
+
+        return () => cancelAnimationFrame(animationFrameId);
+    }, [animSettings, progressRef, workerId, currentValue, dragging, safeMin, safeMax, bpm, getFftLevels, clipDuration]);
+
+    const handleMouseDown = (e, handle) => {
+        if (disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setDragging(handle);
+        
+        const handleMouseMove = (ev) => {
+            if (!trackRef.current) return;
+            const rect = trackRef.current.getBoundingClientRect();
+            const rawX = ev.clientX - rect.left;
+            let percentage = Math.max(0, Math.min(100, (rawX / rect.width) * 100));
+            let newVal = safeMin + (percentage / 100) * (safeMax - safeMin);
+            
+            // Snap to step
+            if (step) {
+                newVal = Math.round(newVal / step) * step;
+                // Recalculate percentage for visual snap
+                percentage = ((newVal - safeMin) / (safeMax - safeMin)) * 100;
+            }
+
+            // Constraints
+            if (handle === 'value') {
+                newVal = Math.max(currentRangeMin, Math.min(currentRangeMax, newVal));
+                // Update visual immediately
+                if (valueHandleRef.current) {
+                    valueHandleRef.current.style.left = `${getPercentage(newVal)}%`;
+                }
+                if (valueFillRef.current && !showRange) {
+                    valueFillRef.current.style.width = `${getPercentage(newVal)}%`;
+                }
+                onChange && onChange(newVal);
+            } else if (handle === 'min') {
+                newVal = Math.max(safeMin, Math.min(currentRangeMax, newVal)); // Can't cross max
+                onRangeChange && onRangeChange([newVal, currentRangeMax]);
+            } else if (handle === 'max') {
+                newVal = Math.max(currentRangeMin, Math.min(safeMax, newVal)); // Can't cross min
+                onRangeChange && onRangeChange([currentRangeMin, newVal]);
+            }
+        };
+
+        const handleMouseUp = () => {
+            setDragging(null);
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+    };
 
     const renderTooltip = (val, leftPct) => {
         return (
