@@ -725,7 +725,7 @@ export async function generateTimer(params, fontBuffer, context = {}) {
             displaySec = Math.max(0, startTime - elapsedSec);
         }
 
-        const h = Math.floor(displaySec / 3600);
+        const h = Math.floor(displaySec / 3600) % 24;
         const m = Math.floor((displaySec % 3600) / 60);
         const s = Math.floor(displaySec % 60);
         const ms = Math.floor((displaySec % 1) * 100);
@@ -734,11 +734,10 @@ export async function generateTimer(params, fontBuffer, context = {}) {
         if (format === 'HH:MM:SS') {
             timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         } else if (format === 'MM:SS') {
-            const totalMin = h * 60 + m;
-            timeStr = `${totalMin.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-        } else if (format === 'SS.mm') {
-            const totalSec = h * 3600 + m * 60 + s;
-            timeStr = `${totalSec.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+            timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        } else if (format === 'SS.mm' || format === 'SS:mm') {
+            const separator = format.includes(':') ? ':' : '.';
+            timeStr = `${s.toString().padStart(2, '0')}${separator}${ms.toString().padStart(2, '0')}`;
         }
 
         const textParams = {

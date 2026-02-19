@@ -406,7 +406,8 @@ export const generatorDefinitions = [
       { id: 'format', label: 'Format', type: 'select', options: [
           { label: 'HH:MM:SS', value: 'HH:MM:SS' },
           { label: 'MM:SS', value: 'MM:SS' },
-          { label: 'SS.mm', value: 'SS.mm' }
+          { label: 'SS.mm', value: 'SS.mm' },
+          { label: 'SS:mm', value: 'SS:mm' }
       ]},
       { id: 'startTime', label: 'Start Time (Sec)', type: 'range', min: 1, max: 3600, step: 1, showIf: { mode: 'count-down' } },
       { id: 'fontUrl', label: 'Fonts', type: 'text' },
