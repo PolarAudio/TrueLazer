@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 
 /**
  * Component for selecting, saving, and deleting presets for effects and generators.
+ * Uses an inline input for naming to avoid browser prompt() issues.
  * @param {Object} props - Component props.
  * @param {string} props.type - The type of preset ('effect' or 'generator').
  * @param {string} props.subType - The specific effect or generator ID (e.g., 'color', 'circle').
@@ -13,6 +14,9 @@ import React, { useState, useEffect } from 'react';
 const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegisterPreset }) => {
     const [presets, setPresets] = useState([]);
     const [selectedPresetName, setSelectedPresetName] = useState('');
+    const [isNaming, setIsNaming] = useState(false);
+    const [tempName, setTempName] = useState('');
+    const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
     const loadPresets = async () => {
         if (window.electronAPI && window.electronAPI.getPresets) {
@@ -23,14 +27,15 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
 
     useEffect(() => {
         loadPresets();
+        setIsNaming(false);
+        setIsConfirmingDelete(false);
     }, [type, subType]);
 
     const handleSave = async () => {
-        const name = prompt('Enter preset name:');
-        if (!name) return;
+        if (!tempName.trim()) return;
 
         const preset = {
-            name,
+            name: tempName.trim(),
             params: currentParams,
         };
 
@@ -38,21 +43,23 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
             const result = await window.electronAPI.savePreset(type, subType, preset);
             if (result.success) {
                 loadPresets();
-                setSelectedPresetName(name);
+                setSelectedPresetName(preset.name);
                 if (onRegisterPreset) onRegisterPreset(type, subType, preset);
+                setIsNaming(false);
+                setTempName('');
             }
         }
     };
 
     const handleDelete = async () => {
         if (!selectedPresetName) return;
-        if (!confirm(`Are you sure you want to delete preset "${selectedPresetName}"?`)) return;
 
         if (window.electronAPI && window.electronAPI.deletePreset) {
             const result = await window.electronAPI.deletePreset(type, subType, selectedPresetName);
             if (result.success) {
                 loadPresets();
                 setSelectedPresetName('');
+                setIsConfirmingDelete(false);
             }
         }
     };
@@ -69,6 +76,57 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
         }
     };
 
+    if (isNaming) {
+        return (
+            <div className="preset-selector naming-mode" style={{ display: 'flex', gap: '5px', alignItems: 'center', marginBottom: '10px' }}>
+                <input 
+                    type="text"
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    placeholder="Preset Name..."
+                    autoFocus
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSave();
+                        if (e.key === 'Escape') setIsNaming(false);
+                    }}
+                    style={{ flex: 1, background: '#000', color: '#fff', border: '1px solid var(--theme-color)', fontSize: '11px', padding: '2px 5px', borderRadius: '3px' }}
+                />
+                <button 
+                    onClick={handleSave}
+                    style={{ background: 'var(--theme-color)', border: 'none', color: '#000', cursor: 'pointer', padding: '2px 8px', borderRadius: '3px', fontSize: '10px', fontWeight: 'bold' }}
+                >
+                    OK
+                </button>
+                <button 
+                    onClick={() => setIsNaming(false)}
+                    style={{ background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', padding: '2px 8px', borderRadius: '3px', fontSize: '10px' }}
+                >
+                    ESC
+                </button>
+            </div>
+        );
+    }
+
+    if (isConfirmingDelete) {
+        return (
+            <div className="preset-selector delete-mode" style={{ display: 'flex', gap: '5px', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '10px', color: '#f44', flex: 1 }}>Delete?</span>
+                <button 
+                    onClick={handleDelete}
+                    style={{ background: '#f44', border: 'none', color: '#fff', cursor: 'pointer', padding: '2px 8px', borderRadius: '3px', fontSize: '10px', fontWeight: 'bold' }}
+                >
+                    YES
+                </button>
+                <button 
+                    onClick={() => setIsConfirmingDelete(false)}
+                    style={{ background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', padding: '2px 8px', borderRadius: '3px', fontSize: '10px' }}
+                >
+                    NO
+                </button>
+            </div>
+        );
+    }
+
     return (
         <div className="preset-selector" style={{ display: 'flex', gap: '5px', alignItems: 'center', marginBottom: '10px' }}>
             <select 
@@ -83,7 +141,7 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
             </select>
             
             <button 
-                onClick={handleSave}
+                onClick={() => setIsNaming(true)}
                 style={{ background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', padding: '2px 5px', borderRadius: '3px', display: 'flex', alignItems: 'center' }}
                 title="Save Preset"
             >
@@ -94,7 +152,7 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
             </button>
 
             <button 
-                onClick={handleDelete}
+                onClick={() => setIsConfirmingDelete(true)}
                 disabled={!selectedPresetName}
                 style={{ background: '#333', border: '1px solid #555', color: selectedPresetName ? '#f44' : '#666', cursor: selectedPresetName ? 'pointer' : 'default', padding: '2px 5px', borderRadius: '3px', display: 'flex', alignItems: 'center' }}
                 title="Delete Preset"
