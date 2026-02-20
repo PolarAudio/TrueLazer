@@ -78,9 +78,9 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
   const [artnetInitialized, setArtnetInitialized] = useState(false);
   const [isMapping, setIsMapping] = useState(false);
   const [learningId, setLearningId] = useState(null);
-  const [mappings, setMappings] = useState({}); // { controlId: { universe, channel, label } }
+  const [mappings, setMappings] = useState({}); 
   const [lastDmxEvent, setLastDmxEvent] = useState(null);
-  const [dmxData, setDmxData] = useState({}); // { universe: Uint8Array(512) }
+  const [dmxData, setDmxData] = useState({}); 
   const [universeFilter, setUniverseFilter] = useState(0);
 
   const onArtnetCommandRef = useRef(onArtnetCommand);
@@ -88,15 +88,51 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
     onArtnetCommandRef.current = onArtnetCommand;
   }, [onArtnetCommand]);
 
-  // ... exists ...
+  const isMappingRef = useRef(isMapping);
+  useEffect(() => {
+      isMappingRef.current = isMapping;
+  }, [isMapping]);
+
+  const handleIncomingArtnet = useCallback((data) => {
+    processArtnetLogic(
+        data, 
+        mappings, 
+        onArtnetCommandRef.current, 
+        isMappingRef.current, 
+        learningId, 
+        setMappings, 
+        setLearningId
+    );
+  }, [mappings, learningId]);
+
+  // Initialize Art-Net and Load Mappings
+  useEffect(() => {
+    const init = async () => {
+      try {
+        if (window.electronAPI && window.electronAPI.initializeArtnet) {
+            const result = await window.electronAPI.initializeArtnet();
+            if (result.success) {
+                setArtnetInitialized(true);
+            }
+        }
+
+        if (window.electronAPI && window.electronAPI.getArtnetMappings) {
+            const savedMappings = await window.electronAPI.getArtnetMappings();
+            if (savedMappings) {
+                setMappings(savedMappings);
+            }
+        }
+      } catch (err) {
+        console.error("Art-Net Init Failed:", err);
+      }
+    };
+    init();
+  }, []);
 
   // Listen to Art-Net events from main process
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onArtnetDataReceived) {
         const cleanup = window.electronAPI.onArtnetDataReceived((data) => {
-            // data: { universe, channel, value }
-            
-            // 1. Update DMX Monitor Data
             setDmxData(prev => {
                 const current = prev[data.universe] || new Uint8Array(512);
                 if (current[data.channel] === data.value) return prev;
@@ -105,34 +141,50 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
                 return { ...prev, [data.universe]: next };
             });
 
-            // 2. Mapping Feedback
             if (isMappingRef.current) {
                 setLastDmxEvent(data);
             }
 
-            // 3. Process Logic
             handleIncomingArtnet(data);
         });
         return cleanup;
     }
-  }, []); // Only run once on mount
+  }, [handleIncomingArtnet]);
 
-  // ... exists ...
+  const saveMappings = async () => {
+      if (window.electronAPI && window.electronAPI.saveArtnetMappings) {
+          await window.electronAPI.saveArtnetMappings(mappings);
+      }
+  };
+
+  const exportMappings = async () => {
+      if (window.electronAPI && window.electronAPI.exportMappings) {
+          await window.electronAPI.exportMappings(mappings, 'artnet');
+      }
+  };
+
+  const importMappings = async () => {
+      if (window.electronAPI && window.electronAPI.importMappings) {
+          const result = await window.electronAPI.importMappings('artnet');
+          if (result.success && result.mappings) {
+              setMappings(result.mappings);
+          }
+      }
+  };
+
+  const startMapping = () => setIsMapping(true);
+  const stopMapping = () => {
+      setIsMapping(false);
+      setLearningId(null);
+  };
 
   const autoPatchFixedFootprint = () => {
-      // The fixed footprint is actually hardcoded in processArtnetLogic, 
-      // but we can add UI labels for them by creating "virtual" mappings 
-      // or just letting the user know they are reserved.
-      // However, for "Hybrid" mapping, we want to allow users to see them in the overlay.
-      
       const newMappings = {};
-      // Master (CH 1-10)
       newMappings['master_intensity'] = { universe: 0, channel: 0, label: 'U0:CH1 (Fixed)' };
       newMappings['blackout'] = { universe: 0, channel: 1, label: 'U0:CH2 (Fixed)' };
       newMappings['middle_bar_page'] = { universe: 0, channel: 2, label: 'U0:CH3 (Fixed)' };
       newMappings['transport'] = { universe: 0, channel: 3, label: 'U0:CH4 (Fixed)' };
 
-      // Layers (CH 11-110)
       for (let i = 0; i < 5; i++) {
           const startCh = 10 + (i * 20);
           newMappings[`layer_${i}_intensity`] = { universe: 0, channel: startCh, label: `U0:CH${startCh + 1} (Fixed)` };
@@ -142,7 +194,6 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
       }
 
       setMappings(prev => ({ ...prev, ...newMappings }));
-      console.log("Auto-patched fixed DMX footprints.");
   };
 
   const removeMapping = (controlId) => {

@@ -4,6 +4,7 @@ import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
 import GlobalQuickAssigns from './GlobalQuickAssigns';
 import CollapsiblePanel from './CollapsiblePanel';
+import { DmxMonitor } from './DmxMonitor';
 
 const SettingsPanel = ({
   enabledShortcuts = {},
@@ -51,7 +52,8 @@ const SettingsPanel = ({
     saveMappings: saveArtnetMappings,
     exportMappings: exportArtnetMappings,
     importMappings: importArtnetMappings,
-    lastDmxEvent
+    lastDmxEvent,
+    autoPatchFixedFootprint
   } = useArtnet() || {};
 
   const {
@@ -269,6 +271,7 @@ const SettingsPanel = ({
                       >
                           {isArtnetMapping ? 'Stop Mapping' : 'Start Mapping'}
                       </button>
+                      <button className="small-btn" onClick={autoPatchFixedFootprint} title="Auto-patch standard 110-channel layout">Auto-Patch</button>
                       <button className="small-btn" onClick={saveArtnetMappings}>Save Default</button>
                       <button className="small-btn" onClick={exportArtnetMappings}>Export</button>
                       <button className="small-btn" onClick={importArtnetMappings}>Import</button>
@@ -279,6 +282,9 @@ const SettingsPanel = ({
                             UNIV {lastDmxEvent.universe} CH {lastDmxEvent.channel + 1} (Val: {lastDmxEvent.value})
                         </div>
                     )}
+                    <div style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '10px' }}>
+                        <DmxMonitor />
+                    </div>
                   </div>
                 )}
             </CollapsiblePanel>

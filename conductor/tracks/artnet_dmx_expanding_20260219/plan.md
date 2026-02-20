@@ -16,7 +16,7 @@
 - [x] Task: Universe Filtering & List Management
     - [x] Add `universeFilter` state to `ArtnetContext`
     - [x] Update the mapping overlay UI to support filtering by universe
-- [~] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
 
 ## Phase 3: Performance & Integration
 - [ ] Task: Main Process Art-Net Optimization
