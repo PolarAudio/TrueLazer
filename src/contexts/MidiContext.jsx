@@ -56,14 +56,22 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
 
   // Initialize MIDI and Load Mappings
   useEffect(() => {
+    let isMounted = true;
     const init = async () => {
       try {
+        console.log("MIDI: Starting initialization...");
         await initializeMidi();
+        
+        if (!isMounted) return;
+
         setMidiInitialized(true);
-        setMidiInputs(getMidiInputs());
+        const inputs = getMidiInputs();
+        console.log(`MIDI: Initialized with ${inputs.length} inputs.`);
+        setMidiInputs(inputs);
         
         // Listen for connection changes (hotplugging)
         listenToStateChange(() => {
+            if (!isMounted) return;
             console.log("MIDI Device change detected, refreshing inputs...");
             setMidiInputs(getMidiInputs());
         });
@@ -79,14 +87,15 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         }
       } catch (err) {
         console.error("MIDI Init Failed:", err);
+        if (isMounted) setMidiInitialized(false);
       }
     };
     init();
 
     return () => {
-        if (WebMidi.enabled) {
-            WebMidi.disable();
-        }
+        isMounted = false;
+        // We stop listening to the state changes, but we don't disable WebMidi globally
+        // as it can cause issues with simultaneous initialization on re-mounts.
     };
   }, []);
 

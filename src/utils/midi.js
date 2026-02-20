@@ -1,27 +1,72 @@
 import { WebMidi } from 'webmidi';
 
+let isInitializing = false;
+
+/**
+ * Initializes the WebMidi library with a retry mechanism and timeout.
+ * @param {number} [retries=3] - Number of attempts to initialize.
+ * @return {Promise<WebMidi>} The initialized WebMidi instance.
+ */
 export const initializeMidi = async (retries = 3) => {
-  for (let i = 0; i < retries; i++) {
-    try {
-      if (WebMidi.enabled) {
-        await WebMidi.disable();
-      }
-      
-      await WebMidi.enable({ sysex: true });
-      console.log("WebMidi is enabled with SysEx support!");
-      return WebMidi;
-    } catch (err) {
-      console.warn(`MIDI initialization attempt ${i + 1} failed:`, err);
-      if (i === retries - 1) {
-        console.error("WebMidi could not be enabled after all retries.", err);
-        throw err;
-      }
-      // Wait a bit before retrying
-      await new Promise(resolve => setTimeout(resolve, 500));
+  if (WebMidi.enabled) {
+    console.log("MIDI: WebMidi is already enabled.");
+    return WebMidi;
+  }
+
+  if (isInitializing) {
+    console.log("MIDI: Initialization already in progress, waiting...");
+    while (isInitializing) {
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
+    return WebMidi;
+  }
+
+  isInitializing = true;
+
+  try {
+    for (let i = 0; i < retries; i++) {
+      try {
+        console.log(`MIDI: Attempting to enable (Attempt ${i + 1})...`);
+        
+        // Use a 5-second timeout for the enable call to prevent hanging
+        const enablePromise = WebMidi.enable({ sysex: true });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout (5s)")), 5000)
+        );
+
+        await Promise.race([enablePromise, timeoutPromise]);
+        
+        console.log("MIDI: WebMidi enabled successfully with SysEx support!");
+        return WebMidi;
+      } catch (err) {
+        console.warn(`MIDI: Attempt ${i + 1} failed: ${err.message || err}`);
+        
+        // If it's the last attempt, try one more time WITHOUT SysEx as a safety fallback
+        if (i === retries - 1) {
+            console.log("MIDI: Final attempt - trying without SysEx...");
+            try {
+                await WebMidi.enable({ sysex: false });
+                console.log("MIDI: WebMidi enabled (fallback mode, NO SysEx).");
+                return WebMidi;
+            } catch (fallbackErr) {
+                console.error("MIDI: All initialization attempts failed.", fallbackErr);
+                throw fallbackErr;
+            }
+        }
+        
+        // Wait before retrying (exponential backoff or simple delay)
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+  } finally {
+    isInitializing = false;
   }
 };
 
+/**
+ * Gets all available MIDI input devices.
+ * @return {Array<{id: string, name: string}>} List of inputs.
+ */
 export const getMidiInputs = () => {
   if (WebMidi.enabled) {
     return WebMidi.inputs.map(input => ({
@@ -32,6 +77,12 @@ export const getMidiInputs = () => {
   return [];
 };
 
+/**
+ * Sets up listeners for a specific MIDI input.
+ * @param {string} inputId - The ID of the MIDI device.
+ * @param {Function} callback - The event handler.
+ * @return {Function} A cleanup function to remove listeners.
+ */
 export const listenToMidiInput = (inputId, callback) => {
   if (WebMidi.enabled) {
     const input = WebMidi.getInputById(inputId);
@@ -39,7 +90,7 @@ export const listenToMidiInput = (inputId, callback) => {
       const noteOnListener = (e) => {
         callback({ 
             type: 'noteon', 
-            note: e.note.identifier, // e.g. "C4"
+            note: e.note.identifier, 
             velocity: e.velocity, 
             controller: null,
             channel: e.message.channel
@@ -80,6 +131,11 @@ export const listenToMidiInput = (inputId, callback) => {
   return () => {};
 };
 
+/**
+ * Listens for hardware connection/disconnection changes.
+ * @param {Function} callback - The event handler.
+ * @return {Function} A cleanup function.
+ */
 export const listenToStateChange = (callback) => {
     if (WebMidi.enabled) {
         const listener = (e) => {
@@ -95,40 +151,49 @@ export const listenToStateChange = (callback) => {
     return () => {};
 };
 
+/**
+ * Stops all listeners for a specific MIDI input.
+ * @param {string} inputId - The device ID.
+ */
 export const stopListeningToMidiInput = (inputId) => {
   if (WebMidi.enabled) {
     const input = WebMidi.getInputById(inputId);
     if (input) {
-      input.removeListener(); // Removes all listeners
+      input.removeListener();
     }
   }
 };
 
+/**
+ * Sends a SysEx message to a MIDI device.
+ * @param {string} inputId - The device ID (mapped to output).
+ * @param {Array<number>} sysexData - The message data bytes (excluding F0/F7/Manufacturer).
+ */
 export const sendSysex = (inputId, sysexData) => {
     if (WebMidi.enabled) {
         const input = WebMidi.getInputById(inputId);
         if (input) {
             const output = WebMidi.outputs.find(o => o.name === input.name);
             if (output) {
-                // In WebMidi v3, sendSysex(manufacturer, data)
-                // 0x47 is Akai. sysexData should not include F0, 47, or F7.
-                // Our current initData in MidiContext.jsx is: [0x7F, 0x29, 0x60, 0x00, 0x04, 0x41, 0x01, 0x01, 0x01]
                 output.sendSysex(0x47, sysexData); 
-                console.log(`Sent SysEx to ${output.name}`);
-            } else {
-                console.warn("Could not find matching MIDI Output for SysEx");
             }
         }
     }
 };
 
+/**
+ * Sends a MIDI Note On message.
+ * @param {string} inputId - The device ID.
+ * @param {string|number} note - The note identifier or number.
+ * @param {number} velocity - Velocity (0-127).
+ * @param {number} channel - MIDI channel (1-16).
+ */
 export const sendNote = (inputId, note, velocity, channel) => {
     if (WebMidi.enabled) {
         const input = WebMidi.getInputById(inputId);
         if (input) {
             const output = WebMidi.outputs.find(o => o.name === input.name);
             if (output) {
-                // velocity 0-127 mapped to attack 0-1
                 output.sendNoteOn(note, { attack: velocity / 127, channels: channel });
             }
         }
