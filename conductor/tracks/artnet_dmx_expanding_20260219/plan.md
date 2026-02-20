@@ -18,7 +18,7 @@
     - [x] Update the mapping overlay UI to support filtering by universe
 - [x] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
 
-## Phase 3: Performance & Integration
+## Phase 3: Performance & Integration [checkpoint: da37b83]
 - [x] Task: Main Process Art-Net Optimization
     - [x] Update Art-Net listener in `main.js` to use a buffer-based approach for high-frequency updates
     - [x] Ensure DMX events are correctly throttled before being sent to the renderer
