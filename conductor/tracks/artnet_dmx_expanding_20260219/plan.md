@@ -26,8 +26,11 @@
     - [x] Verify that custom mapped effect parameters still work while fixed layer controls are active
 - [x] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md)
 
-## Phase 4: Testing & Final Sync
+## Phase 4: Testing & Final Sync [checkpoint: 4cad735]
 - [x] Task: Final Quality Gate
     - [x] Test with professional DMX software (e.g. QLC+, MA2/3 onPC)
     - [x] Run full automated test suite
 - [x] Task: Conductor - User Manual Verification 'Phase 4' (Protocol in workflow.md)
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions 4cad735
