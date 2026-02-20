@@ -1,0 +1,8 @@
+{
+  "track_id": "artnet_dmx_expanding_20260219",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-02-19T16:14:00Z",
+  "updated_at": "2026-02-19T16:14:00Z",
+  "description": "Art-Net/DMX Expanding: Fixed personalities, hybrid mapping, and real-time DMX monitor."
+}
