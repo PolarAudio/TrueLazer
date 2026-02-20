@@ -10,7 +10,7 @@ The primary users are event technicians and lighting designers who are looking f
 The NDI integration has been successfully optimized and stabilized, providing high-performance real-time laser rendering with minimal CPU/GPU overhead. Our ongoing focus remains on professional stability and expanding the generative ecosystem.
 
 ## Core Features
-- **Professional Integration:** High priority is placed on robust MIDI, OSC, and DMX/Artnet mapping. Advanced MIDI integration supports multi-mapping (multiple UI controls per button), dynamic targeting (Selected Layer/This Clip), and individual LED feedback rules for professional hardware like the APC40.
+- **Professional Integration:** High priority is placed on robust MIDI, OSC, and DMX/Artnet mapping. Includes a **Hybrid DMX System** with fixed personalities for rapid console setup (Master + 5 Layers) and custom modular patching for any effect parameter. High-frequency Art-Net traffic is handled via **Throttled IPC Delivery** (~33Hz) and full-universe change detection to ensure perfectly stable 60fps UI performance even under heavy DMX load. Features a real-time **16x32 DMX Monitor** for channel verification and network interface binding for dedicated control networks.
 - **DAC Communication:** Seamless integration with IDN and EtherDream DACs for high-performance laser output. Includes **DAC Channel Grouping** for streamlined management of large multi-projector setups.
 - **Resolume-Inspired UI:** A familiar deck-based layout with layers, columns, and **8 independent pages**, tailored for high-performance ILDA content management.
 - **Integrated Preset System:** Save and manage favorite settings for every effect and generator, with full project portability ensuring presets travel with your .tlp files.
