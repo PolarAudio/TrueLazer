@@ -3840,8 +3840,9 @@ function App() {
   const handleActivateClick = useCallback((layerIndex, colIndex, isPress = true) => {
     const pageIdx = state.activePageId;
     const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+    const hasActualContent = clip && (clip.type === 'ilda' || clip.type === 'generator');
 
-    if (!clip) {
+    if (!hasActualContent) {
         if (isPress) {
             handleClipPreview(layerIndex, colIndex);
             handleDeactivateLayerClips(layerIndex);
@@ -4802,7 +4803,8 @@ function App() {
                 const activeInfo = activeClipIndexes[layerIndex];
                 const isActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
                 const isPreviewing = selectedLayerIndex === layerIndex && selectedColIndex === colIndex;
-                const hasContent = !!clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+                const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+                const hasContent = clip && (clip.type === 'ilda' || clip.type === 'generator');
                 
                 let status = 'empty';
                 if (isActive) status = 'active';

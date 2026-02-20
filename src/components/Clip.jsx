@@ -178,51 +178,51 @@ const handleFilePathDrop = async (filePath, fileName) => {
     }
   };
 
-  return (
-    <div
-      className={`clip ${isDragging ? 'dragging' : ''} ${isActive ? 'active-clip' : ''} `}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      onContextMenu={handleContextMenu}
-    >
-      <Mappable id={`clip_${layerIndex}_${colIndex}`}>
-        <div 
-            className="clip-thumbnail" 
-            onMouseDown={(e) => { if (e.button === 0) onActivateClick(true); }}
-            onMouseUp={(e) => { if (e.button === 0) onActivateClick(false); }}
-            onMouseEnter={handleMouseEnter}
-            onMouseLeave={handleMouseLeave}
-            style={{ overflow: 'hidden' }} // Ensure image fits
-        >
-            {clipContent && clipContent.parsing ? (
-                <div className="clip-loading-spinner"></div>
-            ) : (
-                <>
-                    {/* Render Mode Logic */}
-                    {shouldShowLive && clipContent ? (
-                        /* Live/Hover Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
-                        <IldaThumbnail frame={liveFrame || stillFrame} effects={clipContent?.effects} />
-                    ) : (
-                        /* Still Frame Mode */
-                        /* If we have a generated thumbnail path, use it for efficiency */
-                        (clipContent?.thumbnailPath) ? (
-                            <img 
-                                src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
-                                alt="thumbnail" 
-                                onError={() => onThumbnailError && onThumbnailError(layerIndex, colIndex)}
-                                style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
-                            />
-                        ) : (
-                            /* Fallback to 2D Canvas rendering of still frame (much lighter than WebGL) */
-                            stillFrame && <StaticIldaThumbnail frame={stillFrame} />
-                        )
-                    )}
-
-                    {clipContent?.triggerStyle && clipContent.triggerStyle !== 'normal' && (
-                        <p className="clip_icons">
-                            {clipContent.triggerStyle === 'toggle' && (
+          const hasActualContent = clipContent && (clipContent.type === 'ilda' || clipContent.type === 'generator');
+      
+          return (
+          <div
+            className={`clip ${isDragging ? 'dragging' : ''} ${isActive ? 'active-clip' : ''} `}        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onContextMenu={handleContextMenu}
+      >
+        <Mappable id={`clip_${layerIndex}_${colIndex}`}>
+          <div 
+              className="clip-thumbnail" 
+              onMouseDown={(e) => { if (e.button === 0) onActivateClick(true); }}
+              onMouseUp={(e) => { if (e.button === 0) onActivateClick(false); }}
+              onMouseEnter={handleMouseEnter}
+              onMouseLeave={handleMouseLeave}
+              style={{ overflow: 'hidden' }} // Ensure image fits
+          >
+              {clipContent && clipContent.parsing ? (
+                  <div className="clip-loading-spinner"></div>
+              ) : (
+                  <>
+                      {/* Render Mode Logic */}
+                      {shouldShowLive && hasActualContent ? (
+                          /* Live/Hover Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
+                          <IldaThumbnail frame={liveFrame || stillFrame} effects={clipContent?.effects} />
+                      ) : (
+                          /* Still Frame Mode */
+                          /* If we have a generated thumbnail path, use it for efficiency */
+                          (clipContent?.thumbnailPath) ? (
+                              <img 
+                                  src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
+                                  alt="thumbnail" 
+                                  onError={() => onThumbnailError && onThumbnailError(layerIndex, colIndex)}
+                                  style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} 
+                              />
+                          ) : (
+                              /* Fallback to 2D Canvas rendering of still frame (much lighter than WebGL) */
+                              stillFrame && <StaticIldaThumbnail frame={stillFrame} />
+                          )
+                      )}
+  
+                      {hasActualContent && clipContent?.triggerStyle && clipContent.triggerStyle !== 'normal' && (
+                          <p className="clip_icons">                            {clipContent.triggerStyle === 'toggle' && (
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-toggles" viewBox="0 0 16 16">
                                     <path d="M4.5 9a3.5 3.5 0 1 0 0 7h7a3.5 3.5 0 1 0 0-7zm7 6a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5m-7-14a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5m2.45 0A3.5 3.5 0 0 1 8 3.5 3.5 3.5 0 0 1 6.95 6h4.55a2.5 2.5 0 0 0 0-5zM4.5 0h7a3.5 3.5 0 1 1 0 7h-7a3.5 3.5 0 1 1 0-7"/>
                                 </svg>
