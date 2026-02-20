@@ -130,8 +130,11 @@ let shortcutsState = store.get('shortcutsState');
 
 // Global variables for ArtNet and OSC
 let artnetInstance = null;
-let artnetSender = null; // We might need multiple senders for multiple universes
-let artnetReceivers = new Map(); // Map universe number to receiver instance
+let artnetSender = null; 
+let artnetReceivers = new Map(); 
+let artnetUniverseBuffers = new Map(); 
+let artnetDirtyUniverses = new Set(); 
+let artnetThrottler = null;
 let oscUdpPort = null;
 
 const getOrCreateReceiver = (universe) => {
@@ -144,13 +147,31 @@ const getOrCreateReceiver = (universe) => {
     });
 
     receiver.on('data', (data) => {
-        if (mainWindow) {
-            mainWindow.webContents.send('artnet-data-received', { universe, data });
-        }
+        artnetUniverseBuffers.set(universe, data);
+        artnetDirtyUniverses.add(universe);
     });
 
     artnetReceivers.set(universe, receiver);
     return receiver;
+};
+
+const startArtnetThrottler = () => {
+    if (artnetThrottler) return;
+    artnetThrottler = setInterval(() => {
+        if (artnetDirtyUniverses.size === 0 || !mainWindow || mainWindow.isDestroyed()) return;
+        artnetDirtyUniverses.forEach(universe => {
+            const data = artnetUniverseBuffers.get(universe);
+            if (data) mainWindow.webContents.send('artnet-data-received', { universe, data });
+        });
+        artnetDirtyUniverses.clear();
+    }, 30); 
+};
+
+const stopArtnetThrottler = () => {
+    if (artnetThrottler) {
+        clearInterval(artnetThrottler);
+        artnetThrottler = null;
+    }
 };
 
 // IPC handlers for ArtNet
@@ -174,6 +195,7 @@ ipcMain.handle('initialize-artnet', async () => {
 
       // Initialize a receiver for Universe 0 by default
       getOrCreateReceiver(0);
+      startArtnetThrottler();
     }
     return { success: true };
   } catch (error) {
@@ -265,12 +287,15 @@ ipcMain.on('send-artnet-data', (event, universe, channel, value) => {
 });
 
 ipcMain.on('close-artnet', () => {
-  if (artnetInstance) {
-    artnetInstance = null;
-    artnetSender = null;
-  }
+    if (artnetInstance) {
+        stopArtnetThrottler();
+        artnetReceivers.clear();
+        artnetUniverseBuffers.clear();
+        artnetDirtyUniverses.clear();
+        artnetInstance = null;
+        artnetSender = null;
+    }
 });
-
 // IPC handlers for OSC
 ipcMain.handle('initialize-osc', async (event, config) => {
   try {

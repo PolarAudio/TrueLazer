@@ -39,12 +39,13 @@ export const processArtnetLogic = (data, mappings, onArtnetCommand, isMapping, l
             const layerIdx = Math.floor((channel - 10) / 20);
             const offset = (channel - 10) % 20;
             
-            if (offset === 0) onArtnetCommand(`layer_${layerIdx}_intensity`, value);
+            if (offset === 0) { onArtnetCommand(`layer_${layerIdx}_intensity`, value); return true; }
             else if (offset === 1) {
                 if (value >= 1 && value <= 64) onArtnetCommand(`layer_${layerIdx}_blackout_toggle`, value);
                 else if (value >= 65 && value <= 128) onArtnetCommand(`layer_${layerIdx}_solo_toggle`, value);
                 else if (value >= 129 && value <= 192) onArtnetCommand(`layer_${layerIdx}_autopilot_forward`, value);
                 else if (value >= 193) onArtnetCommand(`layer_${layerIdx}_autopilot_off`, value);
+                return true;
             }
             else if (offset === 2) {
                 // Range-based clip trigger: 0-10 Off, 11-20 Clip 1, 21-30 Clip 2...
@@ -54,10 +55,11 @@ export const processArtnetLogic = (data, mappings, onArtnetCommand, isMapping, l
                 } else {
                     onArtnetCommand(`layer_${layerIdx}_clear`, value);
                 }
+                return true;
             }
-            else if (offset === 3) onArtnetCommand(`layer_${layerIdx}_speed`, value);
+            else if (offset === 3) { onArtnetCommand(`layer_${layerIdx}_speed`, value); return true; }
             
-            return true; // Handled
+            // Channels 5-20 (offsets 4-19) are reserved/free for custom mapping
         }
     }
 
@@ -82,6 +84,7 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
   const [lastDmxEvent, setLastDmxEvent] = useState(null);
   const [dmxData, setDmxData] = useState({}); 
   const [universeFilter, setUniverseFilter] = useState(0);
+  const lastDmxDataRef = useRef({}); // { universe: Uint8Array(512) }
 
   const onArtnetCommandRef = useRef(onArtnetCommand);
   useEffect(() => {
@@ -93,17 +96,12 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
       isMappingRef.current = isMapping;
   }, [isMapping]);
 
-  const handleIncomingArtnet = useCallback((data) => {
-    processArtnetLogic(
-        data, 
-        mappings, 
-        onArtnetCommandRef.current, 
-        isMappingRef.current, 
-        learningId, 
-        setMappings, 
-        setLearningId
-    );
-  }, [mappings, learningId]);
+  // Refs for logic consistency in fast loops
+  const mappingsRef = useRef(mappings);
+  useEffect(() => { mappingsRef.current = mappings; }, [mappings]);
+  
+  const learningIdRef = useRef(learningId);
+  useEffect(() => { learningIdRef.current = learningId; }, [learningId]);
 
   // Initialize Art-Net and Load Mappings
   useEffect(() => {
@@ -132,24 +130,36 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
   // Listen to Art-Net events from main process
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onArtnetDataReceived) {
-        const cleanup = window.electronAPI.onArtnetDataReceived((data) => {
-            setDmxData(prev => {
-                const current = prev[data.universe] || new Uint8Array(512);
-                if (current[data.channel] === data.value) return prev;
-                const next = new Uint8Array(current);
-                next[data.channel] = data.value;
-                return { ...prev, [data.universe]: next };
-            });
+        const cleanup = window.electronAPI.onArtnetDataReceived((payload) => {
+            const { universe, data } = payload;
+            
+            setDmxData(prev => ({ ...prev, [universe]: data }));
 
-            if (isMappingRef.current) {
-                setLastDmxEvent(data);
+            const prevData = lastDmxDataRef.current[universe] || new Uint8Array(512);
+            for (let i = 0; i < 512; i++) {
+                if (data[i] !== prevData[i]) {
+                    const eventData = { universe, channel: i, value: data[i] };
+                    
+                    if (isMappingRef.current) {
+                        setLastDmxEvent(eventData);
+                    }
+
+                    processArtnetLogic(
+                        eventData, 
+                        mappingsRef.current, 
+                        onArtnetCommandRef.current, 
+                        isMappingRef.current, 
+                        learningIdRef.current, 
+                        setMappings, 
+                        setLearningId
+                    );
+                }
             }
-
-            handleIncomingArtnet(data);
+            lastDmxDataRef.current[universe] = new Uint8Array(data);
         });
         return cleanup;
     }
-  }, [handleIncomingArtnet]);
+  }, []); 
 
   const saveMappings = async () => {
       if (window.electronAPI && window.electronAPI.saveArtnetMappings) {

@@ -60,12 +60,18 @@ describe('ArtnetContext Pure Logic', () => {
         expect(onArtnetCommand).toHaveBeenCalledWith('layer_0_speed', 128);
     });
 
-    it('should handle custom mappings', () => {
+    it('should handle hybrid mapping (fixed + custom)', () => {
         const onArtnetCommand = vi.fn();
         const mappings = {
-            'custom_ctrl_1': { universe: 1, channel: 50 }
+            'custom_fx_param': { universe: 0, channel: 100 } // Channel 101 (Outside fixed range 1-110)
         };
-        processArtnetLogic({ universe: 1, channel: 50, value: 100 }, mappings, onArtnetCommand);
-        expect(onArtnetCommand).toHaveBeenCalledWith('custom_ctrl_1', 100);
+        
+        // Fixed: Master Intensity (CH 1)
+        processArtnetLogic({ universe: 0, channel: 0, value: 255 }, mappings, onArtnetCommand);
+        expect(onArtnetCommand).toHaveBeenCalledWith('master_intensity', 255);
+
+        // Custom: FX Param (CH 101)
+        processArtnetLogic({ universe: 0, channel: 100, value: 128 }, mappings, onArtnetCommand);
+        expect(onArtnetCommand).toHaveBeenCalledWith('custom_fx_param', 128);
     });
 });
