@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { WebMidi } from 'webmidi';
 import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote, listenToStateChange } from '../utils/midi';
+import { THEME_COLORS } from '../utils/midiColors';
 
 const MidiContext = createContext(null);
 
@@ -37,7 +38,7 @@ const migrateMappings = (loadedMappings) => {
     return migrated;
 };
 
-export const MidiProvider = ({ children, onMidiCommand }) => {
+export const MidiProvider = ({ children, onMidiCommand, theme = 'orange' }) => {
   const [midiInitialized, setMidiInitialized] = useState(false);
   const [midiInputs, setMidiInputs] = useState([]);
   const [selectedMidiInputId, setSelectedMidiInputId] = useState('');
@@ -176,27 +177,27 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   const sendFeedback = useCallback((controlId, value, status = 'inactive', overrideChannel = null) => {
     if (!midiInitialized) return;
 
+    const colors = THEME_COLORS[theme] || THEME_COLORS['orange'];
+
     // Resolve numerical velocity based on status and feedback settings
     const resolveVelocity = (assignment, val, stat) => {
         const mode = assignment.feedbackMode || 'toggle';
         const cfg = assignment.feedbackConfig || {};
 
         if (mode === 'clip') {
-            if (stat === 'active') return cfg.activeVelocity ?? 127;
+            if (stat === 'active') return cfg.activeVelocity ?? colors.full;
             if (stat === 'previewing') return cfg.previewVelocity ?? 64;
-            if (stat === 'inactive') return cfg.inactiveVelocity ?? 1;
+            if (stat === 'inactive') return cfg.inactiveVelocity ?? colors.dim;
             if (stat === 'empty') return cfg.emptyVelocity ?? 0;
             return 0;
         } else if (mode === 'slider') {
             return Math.round(val * 127);
         } else if (mode === 'dropdown') {
-            // Dropdown might use specific velocities for different items, 
-            // but for now, simple on/off based on if item is selected
-            return val ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
+            return val ? (cfg.onVelocity ?? colors.full) : (cfg.offVelocity ?? 0);
         } else {
             // Default: Toggle
             const is_on = typeof val === 'boolean' ? val : val > 0;
-            return is_on ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
+            return is_on ? (cfg.onVelocity ?? colors.full) : (cfg.offVelocity ?? colors.dim);
         }
     };
 
@@ -219,7 +220,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
             }
         });
     });
-  }, [selectedMidiInputId, midiInitialized, mappings]);
+  }, [selectedMidiInputId, midiInitialized, mappings, theme]);
 
   // Listen to MIDI events
   useEffect(() => {
@@ -266,16 +267,15 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       
       // Determine Context-Aware Defaults
       let feedbackMode = 'toggle';
-      let feedbackConfig = { onVelocity: 127, offVelocity: 0 };
+      let feedbackConfig = {}; // Start empty to use theme fallbacks
 
       if (learningId.startsWith('clip_')) {
           feedbackMode = 'clip';
-          feedbackConfig = { activeVelocity: 127, previewVelocity: 64, inactiveVelocity: 1, emptyVelocity: 0 };
+          feedbackConfig = { previewVelocity: 64, emptyVelocity: 0 };
       } else if (learningId.includes('intensity') || learningId.includes('speed') || learningId.includes('dimmer') || learningId.includes('knob')) {
           feedbackMode = 'slider';
       } else if (learningId.includes('_item_')) {
           feedbackMode = 'dropdown';
-          feedbackConfig = { onVelocity: 127, offVelocity: 0 };
       }
 
       const newAssignment = {

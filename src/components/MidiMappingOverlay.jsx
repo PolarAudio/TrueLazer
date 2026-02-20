@@ -4,6 +4,7 @@ import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
 import { MidiColorPicker } from './MidiColorPicker';
+import { THEME_COLORS } from '../utils/midiColors';
 
 const MidiMappingOverlay = () => {
   const { 
@@ -14,7 +15,8 @@ const MidiMappingOverlay = () => {
     removeAssignment,
     setMappings,
     midiInputs,
-    selectedMidiInputId
+    selectedMidiInputId,
+    theme
   } = useMidi();
   const { 
       isMapping: isArtnetMapping, 
@@ -87,6 +89,8 @@ const MidiMappingOverlay = () => {
       setOverlays([]);
     }
   }, [isMapping, updateOverlayPositions]);
+
+  const currentColors = THEME_COLORS[theme] || THEME_COLORS['orange'];
 
   if (!isMapping) return null;
 
@@ -295,12 +299,12 @@ const MidiMappingOverlay = () => {
                                             <>
                                                 <MidiColorPicker 
                                                     label="On Color"
-                                                    value={a.feedbackConfig?.onVelocity ?? 127}
+                                                    value={a.feedbackConfig?.onVelocity ?? currentColors.full}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, onVelocity: v })}
                                                 />
                                                 <MidiColorPicker 
                                                     label="Off Color"
-                                                    value={a.feedbackConfig?.offVelocity ?? 0}
+                                                    value={a.feedbackConfig?.offVelocity ?? currentColors.dim}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, offVelocity: v })}
                                                 />
                                             </>
@@ -309,7 +313,7 @@ const MidiMappingOverlay = () => {
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
                                                 <MidiColorPicker 
                                                     label="Active"
-                                                    value={a.feedbackConfig?.activeVelocity ?? 127}
+                                                    value={a.feedbackConfig?.activeVelocity ?? currentColors.full}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, activeVelocity: v })}
                                                 />
                                                 <MidiColorPicker 
@@ -319,7 +323,7 @@ const MidiMappingOverlay = () => {
                                                 />
                                                 <MidiColorPicker 
                                                     label="Inactive"
-                                                    value={a.feedbackConfig?.inactiveVelocity ?? 1}
+                                                    value={a.feedbackConfig?.inactiveVelocity ?? currentColors.dim}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, inactiveVelocity: v })}
                                                 />
                                                 <MidiColorPicker 
@@ -330,6 +334,7 @@ const MidiMappingOverlay = () => {
                                             </div>
                                         )}
                                     </div>
+                                </div>
                                 </div>
                             </div>
                         ))

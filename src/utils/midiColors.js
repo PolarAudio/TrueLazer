@@ -155,3 +155,20 @@ export const getVelocityForColorName = (name) => {
 export const getColorForVelocity = (vel) => {
   return APC40_COLORS.find(c => c.velocity === vel) || APC40_COLORS[0];
 };
+
+/**
+ * Mapping of application UI themes to MIDI velocity values for APC40 feedback.
+ * @type {Object<string, {full: number, dim: number}>}
+ */
+export const THEME_COLORS = {
+  'orange': { full: 96, dim: 10 }, // Vibrant Orange / Orange Dark
+  'yellow': { full: 13, dim: 15 }, // Yellow / Yellow Very Dark
+  'cyan': { full: 33, dim: 35 }, // Cyan / Cyan Very Dark
+  'light-blue': { full: 37, dim: 39 }, // Sky / Sky Very Dark
+  'blue': { full: 45, dim: 47 }, // Blue / Blue Very Dark
+  'magenta': { full: 53, dim: 55 }, // Magenta / Magenta Very Dark
+  'red': { full: 5, dim: 7 }, // Red / Red Very Dark
+  'green': { full: 21, dim: 23 }, // Green / Green Very Dark
+  'white': { full: 119, dim: 1 }, // Pure White / Grey Dark
+};
+

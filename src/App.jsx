@@ -39,6 +39,7 @@ import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
 import { applyEffects, applyOutputProcessing, resolveParam } from './utils/effects';
 import { optimizePoints } from './utils/optimizer';
 import { effectDefinitions } from './utils/effectDefinitions';
+import { THEME_COLORS } from './utils/midiColors';
 import { sendNote } from './utils/midi';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText, generateSinewave } from './utils/generators'; // Import generator functions
 
@@ -1204,18 +1205,6 @@ function reducer(state, action) {
 	return state;
   }
 }
-
-const THEME_COLORS = {
-    'orange': { full: 96, dim: 10 }, // Vibrant Orange / Orange Dark
-    'yellow': { full: 13, dim: 15 }, // Yellow / Yellow Very Dark
-    'cyan': { full: 33, dim: 35 }, // Cyan / Cyan Very Dark
-    'light-blue': { full: 37, dim: 39 }, // Sky / Sky Very Dark
-    'blue': { full: 45, dim: 47 }, // Blue / Blue Very Dark
-    'magenta': { full: 53, dim: 55 }, // Magenta / Magenta Very Dark
-    'red': { full: 5, dim: 7 }, // Red / Red Very Dark
-    'green': { full: 21, dim: 23 }, // Green / Green Very Dark
-    'white': { full: 119, dim: 1 }, // Pure White / Grey Dark
-};
 
 const generateThumbnail = async (frame, effects, layerIndex, colIndex, optimizationEnabled = true) => {
     // Basic validation
@@ -4842,7 +4831,7 @@ function App() {
   });
 
   return (
-    <MidiProvider onMidiCommand={handleMidiCommand}>
+    <MidiProvider onMidiCommand={handleMidiCommand} theme={theme}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
     <KeyboardProvider onCommand={handleMidiCommand} enabled={enabledShortcuts.keyboard}>
             <MidiFeedbackHandler 
