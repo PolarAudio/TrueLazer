@@ -175,15 +175,17 @@ const stopArtnetThrottler = () => {
 };
 
 // IPC handlers for ArtNet
-ipcMain.handle('initialize-artnet', async () => {
+ipcMain.handle('initialize-artnet', async (event, options = {}) => {
   try {
+    const { interfaceAddress } = options;
     if (!artnetInstance) {
       const dmxlib = await import('dmxnet');
       // dmxnet exports an object with a 'dmxnet' property which is the actual class
       const DMXnet = dmxlib.dmxnet || (dmxlib.default && dmxlib.default.dmxnet) || dmxlib.default || dmxlib; 
       
       artnetInstance = new DMXnet({
-        log: { level: 'error' } 
+        log: { level: 'error' },
+        ip: interfaceAddress || undefined
       });
       // Initialize a default sender for Universe 0
       artnetSender = artnetInstance.newSender({

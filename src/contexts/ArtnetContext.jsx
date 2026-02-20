@@ -6,6 +6,18 @@ export const useArtnet = () => {
   return useContext(ArtnetContext);
 };
 
+/**
+ * Pure logic for processing incoming Art-Net data.
+ * Maps raw DMX channels to application commands using fixed footprints and custom mappings.
+ * @param {Object} data - The Art-Net packet { universe, channel, value }.
+ * @param {Object} mappings - Current DMX mappings.
+ * @param {Function} onArtnetCommand - Callback for triggering application-level commands.
+ * @param {boolean} isMapping - Whether the application is currently in learn mode.
+ * @param {string|null} learningId - The ID of the control currently being mapped.
+ * @param {Function} setMappings - State setter for updating mappings.
+ * @param {Function} setLearningId - State setter for resetting learn mode.
+ * @return {boolean} True if the event was handled by fixed logic or a custom mapping.
+ */
 export const processArtnetLogic = (data, mappings, onArtnetCommand, isMapping, learningId, setMappings, setLearningId) => {
     const { universe, channel, value } = data;
 
@@ -58,8 +70,6 @@ export const processArtnetLogic = (data, mappings, onArtnetCommand, isMapping, l
                 return true;
             }
             else if (offset === 3) { onArtnetCommand(`layer_${layerIdx}_speed`, value); return true; }
-            
-            // Channels 5-20 (offsets 4-19) are reserved/free for custom mapping
         }
     }
 
@@ -84,6 +94,7 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
   const [lastDmxEvent, setLastDmxEvent] = useState(null);
   const [dmxData, setDmxData] = useState({}); 
   const [universeFilter, setUniverseFilter] = useState(0);
+  const [artnetInterface, setArtnetInterface] = useState('');
   const lastDmxDataRef = useRef({}); // { universe: Uint8Array(512) }
 
   const onArtnetCommandRef = useRef(onArtnetCommand);
@@ -96,7 +107,6 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
       isMappingRef.current = isMapping;
   }, [isMapping]);
 
-  // Refs for logic consistency in fast loops
   const mappingsRef = useRef(mappings);
   useEffect(() => { mappingsRef.current = mappings; }, [mappings]);
   
@@ -107,8 +117,18 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
   useEffect(() => {
     const init = async () => {
       try {
+        let interfaceAddress = '';
+        if (window.electronAPI && window.electronAPI.getArtnetMappings) {
+            // We use the same store area for settings
+            const settings = await window.electronAPI.getArtnetMappings(); // Placeholder for settings
+            if (settings && settings._config) {
+                interfaceAddress = settings._config.interfaceAddress || '';
+                setArtnetInterface(interfaceAddress);
+            }
+        }
+
         if (window.electronAPI && window.electronAPI.initializeArtnet) {
-            const result = await window.electronAPI.initializeArtnet();
+            const result = await window.electronAPI.initializeArtnet({ interfaceAddress });
             if (result.success) {
                 setArtnetInitialized(true);
             }
@@ -117,7 +137,8 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
         if (window.electronAPI && window.electronAPI.getArtnetMappings) {
             const savedMappings = await window.electronAPI.getArtnetMappings();
             if (savedMappings) {
-                setMappings(savedMappings);
+                const { _config, ...pureMappings } = savedMappings;
+                setMappings(pureMappings);
             }
         }
       } catch (err) {
@@ -161,9 +182,13 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
     }
   }, []); 
 
-  const saveMappings = async () => {
+  const saveMappings = async (newMappings = mappings) => {
       if (window.electronAPI && window.electronAPI.saveArtnetMappings) {
-          await window.electronAPI.saveArtnetMappings(mappings);
+          const toSave = { 
+              ...newMappings, 
+              _config: { interfaceAddress: artnetInterface } 
+          };
+          await window.electronAPI.saveArtnetMappings(toSave);
       }
   };
 
@@ -177,7 +202,8 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
       if (window.electronAPI && window.electronAPI.importMappings) {
           const result = await window.electronAPI.importMappings('artnet');
           if (result.success && result.mappings) {
-              setMappings(result.mappings);
+              const { _config, ...pureMappings } = result.mappings;
+              setMappings(pureMappings);
           }
       }
   };
@@ -231,7 +257,9 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
     dmxData,
     universeFilter,
     setUniverseFilter,
-    autoPatchFixedFootprint
+    autoPatchFixedFootprint,
+    artnetInterface,
+    setArtnetInterface
   };
 
   return (

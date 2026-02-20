@@ -16,7 +16,7 @@ import BPMControls from './components/BPMControls';
 import TransportControls from './components/TransportControls';
 import SettingsPanel from './components/SettingsPanel';
 import GeneratorSettingsPanel from './components/GeneratorSettingsPanel';
-import ShortcutsWindow from './components/ShortcutsWindow';
+import { ShortcutsWindow } from './components/ShortcutsWindow';
 import RenameModal from './components/RenameModal';
 import OutputSettingsWindow from './components/OutputSettingsWindow';
 import AudioSettingsWindow from './components/AudioSettingsWindow';
@@ -4351,15 +4351,6 @@ function App() {
       case 'blackout_off':
         if (globalBlackoutRef.current) dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
         break;
-      case 'transport_play':
-        if (!isPlayingRef.current) handlePlay();
-        break;
-      case 'transport_pause':
-        if (isPlayingRef.current) handlePause();
-        break;
-      case 'transport_stop':
-        handleStop();
-        break;
       case 'master_speed':
         const currentSpeedNorm = (playbackFpsRef.current - 1) / 119;
         let newSpeedNorm = normalizedValue;
@@ -4898,6 +4889,11 @@ function App() {
             onRelocate={handleRelocate}
             onClose={() => setMissingFiles([])}
         />
+        <ShortcutsWindow 
+            show={showShortcutsWindow} 
+            onClose={() => setShowShortcutsWindow(false)} 
+            enabledShortcuts={enabledShortcuts} 
+        />
         <div className="main-content">
             <div className="top-bar-left-area">
               <CompositionControls
@@ -5054,17 +5050,7 @@ function App() {
                     />
                 </div>
                     <div className="middle-bar-mid-area">
-                        <TransportControls
-                            onPlay={handlePlay}
-                            onPause={handlePause}
-                            onStop={handleStop}
-                            isPlaying={isPlaying}
-                            isStopped={isStopped}
-                        />
-						<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
-                    </div>
-				<div className="middle-bar-right-area">
-                    <div className="page-navigation">
+						<div className="page-navigation">
                         {Array.from({ length: numPages || 8 }).map((_, i) => (
                             <Mappable key={i} id={`middle_bar_page_${i}`}>
                                 <button 
@@ -5086,7 +5072,17 @@ function App() {
                                 </button>
                             </Mappable>
                         ))}
+						</div>
                     </div>
+				<div className="middle-bar-right-area">
+					    <TransportControls
+                            onPlay={handlePlay}
+                            onPause={handlePause}
+                            onStop={handleStop}
+                            isPlaying={isPlaying}
+                            isStopped={isStopped}
+                        />
+						<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
                 </div>
             </div>
 		<div className="bottom-panel">

@@ -341,4 +341,4 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
   );
 };
 
-export default ShortcutsWindow;
+export { ShortcutsWindow };

@@ -359,7 +359,7 @@ body {
   }
   .middle-bar-mid-area {
 	display: grid;
-	grid-template-columns: 1fr 1fr 5fr;
+	grid-template-columns: 1fr;
     justify-content: center;
     align-items: center;
 	height: 80%;
@@ -369,6 +369,11 @@ body {
 	min-height: 0;
 	grid-template-columns: 1fr 1fr;
     align-items: center;
+  }
+  .page-navigation {
+    grid-template-columns: repeat(8, 1fr);
+    display: grid;
+    height: 75%;
   }
   .transport-controls {
     display: grid;

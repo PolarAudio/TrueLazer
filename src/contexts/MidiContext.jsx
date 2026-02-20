@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { WebMidi } from 'webmidi';
 import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote, listenToStateChange } from '../utils/midi';
 
 const MidiContext = createContext(null);
@@ -81,6 +82,12 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       }
     };
     init();
+
+    return () => {
+        if (WebMidi.enabled) {
+            WebMidi.disable();
+        }
+    };
   }, []);
 
   // Reactive Auto-Selection for MIDI Inputs

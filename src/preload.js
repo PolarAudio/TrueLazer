@@ -117,14 +117,7 @@ contextBridge.exposeInMainWorld(
                                             closeArtnet: () => ipcRenderer.send('close-artnet'),
                                             listenArtnetUniverse: (universe) => ipcRenderer.send('artnet-listen-universe', universe),
                                             onArtnetDataReceived: (callback) => {
-                                                const listener = (event, { universe, data }) => {
-                                                    // data is array of 512.
-                                                    data.forEach((val, idx) => {
-                                                        if (val > 0) { // Simple filter for non-zero to detect signal
-                                                            callback({ universe, channel: idx, value: val });
-                                                        }
-                                                    });
-                                                };
+                                                const listener = (event, payload) => callback(payload);
                                                 ipcRenderer.on('artnet-data-received', listener);
                                                 return () => ipcRenderer.removeListener('artnet-data-received', listener);
                                             },

@@ -1,15 +1,24 @@
 import { WebMidi } from 'webmidi';
 
-export const initializeMidi = async () => {
-  if (WebMidi.enabled) return WebMidi;
-  try {
-    // Request SysEx access
-    await WebMidi.enable({ sysex: true });
-    console.log("WebMidi is enabled with SysEx support!");
-    return WebMidi;
-  } catch (err) {
-    console.error("WebMidi could not be enabled.", err);
-    throw err;
+export const initializeMidi = async (retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      if (WebMidi.enabled) {
+        await WebMidi.disable();
+      }
+      
+      await WebMidi.enable({ sysex: true });
+      console.log("WebMidi is enabled with SysEx support!");
+      return WebMidi;
+    } catch (err) {
+      console.warn(`MIDI initialization attempt ${i + 1} failed:`, err);
+      if (i === retries - 1) {
+        console.error("WebMidi could not be enabled after all retries.", err);
+        throw err;
+      }
+      // Wait a bit before retrying
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
   }
 };
 
