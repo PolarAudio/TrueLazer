@@ -4,7 +4,6 @@ import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
 import GlobalQuickAssigns from './GlobalQuickAssigns';
 import CollapsiblePanel from './CollapsiblePanel';
-import { DmxMonitor } from './DmxMonitor';
 
 const SettingsPanel = ({
   enabledShortcuts = {},
@@ -282,9 +281,6 @@ const SettingsPanel = ({
                             UNIV {lastDmxEvent.universe} CH {lastDmxEvent.channel + 1} (Val: {lastDmxEvent.value})
                         </div>
                     )}
-                    <div style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '10px' }}>
-                        <DmxMonitor />
-                    </div>
                   </div>
                 )}
             </CollapsiblePanel>

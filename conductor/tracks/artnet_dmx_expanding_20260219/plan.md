@@ -24,7 +24,7 @@
     - [x] Ensure DMX events are correctly throttled before being sent to the renderer
 - [x] Task: End-to-End Hybrid Mapping Test
     - [x] Verify that custom mapped effect parameters still work while fixed layer controls are active
-- [~] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md)
 
 ## Phase 4: Testing & Final Sync
 - [ ] Task: Final Quality Gate

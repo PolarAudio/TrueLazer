@@ -32,7 +32,10 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
       startMapping: startArtnetMapping,
       stopMapping: stopArtnetMapping,
       learningId: artnetLearningId,
-      autoPatchFixedFootprint
+      autoPatchFixedFootprint,
+      artnetInterface,
+      setArtnetInterface,
+      saveMappings: saveArtnetMappings
   } = useArtnet() || {};
 
   const {
@@ -42,6 +45,7 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
     learningId: keyboardLearningId
   } = useKeyboard() || {};
 
+  const [networkInterfaces, setNetworkInterfaces] = useState([]);
   const [artnetUniverses, setArtnetUniverses] = useState([]);
   const [selectedArtnetUniverseId, setSelectedArtnetUniverseId] = useState('');
   const [artnetChannel, setArtnetChannel] = useState(0);
@@ -58,7 +62,11 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
   useEffect(() => {
     if (!show) return;
 
-    // Load Universes if Art-Net is active
+    // Load Interfaces
+    if (window.electronAPI && window.electronAPI.getNetworkInterfaces) {
+        window.electronAPI.getNetworkInterfaces().then(setNetworkInterfaces);
+    }
+
     const loadUniverses = async () => {
         if (globalArtnetInitialized && window.electronAPI.getArtnetUniverses) {
             const universes = await window.electronAPI.getArtnetUniverses();
@@ -70,7 +78,6 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
     };
     loadUniverses();
 
-    // OSC Initialization (Local state for now as it's not in a context yet)
     const initOsc = async () => {
       if (!enabledShortcuts.osc) return () => {};
       try {
@@ -154,6 +161,20 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
     }
   };
 
+  const handleArtnetInterfaceChange = (e) => {
+      const newIp = e.target.value;
+      setArtnetInterface(newIp);
+      saveArtnetMappings(); 
+      alert("Please restart Art-Net (or the App) to bind to the new interface.");
+  };
+
+  const handleRefreshInterfaces = async () => {
+      if (window.electronAPI && window.electronAPI.getNetworkInterfaces) {
+          const interfaces = await window.electronAPI.getNetworkInterfaces();
+          setNetworkInterfaces(interfaces);
+      }
+  };
+
   const handleOscSendMessage = () => {
     const args = oscSendMessageArgs.split(',').map(arg => {
       if (!isNaN(parseFloat(arg))) return parseFloat(arg);
@@ -200,6 +221,23 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
         {enabledShortcuts.artnet && (
         <div className="shortcuts-section">
           <h3>DMX/Artnet</h3>
+          
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '15px', background: '#111', padding: '10px', borderRadius: '5px' }}>
+              <label style={{ fontSize: '11px', color: '#888' }}>Network Interface:</label>
+              <select 
+                value={artnetInterface} 
+                onChange={handleArtnetInterfaceChange} 
+                className="param-select" 
+                style={{ flex: 1 }}
+              >
+                  <option value="">All Interfaces (Default)</option>
+                  {networkInterfaces.map(iface => (
+                      <option key={iface.address} value={iface.address}>{iface.name} ({iface.address})</option>
+                  ))}
+              </select>
+              <button onClick={handleRefreshInterfaces} className="small-btn" title="Refresh Interface List">↻</button>
+          </div>
+
           {!globalArtnetInitialized ? (
             <p>Initializing Art-Net...</p>
           ) : (
@@ -225,11 +263,11 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                     <div style={{ display: 'flex', gap: '10px', marginBottom: '5px' }}>
                       <div style={{ flex: 1 }}>
                           <label style={{ fontSize: '10px', color: '#888' }}>Channel</label>
-                          <input type="number" min="0" max="511" value={artnetChannel} onChange={handleArtnetChannelChange} style={{ width: '100%' }} />
+                          <input type="number" min="0" max="511" value={artnetChannel} onChange={handleArtnetChannelChange} style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #444', padding: '4px', borderRadius: '3px' }} />
                       </div>
                       <div style={{ flex: 1 }}>
                           <label style={{ fontSize: '10px', color: '#888' }}>Value</label>
-                          <input type="number" min="0" max="255" value={artnetValue} onChange={handleArtnetValueChange} style={{ width: '100%' }} />
+                          <input type="number" min="0" max="255" value={artnetValue} onChange={handleArtnetValueChange} style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #444', padding: '4px', borderRadius: '3px' }} />
                       </div>
                     </div>
                     <button onClick={handleSendArtnetData} style={{ width: '100%' }}>Send Data</button>
