@@ -335,7 +335,6 @@ const MidiMappingOverlay = () => {
                                         )}
                                     </div>
                                 </div>
-                                </div>
                             </div>
                         ))
                     ) : (
