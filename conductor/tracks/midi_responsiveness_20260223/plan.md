@@ -14,8 +14,8 @@
 - [x] Task: Apply throttling to `ArtnetContext.jsx` command dispatch
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Throttled Dispatch' (Protocol in workflow.md)
 
-## Phase 3: Final Verification & Cleanup
-- [~] Task: Verify 60Hz UI responsiveness across MIDI, Art-Net, and Keyboard
-- [~] Task: Verify Stable MIDI Listener stability during mapping changes (no console re-bind logs)
-- [~] Task: Perform final code coverage check (>80%) and linting
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Final Verification' (Protocol in workflow.md)
+## Phase 3: Final Verification & Cleanup [checkpoint: fd8e133]
+- [x] Task: Verify 60Hz UI responsiveness across MIDI, Art-Net, and Keyboard
+- [x] Task: Verify Stable MIDI Listener stability during mapping changes (no console re-bind logs)
+- [x] Task: Perform final code coverage check (>80%) and linting
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Final Verification' (Protocol in workflow.md)
