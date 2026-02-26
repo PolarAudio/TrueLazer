@@ -1701,7 +1701,6 @@ function App() {
   const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
   
   const throttledDispatchesRef = useRef(new Map()); // id -> throttled function
-  const throttledDispatchesRef = useRef(new Map()); // id -> throttled function
 
   const throttledDispatch = useCallback((id, action, delay = 16.6) => {
       if (!throttledDispatchesRef.current.has(id)) {
