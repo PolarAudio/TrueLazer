@@ -88,7 +88,22 @@ const LaserOnOffButton = React.memo(({ isWorldOutputActive, onToggleWorldOutput 
 });
 
 const ensureArrayStructure = (arr, pages, rows, cols, defaultValueFactory) => {
-  // Check if it's a 3D array (pages support)
+  // 1. Handle older 2D structures (rows x cols)
+  if (Array.isArray(arr) && arr.length === rows && Array.isArray(arr[0])) {
+      // Check if it's actually 2D (the first element is not a nested page-layer array)
+      // Usually, if it's 2D, arr[0][0] is a clip object, not an array.
+      if (!Array.isArray(arr[0][0])) {
+          console.log("Migration: Converting old 2D project layout to 3D pages structure. Clips moved to Page 1.");
+          return Array(pages).fill(null).map((_, p) => {
+              if (p === 0) return arr; // Put old 2D content in first page
+              return Array(rows).fill(null).map((_, r) => 
+                  Array(cols).fill(null).map((_, c) => defaultValueFactory(p, r, c))
+              );
+          });
+      }
+  }
+
+  // 2. Handle missing or wrong-sized 3D structures
   if (!Array.isArray(arr) || arr.length !== pages) {
     return Array(pages).fill(null).map((_, p) => 
       Array(rows).fill(null).map((_, r) => 
@@ -96,6 +111,8 @@ const ensureArrayStructure = (arr, pages, rows, cols, defaultValueFactory) => {
       )
     );
   }
+
+  // 3. Deep validation of existing 3D structure
   return arr.map((page, p) => {
     if (!Array.isArray(page) || page.length !== rows) {
       return Array(rows).fill(null).map((_, r) => 
@@ -561,11 +578,19 @@ function reducer(state, action) {
         const clipToUpdate = { ...updatedClipContents[pageIdx][layerIndex][colIndex] };
         if (clipToUpdate) {
             const currentSync = clipToUpdate.syncSettings || {};
-            // Toggle syncMode: if same mode clicked again, turn off (null)
-            const nextMode = currentSync[paramId] === syncMode ? null : syncMode;
+            let nextSyncValue;
+
+            if (typeof syncMode === 'string') {
+                // Toggle mode if it's a simple string
+                nextSyncValue = currentSync[paramId] === syncMode ? null : syncMode;
+            } else {
+                // If it's an object (new settings), always apply it
+                nextSyncValue = syncMode;
+            }
+
             clipToUpdate.syncSettings = {
                 ...currentSync,
-                [paramId]: nextMode
+                [paramId]: nextSyncValue
             };
             updatedClipContents[pageIdx][layerIndex][colIndex] = clipToUpdate;
         }
@@ -850,32 +875,36 @@ function reducer(state, action) {
         return state;
     }
     case 'SET_CLIP_PARSING_STATUS': {
-        const { layerIndex, colIndex, status } = action.payload;
-        const pageIdx = state.activePageId;
+        const { layerIndex, colIndex, status, pageId } = action.payload;
+        const pageIdx = pageId !== undefined ? pageId : state.activePageId;
         const newClipContents = [...state.clipContents];
-        newClipContents[pageIdx] = [...newClipContents[pageIdx]];
-        if (newClipContents[pageIdx][layerIndex]) {
-            newClipContents[pageIdx][layerIndex] = [...newClipContents[pageIdx][layerIndex]];
-            const existingClip = newClipContents[pageIdx][layerIndex][colIndex] || {};
-            newClipContents[pageIdx][layerIndex][colIndex] = { ...existingClip, parsing: status };
-            return { ...state, clipContents: newClipContents };
+        
+        if (newClipContents[pageIdx]) {
+            newClipContents[pageIdx] = [...newClipContents[pageIdx]];
+            if (newClipContents[pageIdx][layerIndex]) {
+                newClipContents[pageIdx][layerIndex] = [...newClipContents[pageIdx][layerIndex]];
+                const existingClip = newClipContents[pageIdx][layerIndex][colIndex] || {};
+                newClipContents[pageIdx][layerIndex][colIndex] = { ...existingClip, parsing: status };
+                return { ...state, clipContents: newClipContents };
+            }
         }
         return state;
     }
     case 'SET_BULK_PARSING_STATUS': {
-        const pageIdx = state.activePageId;
         const newClipContents = [...state.clipContents];
-        newClipContents[pageIdx] = [...newClipContents[pageIdx]];
         
-        const affectedLayers = new Set(action.payload.map(p => p.layerIndex));
-        affectedLayers.forEach(lIdx => {
-             if(newClipContents[pageIdx][lIdx]) newClipContents[pageIdx][lIdx] = [...newClipContents[pageIdx][lIdx]];
+        // Group by pageIdx for efficient immutable updates
+        const affectedPages = new Set(action.payload.map(p => p.pageId !== undefined ? p.pageId : state.activePageId));
+        affectedPages.forEach(pIdx => {
+            if (newClipContents[pIdx]) newClipContents[pIdx] = [...newClipContents[pIdx]];
         });
 
-        action.payload.forEach(({ layerIndex, colIndex, status }) => {
-            if (newClipContents[pageIdx][layerIndex]) {
-                 const existingClip = newClipContents[pageIdx][layerIndex][colIndex] || {};
-                 newClipContents[pageIdx][layerIndex][colIndex] = { ...existingClip, parsing: status };
+        action.payload.forEach(({ layerIndex, colIndex, status, pageId }) => {
+            const pIdx = pageId !== undefined ? pageId : state.activePageId;
+            if (newClipContents[pIdx] && newClipContents[pIdx][layerIndex]) {
+                 newClipContents[pIdx][layerIndex] = [...newClipContents[pIdx][layerIndex]];
+                 const existingClip = newClipContents[pIdx][layerIndex][colIndex] || {};
+                 newClipContents[pIdx][layerIndex][colIndex] = { ...existingClip, parsing: status };
             }
         });
         return { ...state, clipContents: newClipContents };
@@ -1188,15 +1217,18 @@ function reducer(state, action) {
         return { ...state, clipContents: newClipContents };
     }
     case 'SET_CLIP_PARSING_FAILED': {
-        const { layerIndex, colIndex, failed } = action.payload;
-        const pageIdx = state.activePageId;
+        const { layerIndex, colIndex, failed, pageId } = action.payload;
+        const pageIdx = pageId !== undefined ? pageId : state.activePageId;
         const newClipContents = [...state.clipContents];
-        newClipContents[pageIdx] = [...newClipContents[pageIdx]];
-        if (newClipContents[pageIdx][layerIndex]) {
-            newClipContents[pageIdx][layerIndex] = [...newClipContents[pageIdx][layerIndex]];
-            const existingClip = newClipContents[pageIdx][layerIndex][colIndex];
-            if (existingClip) {
-                newClipContents[pageIdx][layerIndex][colIndex] = { ...existingClip, parsingFailed: failed };
+        
+        if (newClipContents[pageIdx]) {
+            newClipContents[pageIdx] = [...newClipContents[pageIdx]];
+            if (newClipContents[pageIdx][layerIndex]) {
+                newClipContents[pageIdx][layerIndex] = [...newClipContents[pageIdx][layerIndex]];
+                const existingClip = newClipContents[pageIdx][layerIndex][colIndex];
+                if (existingClip) {
+                    newClipContents[pageIdx][layerIndex][colIndex] = { ...existingClip, parsingFailed: failed };
+                }
             }
         }
         return { ...state, clipContents: newClipContents };
@@ -2570,7 +2602,9 @@ function App() {
               const clipFps = pSettings.fps || 60;
               const clipFrameInterval = 1000 / (clipFps * (pSettings.speedMultiplier || 1));
               
-              if (dt >= clipFrameInterval) {
+              const isSingleFrameGen = clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1);
+
+              if (dt >= clipFrameInterval || isSingleFrameGen) {
                   const framesToAdvance = Math.floor(dt / clipFrameInterval);
                   if (isPlayingRef.current) {
                       lastFrameFetchTimeRef.current[workerId] = timestamp - (dt % clipFrameInterval);
@@ -2578,9 +2612,20 @@ function App() {
                   } else {
                       lastFrameFetchTimeRef.current[workerId] = timestamp;
                   }
-                  currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
+
+                  if (isSingleFrameGen) {
+                      // Virtual progress for single-frame generators based on pSettings.duration
+                      const virtualDurMs = (pSettings.duration || 1.0) * 1000;
+                      currentProgress = (totalElapsed / virtualDurMs) % 1.0;
+                      targetIndex = 0; // Always frame 0
+                  } else {
+                      currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
+                  }
               } else {
-                  return; // Not enough time passed
+                  // If not enough time passed for a new frame, we still keep current targetIndex
+                  // and we don't return here anymore, so parameter animation can run every loop
+                  targetIndex = frameIndexesRef.current[workerId] || 0;
+                  currentProgress = progressRef.current[workerId] || 0;
               }
           }
           
@@ -2684,7 +2729,7 @@ function App() {
                                     }                  
                   if (changed) {
                       const seq = ++generatorRequestSeqRef.current;
-                      regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, resolvedParams, seq, true);
+                      regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, resolvedParams, seq, true, false, null, null, pageIdx);
                   }
               }
 
@@ -2697,7 +2742,7 @@ function App() {
                       time: timestamp,
                       activationTime: clipActivationTimesRef.current[layerIndex] || 0
                   };
-                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data, context);
+                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data, context, pageIdx);
               } else if (generatorId === 'timer') {
                   const params = clip.currentParams || {};
                   const seq = ++generatorRequestSeqRef.current;
@@ -2705,7 +2750,7 @@ function App() {
                       time: timestamp,
                       activationTime: clipActivationTimesRef.current[layerIndex] || 0
                   };
-                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, null, context);
+                  regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, null, context, pageIdx);
               }
           }
 
@@ -3415,12 +3460,12 @@ function App() {
           });
         }
       } else if (e.data.type === 'parsing-status') {
-        const { layerIndex, colIndex, status } = e.data;
+        const { layerIndex, colIndex, status, pageId } = e.data;
         if (layerIndex !== undefined && colIndex !== undefined) {
-            dispatch({ type: 'SET_CLIP_PARSING_STATUS', payload: { layerIndex, colIndex, status } });
+            dispatch({ type: 'SET_CLIP_PARSING_STATUS', payload: { layerIndex, colIndex, status, pageId } });
             if (!status) {
                 // Mark as failed so we don't retry endlessly
-                dispatch({ type: 'SET_CLIP_PARSING_FAILED', payload: { layerIndex, colIndex, failed: true } });
+                dispatch({ type: 'SET_CLIP_PARSING_FAILED', payload: { layerIndex, colIndex, failed: true, pageId } });
             }
         }
       }
@@ -3464,20 +3509,22 @@ function App() {
       if (!ildaParserWorker) return;
 
       const clipsToParse = [];
-      clipContents.forEach((layer, layerIndex) => {
-          layer.forEach((clip, colIndex) => {
-              if (clip && clip.type === 'ilda' && clip.filePath && !clip.workerId && !clip.parsing && !clip.parsingFailed) {
-                  clipsToParse.push({ layerIndex, colIndex, fileName: clip.fileName, filePath: clip.filePath });
-              }
+      clipContents.forEach((page, pageIndex) => {
+          page.forEach((layer, layerIndex) => {
+              layer.forEach((clip, colIndex) => {
+                  if (clip && clip.type === 'ilda' && clip.filePath && !clip.workerId && !clip.parsing && !clip.parsingFailed) {
+                      clipsToParse.push({ pageId: pageIndex, layerIndex, colIndex, fileName: clip.fileName, filePath: clip.filePath });
+                  }
+              });
           });
       });
 
       if (clipsToParse.length > 0) {
-          console.log(`Triggering re-parse for ${clipsToParse.length} clips.`);
+          console.log(`Triggering re-parse for ${clipsToParse.length} clips across all pages.`);
           // Bulk update status to parsing
           dispatch({ 
               type: 'SET_BULK_PARSING_STATUS', 
-              payload: clipsToParse.map(c => ({ layerIndex: c.layerIndex, colIndex: c.colIndex, status: true })) 
+              payload: clipsToParse.map(c => ({ pageId: c.pageId, layerIndex: c.layerIndex, colIndex: c.colIndex, status: true })) 
           });
 
           // Send requests
@@ -3487,7 +3534,8 @@ function App() {
                   fileName: clip.fileName,
                   filePath: clip.filePath,
                   layerIndex: clip.layerIndex,
-                  colIndex: clip.colIndex
+                  colIndex: clip.colIndex,
+                  pageId: clip.pageId
               });
           });
       }
@@ -3542,9 +3590,12 @@ function App() {
     const handleMessage = (e) => {
         if (e.data.browserFile) return;
 
+        const { pageId, layerIndex, colIndex, success, frames, generatorDefinition, currentParams, isLive, isAutoUpdate, seq, isNdi } = e.data;
+
         // 1. Mark as free and check for pending tasks FIRST
-        if (e.data.layerIndex !== undefined && e.data.colIndex !== undefined) {
-            const clipKey = `${e.data.layerIndex}-${e.data.colIndex}`;
+        if (layerIndex !== undefined && colIndex !== undefined) {
+            const pId = pageId !== undefined ? pageId : stateRef.current.activePageId;
+            const clipKey = `${pId}-${layerIndex}-${colIndex}`;
             generatorProcessingMap.current.set(clipKey, false); 
             
             if (generatorPendingMap.current.has(clipKey)) {
@@ -3555,15 +3606,13 @@ function App() {
             }
         }
 
-        if (e.data.success) {
-            const { layerIndex, colIndex, frames, generatorDefinition, currentParams, isLive, isAutoUpdate, seq } = e.data;
-
+        if (success) {
             if (layerIndex === undefined || colIndex === undefined) return;
+            const pId = pageId !== undefined ? pageId : stateRef.current.activePageId;
 
             // 2. DISCARD stale responses
-            // If we have a sequence number, and it's older than what we've already processed, IGNORE it.
             if (seq !== undefined) {
-                const key = `${layerIndex}-${colIndex}`;
+                const key = `${pId}-${layerIndex}-${colIndex}`;
                 const lastProcessed = latestProcessedSeqRef.current.get(key) || 0;
                 if (seq < lastProcessed) {
                     return;
@@ -3571,15 +3620,14 @@ function App() {
                 latestProcessedSeqRef.current.set(key, seq);
             }
 
-            // Update liveFrames ref
-            const generatorWorkerId = `generator-${layerIndex}-${colIndex}`;
+            // Update liveFrames ref - MUST be page-aware
+            const generatorWorkerId = `generator-${pId}-${layerIndex}-${colIndex}`;
             liveFramesRef.current[generatorWorkerId] = frames[0];
 
             // 3. Update State only for relevant parameter changes
             if (!isLive && !isAutoUpdate && seq === (generatorRequestSeqRef.current)) {
-                const { pageId = stateRef.current.activePageId } = e.data;
                 const clipSource = clipContentsRef.current;
-                const existingClip = clipSource?.[pageId]?.[layerIndex]?.[colIndex] || {};
+                const existingClip = clipSource?.[pId]?.[layerIndex]?.[colIndex] || {};
                 
                 const newClipContent = {
                     ...existingClip, // Preserve existing settings (syncSettings, audio, dacs, etc)
@@ -3597,15 +3645,15 @@ function App() {
                     },
                 };
                 
-                dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent } });
+                dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: newClipContent, pageId: pId } });
 
                 // Only update the clip name if it's currently the default name
-                const currentName = clipNamesRef.current[pageId][layerIndex][colIndex];
+                const currentName = clipNamesRef.current[pId]?.[layerIndex]?.[colIndex];
                 const defaultPattern = `Clip ${layerIndex + 1}-${colIndex + 1}`;
                 if (currentName === defaultPattern) {
-                    dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name } });
+                    dispatch({ type: 'SET_CLIP_NAME', payload: { layerIndex, colIndex, name: generatorDefinition.name, pageId: pId } });
                 }
-            } else if (e.data.isNdi) {
+            } else if (isNdi) {
                 // If it's a live NDI frame update, signal ready for the next one
                 if (window.electronAPI && window.electronAPI.ndiRendererReady) {
                     window.electronAPI.ndiRendererReady();
@@ -3739,11 +3787,13 @@ function App() {
 
   const handleDeactivateLayerClips = useCallback((layerIndex) => {
     stopAudio(layerIndex); // Stop audio for this layer
+    if (activeClipIndexesRef.current) activeClipIndexesRef.current[layerIndex] = null;
     dispatch({ type: 'DEACTIVATE_LAYER_CLIPS', payload: { layerIndex } });
   }, [stopAudio]);
 
   const handleClearAllActive = useCallback(() => {
     stopAllAudio(); // Stop all audio
+    if (activeClipIndexesRef.current) activeClipIndexesRef.current.fill(null);
     dispatch({ type: 'CLEAR_ALL_ACTIVE_CLIPS' });
   }, [stopAllAudio]);
 
@@ -3800,22 +3850,22 @@ function App() {
     }
   }, [isWorldOutputActive, state.dacs]);
 
-  const handleClipPreview = useCallback((layerIndex, colIndex) => {
-      const pageIdx = state.activePageId;
-      dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
-      const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
-      if (clip && clip.type === 'ilda') {
-          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames, generatorId: null, generatorParams: {} } });
-      } else if (clip && clip.type === 'generator') {
-          const generatorWorkerId = `generator-${pageIdx}-${layerIndex}-${colIndex}`; 
-          dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
-      } else {
-        // Clip is empty, clear the selection data
-        dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: null, totalFrames: 0, generatorId: null, generatorParams: {} } });
-      }
-  }, [clipContents, state.activePageId]);
-
-  const handleClipHover = useCallback((layerIndex, colIndex, isHovering) => {
+    const handleClipPreview = useCallback((layerIndex, colIndex) => {
+        const pageIdx = state.activePageId;
+        const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+        const hasActualContent = clip && (clip.type === 'ilda' || clip.type === 'generator');
+  
+        if (!hasActualContent) return;
+  
+        dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
+        if (clip.type === 'ilda') {
+            dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames, generatorId: null, generatorParams: {} } });
+        } else if (clip.type === 'generator') {
+            const generatorWorkerId = `generator-${pageIdx}-${layerIndex}-${colIndex}`;
+            dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
+        }
+    }, [clipContents, state.activePageId]);
+    const handleClipHover = useCallback((layerIndex, colIndex, isHovering) => {
       if (isHovering) {
           hoveredClipRef.current = { layerIndex, colIndex };
       } else {
@@ -3831,16 +3881,14 @@ function App() {
     const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
     const hasActualContent = clip && (clip.type === 'ilda' || clip.type === 'generator');
 
-    if (!hasActualContent) {
-        if (isPress) {
-            handleClipPreview(layerIndex, colIndex);
-            handleDeactivateLayerClips(layerIndex);
-        }
-        return;
-    }
-
-    const style = clip.triggerStyle || 'normal';
-    const activeInfo = activeClipIndexes[layerIndex];
+         if (!hasActualContent) {
+             if (isPress) {
+                 handleDeactivateLayerClips(layerIndex);
+             }
+             return;
+         }
+        const style = clip.triggerStyle || 'normal';
+    const activeInfo = activeClipIndexesRef.current[layerIndex];
     const isCurrentActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
 
     if (style === 'normal') {
@@ -3860,7 +3908,7 @@ function App() {
             if (isCurrentActive) {
                 handleDeactivateLayerClips(layerIndex);
             }
-            return;
+            return; // CRITICAL: Stop here on release
         }
     }
 
@@ -3886,7 +3934,8 @@ function App() {
                     filePath: clip.audioFile.path, 
                     fileName: clip.audioFile.name || clip.audioFile.path.split(/[/\\]/).pop(), 
                     requestId: reqId,
-                    type: 'audio' 
+                    type: 'audio',
+                    pageId: pageIdx
                 }];
             });
         });
@@ -3897,6 +3946,7 @@ function App() {
     // Record activation time
     clipActivationTimesRef.current[layerIndex] = performance.now();
 
+    if (activeClipIndexesRef.current) activeClipIndexesRef.current[layerIndex] = { pageId: pageIdx, colIndex };
     dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } });
 
     // Capture still frame for thumbnail
@@ -4672,8 +4722,8 @@ function App() {
               
               console.log(`[Relocate] Scanning for other files moving from [${oldDirectory}] to [${newDirectory}]`);
 
-              // Flatten all clips to iterate easily
-              const allClips = stateRef.current.clipContents.flat().filter(c => c);
+              // Flatten all clips to iterate easily across all pages
+              const allClips = stateRef.current.clipContents.flat(2).filter(c => c);
               const processedOldPaths = new Set([fileEntry.filePath]);
 
               for (const clip of allClips) {
@@ -4692,13 +4742,8 @@ function App() {
                                    dispatch({ type: 'UPDATE_CLIP_FILE_PATH', payload: { oldPath: clip.filePath, newPath: potentialPath } });
                                    processedOldPaths.add(clip.filePath);
                                    
-                                   // Try to satisfy worker if it was waiting
-                                   if (ildaParserWorker) {
-                                       // We don't have the requestId easily here unless we look at missingFiles
-                                       // But updating the path prevents future errors. 
-                                       // If it was already missing, we should remove it from missingFiles
-                                       setMissingFiles(prev => prev.filter(f => f.filePath !== clip.filePath));
-                                   }
+                                   // If it was already missing, we should remove it from missingFiles
+                                   setMissingFiles(prev => prev.filter(f => f.filePath !== clip.filePath));
                                }
                            }
                        }

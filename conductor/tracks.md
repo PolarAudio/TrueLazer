@@ -4,5 +4,5 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ---
 
-- [ ] **Track: Optimize MIDI & Control Responsiveness with 60Hz Throttling**
+- [~] **Track: Optimize MIDI & Control Responsiveness with 60Hz Throttling**
 *Link: [./tracks/midi_responsiveness_20260223/](./tracks/midi_responsiveness_20260223/)*

@@ -6,7 +6,7 @@ import DualRangeSlider from './DualRangeSlider';
 import AnimationControls from './AnimationControls';
 import { PresetSelector } from './PresetSelector';
 
-const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration, uiState, onUpdateUiState }) => {
+const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState }) => {
     const [hovered, setHovered] = useState(false);
 
     const paramKey = `${generatorId}.${control.id}`;
@@ -100,6 +100,8 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                                 progressRef={progressRef}
                                 workerId={workerId}
                                 clipDuration={clipDuration}
+                                bpm={bpm}
+                                getFftLevels={getFftLevels}
                             />
                         )
                     ) : control.type === 'number' ? (
@@ -164,7 +166,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
     );
 };
 
-const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex, progressRef, workerId, clipDuration, uiState, onUpdateUiState, onRegisterPreset }) => {
+const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, onRegisterPreset }) => {
   const [systemFonts, setSystemFonts] = useState([]);
   const [projectFonts, setProjectFonts] = useState([]);
   const [loadingSystemFonts, setLoadingSystemFonts] = useState(false);
@@ -326,6 +328,8 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
                 workerId={workerId}
                 generatorId={selectedGeneratorId}
                 clipDuration={clipDuration}
+                bpm={bpm}
+                getFftLevels={getFftLevels}
                 uiState={uiState}
                 onUpdateUiState={onUpdateUiState}
             />

@@ -146,8 +146,8 @@ const ClipSettingsPanel = ({
       clipDuration = totalFrames / clipFps;
   }
 
-  // Derive Worker ID for progress tracking
-  const derivedWorkerId = workerId || (type === 'ilda' ? `ilda-${selectedLayerIndex}-${selectedColIndex}` : (type === 'generator' ? `generator-${selectedLayerIndex}-${selectedColIndex}` : null));
+  const pageIdx = clip?.pageId !== undefined ? clip.pageId : selectedLayerIndex !== null ? (clip?.pageId ?? 0) : 0; // Fallback to 0 if not available
+  const derivedWorkerId = workerId || (type === 'ilda' ? `ilda-${selectedLayerIndex}-${selectedColIndex}` : (type === 'generator' ? `generator-${pageIdx}-${selectedLayerIndex}-${selectedColIndex}` : null));
 
   const audioProgress = audioInfo && audioInfo.duration 
     ? (audioInfo.currentTime / audioInfo.duration) * 100 

@@ -1,10 +1,10 @@
 # Implementation Plan: MIDI & Control Responsiveness Optimization
 
 ## Phase 1: Context & Dispatch Refactoring (Infrastructure)
-- [ ] Task: Write Failing Tests for Stable Listener Binding in `MidiContext.jsx`
-- [ ] Task: Implement `mappingsRef` and `stateRefs` in `MidiContext.jsx` to prevent listener re-binding
-- [ ] Task: Write Failing Tests for Feedback Lookup Optimization
-- [ ] Task: Implement Feedback Lookup Map in `MidiContext.jsx` for O(1) retrieval
+- [x] Task: Write Failing Tests for Stable Listener Binding in `MidiContext.jsx`
+- [x] Task: Implement `mappingsRef` and `stateRefs` in `MidiContext.jsx` to prevent listener re-binding
+- [x] Task: Write Failing Tests for Feedback Lookup Optimization
+- [~] Task: Implement Feedback Lookup Map in `MidiContext.jsx` for O(1) retrieval
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure' (Protocol in workflow.md)
 
 ## Phase 2: High-Frequency Throttled Dispatch

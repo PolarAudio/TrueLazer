@@ -67,6 +67,7 @@ self.onmessage = async (event) => {
         }
         self.postMessage({
           success: true,
+          pageId: event.data.pageId, // Pass back pageId
           layerIndex,
           colIndex,
           frames,
