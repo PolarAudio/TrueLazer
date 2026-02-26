@@ -42,6 +42,7 @@ import { effectDefinitions } from './utils/effectDefinitions';
 import { THEME_COLORS } from './utils/midiColors';
 import { sendNote } from './utils/midi';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText, generateSinewave } from './utils/generators'; // Import generator functions
+import { throttle } from './utils/throttle';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -1699,17 +1700,17 @@ function App() {
 
   const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
   
-  const debounceTimersRef = useRef(new Map());
-  const debouncedDispatch = useCallback((id, action, delay = 30) => {
-      if (debounceTimersRef.current.has(id)) {
-          clearTimeout(debounceTimersRef.current.get(id));
+  const throttledDispatchesRef = useRef(new Map()); // id -> throttled function
+  const throttledDispatchesRef = useRef(new Map()); // id -> throttled function
+
+  const throttledDispatch = useCallback((id, action, delay = 16.6) => {
+      if (!throttledDispatchesRef.current.has(id)) {
+          // Create a new throttled function for this ID
+          const throttled = throttle((act) => dispatch(act), delay);
+          throttledDispatchesRef.current.set(id, throttled);
       }
-      const timer = setTimeout(() => {
-          dispatch(action);
-          debounceTimersRef.current.delete(id);
-      }, delay);
-      debounceTimersRef.current.set(id, timer);
-  }, []);
+      throttledDispatchesRef.current.get(id)(action);
+  }, [dispatch]);
 
   const {
     columns,
@@ -3575,11 +3576,11 @@ function App() {
         }
     }
     // 2. Dispatch for State Persistence - DEBOUNCED
-    debouncedDispatch(
+    throttledDispatch(
         `effect-${layerIndex}-${colIndex}-${effectIndex}-${paramName}`, 
         { type: 'UPDATE_EFFECT_PARAMETER', payload: { layerIndex, colIndex, effectIndex, paramName, newValue } }
     );
-  }, [debouncedDispatch, state.activePageId]);
+  }, [throttledDispatch, state.activePageId]);
 
 
   // Re-run generator when parameters of the selected clip change - REMOVED TO PREVENT LOOP
@@ -4091,7 +4092,7 @@ function App() {
       }
 
       // Dispatch the state update (Persistence) - DEBOUNCED
-      debouncedDispatch(
+      throttledDispatch(
           `generator-${pageIdx}-${selectedLayerIndex}-${selectedColIndex}-${paramName}`,
           {
               type: 'UPDATE_GENERATOR_PARAM',
@@ -4262,11 +4263,11 @@ function App() {
       }
 
       // 2. DEBOUNCED STATE UPDATE (For UI and persistence)
-      debouncedDispatch(
+      throttledDispatch(
           `quick-${type}-${index}`, 
           { type: 'UPDATE_QUICK_CONTROL', payload: { type, index, value } }
       );
-  }, [state.quickAssigns, debouncedDispatch]);
+  }, [state.quickAssigns, throttledDispatch]);
 
   const handleToggleQuickButton = useCallback((index) => {
       const btn = state.quickAssigns.buttons[index];
@@ -4383,7 +4384,7 @@ function App() {
       case 'master_intensity':
         if (controlMode === 'absolute') masterIntensityRef.current = normalizedValue;
         else masterIntensityRef.current = Math.max(0, Math.min(1, masterIntensityRef.current + normalizedValue));
-        debouncedDispatch('master_intensity', { type: 'SET_MASTER_INTENSITY', payload: masterIntensityRef.current });
+        throttledDispatch('master_intensity', { type: 'SET_MASTER_INTENSITY', payload: masterIntensityRef.current });
         break;
       case 'blackout_on':
         if (!globalBlackoutRef.current) dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' });
@@ -4396,7 +4397,7 @@ function App() {
         let newSpeedNorm = normalizedValue;
         if (controlMode !== 'absolute') newSpeedNorm = Math.max(0, Math.min(1, currentSpeedNorm + normalizedValue));
         const newFps = Math.max(1, Math.round(newSpeedNorm * 119 + 1));
-        debouncedDispatch('master_speed', { type: 'SET_RENDER_SETTING', payload: { setting: 'playbackFps', value: newFps } });
+        throttledDispatch('master_speed', { type: 'SET_RENDER_SETTING', payload: { setting: 'playbackFps', value: newFps } });
         break;
       case 'laser_output':
         if (value > 0) dispatch({ type: 'TOGGLE_WORLD_OUTPUT_ACTIVE' });
@@ -4501,7 +4502,7 @@ function App() {
                  let targetVal = normalizedValue;
                  if (controlMode !== 'absolute') targetVal = Math.max(0, Math.min(1, (layerIntensitiesRef.current[layerIdx] || 0) + normalizedValue));
                  layerIntensitiesRef.current[layerIdx] = targetVal;
-                 debouncedDispatch(`layer_${layerIdx}_intensity`, { type: 'SET_LAYER_INTENSITY', payload: { layerIndex: layerIdx, intensity: targetVal } });
+                 throttledDispatch(`layer_${layerIdx}_intensity`, { type: 'SET_LAYER_INTENSITY', payload: { layerIndex: layerIdx, intensity: targetVal } });
              } else if (action === 'clear' && value > 0) {
                  handleDeactivateLayerClips(layerIdx);
              }

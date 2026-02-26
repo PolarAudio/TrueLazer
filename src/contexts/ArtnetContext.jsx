@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { throttle } from '../utils/throttle';
 
 const ArtnetContext = createContext(null);
 
@@ -148,6 +149,20 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
     init();
   }, []);
 
+  const throttledCommandsRef = useRef(new Map()); // id -> throttled function
+
+  const throttledArtnetCommand = useCallback((id, value) => {
+      if (!throttledCommandsRef.current.has(id)) {
+          const throttled = throttle((val) => {
+              if (onArtnetCommandRef.current) {
+                  onArtnetCommandRef.current(id, val);
+              }
+          }, 16.6);
+          throttledCommandsRef.current.set(id, throttled);
+      }
+      throttledCommandsRef.current.get(id)(value);
+  }, []);
+
   // Listen to Art-Net events from main process
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onArtnetDataReceived) {
@@ -168,7 +183,7 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
                     processArtnetLogic(
                         eventData, 
                         mappingsRef.current, 
-                        onArtnetCommandRef.current, 
+                        throttledArtnetCommand, 
                         isMappingRef.current, 
                         learningIdRef.current, 
                         setMappings, 
@@ -180,7 +195,7 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
         });
         return cleanup;
     }
-  }, []); 
+  }, [throttledArtnetCommand]); 
 
   const saveMappings = async (newMappings = mappings) => {
       if (window.electronAPI && window.electronAPI.saveArtnetMappings) {
