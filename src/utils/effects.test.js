@@ -113,4 +113,57 @@ describe('applyDelay', () => {
     expect(pts[0].x).toBeCloseTo(1);
     expect(pts[2].x).toBeCloseTo(0); 
   });
+
+  it('should have blanked transitions between frames in frame mode', () => {
+    const effectStates = new Map();
+    const effects = [{
+      id: 'delay',
+      instanceId: 'd1',
+      params: { mode: 'frame', delayAmount: 1, steps: 2, decay: 1.0, delayDirection: 'left_to_right' }
+    }];
+
+    // Frame 1: Point at (0,0)
+    const f1 = mockFrame([{ x: 0, y: 0 }]);
+    applyEffects(f1, effects, { effectStates });
+
+    // Frame 2: Point at (1,1)
+    const f2 = mockFrame([{ x: 1, y: 1 }]);
+    const result = applyEffects(f2, effects, { effectStates });
+    
+    // Points expected:
+    // [0]: (1,1) - Frame 2
+    // [1]: (1,1) - Bridge (blanked)
+    // [2]: (0,0) - Frame 1
+    
+    // The transition from [1] to [2] must be blanked to avoid a connecting line.
+    // In laser terminology, the blanking bit on point [2] must be 1.
+    expect(result.points[2 * 8 + 6]).toBe(1); // Point [2] (Frame 1 start) should be blanked
+  });
+
+  it('should bypass segment delay if point count is below 5', () => {
+    const effectStates = new Map();
+    const effects = [{
+      id: 'delay',
+      instanceId: 'd1',
+      params: { mode: 'segment', delayAmount: 1, steps: 2, decay: 1.0, delayDirection: 'left_to_right' }
+    }];
+
+    // 1. Initial Frame (at 0,0) - 4 points
+    const f0 = mockFrame([
+        { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }
+    ]);
+    applyEffects(f0, effects, { effectStates });
+
+    // 2. Next Frame (at 1,1) - 4 points
+    const f1 = mockFrame([
+        { x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }
+    ]);
+    
+    // With 4 points, it should bypass. So result should have (1,1) points.
+    // If it DOESN'T bypass, it would have some points from f0 (0,0) due to segment logic.
+    const result = applyEffects(f1, effects, { effectStates });
+    
+    expect(result.points[0]).toBe(1); // Point 0 from f1
+    expect(result.points[2 * 8]).toBe(1); // Point 2 should ALSO be from f1 if bypassed. If not bypassed, it would be from f0 (0).
+  });
 });

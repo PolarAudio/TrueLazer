@@ -1419,82 +1419,39 @@ const SystemMonitor = React.memo(({
 });
 		
 const SidePanelContainer = React.memo(({
-		
-    clipContents,
-		
-    activeClipIndexes,
-		
-    layerEffects,
-		
-    bpm,
-		
-    playbackFps,
-		
     selectedLayerIndex,
-		
     selectedColIndex,
-		
     liveFramesRef,
-		
     progressRef,
-		
     selectedDac,
-		
     liveDacOutputSettingsRef,
-		
     dacOutputSettings,
-		
     getAudioInfo,
-		
-    fftLevels,
-		
     getFftLevels,
-		
     effectStatesRef,
-		
     clipActivationTimesRef,
-		
     showBeamEffect,
-		
     beamAlpha,
-		
     fadeAlpha,
-		
     previewScanRate,
-		
     beamRenderMode,
-		
     worldShowBeamEffect,
-		
     worldBeamRenderMode,
-		
-    masterIntensity,
-		
-    layerIntensities,
-		
-    globalBlackout,
-		
-    layerSolos,
-		
-    layerBlackouts,
-		
     handleToggleBeamEffect,
-		
     handleCycleDisplayMode,
-		
     previewFrameCountRef,
-		
-    totalPointsSentRef,
-		
-    activeChannelsCountRef,
-		
-    lastStatUpdateTimeRef,
-		
     liveClipContentsRef,
-		
+    activeClipIndexesRef, // Use Ref
+    layerEffectsRef, // Use Ref
+    bpmRef, // Use Ref
+    playbackFpsRef, // Use Ref
+    masterIntensityRef, // Use Ref
+    layerIntensitiesRef, // Use Ref
+    globalBlackoutRef, // Use Ref
+    layerSolosRef, // Use Ref
+    layerBlackoutsRef, // Use Ref
     optimizationEnabled,
-    onRegisterPreset, // Add this
-    activePageId // Add this
+    activePageId
 }) => {
     const [tick, setTick] = useState(0);
     const lastPreviewTimeRef = useRef(0);
@@ -1516,15 +1473,25 @@ const SidePanelContainer = React.memo(({
         return () => cancelAnimationFrame(rafId);
     }, [previewInterval, previewFrameCountRef]);
 
-    // DERIVED PREVIEW DATA - Use Live Ref for immediate feedback
-        const clipSource = liveClipContentsRef?.current || clipContents;
-        const pageIdx = activePageId;
-        const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null ? clipSource[pageIdx]?.[selectedLayerIndex]?.[selectedColIndex] : null;
-        
-        const activeInfo = selectedLayerIndex !== null ? activeClipIndexes[selectedLayerIndex] : null;
-        const targetPreviewWorkerId = selectedColIndex !== null 
-            ? (selectedClip?.type === 'ilda' ? selectedClip?.workerId : `generator-${pageIdx}-${selectedLayerIndex}-${selectedColIndex}`)
-            : (activeInfo && activeInfo.colIndex !== null ? (clipSource[activeInfo.pageId]?.[selectedLayerIndex]?.[activeInfo.colIndex]?.type === 'ilda' ? clipSource[activeInfo.pageId]?.[selectedLayerIndex]?.[activeInfo.colIndex]?.workerId : `generator-${activeInfo.pageId}-${selectedLayerIndex}-${activeInfo.colIndex}`) : null);
+    // DERIVED PREVIEW DATA - Use Live Refs for immediate feedback and to avoid re-renders
+    const clipSource = liveClipContentsRef?.current;
+    const pageIdx = activePageId;
+    const activeClipIndexes = activeClipIndexesRef.current;
+    const layerEffects = layerEffectsRef.current;
+    const bpm = bpmRef.current;
+    const playbackFps = playbackFpsRef.current;
+    const masterIntensity = masterIntensityRef.current;
+    const layerIntensities = layerIntensitiesRef.current;
+    const globalBlackout = globalBlackoutRef.current;
+    const layerSolos = layerSolosRef.current;
+    const layerBlackouts = layerBlackoutsRef.current;
+
+    const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null ? clipSource[pageIdx]?.[selectedLayerIndex]?.[selectedColIndex] : null;
+    
+    const activeInfo = selectedLayerIndex !== null ? activeClipIndexes[selectedLayerIndex] : null;
+    const targetPreviewWorkerId = selectedColIndex !== null 
+        ? (selectedClip?.type === 'ilda' ? selectedClip?.workerId : `generator-${pageIdx}-${selectedLayerIndex}-${selectedColIndex}`)
+        : (activeInfo && activeInfo.colIndex !== null ? (clipSource[activeInfo.pageId]?.[selectedLayerIndex]?.[activeInfo.colIndex]?.type === 'ilda' ? clipSource[activeInfo.pageId]?.[selectedLayerIndex]?.[activeInfo.colIndex]?.workerId : `generator-${activeInfo.pageId}-${selectedLayerIndex}-${activeInfo.colIndex}`) : null);
 
     const selectedClipFrame = targetPreviewWorkerId ? liveFramesRef.current[targetPreviewWorkerId] : null;
     const selectedClipProgress = targetPreviewWorkerId ? (progressRef.current[targetPreviewWorkerId] || 0) : 0;
@@ -1583,7 +1550,7 @@ const SidePanelContainer = React.memo(({
           }
         });
         return frames;
-    }, [activeClipIndexes, clipSource, tick, bpm, layerEffects, playbackFps, liveFramesRef, progressRef, effectStatesRef, clipActivationTimesRef]);
+    }, [tick, liveFramesRef]); // Only depend on tick and stable ref
 
     const effectiveLayerIntensities = useMemo(() => {
         const isAnySolo = layerSolos.some(s => s);
@@ -1592,7 +1559,7 @@ const SidePanelContainer = React.memo(({
             if (isAnySolo) return layerSolos[index] ? (layerBlackouts[index] ? 0 : intensity) : 0;
             return layerBlackouts[index] ? 0 : intensity;
         });
-    }, [layerIntensities, layerBlackouts, layerSolos, globalBlackout]);
+    }, [tick]); // Driven by tick
 
     return (
 		<div className="side-panel">
@@ -3876,6 +3843,22 @@ function App() {
       }
   }, []);
 
+  const handleLayerIntensityChange = useCallback((layerIndex, intensity) => {
+      dispatch({ type: 'SET_LAYER_INTENSITY', payload: { layerIndex, intensity } });
+  }, [dispatch]);
+
+  const handleToggleLayerBlackout = useCallback((layerIndex) => {
+      dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex } });
+  }, [dispatch]);
+
+  const handleToggleLayerSolo = useCallback((layerIndex) => {
+      dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex } });
+  }, [dispatch]);
+
+  const handleLayerSelect = useCallback((layerIndex) => {
+      dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex: null } });
+  }, [dispatch]);
+
   const handleActivateClick = useCallback((layerIndex, colIndex, isPress = true) => {
     const pageIdx = state.activePageId;
     const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
@@ -4954,21 +4937,21 @@ function App() {
                   key={layerIndex}
                   layerName={layerName}
                   index={layerIndex}
-                  onDropEffect={(effectId) => handleDropEffectOnLayer(layerIndex, effectId)}
-                  onDropDac={(layerIndex, dacData) => handleDropDacOnLayer(layerIndex, dacData)}
+                  onDropEffect={handleDropEffectOnLayer}
+                  onDropDac={handleDropDacOnLayer}
                   layerEffects={layerEffects[layerIndex]}
                   activeClipData={activeClipDataForLayer}
                   liveFrame={liveFrameForLayer}
                   thumbnailRenderMode={thumbnailRenderMode} // Add this prop
                   intensity={layerIntensities[layerIndex]}
-                  onIntensityChange={(value) => dispatch({ type: 'SET_LAYER_INTENSITY', payload: { layerIndex, intensity: value } })}
-                  onDeactivateLayerClips={() => handleDeactivateLayerClips(layerIndex)}
-                  onShowLayerFullContextMenu={() => handleShowLayerFullContextMenu(layerIndex)}
+                  onIntensityChange={handleLayerIntensityChange}
+                  onDeactivateLayerClips={handleDeactivateLayerClips}
+                  onShowLayerFullContextMenu={handleShowLayerFullContextMenu}
                   isBlackout={layerBlackouts[layerIndex]}
                   isSolo={layerSolos[layerIndex]}
-                  onToggleBlackout={() => dispatch({ type: 'TOGGLE_LAYER_BLACKOUT', payload: { layerIndex } })}
-                  onToggleSolo={() => dispatch({ type: 'TOGGLE_LAYER_SOLO', payload: { layerIndex } })}
-                  onLayerSelect={(idx) => dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex: idx, colIndex: null } })}
+                  onToggleBlackout={handleToggleLayerBlackout}
+                  onToggleSolo={handleToggleLayerSolo}
+                  onLayerSelect={handleLayerSelect}
                 />
               );
             })}          </div>
@@ -5017,15 +5000,13 @@ function App() {
                         thumbnailRenderMode={thumbnailRenderMode} // Add this prop
                         liveFrame={clipLiveFrame} // Add this prop
                         stillFrame={clipStillFrame} // Add this prop
-                        onActivateClick={(isPress) => handleActivateClick(layerIndex, colIndex, isPress)}
+                        onActivateClick={handleActivateClick}
                         isActive={isActive}
                         onUnsupportedFile={showNotification}
-                        onDropEffect={(effectData) => handleDropEffectOnClip(layerIndex, colIndex, effectData)}
+                        onDropEffect={handleDropEffectOnClip}
                         onDropGenerator={handleDropGenerator}
-                        onDropDac={(passedLayerIndex, passedColIndex, dacDataFromClip) => {
-                            handleDropDac(passedLayerIndex, passedColIndex, dacDataFromClip);
-                        }}
-                        onLabelClick={() => handleClipPreview(layerIndex, colIndex)}
+                        onDropDac={handleDropDac}
+                        onLabelClick={handleClipPreview}
                         isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                         ildaParserWorker={ildaParserWorker}
                         onClipHover={handleClipHover}
@@ -5038,11 +5019,6 @@ function App() {
             </div>
           </div>
 			<SidePanelContainer 
-                clipContents={clipContents}
-                activeClipIndexes={activeClipIndexes}
-                layerEffects={layerEffects}
-                bpm={bpm}
-                playbackFps={playbackFps}
                 selectedLayerIndex={selectedLayerIndex}
                 selectedColIndex={selectedColIndex}
                 liveFramesRef={liveFramesRef}
@@ -5051,7 +5027,6 @@ function App() {
                 liveDacOutputSettingsRef={liveDacOutputSettingsRef}
                 dacOutputSettings={dacOutputSettings}
                 getAudioInfo={getAudioInfo}
-                fftLevels={fftLevels}
                 getFftLevels={getFftLevels}
                 effectStatesRef={effectStatesRef}
                 clipActivationTimesRef={clipActivationTimesRef}
@@ -5062,20 +5037,20 @@ function App() {
                 beamRenderMode={beamRenderMode}
                 worldShowBeamEffect={worldShowBeamEffect}
                 worldBeamRenderMode={worldBeamRenderMode}
-                masterIntensity={masterIntensity}
-                layerIntensities={layerIntensities}
-                globalBlackout={globalBlackout}
-                layerSolos={layerSolos}
-                layerBlackouts={layerBlackouts}
                 handleToggleBeamEffect={handleToggleBeamEffect}
                 handleCycleDisplayMode={handleCycleDisplayMode}
                 previewFrameCountRef={previewFrameCountRef}
-                totalPointsSentRef={totalPointsSentRef}
-                activeChannelsCountRef={activeChannelsCountRef}
-                lastStatUpdateTimeRef={lastStatUpdateTimeRef}
                 liveClipContentsRef={liveClipContentsRef}
+                activeClipIndexesRef={activeClipIndexesRef}
+                layerEffectsRef={layerEffectsRef}
+                bpmRef={bpmRef}
+                playbackFpsRef={playbackFpsRef}
+                masterIntensityRef={masterIntensityRef}
+                layerIntensitiesRef={layerIntensitiesRef}
+                globalBlackoutRef={globalBlackoutRef}
+                layerSolosRef={layerSolosRef}
+                layerBlackoutsRef={layerBlackoutsRef}
                 optimizationEnabled={optimizationEnabled}
-                onRegisterPreset={handleRegisterPreset}
                 activePageId={activePageId}
             />
             <div className="middle-bar">
@@ -5182,6 +5157,8 @@ function App() {
 						progressRef={progressRef}
 						onAudioError={handleAudioError}
 						onRegisterPreset={handleRegisterPreset}
+						liveFramesRef={liveFramesRef}
+						activePageId={activePageId}
 					/>}
 					{activeBottomTab_2 === 'layer' && <LayerSettingsPanel
 						selectedLayerIndex={selectedLayerIndex}

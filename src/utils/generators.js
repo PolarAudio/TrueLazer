@@ -196,7 +196,8 @@ export function generateCircle(params) {
       points.push({
         x: radius * Math.cos(angle) + x,
         y: radius * Math.sin(angle) + y,
-        r, g, b
+        r, g, b,
+        lastPoint: i === numPoints
       });
     }
 
@@ -237,11 +238,12 @@ export function generateSquare(params) {
         points.push({
           x: start.x + (end.x - start.x) * t,
           y: start.y + (end.y - start.y) * t,
-          r, g, b
+          r, g, b,
+          lastPoint: false
         });
       }
     }
-    points.push({ ...corners[corners.length - 1], r, g, b });
+    points.push({ ...corners[corners.length - 1], r, g, b, lastPoint: true });
 
     return { points: applyRenderingStyle(points, params) };
   } catch (error) {
@@ -297,11 +299,12 @@ export function generateTriangle(params) {
         points.push({
           x: start.x + (end.x - start.x) * t,
           y: start.y + (end.y - start.y) * t,
-          r, g, b
+          r, g, b,
+          lastPoint: false
         });
       }
     }
-    points.push({ ...corners[corners.length - 1], r, g, b });
+    points.push({ ...corners[corners.length - 1], r, g, b, lastPoint: true });
 
     return { points: applyRenderingStyle(points, params) };
   } catch (error) {
@@ -329,7 +332,8 @@ export function generateLine(params) {
       points.push({
         x: x1 + (x2 - x1) * t,
         y: y1 + (y2 - y1) * t,
-        r, g, b
+        r, g, b,
+        lastPoint: i === pointDensity
       });
     }
 
@@ -374,11 +378,12 @@ export function generateStar(params) {
         points.push({
           x: start.x + (end.x - start.x) * t,
           y: start.y + (end.y - start.y) * t,
-          r, g, b
+          r, g, b,
+          lastPoint: false
         });
       }
     }
-    points.push({ ...vertices[vertices.length - 1], r, g, b });
+    points.push({ ...vertices[vertices.length - 1], r, g, b, lastPoint: true });
 
     return { points: applyRenderingStyle(points, params) };
   } catch (error) {
@@ -593,7 +598,8 @@ export function generateSinewave(params) {
       points.push({
         x: curX + x,
         y: curY + y,
-        r, g, b
+        r, g, b,
+        lastPoint: i === numPoints
       });
     }
 
@@ -651,11 +657,13 @@ export function generateWaveform(params) {
                 const dataIdx = startIdx + Math.floor((i / numBins) * effectiveLen);
                 const val = (data[dataIdx] / 255) * height;
 
+                const isLastBin = i === numBins - 1;
+
                 // Vertical Bar: Bottom to Top
-                points.push({ x: curX, y: -height / 2 + y, r: 0, g: 0, b: 0, blanking: true }); // Jump to bottom
-                points.push({ x: curX, y: -height / 2 + y, r, g, b }); // Start bar
-                points.push({ x: curX, y: -height / 2 + val + y, r, g, b }); // End bar
-                points.push({ x: curX, y: -height / 2 + val + y, r: 0, g: 0, b: 0, blanking: true }); // Blank end
+                points.push({ x: curX, y: -height / 2 + y, r: 0, g: 0, b: 0, blanking: true, lastPoint: false }); // Jump to bottom
+                points.push({ x: curX, y: -height / 2 + y, r, g, b, lastPoint: false }); // Start bar
+                points.push({ x: curX, y: -height / 2 + val + y, r, g, b, lastPoint: false }); // End bar
+                points.push({ x: curX, y: -height / 2 + val + y, r: 0, g: 0, b: 0, blanking: true, lastPoint: isLastBin }); // Blank end
             }
         } else if (mode === 'waveform') {
             // Time Domain Waveform (Oscilloscope)
@@ -665,7 +673,7 @@ export function generateWaveform(params) {
                 const dataIdx = Math.floor((i / numBins) * dataLen);
                 // Time domain data is centered around 128
                 const val = ((data[dataIdx] - 128) / 128) * (height / 2);
-                points.push({ x: curX, y: val + y, r, g, b });
+                points.push({ x: curX, y: val + y, r, g, b, lastPoint: i === numBins - 1 });
             }
         } else if (mode === 'spectrum') {
             // Continuous Spectrum Line
@@ -674,7 +682,7 @@ export function generateWaveform(params) {
                 const curX = startX + t * width + x;
                 const dataIdx = startIdx + Math.floor((i / numBins) * effectiveLen);
                 const val = (data[dataIdx] / 255) * height;
-                points.push({ x: curX, y: -height / 2 + val + y, r, g, b });
+                points.push({ x: curX, y: -height / 2 + val + y, r, g, b, lastPoint: i === numBins - 1 });
             }
         }
 

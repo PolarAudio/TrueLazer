@@ -380,7 +380,7 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
     );
 };
 
-const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle, onRegisterPreset }) => {
+const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle, onRegisterPreset, currentPointCount }) => {
   if (!effect) return null;
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
   if (!effectDefinition) return null;
@@ -390,6 +390,8 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
   const isColor = effect.id === 'color';
   const isEnabled = effect.params.enabled !== false;
   const isChannelMode = effect.params.mode === 'channel';
+
+  const showSegmentThresholdWarning = isDelay && effect.params.mode === 'segment' && currentPointCount > 0 && currentPointCount < 5;
 
   const collapsedEffects = uiState?.collapsedEffects || {};
   const isCollapsed = !!collapsedEffects[effect.instanceId];
@@ -478,6 +480,11 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                                 onChange={(newOrder) => onParamChange('customOrder', newOrder)}
                             />
                         )}
+                        {showSegmentThresholdWarning && (
+                            <div className="effect-warning" style={{ color: '#ff4444', fontSize: '10px', marginBottom: '10px', padding: '5px', background: 'rgba(255,0,0,0.1)', borderRadius: '3px', border: '1px solid rgba(255,0,0,0.2)' }}>
+                                ⚠ Insufficient point count for segment delay (min 5 points).
+                            </div>
+                        )}
                     </>
                 )}
 
@@ -524,4 +531,4 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
   );
 };
 
-export default EffectEditor;
+export default React.memo(EffectEditor);

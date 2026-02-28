@@ -752,6 +752,11 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
     history.unshift(new Float32Array(points));
 
     if (mode === 'segment') {
+        // SEGMENT MODE THRESHOLD: Minimum 5 points required
+        if (numPoints < 5) {
+            return points;
+        }
+
         const maxHistory = delayAmount * steps + 1;
         if (history.length > maxHistory) history.length = maxHistory;
         const newPoints = new Float32Array(points.length);
@@ -866,7 +871,15 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
                 newPoints[dstOff+3] = src[srcOff+3] * factor;
                 newPoints[dstOff+4] = src[srcOff+4] * factor;
                 newPoints[dstOff+5] = src[srcOff+5] * factor;
-                newPoints[dstOff+6] = src[srcOff+6];
+                
+                // Force blanking on the first point of subsequent echoes to hide transition lines
+                if (k > 0 && i === 0) {
+                    newPoints[dstOff+6] = 1;
+                    newPoints[dstOff+3] = 0; newPoints[dstOff+4] = 0; newPoints[dstOff+5] = 0;
+                } else {
+                    newPoints[dstOff+6] = src[srcOff+6];
+                }
+                
                 newPoints[dstOff+7] = src[srcOff+7];
             }
             currentOffset += srcNumPoints * 8;

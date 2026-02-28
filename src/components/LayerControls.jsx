@@ -13,6 +13,26 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
     setAppliedEffects(layerEffects || []);
   }, [layerEffects]);
 
+  const handleClear = () => {
+      if (onDeactivateLayerClips) onDeactivateLayerClips(index);
+  };
+
+  const handleToggleBlackoutLocal = () => {
+      if (onToggleBlackout) onToggleBlackout(index);
+  };
+
+  const handleToggleSoloLocal = () => {
+      if (onToggleSolo) onToggleSolo(index);
+  };
+
+  const handleIntensityChangeLocal = (e) => {
+      if (onIntensityChange) onIntensityChange(index, parseFloat(e.target.value));
+  };
+
+  const handleLayerSelectLocal = () => {
+      if (onLayerSelect) onLayerSelect(index);
+  };
+
   const combinedEffects = useMemo(() => {
       return [...(activeClipData?.effects || []), ...(layerEffects || [])];
   }, [activeClipData?.effects, layerEffects]);
@@ -99,7 +119,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
         <Mappable id={`layer_${index}_clear`}>
             <span 
                 className="layer-control-button full-height" 
-                onClick={() => onDeactivateLayerClips(index)}
+                onClick={handleClear}
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'toggle', 'clear', 'layer', `L${index+1} Clear`)}
             >
@@ -112,7 +132,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
           <Mappable id={`layer_${index}_blackout`}>
             <span 
                 className="layer-control-button half-height" 
-                onClick={onToggleBlackout}
+                onClick={handleToggleBlackoutLocal}
                 style={{ backgroundColor: isBlackout ? 'red' : '' }}
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'toggle', 'blackout', 'layer', `L${index+1} Blackout`)}
@@ -126,7 +146,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
           <Mappable id={`layer_${index}_solo`}>
             <span 
                 className="layer-control-button half-height" 
-                onClick={onToggleSolo}
+                onClick={handleToggleSoloLocal}
                 style={{ backgroundColor: isSolo ? 'var(--theme-color)' : '', color: isSolo ? 'black' : '' }}
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'toggle', 'solo', 'layer', `L${index+1} Solo`)}
@@ -146,7 +166,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
       </div>
 		<div className="layer-control-row">
           <Mappable id={`layer_${index}_intensity`}>
-			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={(e) => onIntensityChange(parseFloat(e.target.value))} />
+			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={handleIntensityChangeLocal} />
           </Mappable>
 		</div>
 		<div 
@@ -177,11 +197,12 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
               ))}
             </div>
           )
-        )}
-      </div>
-      <span className="layer-name-label" onClick={() => onLayerSelect && onLayerSelect(index)}>{layerName}</span>
-    </div>
-  );
-};
-
-export default LayerControls;
+                )}
+              </div>
+              <span className="layer-name-label" onClick={handleLayerSelectLocal}>{layerName}</span>
+            </div>
+          );
+        };
+        
+        export default React.memo(LayerControls);
+        

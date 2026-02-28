@@ -29,7 +29,9 @@ const ClipSettingsPanel = ({
   onUpdateClipUiState,
   progressRef,
   onAudioError,
-  onRegisterPreset // Add this
+  onRegisterPreset,
+  liveFramesRef,
+  activePageId
 }) => {
   const [dacStatuses, setDacStatuses] = useState({});
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
@@ -148,6 +150,8 @@ const ClipSettingsPanel = ({
 
   const pageIdx = clip?.pageId !== undefined ? clip.pageId : selectedLayerIndex !== null ? (clip?.pageId ?? 0) : 0; // Fallback to 0 if not available
   const derivedWorkerId = workerId || (type === 'ilda' ? `ilda-${selectedLayerIndex}-${selectedColIndex}` : (type === 'generator' ? `generator-${pageIdx}-${selectedLayerIndex}-${selectedColIndex}` : null));
+
+  const currentPointCount = (liveFramesRef?.current && derivedWorkerId) ? (liveFramesRef.current[derivedWorkerId]?.points?.length / 8 || 0) : 0;
 
   const audioProgress = audioInfo && audioInfo.duration 
     ? (audioInfo.currentTime / audioInfo.duration) * 100 
@@ -291,6 +295,7 @@ const ClipSettingsPanel = ({
                   uiState={uiState}
                   onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
                   onRegisterPreset={onRegisterPreset}
+                  currentPointCount={currentPointCount}
                   dragHandle={
                     <div 
                         draggable
@@ -317,4 +322,4 @@ const ClipSettingsPanel = ({
   );
 };
 
-export default ClipSettingsPanel;
+export default React.memo(ClipSettingsPanel);

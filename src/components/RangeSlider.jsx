@@ -7,6 +7,7 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
     const valueFillRef = useRef(null);
     const [dragging, setDragging] = useState(null); // 'min', 'max', 'value'
     const [hoveredHandle, setHoveredHandle] = useState(null);
+    const draggingValueRef = useRef(value); // Keep track of latest drag value
 
     const safeMin = min !== undefined ? min : 0;
     const safeMax = max !== undefined ? max : 1;
@@ -17,6 +18,13 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
     
     // value is the main current value (static)
     const currentValue = value !== undefined ? value : safeMin;
+
+    // Sync Ref with Prop when NOT dragging
+    useEffect(() => {
+        if (dragging !== 'value') {
+            draggingValueRef.current = value;
+        }
+    }, [value, dragging]);
 
     const getPercentage = (val) => {
         const range = safeMax - safeMin;
@@ -29,15 +37,11 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
         let animationFrameId;
 
         const updateVisuals = () => {
-            if (dragging === 'value') {
-                 // If dragging, visual is handled by state/props updates
-                 animationFrameId = requestAnimationFrame(updateVisuals);
-                 return;
-            }
-
             let displayValue = currentValue;
 
-            if (animSettings && animSettings.syncMode && progressRef && progressRef.current) {
+            if (dragging === 'value') {
+                 displayValue = draggingValueRef.current;
+            } else if (animSettings && animSettings.syncMode && progressRef && progressRef.current) {
                 // Determine current progress
                 const currentProgress = (workerId && progressRef.current[workerId] !== undefined) 
                     ? progressRef.current[workerId] 
@@ -94,13 +98,8 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
             // Constraints
             if (handle === 'value') {
                 newVal = Math.max(currentRangeMin, Math.min(currentRangeMax, newVal));
-                // Update visual immediately
-                if (valueHandleRef.current) {
-                    valueHandleRef.current.style.left = `${getPercentage(newVal)}%`;
-                }
-                if (valueFillRef.current && !showRange) {
-                    valueFillRef.current.style.width = `${getPercentage(newVal)}%`;
-                }
+                draggingValueRef.current = newVal;
+                // Visual update is now handled by the animation loop reading from draggingValueRef
                 onChange && onChange(newVal);
             } else if (handle === 'min') {
                 newVal = Math.max(safeMin, Math.min(currentRangeMax, newVal)); // Can't cross max
@@ -155,7 +154,7 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                 {/* Tooltips */}
                 {(dragging === 'min' || hoveredHandle === 'min') && renderTooltip(currentRangeMin, getPercentage(currentRangeMin))}
                 {(dragging === 'max' || hoveredHandle === 'max') && renderTooltip(currentRangeMax, getPercentage(currentRangeMax))}
-                {(dragging === 'value' || hoveredHandle === 'value') && renderTooltip(currentValue, getPercentage(currentValue))}
+                {(dragging === 'value' || hoveredHandle === 'value') && renderTooltip(dragging === 'value' ? draggingValueRef.current : currentValue, getPercentage(dragging === 'value' ? draggingValueRef.current : currentValue))}
 
                 {/* Range Fill (Visualizes the Animation Range) */}
                 {showRange && (

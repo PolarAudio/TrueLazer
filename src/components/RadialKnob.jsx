@@ -2,6 +2,75 @@ import React, { useEffect, useRef } from 'react';
 
 const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, className: extraClassName, ...props }) => {
     const knobRef = useRef(null);
+    const indicatorRef = useRef(null);
+    const valueTextRef = useRef(null);
+    const draggingValueRef = useRef(value);
+    const isDraggingRef = useRef(false);
+
+    // value 0-1
+    const rotation = -135 + (value * 270);
+
+    // Sync Ref with Prop when NOT dragging
+    useEffect(() => {
+        if (!isDraggingRef.current) {
+            draggingValueRef.current = value;
+            updateDOM(value);
+        }
+    }, [value]);
+
+    const updateDOM = (val) => {
+        const rot = -135 + (val * 270);
+        if (indicatorRef.current) {
+            indicatorRef.current.style.transform = `rotate(${rot}deg)`;
+        }
+        if (valueTextRef.current) {
+            valueTextRef.current.innerText = `${Math.round(val * 100)}%`;
+        }
+    };
+
+    const handleMouseDown = (e) => {
+        if (!isAssigned || e.button !== 0) return;
+        e.preventDefault();
+        isDraggingRef.current = true;
+        const startY = e.clientY;
+        const startVal = draggingValueRef.current;
+        
+        const handleMouseMove = (ev) => {
+            const delta = startY - ev.clientY;
+            const change = delta / 200; // sensitivity
+            const newVal = Math.max(0, Math.min(1, startVal + change));
+            draggingValueRef.current = newVal;
+            updateDOM(newVal);
+            onChange(newVal);
+        };
+
+        const handleMouseUp = () => {
+            isDraggingRef.current = false;
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+    };
+
+    const handleWheelLocal = (e) => {
+        if (!isAssigned) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const change = e.deltaY * -0.001;
+        const newVal = Math.max(0, Math.min(1, draggingValueRef.current + change));
+        draggingValueRef.current = newVal;
+        updateDOM(newVal);
+        onChange(newVal);
+    };
+
+    useEffect(() => {
+        const knobElement = knobRef.current;
+        if (!knobElement) return;
+        knobElement.addEventListener('wheel', handleWheelLocal, { passive: false });
+        return () => knobElement.removeEventListener('wheel', handleWheelLocal);
+    }, [isAssigned, onChange]); 
 
     const handleDragOver = (e) => {
         if (onDrop) {
@@ -15,14 +84,9 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
             e.preventDefault();
             try {
                 const rawData = e.dataTransfer.getData('application/x-truelazer-param');
-                console.log('[RadialKnob] Dropped Data Raw:', rawData);
                 const data = JSON.parse(rawData);
-                console.log('[RadialKnob] Dropped Data Parsed:', data);
-
                 if (data && (data.type === 'range' || data.type === 'number')) {
                     onDrop(data);
-                } else {
-                    console.warn('[RadialKnob] Invalid data type for knob:', data?.type);
                 }
             } catch (err) {
                 console.error('[RadialKnob] Drop Error:', err);
@@ -30,53 +94,7 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
         }
     };
 
-    // value 0-1
-    const rotation = -135 + (value * 270);
-
-    const handleMouseDown = (e) => {
-        if (!isAssigned || e.button !== 0) return;
-        e.preventDefault(); // Prevent text selection
-        const startY = e.clientY;
-        const startVal = value;
-        
-        const handleMouseMove = (ev) => {
-            const delta = startY - ev.clientY;
-            const change = delta / 200; // sensitivity
-            let newVal = Math.max(0, Math.min(1, startVal + change));
-            onChange(newVal);
-        };
-
-        const handleMouseUp = () => {
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
-        };
-
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
-    };
-
-    useEffect(() => {
-        const knobElement = knobRef.current;
-        if (!knobElement) return;
-
-        const handleWheel = (e) => {
-            if (!isAssigned) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const change = e.deltaY * -0.001; // Negative deltaY is scrolling up
-            let newVal = Math.max(0, Math.min(1, value + change));
-            onChange(newVal);
-        };
-
-        knobElement.addEventListener('wheel', handleWheel, { passive: false });
-
-        return () => {
-            knobElement.removeEventListener('wheel', handleWheel);
-        };
-    }, [value, onChange, isAssigned]); 
-
     return (
-		//
         <div className={`quick-assign-knob ${!isAssigned ? 'unassigned' : ''} ${extraClassName || ''}`.trim()}
              ref={knobRef}
              style={{cursor: isAssigned ? 'ns-resize' : 'default', userSelect: 'none', opacity: isAssigned ? 1 : 0.5 }}
@@ -87,10 +105,10 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
         >
 		<div className="knob-label" title={label}>{label}</div>
 			<div className="knob-circle" >
-				<div className="knob-indicator" style={{ transform: `rotate(${rotation}deg)` }}></div>
+				<div className="knob-indicator" ref={indicatorRef} style={{ transform: `rotate(${rotation}deg)` }}></div>
 			</div>
         
-			<div className="knob-value" style={{ fontSize: '9px', color: '#888', marginTop: '2px' }}>{Math.round(value * 100)}%</div>
+			<div className="knob-value" ref={valueTextRef} style={{ fontSize: '9px', color: '#888', marginTop: '2px' }}>{Math.round(value * 100)}%</div>
         </div>
     );
 };

@@ -48,6 +48,14 @@ const Clip = ({
     }
   };
 
+  const handleActivate = (isPress) => {
+      if (onActivateClick) onActivateClick(layerIndex, colIndex, isPress);
+  };
+
+  const handleLabelClick = () => {
+      if (onLabelClick) onLabelClick(layerIndex, colIndex);
+  };
+
   const handleMouseEnter = () => {
       setIsHovered(true);
       if (onClipHover) onClipHover(layerIndex, colIndex, true);
@@ -55,7 +63,7 @@ const Clip = ({
 
   const handleMouseLeave = () => {
       setIsHovered(false);
-      onActivateClick(false); // Reuse existing logic
+      handleActivate(false); // Use local wrapper
       if (onClipHover) onClipHover(layerIndex, colIndex, false);
   };
 
@@ -191,8 +199,8 @@ const handleFilePathDrop = async (filePath, fileName) => {
         <Mappable id={`clip_${layerIndex}_${colIndex}`}>
           <div 
               className="clip-thumbnail" 
-              onMouseDown={(e) => { if (e.button === 0) onActivateClick(true); }}
-              onMouseUp={(e) => { if (e.button === 0) onActivateClick(false); }}
+              onMouseDown={(e) => { if (e.button === 0) handleActivate(true); }}
+              onMouseUp={(e) => { if (e.button === 0) handleActivate(false); }}
               onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
               style={{ overflow: 'hidden' }} // Ensure image fits
@@ -239,7 +247,7 @@ const handleFilePathDrop = async (filePath, fileName) => {
         </div>
       </Mappable>
       <Mappable id={`clip_${layerIndex}_${colIndex}_preview`}>
-        <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={onLabelClick}>{displayName}</span>
+        <span className={`clip-label ${isSelected ? 'selected-clip' : ''}`} onClick={handleLabelClick}>{displayName}</span>
       </Mappable>
     </div>
   );

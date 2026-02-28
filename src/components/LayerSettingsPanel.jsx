@@ -194,4 +194,4 @@ const LayerSettingsPanel = ({
     );
 };
 
-export default LayerSettingsPanel;
+export default React.memo(LayerSettingsPanel);
