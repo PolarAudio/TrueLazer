@@ -1,0 +1,16 @@
+- [x] Fix Vite Build Warnings
+  - [x] Add `emptyOutDir: true` to `vite.config.js`
+  - [x] Add `manualChunks` to `build.rollupOptions` in `vite.config.js`
+- [x] Fix Mixed Imports for `ilda-writer`
+  - [x] Refactor `ShapeBuilder.jsx` to dynamically import `framesToIlda`
+- [ ] Audit Drag & Drop Handlers
+  - [ ] Inspect and fix payloads in `GlobalQuickAssigns`
+  - [ ] Inspect and fix payloads in `FileBrowser`
+  - [ ] Inspect and fix payloads in `ClipSettingsPanel`
+- [ ] Add Worker Error Handlers
+  - [ ] Refactor `ilda-parser.worker.js` to postMessage errors
+  - [ ] Refactor `generators.worker.js` to postMessage errors
+- [ ] Implement ElectronAPI Fallbacks
+  - [ ] Update `osc.js`
+  - [ ] Update `midi.js`
+  - [ ] Update `artnet.js`

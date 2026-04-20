@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { framesToIlda } from '../utils/ilda-writer';
 import { parseIldaFile } from '../utils/ilda-parser';
 import { calculateSmoothHandles } from '../utils/geometry';
 
@@ -1980,6 +1979,7 @@ const ShapeBuilder = ({ onBack }) => {
               }); 
               return { points: pts, frameName: 'SHAPE' };
           });
+          const { framesToIlda } = await import('../utils/ilda-writer.js');
           const buffer = framesToIlda(ildaFramesData); await window.electronAPI.saveIldaFile(buffer, 'built_shape.ild');
       } catch (e) { console.error(e); } finally { setIsExporting(false); }
   };
