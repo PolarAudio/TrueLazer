@@ -80,7 +80,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
         
         if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color' || parsedData.type === 'effect') {
           if (onDropEffect) {
-            onDropEffect(parsedData.id || parsedData.name);
+            onDropEffect(index, parsedData.id || parsedData.name);
             return;
           }
         } else if (parsedData.isGroup || (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels))) {
@@ -99,7 +99,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
     if (droppedId.startsWith('effect_')) {
       const effectId = droppedId.replace('effect_', '');
       if (onDropEffect) {
-        onDropEffect(effectId);
+        onDropEffect(index, effectId);
       }
     }
   };
