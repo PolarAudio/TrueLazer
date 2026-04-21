@@ -191,7 +191,7 @@ export function generateCircle(params) {
     });
 
     const points = [];
-    for (let i = 0; i <= numPoints; i++) {
+    for (let i = 0; i < numPoints; i++) {
       const angle = (i / numPoints) * 2 * Math.PI;
       points.push({
         x: radius * Math.cos(angle) + x,
@@ -201,7 +201,7 @@ export function generateCircle(params) {
       });
     }
 
-    return { points: applyRenderingStyle(points, params) };
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateCircle:', error);
     throw error;
@@ -243,9 +243,9 @@ export function generateSquare(params) {
         });
       }
     }
-    points.push({ ...corners[corners.length - 1], r, g, b, lastPoint: true });
+    // Redundant point removed
 
-    return { points: applyRenderingStyle(points, params) };
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateSquare:', error);
     throw error;
@@ -304,9 +304,9 @@ export function generateTriangle(params) {
         });
       }
     }
-    points.push({ ...corners[corners.length - 1], r, g, b, lastPoint: true });
+    // Redundant point removed
 
-    return { points: applyRenderingStyle(points, params) };
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateTriangle:', error);
     throw error;
@@ -385,7 +385,7 @@ export function generateStar(params) {
     }
     points.push({ ...vertices[vertices.length - 1], r, g, b, lastPoint: true });
 
-    return { points: applyRenderingStyle(points, params) };
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateStar:', error);
     throw error;

@@ -62,7 +62,7 @@ self.onmessage = async (event) => {
         } catch (generatorError) {
           console.error(`Error generating frames for ${generator.name}:`, generatorError);
           frames = [{ points: [] }]; // Ensure frames array is still returned, even on error
-          self.postMessage({ success: false, error: generatorError.message, layerIndex, colIndex });
+          self.postMessage({ type: 'error', message: generatorError.message, layerIndex, colIndex });
           return;
         }
         self.postMessage({
@@ -81,10 +81,10 @@ self.onmessage = async (event) => {
         break;
       default:
         console.log('Worker: Received unknown message type:', type, 'Event data:', event.data);
-        self.postMessage({ success: false, error: 'Unknown message type', layerIndex, colIndex });
+        self.postMessage({ type: 'error', message: 'Unknown message type', layerIndex, colIndex });
     }
   } catch (error) {
     console.error('Worker: Uncaught error in onmessage handler:', error);
-    self.postMessage({ success: false, error: error.message, layerIndex, colIndex });
+    self.postMessage({ type: 'error', message: error.message, layerIndex, colIndex });
   }
 };

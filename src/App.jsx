@@ -61,10 +61,30 @@ const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => {
 
   return (
     <div className="master-speed-slider">
-      <label htmlFor="masterSpeedRange" draggable onDragStart={handleDragStart}>{playbackFps} FPS</label>
-      <Mappable id="master_speed">
-          <input type="range" min="1" max="120" value={playbackFps} className="slider_hor" id="masterSpeedRange" onChange={(e) => onSpeedChange(parseInt(e.target.value))} />
-      </Mappable>
+      <label 
+        draggable 
+        onDragStart={handleDragStart}
+        className="draggable-param-label"
+      >
+        FPS
+      </label>
+      <div className="value-adjuster">
+          <Mappable id="master_speed_down">
+            <button onClick={() => onSpeedChange(Math.max(1, playbackFps - 1))}>-</button>
+          </Mappable>
+          <Mappable id="master_speed">
+            <input 
+              type="number" 
+              min="1" 
+              max="120" 
+              value={playbackFps} 
+              onChange={(e) => onSpeedChange(parseInt(e.target.value) || 1)} 
+            />
+          </Mappable>
+          <Mappable id="master_speed_up">
+            <button onClick={() => onSpeedChange(Math.min(120, playbackFps + 1))}>+</button>
+          </Mappable>
+      </div>
     </div>
   );
 });
@@ -166,6 +186,8 @@ const getInitialState = (initialSettings) => ({
   worldShowBeamEffect: initialSettings?.renderSettings?.worldShowBeamEffect ?? true,
   worldBeamRenderMode: initialSettings?.renderSettings?.worldBeamRenderMode ?? 'both',
   optimizationEnabled: initialSettings?.renderSettings?.optimizationEnabled ?? true,
+  optimizationMaxDist: Number(initialSettings?.renderSettings?.optimizationMaxDist ?? 0.02),
+  optimizationPathDwell: Number(initialSettings?.renderSettings?.optimizationPathDwell ?? 2),
   activeClipIndexes: initialSettings?.activeClipIndexes ?? Array(5).fill(null),
   isPlaying: false,
   isStopped: true, // Add this
@@ -638,9 +660,12 @@ function reducer(state, action) {
     case 'SET_WORLD_OUTPUT_ACTIVE': {
       return { ...state, isWorldOutputActive: action.payload };
 	}
-    case 'SET_OPTIMIZATION_ENABLED': {
+    case 'SET_OPTIMIZATION_ENABLED':
         return { ...state, optimizationEnabled: action.payload };
-    }
+    case 'SET_OPTIMIZATION_MAX_DIST':
+        return { ...state, optimizationMaxDist: action.payload };
+    case 'SET_OPTIMIZATION_PATH_DWELL':
+        return { ...state, optimizationPathDwell: action.payload };
     case 'TOGGLE_WORLD_OUTPUT_ACTIVE': {
       return { ...state, isWorldOutputActive: !state.isWorldOutputActive };
 	}
@@ -1326,6 +1351,39 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex, optimizat
         lastWasBlanked = blanking;
     }
 
+    // Automatically close the loop for the thumbnail if the frame is explicitly marked as closed
+    let firstX, firstY, firstR, firstG, firstB, firstBlanking;
+    if (isTyped) {
+        firstX = points[0]; firstY = points[1];
+        firstR = points[3]; firstG = points[4]; firstB = points[5];
+        firstBlanking = points[6] > 0.5;
+    } else {
+        const p = points[0];
+        firstX = p.x; firstY = p.y;
+        firstR = p.r; firstG = p.g; firstB = p.b;
+        firstBlanking = !!p.blanking;
+    }
+
+    if (processedFrame.isClosed && !lastWasBlanked && !firstBlanking && lastX !== null) {
+        const dist = Math.sqrt(Math.pow(lastX - ((firstX + 1) * 0.5 * width), 2) + Math.pow(lastY - ((1 - (firstY + 1) * 0.5) * height), 2));
+        // Only close if it's reasonably a loop (distance < 20 pixels on 128x128 canvas)
+        if (dist > 0.1 && dist < 40) {
+            const screenX = (firstX + 1) * 0.5 * width;
+            const screenY = (1 - (firstY + 1) * 0.5) * height;
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(screenX, screenY);
+            
+            const ir = Math.floor(Math.max(0, Math.min(255, firstR)));
+            const ig = Math.floor(Math.max(0, Math.min(255, firstG)));
+            const ib = Math.floor(Math.max(0, Math.min(255, firstB)));
+            
+            ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
+            ctx.stroke();
+        }
+    }
+
     // Convert to Blob and then ArrayBuffer
     try {
         const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
@@ -1710,6 +1768,8 @@ function App() {
     worldShowBeamEffect,
     worldBeamRenderMode,
     optimizationEnabled,
+    optimizationMaxDist,
+    optimizationPathDwell,
     activeClipIndexes,
     isPlaying,
     isStopped, // Add this
@@ -1845,6 +1905,8 @@ function App() {
     const selectedClipRef = useRef(null);
     const getAudioInfoRef = useRef(getAudioInfo);
     const optimizationEnabledRef = useRef(optimizationEnabled);
+    const optimizationMaxDistRef = useRef(optimizationMaxDist);
+    const optimizationPathDwellRef = useRef(optimizationPathDwell);
 
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
     useEffect(() => { isWorldOutputActiveRef.current = isWorldOutputActive; }, [isWorldOutputActive]);
@@ -1854,6 +1916,8 @@ function App() {
     useEffect(() => { selectedColIndexRef.current = selectedColIndex; }, [selectedColIndex]);
     useEffect(() => { getAudioInfoRef.current = getAudioInfo; }, [getAudioInfo]);
     useEffect(() => { optimizationEnabledRef.current = optimizationEnabled; }, [optimizationEnabled]);
+    useEffect(() => { optimizationMaxDistRef.current = Number(optimizationMaxDist); }, [optimizationMaxDist]);
+    useEffect(() => { optimizationPathDwellRef.current = Number(optimizationPathDwell); }, [optimizationPathDwell]);
 
     const playbackFpsRef = useRef(playbackFps);
     useEffect(() => { playbackFpsRef.current = playbackFps; }, [playbackFps]);
@@ -2380,7 +2444,11 @@ function App() {
 
               // Optimization AFTER effects ensures all transitions (Mirror, Delay, Blanking) are handled
               if (optimizationEnabledRef.current) {
-                  const optimizedPts = optimizePoints(modifiedFrame.points);
+                  const optimizedPts = optimizePoints(modifiedFrame.points, {
+                      maxDist: Number(optimizationMaxDistRef.current || 0.02),
+                      pathDwell: Number(optimizationPathDwellRef.current || 2),
+                      isClosed: modifiedFrame.isClosed
+                  });
                   modifiedFrame.points = optimizedPts;
                   modifiedFrame.isTypedArray = true;
               }
@@ -4688,7 +4756,7 @@ function App() {
                           type: 'file-content-response',
                           requestId: fileEntry.requestId,
                           arrayBuffer: newArrayBuffer,
-                      }, [newArrayBuffer]);
+                      }, [arrayBuffer]);
                   }
               }
 
@@ -5201,11 +5269,14 @@ function App() {
                   worldShowBeamEffect,
                   worldBeamRenderMode,
                   settingsPanelCollapsed: state.settingsPanelCollapsed,
-                  optimizationEnabled: optimizationEnabled
+                  optimizationEnabled: optimizationEnabled,
+                  optimizationMaxDist: optimizationMaxDist,
+                  optimizationPathDwell: optimizationPathDwell
               }}
               onSetRenderSetting={(setting, value) => {
-                  if (setting === 'optimizationEnabled') {
-                      dispatch({ type: 'SET_OPTIMIZATION_ENABLED', payload: value });
+                  if (setting === 'optimizationEnabled' || setting === 'optimizationMaxDist' || setting === 'optimizationPathDwell') {
+                      const actionType = `SET_${setting.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
+                      dispatch({ type: actionType, payload: Number(value) });
                   } else {
                       dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } });
                   }

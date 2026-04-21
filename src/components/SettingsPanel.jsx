@@ -166,8 +166,31 @@ const SettingsPanel = ({
                 onChange={(e) => onSetRenderSetting('optimizationEnabled', e.target.checked)}
               />
           </div>
-          <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '5px' }}>
-              Optimizes geometry (interpolation/dwell) before applying effects. Fixes lines in Delay effect but increases point count.
+          <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px' }}>
+              <label className="param-label" style={{ fontSize: '11px' }}>Max Point Distance</label>
+              <input 
+                type="number" 
+                min="0.005" max="0.5" step="0.005"
+                value={renderSettings.optimizationMaxDist} 
+                onChange={(e) => onSetRenderSetting('optimizationMaxDist', parseFloat(e.target.value.toString().replace(',', '.')))}
+                className="param-number-input"
+                style={{ width: '60px' }}
+              />
+          </div>
+          <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px' }}>
+              <label className="param-label" style={{ fontSize: '11px' }}>Dwell Time (Samples)</label>
+              <input 
+                type="number" 
+                min="0" max="10" step="1"
+                value={renderSettings.optimizationPathDwell} 
+                onChange={(e) => onSetRenderSetting('optimizationPathDwell', parseInt(e.target.value))}
+                className="param-number-input"
+                style={{ width: '60px' }}
+              />
+          </div>
+          <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '10px' }}>
+              Optimizes geometry (interpolation/dwell) before applying effects. 
+              Higher distance adds fewer points. Higher dwell stabilizes corners.
           </p>
       </CollapsiblePanel>
 

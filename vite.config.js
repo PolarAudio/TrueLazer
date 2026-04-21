@@ -11,10 +11,12 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom'],
-          'vendor-mui': ['@mui/material', '@emotion/react', '@emotion/styled'],
-          'vendor-laser': ['@laser-dac/core', '@laser-dac/ether-dream']
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('@mui')) return 'vendor-mui';
+            if (id.includes('react') || id.includes('react-dom')) return 'vendor-react';
+            return 'vendor'; // all other node_modules
+          }
         }
       }
     }

@@ -1,8 +1,0 @@
-{
-  "track_id": "midi_responsiveness_20260223",
-  "type": "feature",
-  "status": "new",
-  "created_at": "2026-02-23T14:00:00Z",
-  "updated_at": "2026-02-23T14:00:00Z",
-  "description": "Optimize MIDI & Control Responsiveness with 60Hz Throttling"
-}

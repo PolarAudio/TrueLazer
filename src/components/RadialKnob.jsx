@@ -97,7 +97,7 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
     return (
         <div className={`quick-assign-knob ${!isAssigned ? 'unassigned' : ''} ${extraClassName || ''}`.trim()}
              ref={knobRef}
-             style={{cursor: isAssigned ? 'ns-resize' : 'default', userSelect: 'none', opacity: isAssigned ? 1 : 0.5 }}
+             style={{ userSelect: 'none' }}
              onDragOver={handleDragOver} 
              onDrop={handleDrop}
              onMouseDown={handleMouseDown}

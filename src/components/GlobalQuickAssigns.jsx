@@ -30,11 +30,9 @@ const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, onContextMenu
     return (
         <div className={`quick-assign-button ${value ? 'active' : ''} ${!isAssigned ? 'unassigned' : ''} ${extraClassName || ''}`.trim()}
              style={{
-				cursor: isAssigned ? 'pointer' : 'default', 
-				userSelect: 'none',
-				width: '90%',
-				opacity: isAssigned ? 1 : 0.5,
-				}}
+                userSelect: 'none',
+                width: '90%',
+             }}
              onDragOver={handleDragOver} 
              onDrop={handleDrop}
              onContextMenu={onContextMenu}

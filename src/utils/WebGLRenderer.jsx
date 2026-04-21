@@ -334,12 +334,9 @@ export class WebGLRenderer {
     // Let's rely on 'applyEffects' which we just updated to be robust.
     // So we pass original 'effects' and let 'applyEffects' do the work.
     
-    // Optimize BEFORE effects (Option 3 match)
+    // Previews should NOT be optimized as the optimizer is designed for DAC/Scanner stabilization
+    // This allows the user to see the "pure" generator geometry in the preview.
     let frameToProcess = frame;
-    if (optimizationEnabled) {
-        const optimizedPoints = optimizePoints(frame.points);
-        frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
-    }
 
     // Apply effects before drawing
     // We pass syncSettings and bpm in the context
@@ -385,11 +382,13 @@ export class WebGLRenderer {
       // Modes: 'points' (dots), 'lines' (strip), 'both' (strip + dots)
       const drawPoints = beamRenderMode === 'points' || beamRenderMode === 'both';
       const drawLines = beamRenderMode === 'lines' || beamRenderMode === 'both';
-      
+      const firstPoint = getPointData(0);
+      let lastProcessedPoint = firstPoint;
+
       if (drawLines) {
           let currentSegmentPositions = [];
           let currentSegmentColors = [];
-          let prevPoint = getPointData(0);
+          let prevPoint = firstPoint;
 
           for (let i = 1; i < pointsToDraw; i++) {
             const point = getPointData(i);
@@ -399,22 +398,24 @@ export class WebGLRenderer {
             const prevIdx = (startIndex + i - 1) % numPoints;
             const isWrap = currIdx < prevIdx;
 
-            if (point.blanking || isWrap) {
-              if (currentSegmentPositions.length > 0) {
-                this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
-                currentSegmentPositions = [];
-                currentSegmentColors = [];
-              }
-            } else {
-              // Beam to this point is ON. The segment starts at prevPoint.
+            // Only draw a line if BOTH points are non-blanked and we aren't wrapping around
+            if (!point.blanking && !prevPoint.blanking && !isWrap) {
               if (currentSegmentPositions.length === 0) {
                 currentSegmentPositions.push(prevPoint.x, prevPoint.y);
-                currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+                currentSegmentColors.push(prevPoint.r / 255 * intensity, prevPoint.g / 255 * intensity, prevPoint.b / 255 * intensity);
               }
               currentSegmentPositions.push(point.x, point.y);
               currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+            } else {
+              // End current segment if we hit blanking or wrap
+              if (currentSegmentPositions.length >= 4) { // At least 2 points (x,y,x,y)
+                this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
+              }
+              currentSegmentPositions = [];
+              currentSegmentColors = [];
             }
             prevPoint = point;
+            lastProcessedPoint = point;
           }
           if (currentSegmentPositions.length > 0) {
             this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
@@ -430,9 +431,20 @@ export class WebGLRenderer {
               pts.push(point.x, point.y);
               cols.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
             }
+            lastProcessedPoint = point;
           }
           if (pts.length > 0) {
             this._drawSegment(new Float32Array(pts), new Float32Array(cols), 1.0, pts.length / 2, true);
+          }
+      }
+
+      // Automatically close the loop if the frame is explicitly marked as closed
+      const isClosed = modifiedFrame?.isClosed;
+      if (isClosed && drawLines && !lastProcessedPoint.blanking && !firstPoint.blanking) {
+          const dist = Math.sqrt(Math.pow(lastProcessedPoint.x - firstPoint.x, 2) + Math.pow(lastProcessedPoint.y - firstPoint.y, 2));
+          // Only close if it's reasonably a loop (distance < 0.5)
+          if (dist > 0.001 && dist < 0.5) {
+              this._drawSegment(new Float32Array([lastProcessedPoint.x, lastProcessedPoint.y, firstPoint.x, firstPoint.y]), new Float32Array([lastProcessedPoint.r/255*intensity, lastProcessedPoint.g/255*intensity, lastProcessedPoint.b/255*intensity, firstPoint.r/255*intensity, firstPoint.g/255*intensity, firstPoint.b/255*intensity]), 1.0, 2, false);
           }
       }
     };
@@ -443,7 +455,29 @@ export class WebGLRenderer {
       const beamColors = [];
       for (let i = 0; i < pointsToDraw; i++) {
         const point = getPointData(i);
-        if (!point.blanking) {
+        if (point.blanking) continue;
+
+        // Dwell detection: Is this point at the same location as neighbors in the frame?
+        const currIdx = (startIndex + i) % numPoints;
+        const prevIdx = (currIdx - 1 + numPoints) % numPoints;
+        const nextIdx = (currIdx + 1) % numPoints;
+        
+        // Check actual buffer points for dwell
+        let isDwell = false;
+        if (isTyped) {
+          const offP = prevIdx * 8;
+          const offN = nextIdx * 8;
+          isDwell = (Math.abs(point.x - points[offP]) < 0.001 && Math.abs(point.y - points[offP+1]) < 0.001) ||
+                    (Math.abs(point.x - points[offN]) < 0.001 && Math.abs(point.y - points[offN+1]) < 0.001);
+        } else {
+          const prevP = points[prevIdx];
+          const nextP = points[nextIdx];
+          isDwell = (Math.abs(point.x - prevP.x) < 0.001 && Math.abs(point.y - prevP.y) < 0.001) ||
+                    (Math.abs(point.x - nextP.x) < 0.001 && Math.abs(point.y - nextP.y) < 0.001);
+        }
+
+        // Render beam if it's a dwell point OR if we are in 'points' only mode
+        if (isDwell || beamRenderMode === 'points') {
           beamPositions.push(0, 0, point.x, point.y);
           const color = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
           beamColors.push(...color, ...color);
@@ -465,12 +499,12 @@ export class WebGLRenderer {
         
         // Detect wrap-around
         const isWrap = ((startIndex + i) % numPoints) < ((startIndex + i - 1) % numPoints);
-        if (isWrap) {
-            prevPoint = point;
-            continue;
-        }
+        
+        // Only draw cone if BOTH points are visible, no wrap, and they are NOT at the same location (it's a path)
+        // Using a slightly larger epsilon (0.001) to ignore tiny movements or duplicate start/end points
+        const isMovement = Math.abs(point.x - prevPoint.x) > 0.001 || Math.abs(point.y - prevPoint.y) > 0.001;
 
-        if (!point.blanking) {
+        if (!point.blanking && !prevPoint.blanking && !isWrap && isMovement) {
           trianglePositions.push(0, 0, prevPoint.x, prevPoint.y, point.x, point.y);
           
           const color1 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
@@ -487,6 +521,21 @@ export class WebGLRenderer {
       }
       if (trianglePositions.length > 0) {
         this._drawTriangles(new Float32Array(trianglePositions), new Float32Array(triangleColors), beamAlpha, trianglePositions.length / 2);
+      }
+
+      // Close the 3D loop for cones
+      const isClosed = modifiedFrame?.isClosed;
+      const firstPoint = getPointData(0);
+      if (isClosed && !prevPoint.blanking && !firstPoint.blanking) {
+          const dist = Math.sqrt(Math.pow(prevPoint.x - firstPoint.x, 2) + Math.pow(prevPoint.y - firstPoint.y, 2));
+          if (dist > 0.001 && dist < 0.5) {
+              const trianglePositionsWrap = [0, 0, prevPoint.x, prevPoint.y, firstPoint.x, firstPoint.y];
+              const color1 = [prevPoint.r / 255 * intensity, prevPoint.g / 255 * intensity, prevPoint.b / 255 * intensity];
+              const edgeFade = 0.3;
+              const fadedColor1 = [color1[0] * edgeFade, color1[1] * edgeFade, color1[2] * edgeFade];
+              const triangleColorsWrap = [...color1, ...fadedColor1, ...fadedColor1]; // simplified for wrap
+              this._drawTriangles(new Float32Array(trianglePositionsWrap), new Float32Array(triangleColorsWrap), beamAlpha, 3);
+          }
       }
     };
 

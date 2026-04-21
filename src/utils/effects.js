@@ -180,19 +180,25 @@ export function applyEffects(frame, effects, context = {}) {
     ensureBufferSize(numPointsCount);
 
     // Copy source to processing buffer (avoid unnecessary allocations)
+    let currentNumPoints = numPointsCount;
     let activePoints = processingBuffer;
     if (isSourceTyped) {
         activePoints.set(sourcePoints);
     } else {
-        // Fallback copy for non-typed arrays
-        for (let i = 0; i < numPointsCount; i++) {
+        // Fallback copy for non-typed arrays (objects)
+        for (let i = 0; i < currentNumPoints; i++) {
             const p = sourcePoints[i];
             const offset = i * 8;
-            activePoints.set(p, offset);
+            activePoints[offset] = p.x ?? 0;
+            activePoints[offset + 1] = p.y ?? 0;
+            activePoints[offset + 2] = p.z ?? 0;
+            activePoints[offset + 3] = p.r ?? 255;
+            activePoints[offset + 4] = p.g ?? 255;
+            activePoints[offset + 5] = p.b ?? 255;
+            activePoints[offset + 6] = p.blanking ? 1 : 0;
+            activePoints[offset + 7] = p.intensity ?? 1;
         }
     }
-
-    let processedPoints = activePoints;
 
     // Process each effect in sequence
     for (const effect of effects) {
@@ -223,40 +229,49 @@ export function applyEffects(frame, effects, context = {}) {
         // Dispatch to appropriate handler
         switch (effect.id) {
             // --- Existing effects ---
-            case 'rotate': applyRotate(activePoints, numPointsCount, resolvedParams, progress, time); break;
-            case 'scale': applyScale(activePoints, numPointsCount, resolvedParams); break;
-            case 'translate': applyTranslate(activePoints, numPointsCount, resolvedParams); break;
-            case 'color': applyColor(activePoints, numPointsCount, resolvedParams, time); break;
-            case 'wave': applyWave(activePoints, numPointsCount, resolvedParams, time); break;
-            case 'blanking': applyBlanking(activePoints, numPointsCount, resolvedParams); break;
-            case 'strobe': applyStrobe(activePoints, numPointsCount, resolvedParams, time); break;
-            case 'mirror': activePoints = applyMirror(activePoints, numPointsCount, resolvedParams); break;
-            case 'warp': applyWarp(activePoints, numPointsCount, resolvedParams, time); break;
-            case 'distortion': applyDistortion(activePoints, numPointsCount, resolvedParams, time); break;
-            case 'move': applyMove(activePoints, numPointsCount, resolvedParams, time); break;
-            case 'delay': if (effectStates && effect.instanceId) { activePoints = applyDelay(activePoints, numPointsCount, resolvedParams, effectStates, effect.instanceId, context); } break;
-            case 'chase': activePoints = applyChase(activePoints, numPointsCount, resolvedParams, time, context); break;
+            case 'rotate': applyRotate(activePoints, currentNumPoints, resolvedParams, progress, time); break;
+            case 'scale': applyScale(activePoints, currentNumPoints, resolvedParams); break;
+            case 'translate': applyTranslate(activePoints, currentNumPoints, resolvedParams); break;
+            case 'color': applyColor(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'wave': applyWave(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'blanking': applyBlanking(activePoints, currentNumPoints, resolvedParams); break;
+            case 'strobe': applyStrobe(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'mirror': 
+                activePoints = applyMirror(activePoints, currentNumPoints, resolvedParams); 
+                currentNumPoints = activePoints.length / 8;
+                break;
+            case 'warp': applyWarp(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'distortion': applyDistortion(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'move': applyMove(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'delay': 
+                if (effectStates && effect.instanceId) { 
+                    activePoints = applyDelay(activePoints, currentNumPoints, resolvedParams, effectStates, effect.instanceId, context); 
+                    currentNumPoints = activePoints.length / 8;
+                } 
+                break;
+            case 'chase': 
+                activePoints = applyChase(activePoints, currentNumPoints, resolvedParams, time, context); 
+                currentNumPoints = activePoints.length / 8;
+                break;
 
             // --- New point‑based effects ---
-            case 'invert': processedPoints = applyInvert(activePoints, numPointsCount, resolvedParams); break;
-            case 'noise': processedPoints = applyNoise(activePoints, numPointsCount, resolvedParams, time); break;
-            case 'threshold': processedPoints = applyThreshold(activePoints, numPointsCount, resolvedParams); break;
-            case 'grow': processedPoints = applyGrow(activePoints, numPointsCount, resolvedParams); break;
+            case 'invert': applyInvert(activePoints, currentNumPoints, resolvedParams); break;
+            case 'noise': applyNoise(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'threshold': applyThreshold(activePoints, currentNumPoints, resolvedParams); break;
+            case 'grow': applyGrow(activePoints, currentNumPoints, resolvedParams); break;
 
             // ... other existing effects continued ...
-
             default: /* no‑op */ break;
         }
 
-        // Prepare for next iteration
-        processedPoints = processedPoints; // ensure we reference the latest buffer
-        ensureBufferSize(processedPoints.length);
+        ensureBufferSize(currentNumPoints);
     }
 
     // Final result must be a NEW buffer because it's passed around, but we've reduced intermediate ones
-    const finalPoints = new Float32Array(processedPoints);
-    if (processedPoints._channelDistributions) {
-        finalPoints._channelDistributions = processedPoints._channelDistributions;
+    const finalPoints = new Float32Array(currentNumPoints * 8);
+    finalPoints.set(activePoints.subarray(0, currentNumPoints * 8));
+    if (activePoints._channelDistributions) {
+        finalPoints._channelDistributions = activePoints._channelDistributions;
     }
     return { ...frame, points: finalPoints, isTypedArray: true };
 }
@@ -493,7 +508,9 @@ function applyStrobe(points, numPoints, params, time) {
 
 function applyMirror(points, numPoints, params) {
     const { mode, additive = true, axisOffset = 0, planeRotation = 0 } = params;
-    if (mode === 'none' || numPoints === 0) return points;
+    if (mode === 'none' || numPoints === 0) {
+        return points.subarray(0, numPoints * 8);
+    }
 
     const angleRad = planeRotation * Math.PI / 180;
     const cosA = Math.cos(angleRad);
@@ -755,32 +772,6 @@ function applyMove(points, numPoints, params, time) {
 }
 
 // Utility: Simple 1D Perlin noise function
-function perlinNoise1D(seed) {
-    const permutation = [];
-    for (let i = 0; i < 256; i++) {
-        permutation[i] = (seed * 9301 + 49297) % 233280;
-        permutation[i + 256] = permutation[i];
-    }
-    return (x) => {
-        const X = Math.floor(x) & 255;
-        const Y = (x * 128) & 255;
-        const u = fade(X);
-        const v = fade(Y);
-        return lerp(
-            grad(permutation[X] + Y, x),
-            grad(permutation[X + 1] + Y, x - 1),
-            u
-        );
-    };
-}
-function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
-function lerp(a, b, t) { return a + t * (b - a); }
-function grad(hash, x) {
-    const h = hash & 15;
-    const grad = 1 + (h & 7);
-    return h & 8 ? -grad * x : grad * x;
-}
-
 // ---------- New point‑based effect helpers ----------
 
 function applyInvert(points, numPoints, params) {
@@ -803,15 +794,26 @@ function applyInvert(points, numPoints, params) {
 }
 
 function applyNoise(points, numPoints, params, time) {
-    const { type = 'perlin', amplitude = 0.1, scale = 10, speed = 1, octaves = 1, seed = 0 } = params;
-    const noise = perlinNoise1D(seed);
+    const { amplitude = 0.05, scale = 5, speed = 1, seed = 0 } = params;
+    const t = time * 0.001 * speed;
+    
+    // Simple but stable pseudo-noise based on coordinates
+    const getNoise = (nx, ny, nt) => {
+        return Math.sin(nx * scale + nt) * Math.cos(ny * scale - nt * 0.7) * 
+               Math.sin(nx * scale * 0.5 - ny * scale * 0.3 + nt * 1.1);
+    };
+
     for (let i = 0; i < numPoints; i++) {
         const offset = i * 8;
         const x = points[offset];
         const y = points[offset + 1];
-        const v = noise((x + y) * scale + time * speed);
-        points[offset] += amplitude * v;
-        points[offset + 1] += amplitude * v;
+        
+        // Decouple X and Y by using different phase shifts and offsets
+        const noiseX = getNoise(x + seed, y, t);
+        const noiseY = getNoise(x, y + seed + 10, t + 0.5);
+        
+        points[offset] += noiseX * amplitude;
+        points[offset + 1] += noiseY * amplitude;
     }
     return points;
 }
@@ -867,7 +869,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
     const { mode = 'segment', delayAmount, decay, delayDirection, useCustomOrder, customOrder, playstyle = 'repeat', steps = 10 } = params;
     if (!effectStates.has(instanceId)) effectStates.set(instanceId, []);
     const history = effectStates.get(instanceId);
-    history.unshift(new Float32Array(points));
+    history.unshift(new Float32Array(points.subarray(0, numPoints * 8)));
 
     if (mode === 'segment') {
         // SEGMENT MODE THRESHOLD: Minimum 5 points required
