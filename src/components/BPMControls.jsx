@@ -33,6 +33,21 @@ const BPMControls = ({ bpm, onBpmChange }) => {
     }
   };
 
+  const bpmInputRef = useRef(null);
+  useEffect(() => {
+    const el = bpmInputRef.current;
+    if (!el) return;
+    const handler = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -1 : 1;
+      const newVal = Math.round(Math.max(1, Math.min(999, bpm + delta)));
+      setLocalBpm(newVal);
+      onBpmChange(newVal);
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [bpm, onBpmChange]);
+
   return (
     <div className="bpm-controls">
       <div className="bpm-display">
@@ -52,6 +67,7 @@ const BPMControls = ({ bpm, onBpmChange }) => {
               min="1"
               max="999"
               step="0.1"
+              ref={bpmInputRef}
             />
           </Mappable>
           <Mappable id="bpm_fine_up">

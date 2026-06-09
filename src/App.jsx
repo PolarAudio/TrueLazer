@@ -47,6 +47,19 @@ import { throttle } from './utils/throttle';
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => {
+  const fpsInputRef = useRef(null);
+  useEffect(() => {
+    const el = fpsInputRef.current;
+    if (!el) return;
+    const handler = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -1 : 1;
+      onSpeedChange(Math.max(1, Math.min(120, playbackFps + delta)));
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [playbackFps, onSpeedChange]);
+
   const handleDragStart = (e) => {
     e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
         type: 'range',
@@ -79,6 +92,7 @@ const MasterSpeedSlider = React.memo(({ playbackFps, onSpeedChange }) => {
               max="120" 
               value={playbackFps} 
               onChange={(e) => onSpeedChange(parseInt(e.target.value) || 1)} 
+              ref={fpsInputRef}
             />
           </Mappable>
           <Mappable id="master_speed_up">
@@ -1271,7 +1285,7 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex, optimizat
     let frameToProcess = frame;
     if (optimizationEnabled) {
         try {
-            const optimizedPoints = optimizePoints(frame.points);
+            const optimizedPoints = optimizePoints(frame.points, { isClosed: frame.isClosed });
             frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
         } catch (e) {
             console.warn("Failed to optimize points for thumbnail:", e);
@@ -1366,8 +1380,8 @@ const generateThumbnail = async (frame, effects, layerIndex, colIndex, optimizat
 
     if (processedFrame.isClosed && !lastWasBlanked && !firstBlanking && lastX !== null) {
         const dist = Math.sqrt(Math.pow(lastX - ((firstX + 1) * 0.5 * width), 2) + Math.pow(lastY - ((1 - (firstY + 1) * 0.5) * height), 2));
-        // Only close if it's reasonably a loop (distance < 20 pixels on 128x128 canvas)
-        if (dist > 0.1 && dist < 40) {
+        // Only close if last and first are not at the exact same pixel
+        if (dist > 0.1) {
             const screenX = (firstX + 1) * 0.5 * width;
             const screenY = (1 - (firstY + 1) * 0.5) * height;
 
@@ -1861,7 +1875,7 @@ function App() {
 
           if (clipContents) {
 
-              liveClipContentsRef.current = structuredClone(clipContents);
+              liveClipContentsRef.current = clipContents;
 
           }
 
@@ -1873,7 +1887,7 @@ function App() {
 
           if (dacOutputSettings) {
 
-              liveDacOutputSettingsRef.current = structuredClone(dacOutputSettings);
+              liveDacOutputSettingsRef.current = dacOutputSettings;
 
           }
 
@@ -1966,7 +1980,7 @@ function App() {
               return;
           }
           if (clipContents) {
-              liveClipContentsRef.current = structuredClone(clipContents);
+              liveClipContentsRef.current = clipContents;
           }
       }, [clipContents]);
 
@@ -1976,7 +1990,7 @@ function App() {
               return;
           }
           if (dacOutputSettings) {
-              liveDacOutputSettingsRef.current = structuredClone(dacOutputSettings);
+              liveDacOutputSettingsRef.current = dacOutputSettings;
           }
       }, [dacOutputSettings]);
 
@@ -2563,8 +2577,10 @@ function App() {
               activeCount++;
               const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
               totalPointsSentRef.current += numPts;
-              // Fix: optimizationEnabledRef.current being true should mean skipOptimization is FALSE
-              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame.points, OUTPUT_FPS, group.type, { skipOptimization: !optimizationEnabledRef.current });
+              // When main optimizer ran (optimization ON), skip the legacy DAC optimizer
+              // to avoid double-optimization. When main optimizer is OFF, let the legacy
+              // DAC optimizer provide basic interpolation.
+              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame.points, OUTPUT_FPS, group.type, { skipOptimization: optimizationEnabledRef.current });
             }
           });
           activeChannelsCountRef.current = activeCount;

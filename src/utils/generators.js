@@ -197,9 +197,14 @@ export function generateCircle(params) {
         x: radius * Math.cos(angle) + x,
         y: radius * Math.sin(angle) + y,
         r, g, b,
-        lastPoint: i === numPoints
+        lastPoint: false
       });
     }
+    // Close the loop: add the first point at the end so the data is geometrically
+    // closed without relying on the optimizer.  This keeps padPoints from inserting
+    // trailing blanking and the renderer's closing fallback from needing an upper
+    // distance bound.
+    points.push({ ...points[0], lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
@@ -243,7 +248,10 @@ export function generateSquare(params) {
         });
       }
     }
-    // Redundant point removed
+    // Close the loop: duplicate the first point so padPoints detects isClosed
+    // without relying on the optimizer. Must be added before applyRenderingStyle
+    // so non-normal rendering styles also get the closing point.
+    points.push({ ...points[0], lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
@@ -304,7 +312,10 @@ export function generateTriangle(params) {
         });
       }
     }
-    // Redundant point removed
+    // Close the loop: duplicate the first point so padPoints detects isClosed
+    // without relying on the optimizer. Must be added before applyRenderingStyle
+    // so non-normal rendering styles also get the closing point.
+    points.push({ ...points[0], lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
@@ -383,7 +394,9 @@ export function generateStar(params) {
         });
       }
     }
-    points.push({ ...vertices[vertices.length - 1], r, g, b, lastPoint: true });
+    // Star already has a closing vertex in the array (vertices[0] is duplicated at the end),
+    // so the loop above draws the closing edge.  No need to push a closing point here.
+    points.push({ ...vertices[vertices.length - 1], r, g, b, lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {

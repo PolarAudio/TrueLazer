@@ -55,10 +55,9 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
     };
 
     const handleWheelLocal = (e) => {
-        if (!isAssigned) return;
         e.preventDefault();
         e.stopPropagation();
-        const change = e.deltaY * -0.001;
+        const change = e.deltaY * -0.01;
         const newVal = Math.max(0, Math.min(1, draggingValueRef.current + change));
         draggingValueRef.current = newVal;
         updateDOM(newVal);
@@ -70,7 +69,7 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
         if (!knobElement) return;
         knobElement.addEventListener('wheel', handleWheelLocal, { passive: false });
         return () => knobElement.removeEventListener('wheel', handleWheelLocal);
-    }, [isAssigned, onChange]); 
+    }, [onChange]); 
 
     const handleDragOver = (e) => {
         if (onDrop) {

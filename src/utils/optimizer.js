@@ -93,11 +93,13 @@ export function optimizePoints(points, settings = {}) {
     });
 
     // Also detect if the WHOLE FRAME loops back (last visible to first visible)
+    let frameIsClosed = false;
     if (firstVisibleIdx !== -1 && lastVisibleIdx !== -1) {
         const fv = get(firstVisibleIdx);
         const lv = get(lastVisibleIdx);
         const d = Math.sqrt(Math.pow(fv.x - lv.x, 2) + Math.pow(fv.y - lv.y, 2));
-        if (d < 0.05) {
+        frameIsClosed = d < 0.05;
+        if (frameIsClosed) {
             skipDwellAtIdx[firstVisibleIdx] = 1;
             skipDwellAtIdx[lastVisibleIdx + 1] = 1;
         }
@@ -107,9 +109,16 @@ export function optimizePoints(points, settings = {}) {
         skipDwellAtIdx[lastVisibleIdx + 1] = 1;
     }
 
+    // Use auto-detection or explicit setting
+    const isClosed = settings.isClosed || frameIsClosed;
+
+    // When closed, only process up to the last visible point to avoid trailing
+    // blanking (common in ILDA files) breaking the loop closure.
+    const processEndIdx = (isClosed && lastVisibleIdx !== -1) ? lastVisibleIdx + 1 : numPoints;
+
     let prevPoint = get(0);
 
-    for (let i = 0; i < numPoints; i++) {
+    for (let i = 0; i < processEndIdx; i++) {
         const currPoint = get(i);
 
         // Blanking dwells
@@ -152,40 +161,43 @@ export function optimizePoints(points, settings = {}) {
 
     // --- WRAP-AROUND HANDLING (End of Frame to Start of Next) ---
     const firstPoint = get(0);
-    const wrapDx = firstPoint.x - prevPoint.x;
-    const wrapDy = firstPoint.y - prevPoint.y;
-    const wrapDist = Math.sqrt(wrapDx*wrapDx + wrapDy*wrapDy);
 
-    if (settings.isClosed) {
-        // CLOSE THE LOOP: Interpolate back to start if both ends are visible
-        if (!firstPoint.blanking && !prevPoint.blanking) {
+    if (isClosed) {
+        // CLOSE THE LOOP: Use the last visible point even when trailing blanking exists
+        const closePoint = isClosed && lastVisibleIdx !== -1 ? get(lastVisibleIdx) : prevPoint;
+        if (!firstPoint.blanking && !closePoint.blanking) {
+            const wrapDx = firstPoint.x - closePoint.x;
+            const wrapDy = firstPoint.y - closePoint.y;
+            const wrapDist = Math.sqrt(wrapDx*wrapDx + wrapDy*wrapDy);
             if (wrapDist > maxDist) {
                 const steps = Math.floor(wrapDist / maxDist);
                 for (let s = 1; s < steps; s++) {
                     const t = s / steps;
                     push(
-                        prevPoint.x + wrapDx * t, 
-                        prevPoint.y + wrapDy * t, 
-                        prevPoint.z + (firstPoint.z - prevPoint.z) * t, 
+                        closePoint.x + wrapDx * t, 
+                        closePoint.y + wrapDy * t, 
+                        closePoint.z + (firstPoint.z - closePoint.z) * t, 
                         firstPoint.r, firstPoint.g, firstPoint.b, false
                     );
                 }
             }
-            // Ensure final connection
+            // Push firstPoint to close the remaining gap — the interpolation
+            // only reaches (steps-1)/steps of the closing edge, leaving
+            // ~maxDist from p0. This single-point dwell at the same position
+            // is invisible (laser at same spot) but prevents a visible gap.
             push(firstPoint.x, firstPoint.y, firstPoint.z, firstPoint.r, firstPoint.g, firstPoint.b, false);
         }
     } else {
         // OPEN SHAPE: Ensure we blank at the end of the frame before jumping back to start
         if (!prevPoint.blanking) {
-            // Add turn-off dwells at the last visible point
             for (let d = 0; d < pathDwell; d++) push(prevPoint.x, prevPoint.y, prevPoint.z, 0, 0, 0, true);
         }
         
-        // If the jump is large, we could add intermediate blanking points, 
-        // but typically the DAC reset handled it. However, explicit blanking is safer.
-        if (wrapDist > 0.1) {
+        const openWrapDx = firstPoint.x - prevPoint.x;
+        const openWrapDy = firstPoint.y - prevPoint.y;
+        const openWrapDist = Math.sqrt(openWrapDx*openWrapDx + openWrapDy*openWrapDy);
+        if (openWrapDist > 0.1) {
              push(firstPoint.x, firstPoint.y, firstPoint.z, 0, 0, 0, true);
-             // Add turn-on dwells at the new start point
              for (let d = 0; d < pathDwell; d++) push(firstPoint.x, firstPoint.y, firstPoint.z, 0, 0, 0, true);
         }
     }

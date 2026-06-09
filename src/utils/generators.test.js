@@ -52,6 +52,7 @@ describe('generateTriangle', () => {
     expect(result.points[1]).toMatchObject({ x: 2, y: 0 });
     expect(result.points[2]).toMatchObject({ x: 1, y: 2 });
     expect(result.points[3]).toMatchObject({ x: 0, y: 0 });
+    // With pointDensity=1, 4 points (3 sides + 1 closing duplicate)
   });
 
   it('should generate an equilateral triangle when size is provided', () => {

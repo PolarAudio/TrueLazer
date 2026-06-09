@@ -137,51 +137,18 @@ function ensureBufferSize(numPoints) {
     }
 }
 
-// Performance metrics (simple console logger)
-let frameCount = 0;
-let totalFrameTime = 0;
-let minFrameTime = Infinity;
-let maxFrameTime = 0;
-function updatePerformanceMetrics(frameTime) {
-    frameCount++;
-    totalFrameTime += frameTime;
-    minFrameTime = Math.min(minFrameTime, frameTime);
-    maxFrameTime = Math.max(maxFrameTime, frameTime);
-    if (frameCount % 60 === 0) {
-        const avg = totalFrameTime / frameCount;
-        console.log(`[Effects] Avg ${avg.toFixed(1)}ms (${minFrameTime.toFixed(1)}-${maxFrameTime.toFixed(1)}ms) | Buffer resizes: ${globalBufferResizeCount}`);
-        frameCount = 0; totalFrameTime = 0; minFrameTime = Infinity; maxFrameTime = 0;
-    }
-}
-
 export function applyEffects(frame, effects, context = {}) {
     const { progress = 0, time = performance.now(), effectStates, syncSettings = {}, fftLevels } = context;
 
     if (!effects || effects.length === 0) return frame;
 
     const sourcePoints = frame.points;
-    const isSourceTyped = frame.isTypedArray || sourcePoints instanceof Float32Array;
+    const isSourceTyped = sourcePoints instanceof Float32Array;
     const numPointsCount = isSourceTyped ? (sourcePoints.length / 8) : sourcePoints.length;
 
-    // Internal buffer for processing to reduce GC pressure
-    let processingBuffer = new Float32Array(1024 * 8);
-    function ensureBufferSize(numPoints) {
-        if (processingBuffer.length < numPoints * 8) {
-            processingBuffer = new Float32Array(numPoints * 8 * 2); // Double size for buffer room
-        }
-    }
-
-    // Performance monitoring
-    const START_APPLY = performance.now();
-    const applyStartTime = performance.now();
-    const frameStartTime = performance.now();
-
-    // Ensure buffer can hold the maximum number of points we might process
-    ensureBufferSize(numPointsCount);
-
-    // Copy source to processing buffer (avoid unnecessary allocations)
+    // Copy source to global processing buffer
     let currentNumPoints = numPointsCount;
-    let activePoints = processingBuffer;
+    let activePoints = globalProcessingBuffer;
     if (isSourceTyped) {
         activePoints.set(sourcePoints);
     } else {
@@ -196,7 +163,7 @@ export function applyEffects(frame, effects, context = {}) {
             activePoints[offset + 4] = p.g ?? 255;
             activePoints[offset + 5] = p.b ?? 255;
             activePoints[offset + 6] = p.blanking ? 1 : 0;
-            activePoints[offset + 7] = p.intensity ?? 1;
+            activePoints[offset + 7] = p.lastPoint ? 1 : 0;
         }
     }
 
@@ -273,7 +240,7 @@ export function applyEffects(frame, effects, context = {}) {
     if (activePoints._channelDistributions) {
         finalPoints._channelDistributions = activePoints._channelDistributions;
     }
-    return { ...frame, points: finalPoints, isTypedArray: true };
+    return { ...frame, points: finalPoints, isTypedArray: true, isClosed: frame.isClosed === true };
 }
 function applyRotate(points, numPoints, params, progress, time) {
     const { angle, speed, direction } = params;

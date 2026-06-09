@@ -1,7 +1,20 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import Mappable from './Mappable';
 
 const MasterIntensitySlider = ({ masterIntensity, onMasterIntensityChange }) => {
+    const sliderRef = useRef(null);
+    useEffect(() => {
+        const el = sliderRef.current;
+        if (!el) return;
+        const handler = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.01 : 0.01;
+            onMasterIntensityChange(Math.round(Math.max(0, Math.min(1, masterIntensity + delta)) * 100) / 100);
+        };
+        el.addEventListener('wheel', handler, { passive: false });
+        return () => el.removeEventListener('wheel', handler);
+    }, [masterIntensity, onMasterIntensityChange]);
+
     const handleDragStart = (e) => {
         e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
             type: 'range',
@@ -17,7 +30,7 @@ const MasterIntensitySlider = ({ masterIntensity, onMasterIntensityChange }) => 
     return (
         <div className="master-intensity-slider" draggable onDragStart={handleDragStart}>
             <Mappable id="master_intensity">
-                <input type="range" min="0" max="1" step="0.01" value={masterIntensity} className="slider_hor" id="masterIntensityRange" onChange={(e) => onMasterIntensityChange(parseFloat(e.target.value))} />
+                <input type="range" min="0" max="1" step="0.01" value={masterIntensity} className="slider_hor" id="masterIntensityRange" onChange={(e) => onMasterIntensityChange(parseFloat(e.target.value))} ref={sliderRef} />
             </Mappable>
         </div>
     );

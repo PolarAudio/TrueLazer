@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import IldaThumbnail from './IldaThumbnail';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
@@ -28,6 +28,19 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
   const handleIntensityChangeLocal = (e) => {
       if (onIntensityChange) onIntensityChange(index, parseFloat(e.target.value));
   };
+
+  const intensitySliderRef = useRef(null);
+  useEffect(() => {
+      const el = intensitySliderRef.current;
+      if (!el) return;
+      const handler = (e) => {
+          e.preventDefault();
+          const delta = e.deltaY > 0 ? -0.01 : 0.01;
+          handleIntensityChangeLocal({ target: { value: Math.round(Math.max(0, Math.min(1, intensity + delta)) * 100) / 100 } });
+      };
+      el.addEventListener('wheel', handler, { passive: false });
+      return () => el.removeEventListener('wheel', handler);
+  }, [intensity, index, onIntensityChange]);
 
   const handleLayerSelectLocal = () => {
       if (onLayerSelect) onLayerSelect(index);
@@ -166,7 +179,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
       </div>
 		<div className="layer-control-row">
           <Mappable id={`layer_${index}_intensity`}>
-			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={handleIntensityChangeLocal} />
+			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={handleIntensityChangeLocal} ref={intensitySliderRef} />
           </Mappable>
 		</div>
 		<div 

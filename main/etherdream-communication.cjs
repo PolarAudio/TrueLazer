@@ -45,11 +45,12 @@ function padPoints(points, targetCount) {
     if (!points || points.length === 0) return createBlankFrame(targetCount);
     if (points.length >= targetCount) return points;
 
-    // Detect if closed loop (Generator-like)
-    // Check if first and last point are close and there's no mid-frame blanking
+    // Detect if closed loop (Generator-like).
+    // The main optimizer's closing interpolation ends ~maxDist (0.02) from p0,
+    // so use 0.05 to match the optimizer's auto-detect threshold.
     const isClosedLoop = points.length < 800 && 
-                         Math.abs(points[0].x - points[points.length-1].x) < 0.01 && 
-                         Math.abs(points[0].y - points[points.length-1].y) < 0.01 &&
+                         Math.abs(points[0].x - points[points.length-1].x) < 0.05 && 
+                         Math.abs(points[0].y - points[points.length-1].y) < 0.05 &&
                          !points.some(p => p.blanking);
 
     let padded = [...points];
