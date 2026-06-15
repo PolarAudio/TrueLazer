@@ -1921,7 +1921,6 @@ function App() {
     const optimizationEnabledRef = useRef(optimizationEnabled);
     const optimizationMaxDistRef = useRef(optimizationMaxDist);
     const optimizationPathDwellRef = useRef(optimizationPathDwell);
-
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
     useEffect(() => { isWorldOutputActiveRef.current = isWorldOutputActive; }, [isWorldOutputActive]);
     useEffect(() => { selectedDacRef.current = selectedDac; }, [selectedDac]);
@@ -2207,7 +2206,7 @@ function App() {
     ildaParserWorker.addEventListener('message', handleMessage);
 
     let animationFrameId;
-    let dacRefreshAnimationFrameId;
+    let dacProcessTimeoutId;
     let lastFrameTime = 0;
     const OUTPUT_FPS = 60;
     const dacFrameInterval = 1000 / OUTPUT_FPS;
@@ -2317,13 +2316,14 @@ function App() {
     };
 
     // Animate function for DAC output
-    const animate = (currentTime) => {
+    const animate = () => {
       if (!isWorldOutputActiveRef.current) {
-        cancelAnimationFrame(dacRefreshAnimationFrameId);
+        clearTimeout(dacProcessTimeoutId);
         return;
       }
 
-      if (currentTime - lastFrameTime > dacFrameInterval) {
+      const now = performance.now();
+      if (now - lastFrameTime > dacFrameInterval) {
         if (window.electronAPI && isWorldOutputActiveRef.current) {
           const dacGroups = new Map(); // key: "ip:channel", value: { ip, channel, frames: [] }
 
@@ -2447,7 +2447,7 @@ function App() {
 
               const modifiedFrame = applyEffects(intensityAdjustedFrame, effects, { 
                   progress: clipProgress, 
-                  time: currentTime, 
+                  time: now, 
                   effectStates: effectStatesRef.current, 
                   assignedDacs: dacList, // Pass the combined list of DACs (Layer + Clip)
                   syncSettings: clip.syncSettings || {},
@@ -2544,6 +2544,7 @@ function App() {
 
           // Send merged frames to each DAC channel
           let activeCount = 0;
+          const framesToSend = {};
           dacGroups.forEach(group => {
             let mergedFrame = mergeFrames(group.frames);
             
@@ -2577,17 +2578,26 @@ function App() {
               activeCount++;
               const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
               totalPointsSentRef.current += numPts;
-              // When main optimizer ran (optimization ON), skip the legacy DAC optimizer
-              // to avoid double-optimization. When main optimizer is OFF, let the legacy
-              // DAC optimizer provide basic interpolation.
-              window.electronAPI.sendFrame(group.ip, group.channel, mergedFrame.points, OUTPUT_FPS, group.type, { skipOptimization: optimizationEnabledRef.current });
+              framesToSend[id] = {
+                  points: mergedFrame.points,
+                  ip: group.ip,
+                  channel: group.channel,
+                  type: group.type,
+                  options: { skipOptimization: optimizationEnabledRef.current }
+              };
             }
           });
           activeChannelsCountRef.current = activeCount;
+          // Send the latest processed frames to the main process, which has its own
+          // event loop and sends them to the DAC on a reliable setInterval timer
+          // completely independent of React rendering.
+          if (window.electronAPI && Object.keys(framesToSend).length > 0) {
+              window.electronAPI.send('dac-frame-update', framesToSend);
+          }
         }
-        lastFrameTime = currentTime;
+        lastFrameTime = now;
       }
-      dacRefreshAnimationFrameId = requestAnimationFrame(animate);
+      dacProcessTimeoutId = setTimeout(animate, dacFrameInterval);
     };
 
     function isTypedArray(obj) {
@@ -2886,11 +2896,13 @@ function App() {
 
     animationFrameId = requestAnimationFrame(frameFetcherLoop);
 
-    // Start DAC animation if world output is active
+    // Start DAC processing (renderer) and send loop (main process)
     if (isWorldOutputActive) {
-      dacRefreshAnimationFrameId = requestAnimationFrame(animate);
+      dacProcessTimeoutId = setTimeout(animate, dacFrameInterval);
+      if (window.electronAPI) window.electronAPI.send('start-dac-send-loop');
     } else {
-      cancelAnimationFrame(dacRefreshAnimationFrameId);
+      clearTimeout(dacProcessTimeoutId);
+      if (window.electronAPI) window.electronAPI.send('stop-dac-send-loop');
     }
 
 
@@ -2898,7 +2910,8 @@ function App() {
     return () => {
       ildaParserWorker.removeEventListener('message', handleMessage);
       cancelAnimationFrame(animationFrameId);
-      cancelAnimationFrame(dacRefreshAnimationFrameId); // Clean up DAC animation frame
+      clearTimeout(dacProcessTimeoutId);
+      if (window.electronAPI) window.electronAPI.send('stop-dac-send-loop');
     };
   }, [ildaParserWorker, isWorldOutputActive]); // Minimal dependencies
 
@@ -5001,7 +5014,7 @@ function App() {
             <div className="top-bar-left-area">
               <CompositionControls
                 masterIntensity={masterIntensity}
-                onMasterIntensityChange={(value) => dispatch({ type: 'SET_MASTER_INTENSITY', payload: value })}
+                onMasterIntensityChange={(value) => { masterIntensityRef.current = value; throttledDispatch('master_intensity', { type: 'SET_MASTER_INTENSITY', payload: value }); }}
                 onClearAllActive={handleClearAllActive}
                 isGlobalBlackout={globalBlackout}
                 onToggleGlobalBlackout={() => dispatch({ type: 'TOGGLE_GLOBAL_BLACKOUT' })}

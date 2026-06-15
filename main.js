@@ -844,6 +844,7 @@ function createWindow() {
 
   win.on('closed', () => {
     mainWindow = null;
+    stopDacSendLoop();
     dacCommunication.closeAll();
   });
 
@@ -870,9 +871,35 @@ function createWindow() {
     return await getDacServices(ip, localIp, 1000, type);
   });
 
-  ipcMain.handle('send-frame', async (event, ip, channel, points, fps, type, options) => {
-    sendFrame(ip, channel, points, fps, type, options);
+  // DAC frame buffer + send loop — runs on the main process's own event loop,
+  // completely independent of React rendering in the renderer process.
+  let dacFrameBuffer = {};
+  let dacSendLoopTimer = null;
+  const DAC_SEND_INTERVAL = 1000 / 60; // 60 fps
+
+  ipcMain.on('dac-frame-update', (event, frames) => {
+    dacFrameBuffer = frames;
   });
+
+  const startDacSendLoop = () => {
+    if (dacSendLoopTimer) return;
+    dacSendLoopTimer = setInterval(() => {
+      for (const id of Object.keys(dacFrameBuffer)) {
+        const frame = dacFrameBuffer[id];
+        sendFrame(frame.ip, frame.channel, frame.points, 60, frame.type, frame.options || {});
+      }
+    }, DAC_SEND_INTERVAL);
+  };
+
+  const stopDacSendLoop = () => {
+    if (dacSendLoopTimer) {
+      clearInterval(dacSendLoopTimer);
+      dacSendLoopTimer = null;
+    }
+  };
+
+  ipcMain.on('start-dac-send-loop', startDacSendLoop);
+  ipcMain.on('stop-dac-send-loop', stopDacSendLoop);
 
   ipcMain.handle('start-dac-output', async (event, ip, type) => {
     dacCommunication.startOutput(ip, type);
@@ -1352,6 +1379,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  stopDacSendLoop();
   if (ndi) {
     ndi.destroyReceiver();
   }
