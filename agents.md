@@ -123,3 +123,16 @@ Always act like a senior software engineer who writes code that others can easil
 *	/sdk/etherDream.md
 *	/sdk/ShowBridge.md
 *	/idn.md
+
+## Showbridge Protocol (from Packet Capture Analysis)
+
+### Discovery
+- **Broadcast**: 6 bytes: `[our_ip_4bytes][0xa3][0x1f]` sent from port 8099 to `255.255.255.255:8089`
+- **Response** (16 bytes): `[vendor_2][type_1][channel_1][hw_id_4][reserved_8]`
+  - Capture example: `17 32 01 01 00 48 00 2e 00 00 00 00 00 00 00 00` → vendor=0x3217, type=1, channel=1, hw_id=0x0048002e (MAC `02:00:00:48:00:2e`)
+- **Frame data port**: Unknown for native UDP. SDK uses `showList.udpPort[]` (Truwave-configured). DAC may also speak EtherDream on TCP 7765.
+
+### Files
+- `main/showbridge-probe.cjs` — probe script (discovery + frame send tests)
+- `main/showbridge-communication.cjs` — DAC communication module (discovery + SDK queries + UDP frame sending)
+- `main/dac-communication.cjs` — orchestrator routing to Showbridge module
