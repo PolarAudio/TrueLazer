@@ -7,21 +7,23 @@ const DAC_PORT = 8089;
 const DISCOVERY_BROADCAST_PORT = 8089;
 const NATIVE_RESPONSE_PORT = 8099;
 
-// Wire format constants (from DAC firmware + Truwave.exe Ghidra reversal)
-const UDP_PACKET_SIZE = 0x1204;          // 4612 bytes per chunk
-const HEADER_SIZE = 4;                   // 4-byte header
-const POINT_SIZE = 8;                    // 8-byte wire format point
-const CHUNKS_PER_FRAME = 3;              // Matches Truwave capture (fewer fragments = less loss)
-const PTS_PER_CHUNK = 575;               // Real points per chunk
-const MAX_FRAME_POINTS = CHUNKS_PER_FRAME * PTS_PER_CHUNK;  // 1725
+const UDP_PACKET_SIZE = 0x1204;          // 4612 bytes
+const HEADER_SIZE = 4;
+const POINT_SIZE = 8;
+const PTS_FULL = 575;                    // points per full chunk (chunk 0)
+const CHUNK_STAGGER_MS = 3;
+const MAX_CHUNKS = 2;   // max data chunks. 2×575=1150 pts @ 60fps → PPS=69. Firmware buffer: 2×575×8=9200 < 20004.
+const PPS = 30;
 
-// Type tag
 const DAC_TYPE = 'Showbridge';
 
 // =============== STATE ===============
 let globalStatusCallback = null;
-let sendIntervals = new Map();
 let discoveryCache = new Map();
+
+// Per-channel state
+//   "ip:channel" -> { socket, pendingTimer, heartbeatSent, running }
+const channelState = new Map();
 
 // =============== HELPERS ===============
 function setStatusCallback(cb) {
@@ -48,7 +50,100 @@ function log(...args) {
     console.log(`[Showbridge]`, ...args);
 }
 
-// =============== NATIVE HARDWARE DISCOVERY (port 8089) ===============
+// =============== PACKET BUILDING ===============
+
+function buildFrameChunks(chType, pps, points) {
+    const isTyped = points instanceof Float32Array;
+    const totalPoints = isTyped ? Math.floor(points.length / 8) : (points ? points.length : 0);
+    if (totalPoints === 0) return [];
+
+    const ptsPerChunk = PTS_FULL;                           // 575
+    const numChunks = Math.min(Math.ceil(totalPoints / ptsPerChunk), MAX_CHUNKS);
+    const chunks = [];
+    let pointOffset = 0;
+
+    // No completion chunk — seq change between frames signals the boundary
+    for (let ci = 0; ci < numChunks; ci++) {
+        const buf = Buffer.alloc(UDP_PACKET_SIZE);
+        buf.writeUInt8(numChunks, 0);                       // total_chunks = actual count
+        buf.writeUInt8(ci, 1);                               // chunk_index
+        buf.writeUInt8(0, 2);                                // seq (set by caller)
+        buf.writeUInt8(chType, 3);                           // type
+        buf.writeInt16LE(0x01D2, 4);                         // laser_ctrl = ON
+        buf.writeUInt8(0, 6);
+        buf.writeUInt8(pps, 7);
+
+        const ptsInChunk = Math.min(totalPoints - pointOffset, ptsPerChunk);
+        let lastX = 0, lastY = 0;
+
+        for (let i = 0; i < ptsPerChunk; i++) {
+            const off = HEADER_SIZE + 4 + i * POINT_SIZE;
+            let x = 0, y = 0, blanking = 1, r = 0, g = 0, b = 0;
+
+            if (i < ptsInChunk) {
+                const pi = pointOffset + i;
+                if (isTyped) {
+                    const poff = pi * 8;
+                    x = points[poff] || 0;
+                    y = points[poff + 1] || 0;
+                    r = points[poff + 3] || 0;
+                    g = points[poff + 4] || 0;
+                    b = points[poff + 5] || 0;
+                    blanking = (points[poff + 6] || 0) > 0.5 ? 1 : 0;
+                } else {
+                    const p = points[pi];
+                    if (p instanceof Float32Array || Array.isArray(p)) {
+                        x = p[0] || 0;
+                        y = p[1] || 0;
+                        r = p[3] || 0;
+                        g = p[4] || 0;
+                        b = p[5] || 0;
+                        blanking = (p[6] || 0) > 0.5 ? 1 : 0;
+                    } else if (typeof p === 'object') {
+                        x = p.x || 0;
+                        y = p.y || 0;
+                        r = p.r || 0;
+                        g = p.g || 0;
+                        b = p.b || 0;
+                        blanking = p.blanking ? 1 : 0;
+                    }
+                }
+
+                x = clamp(x, -1.0, 1.0);
+                y = clamp(y, -1.0, 1.0);
+                lastX = x;
+                lastY = y;
+                if (r > 1) r /= 255;
+                if (g > 1) g /= 255;
+                if (b > 1) b /= 255;
+                r = clamp(r, 0, 1);
+                g = clamp(g, 0, 1);
+                b = clamp(b, 0, 1);
+            } else {
+                x = lastX;
+                y = lastY;
+            }
+
+            const dacBlanking = blanking > 0.5 ? 0 : 0xFF;
+
+            const ix = Math.round((x + 1.0) * 2047.5);
+            const iy = Math.round((y + 1.0) * 2047.5);
+            buf.writeInt16LE(ix, off);
+            buf.writeInt16LE(iy, off + 2);
+            buf.writeUInt8(dacBlanking, off + 4);
+            buf.writeUInt8(Math.round(r * 255), off + 5);
+            buf.writeUInt8(Math.round(g * 255), off + 6);
+            buf.writeUInt8(Math.round(b * 255), off + 7);
+        }
+
+        pointOffset += ptsInChunk;
+        chunks.push(buf);
+    }
+
+    return chunks;
+}
+
+// =============== NATIVE DISCOVERY ===============
 async function discoverDacs(timeout = 3000) {
     return new Promise((resolve) => {
         discoveryCache.clear();
@@ -139,7 +234,6 @@ async function discoverDacs(timeout = 3000) {
     });
 }
 
-// =============== DAC SERVICES ===============
 function getDacServices(ip) {
     const cached = discoveryCache.get(ip);
     if (!cached || cached.channels.size === 0) {
@@ -155,188 +249,190 @@ function getDacServices(ip) {
     return Promise.resolve(services);
 }
 
-// =============== FRAME SENDING (correct wire format) ===============
-
-/**
- * Convert float points [-1..1] to Showbridge DAC frame packets.
- *
- * DAC firmware wire format (port 8089):
- *
- *   Packet (0x1204 = 4612 bytes):
- *     [0] total_chunks (MUST be 5)
- *     [1] chunk_index (0-4)
- *     [2] seq_counter (same for all chunks in a frame, +1 per frame)
- *     [3] type (0x00=CH1, 0x01=CH2)
- *     [4-7]   controller area (4 bytes): [laser_ctrl_low][laser_ctrl_high][0][PPS]
- *             chunk 0: laser_ctrl set, chunks 1-4: laser_ctrl=0 (dummy/boundary)
- *     [8-4607] real points: 575 × 8 = 4600 bytes
- *              int16 LE x, int16 LE y, u8 blanking, u8 r, u8 g, u8 b
- *              blanking: 0=DARK, non-zero=LIT
- *     [4608-4611] padding (4 bytes, zeroed)
- *
- *   Frame ready: DAC copies 0x1200 bytes (4 + 4600 + 4) per non-last chunk.
- *   Last chunk (4): firmware copies only 0x624 bytes = 4 + 196×8 (no padding copied).
- *
- *   Boundary points: 4 control bytes of chunk N become blanking/r/g/b of the
- *   virtual boundary point. Setting byte[4]=0x00 in chunks 1-4 keeps them DARK.
- *
- *   Chunks per frame: 3 (matches Truwave captures).
- */
-function sendFrame(ip, channel, points, fps) {
-    if (!points || points.length === 0) return;
-
-    let numPoints;
-    let srcPoints;
-
-    if (points instanceof Float32Array) {
-        numPoints = Math.floor(points.length / 8);
-        srcPoints = points;
-    } else if (Array.isArray(points)) {
-        numPoints = points.length;
-        srcPoints = points;
-    } else {
-        return;
-    }
-
-    numPoints = Math.min(numPoints, MAX_FRAME_POINTS);
-    if (numPoints === 0) return;
-
-    const pps = Math.round(clamp(fps || 30, 1, 255));
-    const channelType = (channel === 2) ? 0x01 : 0x00;
-    const laserCtrl = 0x01D2;  // non-zero = laser ON
-
-    const chunks = [];
-    for (let ci = 0; ci < CHUNKS_PER_FRAME; ci++) {
-        const buf = Buffer.alloc(UDP_PACKET_SIZE);
-
-        // 4-byte header
-        buf.writeUInt8(CHUNKS_PER_FRAME, 0);
-        buf.writeUInt8(ci, 1);
-        buf.writeUInt8(0, 2);
-        buf.writeUInt8(channelType, 3);
-
-        if (ci === 0) {
-            buf.writeInt16LE(laserCtrl, 4);
-        } else {
-            buf.writeInt16LE(0, 4);
-        }
-        buf.writeUInt8(0, 6);
-        buf.writeUInt8(pps, 7);
-
-        for (let i = 0; i < PTS_PER_CHUNK; i++) {
-            const srcIdx = ci * PTS_PER_CHUNK + i;
-            let x, y, blanking, r, g, b;
-
-            if (srcIdx >= numPoints) {
-                x = 0; y = 0; blanking = 0; r = 0; g = 0; b = 0;
-            } else if (srcPoints instanceof Float32Array) {
-                const off = srcIdx * 8;
-                x = srcPoints[off];
-                y = srcPoints[off + 1];
-                r = srcPoints[off + 3];
-                g = srcPoints[off + 4];
-                b = srcPoints[off + 5];
-                blanking = srcPoints[off + 6] > 0.5 ? 0xFF : 0;
-            } else {
-                x = srcPoints[srcIdx].x || 0;
-                y = srcPoints[srcIdx].y || 0;
-                r = srcPoints[srcIdx].r || 0;
-                g = srcPoints[srcIdx].g || 0;
-                b = srcPoints[srcIdx].b || 0;
-                blanking = srcPoints[srcIdx].blanking ? 0xFF : 0;
-            }
-
-            x = clamp(x, -1.0, 1.0);
-            y = clamp(y, -1.0, 1.0);
-            const ix = Math.round((x + 1.0) * 2047.5);
-            const iy = Math.round((y + 1.0) * 2047.5);
-
-            if (r > 1.0) r = r / 255;
-            if (g > 1.0) g = g / 255;
-            if (b > 1.0) b = b / 255;
-            r = clamp(r, 0, 1.0);
-            g = clamp(g, 0, 1.0);
-            b = clamp(b, 0, 1.0);
-
-            const poff = HEADER_SIZE + 4 + i * POINT_SIZE;  // byte 8 + i*8
-            buf.writeInt16LE(ix, poff);
-            buf.writeInt16LE(iy, poff + 2);
-            buf.writeUInt8(blanking, poff + 4);
-            buf.writeUInt8(Math.round(r * 255), poff + 5);
-            buf.writeUInt8(Math.round(g * 255), poff + 6);
-            buf.writeUInt8(Math.round(b * 255), poff + 7);
-        }
-        chunks.push(buf);
-    }
-
-    // Send frames at the requested rate
-    const targetPort = DAC_PORT;
-    const socket = dgram.createSocket('udp4');
-    let frameSeq = 0;
-    let running = true;
-
-    const intervalMs = Math.round(1000 / pps);
-    const timer = setInterval(() => {
-        if (!running) return;
-
-        for (let ci = 0; ci < CHUNKS_PER_FRAME; ci++) {
-            chunks[ci].writeUInt8(frameSeq, 2);  // set seq counter
-            socket.send(chunks[ci], 0, UDP_PACKET_SIZE, targetPort, ip);
-        }
-
-        frameSeq = (frameSeq + 1) & 0xFF;
-    }, intervalMs);
-
-    const ipKey = `${ip}:${channel}`;
-    const oldTimer = sendIntervals.get(ipKey);
-    if (oldTimer) clearInterval(oldTimer);
-    sendIntervals.set(ipKey, { timer, socket, running: () => running });
-
-    log(`Streaming to ${ip}:${targetPort} CH${channel} at ${pps}fps`);
-
-    return { stop: () => { running = false; clearInterval(timer); try { socket.close(); } catch (e) {} } };
-}
-
 // =============== HEARTBEAT ===============
-// Sends a 6-byte heartbeat to register our IP with the DAC.
-// The DAC records the sender IP and sends status responses.
 function sendHeartbeat(ip) {
     const socket = dgram.createSocket('udp4');
     const localIp = getPrimaryIp();
     const ipParts = localIp.split('.').map(Number);
     const buf = Buffer.alloc(6);
-    buf.writeUInt8(0x03, 0);  // type = heartbeat
+    buf.writeUInt8(0x03, 0);
     buf.writeUInt8(ipParts[0], 1);
     buf.writeUInt8(ipParts[1], 2);
     buf.writeUInt8(ipParts[2], 3);
     buf.writeUInt8(ipParts[3], 4);
-    buf.writeUInt8(0, 5);     // padding
+    buf.writeUInt8(0, 5);
     socket.send(buf, 0, 6, DAC_PORT, ip, () => {
         socket.close();
     });
 }
 
+// =============== FRAME SENDING ===============
+
+function sendFrame(ip, channel, points, fps, type, options) {
+    const key = `${ip}:${channel}`;
+    const chType = channel === 2 ? 0x01 : 0x00;
+    const pps = (options && options.pps != null) ? options.pps : PPS;
+
+    // Get or create per-channel state
+    let st = channelState.get(key);
+    if (!st) {
+        st = {
+            socket: dgram.createSocket('udp4'),
+            pendingTimers: [],
+            heartbeatSent: false,
+            running: true,
+            seq: 0,
+        };
+        st.socket.on('error', () => {});
+        channelState.set(key, st);
+    }
+
+    if (!st.running) return;
+
+    // Send heartbeat once per channel session
+    if (!st.heartbeatSent) {
+        sendHeartbeat(ip);
+        st.heartbeatSent = true;
+    }
+
+    // Cancel any pending chunk sends from previous frame
+    for (const t of st.pendingTimers) {
+        clearTimeout(t);
+    }
+    st.pendingTimers = [];
+
+    // Build all chunks for this frame
+    const chunks = buildFrameChunks(chType, pps, points);
+    if (chunks.length === 0) return;
+
+    const seq = st.seq & 0xFF;
+    st.seq = (st.seq + 1) & 0xFF;
+
+    // Set seq on all chunks
+    for (const c of chunks) {
+        c.writeUInt8(seq, 2);
+    }
+
+    // Send chunk 0 immediately
+    try {
+        st.socket.send(chunks[0], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
+    } catch (e) {
+        log(`send error on ${key}: ${e.message}`);
+        return;
+    }
+
+    // Schedule remaining chunks with stagger
+    for (let i = 1; i < chunks.length; i++) {
+        const delay = i * CHUNK_STAGGER_MS;
+        const timer = setTimeout(() => {
+            if (!st.running) return;
+            try {
+                st.socket.send(chunks[i], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
+            } catch (e) {
+                log(`send error on ${key}: ${e.message}`);
+            }
+            const idx = st.pendingTimers.indexOf(timer);
+            if (idx >= 0) st.pendingTimers.splice(idx, 1);
+        }, delay);
+        st.pendingTimers.push(timer);
+    }
+}
+
+// =============== BLANK FRAME ===============
+function sendBlankFrame(ip, channel) {
+    const key = `${ip}:${channel}`;
+    const chType = channel === 2 ? 0x01 : 0x00;
+
+    const socket = dgram.createSocket('udp4');
+    socket.on('error', () => {});
+
+    // Build blank frame: chunk 0 with center-dark points + laser OFF, chunk 1 completion
+    const buf0 = Buffer.alloc(UDP_PACKET_SIZE);
+    buf0.writeUInt8(2, 0);
+    buf0.writeUInt8(0, 1);
+    buf0.writeUInt8(0, 2);
+    buf0.writeUInt8(chType, 3);
+    buf0.writeInt16LE(0, 4);     // laser_ctrl = OFF
+    buf0.writeUInt8(0, 6);
+    buf0.writeUInt8(PPS, 7);
+    for (let i = 0; i < PTS_FULL; i++) {
+        const off = HEADER_SIZE + 4 + i * POINT_SIZE;
+        const ix = Math.round((0 + 1.0) * 2047.5);
+        const iy = Math.round((0 + 1.0) * 2047.5);
+        buf0.writeInt16LE(ix, off);
+        buf0.writeInt16LE(iy, off + 2);
+        buf0.writeUInt8(0, off + 4);
+        buf0.writeUInt8(0, off + 5);
+        buf0.writeUInt8(0, off + 6);
+        buf0.writeUInt8(0, off + 7);
+    }
+
+    const buf1 = Buffer.alloc(UDP_PACKET_SIZE);
+    buf1.writeUInt8(2, 0);
+    buf1.writeUInt8(1, 1);
+    buf1.writeUInt8(0, 2);
+    buf1.writeUInt8(chType, 3);
+    buf1.writeInt16LE(0, 4);
+    buf1.writeUInt8(0, 6);
+    buf1.writeUInt8(PPS, 7);
+
+    let closed = false;
+    socket.send(buf0, 0, UDP_PACKET_SIZE, DAC_PORT, ip, () => {
+        setTimeout(() => {
+            if (closed) return;
+            socket.send(buf1, 0, UDP_PACKET_SIZE, DAC_PORT, ip, () => {
+                setTimeout(() => {
+                    if (!closed) { closed = true; try { socket.close(); } catch (e) {} }
+                }, 10);
+            });
+        }, CHUNK_STAGGER_MS);
+    });
+}
+
 // =============== STOP / CLEANUP ===============
 function stopSending(ip) {
-    for (const [key, state] of sendIntervals) {
-        if (key.startsWith(ip + ':')) {
-            state.running = false;
-            clearInterval(state.timer);
-            try { state.socket.close(); } catch (e) {}
-            sendIntervals.delete(key);
-            log(`Stopped sending to ${key}`);
+    for (const [key, st] of channelState) {
+        if (!key.startsWith(ip + ':')) continue;
+
+        st.running = false;
+
+        // Cancel all pending chunk timers
+        for (const t of st.pendingTimers) {
+            clearTimeout(t);
         }
+        st.pendingTimers = [];
+
+        // Send blank frames to turn off laser
+        const ch = parseInt(key.split(':')[1], 10);
+        sendBlankFrame(ip, ch);
+
+        // Close the socket
+        try { st.socket.close(); } catch (e) {}
+
+        channelState.delete(key);
+        log(`Stopped sending to ${key}`);
     }
 }
 
 function closeAll() {
-    for (const [key, state] of sendIntervals) {
-        state.running = false;
-        clearInterval(state.timer);
-        try { state.socket.close(); } catch (e) {}
+    for (const [key, st] of channelState) {
+        st.running = false;
+
+        for (const t of st.pendingTimers) {
+            clearTimeout(t);
+        }
+        st.pendingTimers = [];
+
+        // Send blank frames before closing
+        const [ip, chStr] = key.split(':');
+        const ch = parseInt(chStr, 10);
+        sendBlankFrame(ip, ch);
+
+        try { st.socket.close(); } catch (e) {}
     }
-    sendIntervals.clear();
+    channelState.clear();
     discoveryCache.clear();
+    log('All Showbridge channels closed');
 }
 
 // =============== EXPORTS ===============
@@ -345,6 +441,7 @@ module.exports = {
     getDacServices,
     sendFrame,
     sendHeartbeat,
+    sendBlankFrame,
     stopSending,
     closeAll,
     setStatusCallback,

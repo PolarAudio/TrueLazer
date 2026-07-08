@@ -906,6 +906,12 @@ function createWindow() {
   });
 
   ipcMain.handle('stop-dac-output', async (event, ip, type) => {
+    // Remove this DAC's frames from the buffer so the send loop doesn't restart output
+    for (const id of Object.keys(dacFrameBuffer)) {
+      if (dacFrameBuffer[id].ip === ip) {
+        delete dacFrameBuffer[id];
+      }
+    }
     stopSending(ip, type);
   });
 
@@ -1379,7 +1385,6 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  stopDacSendLoop();
   if (ndi) {
     ndi.destroyReceiver();
   }

@@ -53,8 +53,15 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                 }
               })
             );
+            // Deduplicate by IP: keep only one entry per DAC (getDacServices already returns all channels)
+            const seenIps = new Set();
+            const deduped = dacsWithServices.filter(d => {
+              if (seenIps.has(d.ip)) return false;
+              seenIps.add(d.ip);
+              return true;
+            });
             if (onDacsDiscovered) {
-              onDacsDiscovered(dacsWithServices);
+              onDacsDiscovered(deduped);
             }
           })
           .catch(err => {
@@ -195,7 +202,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
       </div>
       <div className="dac-list">
         {dacs.map((dac) => (
-          <div key={dac.unitID || dac.ip}
+          <div key={`${dac.unitID || dac.ip}-${dac.channel ?? 'main'}`}
             className={`dac-group`}
             draggable
             onDragStart={(e) => handleGroupDragStart(e, dac)}

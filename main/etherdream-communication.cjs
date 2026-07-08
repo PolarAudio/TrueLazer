@@ -242,7 +242,6 @@ function sendFrame(ip, channel, points, fps, options = {}) {
         if (instance.frameQueue.length > 30) instance.frameQueue.shift();
         instance.lastFrameTime = Date.now();
     }
-    if (!instance.started) startOutput(ip);
 }
 
 async function startOutput(ip) {
