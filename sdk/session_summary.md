@@ -1,408 +1,164 @@
-# Session Summary — Full Protocol Reversal
+# ShowBridge DAC Protocol Reversal — Session Notes
 
-## Core Payload Structure (Per Chunk)
+## Objective
+Reverse-engineer ShowBridge DAC firmware protocol to implement compatible frame rendering in TrueLazer.
 
+---
+
+## Firmware Analysis
+
+### Hardware
+- **MCU**: STM32H750 (M7, 280 MHz, FPv5)
+- **DAC**: Internal H7 DAC with DMA + TIM trigger (One-Pulse Mode)
+- **DMA destination address**: 0x40007434 (DAC_DHR12LD? or DAC_SR?), 0x40007440 (DAC_SHSR1?)
+- **Frame buffers**: SRAM4 at 0x30040200+, 12 channel structs × 0x5F8 bytes
+
+### System Architecture
+- Main loop `FUN_0800f9e8` polls `FUN_08005f3c()` every 1000 ms
+- Output controller `FUN_0800c99c` runs each cycle, checks system mode
+- When mode > 1: configures TIM/DMA, starts output
+- When mode < 2: stops output, cleans up
+
+### Chunk / Frame Format
+- One chunk = 0x1200 bytes on wire (4 header + 4 control + 575×8 pts + 4 pad)
+- Frame = 5 chunks = 2496 real points (+4 boundary = 2500 slots)
+- DMA reads from `buffer + 4` (skips first 4 bytes of chunk 0)
+- Each point = 8 bytes: X(2) + Y(2) + blank(1) + R(1) + G(1) + B(1)
+
+### DMA Command Struct (0x2A = 42 bytes)
 ```
-[4 byte UDP header] [4 control bytes] [575 × 8-byte points] [4 byte padding]
-```
-
-Total: `4 + 4 + 4600 + 4 = 4612 = 0x1204` bytes per UDP datagram.
-
-**The 4 control bytes** (`00 00 00 1e` in all captures):
-| Byte | Value | Meaning |
-|------|-------|---------|
-| 0    | total_chunks | Number of chunks in this frame (e.g., 5) |
-| 1    | chunk_index | Zero-based index of this chunk |
-| 2    | frame_seq | Frame sequence number (incrementing per frame) |
-| 3    | PPS | Pulses per second (e.g., 0x1E = 30) |
-
-## 0xFA Frame Ready Flag — Clarified
-
-**`frame_buffer[2] = 0xFA` is metadata only** — written by the UDP dispatch function when all chunks of a frame are received. It is NOT polled by the DAC output task. The DAC output is controlled entirely by:
-- System mode from `FUN_08005f3c()` (mode < 2 = idle/stop, mode > 1 = active/run)
-- State flags at `state + 0x2d`: bit 4 = output enable, bit 0 = DMA active
-
-The 0xFA flag exists for the Truwave software's benefit (reads it back via status response).
-
-## Frame Buffer Layout (0x4E24 bytes per channel)
-
-```
-offset  content                          source
-------  -------                          ------
-+0x0000 control bytes[4]                 chunk 0 ctrl (byte[2] → 0xFA when frame complete)
-+0x0004 575 points × 8 = 4600 bytes      chunk 0 payload
-+0x11FC 4 padding bytes                  chunk 0 pad
-+0x1200 control bytes[4]                 chunk 1 ctrl
-+0x1204 575 points × 8 = 4600 bytes      chunk 1 payload
-+0x23FC 4 padding bytes                  chunk 1 pad
-+0x2400 ...                              chunks 2-3 same pattern
-+0x4800 control bytes[4]                 chunk 4 ctrl
-+0x4804 196 points × 8 = 1568 bytes      chunk 4 payload (no padding needed)
-+0x4E24 end of buffer
-```
-
-Total DMA capacity: `(0x4E24 - 4) / 8 = 2500` 8-byte blocks.
-Valid points: `4×575 + 196 = 2496`. Remaining 4 slots = inter-chunk boundary straddles.
-
-## UDP Dispatch Function (FUN_08012310)
-
-This is the LWIP `udp_recv()` callback. Key flow:
-
-### Packet Reception
-1. Linearizes the LWIP pbuf chain into a reassembly buffer at `DAT_0801277c`
-2. Determines packet type from total size:
-   - `0x1204` bytes → type from header byte[3]
-   - `0x9a8` bytes → type 2 (settings)
-   - `6` bytes → type 3 (heartbeat)
-   - `0x10` bytes → type 4 (IP conflict)
-
-### Type Dispatch
-- **type 0x00** (CH1 data): Routes to CH1 frame buffer at `*DAT_080127e0`
-- **type 0x01** (CH2 data): Routes to CH2 frame buffer at `*DAT_08012804`
-- **type 0x02** (settings): Handles IP configuration, saves to flash
-- **type 0x03** (heartbeat): Records sender IP, sends response
-- **type 0x06** (GPIO): Sets GPIO port/pin/level
-- **type 0xFD** (file write): Writes arbitrary data to filesystem
-- **type 0xFE** (reserved): No action
-
-### CH1/CH2 Frame Processing
-
-**Copy size determination** (using packet's chunk_index):
-```
-if chunk_index < total_chunks - 1:
-    size = 0x1200        # non-last chunk
-else:
-    size = 0x4E24 - chunk_index * 0x1200   # last chunk
+Offset  Size  Field              Description
+0x00     4     src_addr          0xFFFFFFFF (invalid marker)
+0x04     2     src_addr_hi       0xFFFF
+0x06     4     dst_addr          Manager field (param_1 + 0x27)
+0x0a     2     dst_addr_hi       Manager field high
+0x0c     2     count             0x608 (1544) — element count
+0x0e     2     type_flag         0x100 (first buffer)
+0x10     2     elem_size         0x0008 (8 bytes per element)
+0x12     1     src_burst         0x06
+0x13     1     dst_burst         0x04
+0x14     2     cycle_type        0x100 (first cycle) / 0x200 (second cycle)
+0x16     4     src_buf_lo        Manager buffer spec (low)
+0x1a     2     src_buf_hi        Manager buffer spec (high)
+0x1c     4     frame_handle      Manager handle
+0x20     4     dest_buf_lo       0x00000000
+0x24     2     dest_buf_hi       0x0000
+0x26     4     frame_addr        Frame buffer pointer
 ```
 
-**Frame completion** (using chunks_received counter at `state+0x10`):
-1. Increment `chunks_received`
-2. If `total_chunks <= chunks_received`: write `frame_buffer[2] = 0xFA`, increment frame counter, reset `chunks_received = 0`
+### Double-Buffering Flow
+1. `FUN_0800c764` allocates desc, fills fields, submits via `(param_1+0x18)(param_1, handle)`, frees handle
+2. DMA completion → `FUN_0800c300`:
+   - Validates struct fields (type=0x100, burst=6/4, size=8)
+   - Checks swap available: `param_1+4` (manager buffer) vs desc offset 0x26
+   - If swap available: changes cycle_type to 0x200, swaps source/dest buffers, **resubmits** same handle
+   - If cycle_type == 0x200: sends UDP response (command 0x43, "output complete")
+3. `FUN_0800c828`: Simple descriptor for status confirmations (count=8)
 
-### Sequence Number Tracking
-- Byte[2] = frame sequence number (all chunks in a frame share the same seq)
-- 5-entry ring buffer at `state+0x24` (CH1) / `state+0x29` (CH2) for duplicate detection
-- When new seq arrives and `chunks_received > 0` → a lost frame is counted (incomplete previous frame)
-- `chunks_received` reset to 0 at start of each new frame
+### Timer Config
+- **One-Pulse Mode** (OPM) enabled: `CR1 |= 2` in `FUN_0800323c`
+- **Counter enabled**: `CR1 |= 1`
+- 12 channel entries configured with trigger source (offset 0x0c |= 0x40000000)
+- Manager `state + 0x24` = **0x5DC (1500)** — frame point-count limit
+- DMA desc `count` = **0x608 (1544)** — elements per cycle
 
-### 🚨 Last Chunk Copy Overflow Bug
-For total_chunks < 5, the last chunk's copy formula `0x4E24 - chunk_idx × 0x1200` reads **far past** the 0x1200-byte packet payload:
-- total_chunks=4: copies 0x1824 bytes from 0x1200 buffer → overrun by 0x624 bytes
-- total_chunks=3: copies 0x2A24 bytes from 0x1200 buffer → overrun by 0x1824 bytes
-
-This garbage is written to the trailing frame buffer slots. Combined with stale data from previous frames (frame buffer is NEVER cleared), the DMA outputs junk points for the unfilled slots.
-
-## DMA Command Structure (`FUN_0800c764`)
-
-Allocates a 42-byte command slot (`FUN_0800fa10(3, 0x2a, 0)`). Layout:
-
-| Offset | Size | Value | Meaning |
-|--------|------|-------|---------|
-| 0x00 | 4 | param_3 | Buffer base address (lower 32 bits) |
-| 0x04 | 2 | param_3[1] | Buffer base (upper bits) |
-| 0x06 | 4 | param_2 | Channel DMA address? |
-| 0x0A | 2 | param_2[1] | Cont'd |
-| **0x0C** | **2** | **0x608** | **Point count / transfer size** |
-| **0x0E** | **2** | **0x100** | **Flags (start trigger)** |
-| **0x10** | **2** | **8** | **Point size (bytes per point)** |
-| **0x12** | **1** | **6** | **DMA config byte** |
-| **0x13** | **1** | **4** | **Buffer offset (DMA reads from buffer+4)** |
-| 0x14 | 2 | param_8 | Type: 0x100=first buf, 0x200=second/commit |
-| 0x16 | 4 | param_4 | Ping-pong swap address (next buffer base) |
-| 0x1A | 2 | param_4[1] | Ping-pong swap (next buffer upper bits) |
-| 0x20 | 4 | param_6 | Buffer-related address |
-| 0x22 | 2 | param_6[1] | Cont'd |
-| **0x24** | **4** | **param_5** | **Frame buffer handle / owner context** |
-| 0x26 | 4 | param_7 | Completion callback context |
-
-**Per-point format** (DMA reads 8 bytes from buffer+4):
-- bytes 0-1: X coordinate (LE int16)
-- bytes 2-3: Y coordinate (LE int16)
-- byte 4: blanking (0 = invisible, 1 = visible)
-- bytes 5-7: R/G/B intensity
-
-## DMA Pipeline (`FUN_0800c890`)
-
-Manages 10 command slots at `DAT_0800c908` (each 0x14 bytes):
-- +0x00: callback pointer (freed after use)
-- +0x08: owner (channel state pointer)
-- +0x0C: buffer pointer
-- +0x12: state (2 = active/ready)
-
-On buffer setup: allocates slot, marks active, stores channel pointer + buffer address.
-
-## DMA Completion / Double Buffering (`FUN_0800c300`)
-
-The DMA uses **ping-pong double buffering**:
-
-1. **First buffer (type 0x100) completes**:
-   - Validates command signature (0x0E=0x100, 0x12=6, 0x13=4, point_size=8)
-   - Extracts buffer handle from offset 0x24
-   - Calls `FUN_0800c890` to update pipeline
-   - **Swaps buffers**: saves current handle, loads next buffer from `state+4`, rotates address fields
-   - **Resubmits** command for second buffer
-
-2. **Second buffer (type 0x200) completes**:
-   - Calls `FUN_0800aa48` to send completion notification via UDP (command byte 0x43)
-   - Writes register 0x0C, sends status, increments completion counter
-
-This creates seamless output: while buffer A is DMA'd, buffer B can be written by UDP dispatcher.
-
-## System Mode (from `FUN_08005f3c`)
-
-Read from external SPI device registers (CPLD/FPGA or GPIO expander). 6 modes:
-
-| Mode | Name | Register pattern | DAC params |
-|------|------|-----------------|------------|
-| 1 | IDLE/STOP | Reg1 bit 2 set | Output stops, DMA disabled |
-| 2 | RUN-0 | Reg0 bits 8+12, or Reg0x1f bits[7:5]=6 | (0x4000, 0x2000) |
-| 3 | RUN-1 | Reg0 bit 13, or Reg0x1f bits[7:5]=2 | (0x4000, 0) |
-| 4 | RUN-2 | Reg0 bit 8, or Reg0x1f bits[7:5]=5 | (0, 0x2000) |
-| 5 | RUN-3 | Default fallback | (0, 0) |
-| 6 | SPECIAL | Reg0 bit 12 set, Reg0x1f bit 12 clear | No output action |
-
-Mode-specific params override bits in the SPI peripheral config to select which TIM/DMA channels drive which DAC axes.
-
-## State Flags (`state + 0x2d`)
-
-| Bit | Mask | Name | Set by | Cleared by |
-|-----|------|------|--------|------------|
-| 0 | 0x01 | DMA_BUSY | `f9c6` after DMA start | `f8e8` on stop (if bit 5 also set) |
-| 4 | 0x10 | OUTPUT_ENABLED | `f986` after DMA start | `f974` on stop |
-| 5 | 0x20 | BUF_READY | (external signal?) | (completion handler?) |
-
-**Buffer setup trigger** (`FUN_0800f9c6`): When bit 0 (DMA_BUSY) AND bit 5 (BUF_READY) both set → calls `FUN_0800c804` which builds the DMA command and queues the frame buffer.
-
-## Output Control Logic (`FUN_0800c99c`)
-
+### Key State Fields (Manager Struct at param_1)
 ```
-OUTPUT_ENABLED && mode < 2   → STOP  (SPI/DMA stop, clear flags, free command slots)
-!OUTPUT_ENABLED && mode > 1  → START (SPI config → DMA config → DMA start → set flags)
-OUTPUT_ENABLED && mode > 1   → no-op (already running)
-!OUTPUT_ENABLED && mode < 2  → no-op (idle)
+Offset  Field
+0x04    Current buffer handle/pointer
+0x24    Frame point-count limit (1500)
+0x26    0x06 (DMA config byte)
+0x27    0x20 (first byte from DAT_0800ead0)
+0x28-0x2c  Remaining 5 bytes from DAT_0800ead0
+0x2d    State flags (bit 0: output active, bit 4: output pending)
 ```
 
-## Full Data Flow
+### Key Constants
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| DAT_0800c824 | 0x08012f4a | Points to 0x00000000 (dest addr constant) |
+| DAT_0800c824-6 | 0x08012f44 | Points to 0xFFFFFFFF (src addr constant) |
+| DAT_0800cad0 | RAM array | 3 entries × 0x230 byte allocs |
+| DAT_0800cad4 | RAM array | 2 × 0x22c + 1 × 0x200 byte allocs |
+| DAT_0800ca18 / DAT_0800eae0 | 0x2400355c | Hardware abstraction struct |
+| DAT_0800ead0 | 0x24037d20 | DAC manager struct addr |
+| DAT_0800ead4 | 0x30040200 | DMA channel buffer base (SRAM4) |
+| DAT_0800ead8 | 0x0800fd27 | Flash config pointer |
+| DAT_0800eadc | 0x24037e68 | Pipeline manager struct |
+| chunk_size | 0x1200 (4608) | Bytes per UDP chunk |
+| pts_per_chunk | 575 | Real points per full chunk |
 
-```
-UDP packet arrives (0x1204 bytes)
-  → LWIP callback FUN_08012310
-    → linearize pbuf → reassembly buffer
-    → type dispatch (0x00=CH1, 0x01=CH2)
-    → copy payload to frame_buffer + chunk_idx * 0x1200
-    → chunks_received++
-    → total_chunks <= chunks_received → frame_buffer[2] = 0xFA, frame_counter++
+### ⚠️ CORRECTIONS (2026-07-10)
 
-Main loop (1000ms): FUN_0800f9e8
-  → read system mode from SPI device: FUN_08005f3c
-  → if mode >= 2 && !output_enabled:
-      → SPI config: FUN_08002b0a (→ FUN_08002298 writes peripheral regs)
-      → DMA config: FUN_080031aa
-      → DMA start: FUN_0800323c
-      → set bit 0 (DMA_BUSY): FUN_0800f9c6
-      → set bit 4 (OUTPUT_ENABLED): FUN_0800f986
+**Previous findings from ShowBridge.bin were correct for the firmware, but key misunderstandings existed:**
 
-Buffer pipeline trigger (bits 0 & 5 set):
-  → FUN_0800c804 → FUN_0800c764 builds 42-byte command struct
-    → stores buffer base, point_size=8, offset=4, count=0x608
-    → submits via state callback
+#### 1. FUN_0800AEB8 is DEAD CODE
+The function at `0x0800AEB8` that was labeled as "build 0x43 status response" is **never called, never referenced** anywhere in the binary. It was a static copy sitting in the firmware but unreachable. All "status response builder" notes referencing `FUN_0800AEB8` are incorrect.
 
-DMA reads 2500 × 8-byte blocks from frame_buffer+4
-  → outputs to DAC hardware via SPI
+#### 2. REAL Response Path: FUN_0800AA48 → FUN_0800ACDC
+The actual gatekeeping and response sending logic is:
+- `FUN_0800AA48`: 4 gatekeeping checks (DMA desc valid, context exists, **context->byte[0xc]==8**, sequence matches)
+- `FUN_0800ACDC`: builds and sends status response via `FUN_08012CE8`
+- Called **only** from `FUN_0800C300` DMA completion handler **when `cycle_type == 0x200`**
 
-DMA complete → FUN_0800c300:
-  → type 0x100: swap buffer, resubmit for second half
-  → type 0x200: notify host via UDP response
-```
+#### 3. The `17 32` Response IS NOT a Data-Receipt ACK
+The `17 32 01 01 00 48 00 2e...` response we receive is the **heartbeat/discovery response**, NOT a data-receipt acknowledgment:
+- `0x17` = pbuf `tot_len` field (23 bytes, computed by LWIP)
+- `0x32` = first data byte at payload offset `0xF0`
+- Sent in response to 6-byte heartbeat packets (type 0x03) or 16-byte discovery packets (type 0x04)
+- The response stores sender IP from the heartbeat packet, then replies with firmware status
 
-## Frame Buffer Initialization
+#### 4. No Buffer Overrun with 5-Chunk Format
+With the formula `copy_size = 0x4E24 - chunk_index * 0x1200`:
+- 5 chunks: last copy = 0x0624 bytes, source fits within 0x1204-byte reassembly buffer ✓
+- **BUT 3 chunks**: last copy = 0x2A24 (10788) bytes, reads 6180 bytes past the 0x1204 reassembly buffer ✗
+- This means Truwave's 3-chunk format causes an overrun READ (reads garbage into frame buffer tail)
+- The overrun explains why 5-chunk test caused DAC to go silent (corrupted state), while 3 chunks "work" (laser still fires from first 4608 bytes of valid data)
 
-Buffers are dynamically allocated at runtime:
-- `DAT_080127e0` (flash 0x080127e0) → initial value `0x2400004C` (ptr to ptr in SRAM)
-- `DAT_08012804` (flash 0x08012804) → initial value `0x24000054` (ptr to ptr in SRAM)
-- Each SRAM slot holds the actual buffer address, allocated by `FUN_0800f82c(0, 0x4E24)`
+#### 5. The 0x43 "Type" is a Send-Function Parameter, Not a Wire Byte
+At `0x0800AD24`: `movs r3, #0x43` passes `0x43` as parameter `r3` to `FUN_08012CE8` (the network send wrapper). It's used as a **connection/port identifier** internally, NOT written as a byte in the UDP payload.
 
-Channel init (`FUN_0800f284`): calls `FUN_0800f724(channel)` for channels 0, 2, 3, 4, 5:
-- Buffer ptr from table `DAT_0800f74c + channel*4 + 0x20`
-- Size from `DAT_0800f748 + channel*4` (in 32-bit words)
-- memset(ptr, 0, size)
-- Sets init flag at `DAT_0800f74c + channel + 0x38` = 1
+#### 6. Why the DAC Never Sends 0x43 Responses (Revealed)
+The 4 gatekeeping checks in `FUN_0800AA48`:
+1. `r0 != NULL` — DMA descriptor valid (should pass)
+2. `r0->offset_0x20 != NULL` — context exists (should pass)  
+3. **`context->byte[0xc] == 8`** — **LIKELY FAILS** — requires channel to be configured with type=8
+4. `*r1 == context->offset_0x24` — sequence match (not reached if #3 fails)
 
-Channel 0 → CH1 (type 0x00). Channel 2 → CH2 (type 0x01). Channels 3-5 are spare.
+The channel must be pre-configured with type=8 via a settings packet (type 0x02). Our data packets don't do this configuration. Additionally, even if properly configured, the response only fires on `cycle_type == 0x200` DMA cycles, and the 3-chunk buffer overrun could corrupt the context struct needed for check #2 or #3.
 
-## Inter-Chunk Boundary Straddle
+#### 7. Both Firmware Binaries are Identical
+`ShowbridgeFirmware.bin` (128KB) and `showbridge\ShowBridge.bin` (77KB) are **identical** for the first 78,836 bytes. The extra 52KB in `ShowbridgeFirmware.bin` is all `0xFF` (erased flash padding). All previous analysis of `ShowBridge.bin` applies to the actual DAC firmware.
 
-At each chunk boundary, the DMA reads 8 bytes spanning `padding[4] + next_ctrl[4]`:
-```
-frame_buffer[0x11FC..0x11FF] = 4 padding bytes (chunk N tail)
-frame_buffer[0x1200..0x1203] = 4 control bytes (chunk N+1 head)
-```
+#### 8. Working 3-Chunk Format (Truwave Actual)
+Truwave sends 3 chunks per frame, each `0x1204` bytes:
+- **8-byte header**: `[total_chunks(1)][chunk_index(1)][seq(2 LE)][const(4)]`
+  - Chunk 0: `03 00 <seq> fe 03 00 1e`
+  - Chunk 1: `03 01 <seq> 00 ff ff ff`
+  - Chunk 2: `03 02 <seq> 00 00 00 00`
+- **575 points per chunk** (4600 bytes): each 8 bytes = `X(2 LE) Y(2 LE) BL(1) R(1) G(1) B(1)`
+- **BL=0** = visible (laser ON), **BL≠0** = blanked (laser OFF)
+- **12-bit coordinates** (0-4095), center at 2048
+- **4-byte footer**: `a3 1f 00 00` at offset 4608
+- Total per chunk: `8 + 4600 + 4 = 4612 = 0x1204`
 
-The padding bytes are don't-care. The control byte[0] becomes this "virtual point's" blanking field — must be `0x00` (invisible) to avoid a visible glitch point.
+### 575-Point Limit Hypothesis
+Most likely cause: Timer **OPM** repetition counter (RCR) set for 575 triggers only. The `state+0x24=1500` may not be the active RCR — the actual repetition count could be computed from chunk/point count at DMA start. If only chunk 0 data has arrived by the time the 1-second poll loop triggers output, RCR = 574.
 
-## Sender-Side Behavior (Truwave.exe)
+**Verification test**: Wireshark capture to confirm chunk timing; or send all 5 chunks concatenated in a single ~23KB UDP packet to ensure all data is present before DMA start.
 
-- Uses a stack buffer `char buf[0x1204]`, NEVER zeroed
-- Only `payload_size` bytes written via `memmove`
-- Tail of last chunk in first frame = uninitialized stack garbage
-- Subsequent frames: tail = previous frame's last chunk bytes (stale remnants)
-- These stale bytes are faithfully copied into the frame buffer and output by the DMA
+### Console / Boot Info
+- UART: COM3, 115200 8N1
+- Chinese firmware, DHCP timeout after ~54 attempts → fallback IP 192.168.1.118
+- User reports using 169.254.25.118 (likely set via heartbeat)
+- UDP port: 0x1F99 (8089)
+- Console fields: lwip_comm_init_status=0, udp_demo_init_status=0, linkState=2
 
-## Point Counts Summary
+---
 
-| Property | Value |
-|----------|-------|
-| Points per non-last chunk | 575 |
-| Non-last chunk payload | `4 + 575×8 + 4 = 4608 = 0x1200` |
-| Last chunk (5 total) | `0x4E24 - 4×0x1200 = 0x624` = `4 + 196×8` |
-| Total points per frame | `4×575 + 196 = 2496` |
-| Frame buffer capacity | 2500 DMA slots (2496 + 4 boundaries) |
-| Truwave chunks/capture | 3 (1725 pts — missing 2 chunks from capture) |
+## Testing
 
-## Key Functions in Ghidra
-
-| Function | Purpose |
-|----------|---------|
-| `FUN_08012310` | LWIP UDP receive callback — main dispatch |
-| `FUN_0800f856` | Byte-by-byte memcpy (no bounds check) |
-| `FUN_0800c99c` | Check DAC state, trigger/stop output by mode |
-| `FUN_0800f9e8` | Main loop (1000ms), calls DAC check |
-| `FUN_0800c764` | Build 42-byte DMA command struct |
-| `FUN_0800c890` | Buffer update / command slot alloc in DMA pipeline |
-| `FUN_0800c300` | DMA completion callback (double-buffering) |
-| `FUN_0800c804` | Buffer pipeline trigger (calls c764) |
-| `FUN_0800f724` | Channel frame buffer clear (memset zero) |
-| `FUN_0800f86c` | Channel state constructor (init struct, linked list) |
-| `FUN_0800f284` | Main init — calls f724 for channels 0,2,3,4,5 |
-| `FUN_0800e2ac` | Console/status display task |
-| `FUN_0800aeb8` | Status response builder |
-| `FUN_0800abbc` | UDP response sender |
-| `FUN_0800aa48` | DMA completion handler (sends UDP response, type 8) |
-| `FUN_08012cc0` | UDP packet send wrapper (LWIP) |
-| `FUN_0800f9c6` | Set flags (DMA_BUSY, trigger buffer setup) |
-| `FUN_0800f986` | Set flag (OUTPUT_ENABLED) |
-| `FUN_0800f8e8` | Clear DMA_BUSY, cleanup command slots |
-| `FUN_0800f974` | Clear OUTPUT_ENABLED |
-| `FUN_08005f3c` | Read system mode from SPI device (modes 1-6) |
-| `FUN_080060a4` | SPI register read wrapper |
-| `FUN_08002b0a` | Read SPI device config into struct |
-| `FUN_080031aa` | DMA config (calls FUN_08002298 to write peripheral regs) |
-| `FUN_0800323c` | DMA start (enable interrupts, start transfer) |
-| `FUN_080032f2` | DMA stop (disable everything) |
-| `FUN_08002298` | Write SPI peripheral registers from config struct |
-| `FUN_0800f8ba` | UDP port configuration |
-| `FUN_0800f82c` | Frame buffer allocator (calls FUN_0800f750) |
-| `thunk_FUN_0800f856` | memcpy to frame buffer |
-| `thunk_FUN_0800f862` | memset (used by f724 to clear frame buffers) |
-
-## Key Global Variables
-
-| Symbol | Type | Address | Purpose |
-|--------|------|---------|---------|
-| `DAT_0801277c` | `byte**` | flash 0x0801277c | Reassembly buffer pointer (pbuf linearization target) |
-| `DAT_080127c0` | `byte*` | flash 0x080127c0 | Channel state struct (seq history, counters) |
-| `DAT_080127e0` | `int*` | flash 0x080127e0 | CH1 frame buffer handle → SRAM 0x2400004C (pointer to 0x4E24-byte buffer) |
-| `DAT_080127e4` | `int*` | flash 0x080127e4 | CH1 frame counter (increments per complete frame) |
-| `DAT_08012804` | `int*` | flash 0x08012804 | CH2 frame buffer handle → SRAM 0x24000054 |
-| `DAT_08012808` | `int*` | flash 0x08012808 | CH2 frame counter |
-| `DAT_080127dc` | `int*` | flash 0x080127dc | CH1 lost frame counter |
-| `DAT_08012800` | `int*` | flash 0x08012800 | CH2 lost frame counter |
-| `DAT_0800f74c` | struct* | flash 0x0800f74c | → SRAM 0x24000120 (channel buffer control struct) |
-| `DAT_0800f748` | int** | flash 0x0800f748 | → flash 0x08012DFC (channel buffer size table, 6 entries) |
-| `DAT_0800ca18` | int* | flash 0x0800ca18 | SPI device handle (used by DAC output) |
-| `DAT_0800c908` | int* | flash 0x0800c908 | DMA command slot array base (10 slots × 0x14 bytes) |
-
-## State Structure Layout (DAT_080127c0)
-
-| Offset | Field |
-|--------|-------|
-| +0x00 | CH1 seq_history_write_idx (byte) |
-| +0x01 | CH2 seq_history_write_idx (byte) |
-| +0x08 | CH1 last_seq (4 bytes) |
-| +0x0C | CH2 last_seq (4 bytes) |
-| +0x10 | CH1 chunks_received (4 bytes) |
-| +0x14 | CH2 chunks_received (4 bytes) |
-| +0x24..0x28 | CH1 seq history ring buffer (5 bytes) |
-| +0x29..0x2D | CH2 seq history ring buffer (5 bytes) |
-
-## How to Correctly Send Frame Data
-
-1. **5 chunks per frame** (avoid the overflow bug)
-2. **Each chunk**: `[4 header][575 × 8-byte points][4 zero pad]` = 0x1200 payload
-3. **Header bytes**: [total_chunks=5] [chunk_index 0-4] [frame_seq] [PPS]
-4. **Last chunk** (index 4): `4 header + 196 × 8-byte points` = 0x624 payload (no padding)
-5. **UDP packet**: 4-byte LWIP header + 0x1200-byte payload = 0x1204 total
-6. **First byte of each non-zero chunk**: MUST be 0x00 (boundary point blanking)
-7. **DMA reads from buffer+4**: points start at offset 4 in frame buffer
-8. **No need to set 0xFA**: firmware does this automatically when all chunks received
-9. **Laser ON/OFF**: NOT in control bytes. Likely sent as blanking=1 in individual points, or via separate command (type 0x06 GPIO?)
-
-## Session 2026-07-07 — UART Console, Boot Sequence, Port Confirmation
-
-### Console Output Decoded
-```
-sd_status=%d, mount_status=%d, lwip_comm_init_status=%d, udp_demo_init_status=%d,
-linkState=%d, bt_work=%d, status spi_test=%d, wgCount=%d, selfMode=%d
-
-IP filter status = %d, Skiped %d pcakges. Ch1 got %d lost %d, Ch2 got %d lost %d frames.
-```
-
-**Status struct** at `DAT_0800e6b4` (pointer via `pcVar4`):
-| Offset | Field | Typical |
-|--------|-------|---------|
-| byte[0] | sd_status | 0=OK/no card |
-| byte[1] | mount_status | 3=error (no SD) |
-| byte[2] | lwip_comm_init_status | 0=OK |
-| byte[3] | udp_demo_init_status | 0=OK |
-| byte[4] | bt_work | 0=inactive |
-| byte[5] | status spi_test | 0=OK |
-| bytes[6-7] | short (waveform data) | — |
-| bytes[8-9] | short (waveform data) | — |
-| uint[3] (offset 0x0c) | linkState | 2=link up |
-
-Other fields:
-- **wgCount**: from `FUN_08009384()` — increments `*(DAT_08009390 + 8)` each display cycle
-- **selfMode**: from `FUN_08005f24(0)` — reads byte at `DAT_08005f38 + 0x15` (NOT the system mode from SPI)
-- **IP filter status**: from `FUN_08005a58()` — reads `*DAT_08005a60`. 0 = filter disabled (all senders allowed)
-
-### Boot Sequence (Chinese firmware UART via COM3, 115200 baud)
-Terminal capture in `terminal_capture.txt` (236 lines).
-
-1. `Firmware 0:/damei/ShowBridge.bin not existed.` — SD card bootloader path not found
-2. Repeated Chinese: `"正在获取地址..."` ("Getting address...") — DHCP client runs for ~54 iterations
-3. `linkState` transitions 1→2 when Ethernet link comes up
-4. **DHCP timeout** → fallback to static IP:
-   - **MAC**: `02:00:00:48:00:2E`
-   - **IP**: `192.168.1.118`
-   - **Subnet**: `255.255.255.0`
-   - **Gateway**: `192.168.1.1`
-5. After fallback, periodic status lines print every ~500ms
-
-**Note**: If user reports different IP (e.g., `169.254.25.118`), IP may have been changed via heartbeat command.
-
-### UDP Port Confirmation
-Raw disassembly at `FUN_080122dc` (`0x080122ec`):
-```asm
-ldr r1, [pc, #28]   ; r1 = DWORD_08012308 = 0x08012F50 (callback ref)
-movw r2, #0x1f99    ; r2 = 0x1F99 = 8089 (UDP port)
-bl FUN_080121f8      ; register connection with port
-```
-
-Port stored at `conn + 0x12`. Checked for uniqueness. **Port 8089 is the only UDP listener** — all packet types arrive on this port, distinguished by total size:
-| Size | Type | Byte[3] |
-|------|------|---------|
-| 0x1204 (4612) | Data | 0x00=CH1, 0x01=CH2 |
-| 0x9A8 (2472) | Setting | — |
-| 6 | Heartbeat | — |
-| 0x10 (16) | IP conflict | — |
-
-### Heartbeat Packet (Type 3, 6 bytes)
-- Changes DAC's IP to match **sender's IP** (from UDP header)
-- `FUN_08005e78()` validates before applying
-- Always sends a response packet back
-
-### test_showbridge.py Fixes
-- `struct.pack("<hBBB"` → `"<hBB"` (3 args: total_points, reserved, PPS)
-- Removed heartbeat prefix (would change DAC's IP)
-- Target IP: `169.254.25.118` (user's working link-local)
-- Port: `8089`
+### test_showbridge.py
+- Sends 2-channel (type 0x00/0x01), 5 chunks, 2496 points
+- Fixed: struct.pack("BBBB") for header, removed heartbeat
+- IP: 169.254.25.118:8089

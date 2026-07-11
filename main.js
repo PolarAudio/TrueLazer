@@ -871,22 +871,50 @@ function createWindow() {
     return await getDacServices(ip, localIp, 1000, type);
   });
 
-  // DAC frame buffer + send loop — runs on the main process's own event loop,
-  // completely independent of React rendering in the renderer process.
-  let dacFrameBuffer = {};
+  // DAC frame accumulator + send loop — the renderer pushes frames at 60fps via
+  // dac-frame-update. We accumulate 2 frames' worth of points per channel, then
+  // send them at 30fps via the send loop, so no renderer frame is wasted.
+  let dacFrameAccumulator = {};
   let dacSendLoopTimer = null;
-  const DAC_SEND_INTERVAL = 1000 / 60; // 60 fps
+  const DAC_SEND_INTERVAL = 1000 / 30; // 30 fps per channel (Truwave default)
 
   ipcMain.on('dac-frame-update', (event, frames) => {
-    dacFrameBuffer = frames;
+    // Remove accumulator entries for channels no longer in the update
+    for (const id of Object.keys(dacFrameAccumulator)) {
+      if (!frames[id]) {
+        delete dacFrameAccumulator[id];
+      }
+    }
+    // Accumulate new frames
+    for (const id of Object.keys(frames)) {
+      const f = frames[id];
+      if (!dacFrameAccumulator[id]) {
+        dacFrameAccumulator[id] = { frames: [], ip: f.ip, channel: f.channel, type: f.type, options: f.options || {} };
+      }
+      dacFrameAccumulator[id].frames.push(f.points);
+    }
   });
 
   const startDacSendLoop = () => {
     if (dacSendLoopTimer) return;
     dacSendLoopTimer = setInterval(() => {
-      for (const id of Object.keys(dacFrameBuffer)) {
-        const frame = dacFrameBuffer[id];
-        sendFrame(frame.ip, frame.channel, frame.points, 60, frame.type, frame.options || {});
+      for (const id of Object.keys(dacFrameAccumulator)) {
+        const acc = dacFrameAccumulator[id];
+        if (acc.frames.length === 0) continue;
+
+        // Concatenate all accumulated Float32Arrays into one
+        const totalLen = acc.frames.reduce((s, a) => s + a.length, 0);
+        const merged = new Float32Array(totalLen);
+        let off = 0;
+        for (const arr of acc.frames) {
+          merged.set(arr, off);
+          off += arr.length;
+        }
+        const pts = merged;
+        console.log(`[Main] ${id}: accumulated=${acc.frames.length} totalPts=${pts.length/8}`);
+        acc.frames = [];
+
+        sendFrame(acc.ip, acc.channel, pts, 30, acc.type, acc.options);
       }
     }, DAC_SEND_INTERVAL);
   };
@@ -906,10 +934,10 @@ function createWindow() {
   });
 
   ipcMain.handle('stop-dac-output', async (event, ip, type) => {
-    // Remove this DAC's frames from the buffer so the send loop doesn't restart output
-    for (const id of Object.keys(dacFrameBuffer)) {
-      if (dacFrameBuffer[id].ip === ip) {
-        delete dacFrameBuffer[id];
+    // Remove this DAC's frames from the accumulator
+    for (const id of Object.keys(dacFrameAccumulator)) {
+      if (dacFrameAccumulator[id].ip === ip) {
+        delete dacFrameAccumulator[id];
       }
     }
     stopSending(ip, type);

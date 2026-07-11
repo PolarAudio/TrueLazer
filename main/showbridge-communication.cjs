@@ -11,8 +11,10 @@ const UDP_PACKET_SIZE = 0x1204;          // 4612 bytes
 const HEADER_SIZE = 4;
 const POINT_SIZE = 8;
 const PTS_FULL = 575;                    // points per full chunk (chunk 0)
-const CHUNK_STAGGER_MS = 3;
-const MAX_CHUNKS = 2;   // max data chunks. 2×575=1150 pts @ 60fps → PPS=69. Firmware buffer: 2×575×8=9200 < 20004.
+const CHUNK_STAGGER_MS = 6;   // 5 chunks x 6ms = 30ms within 33ms (30fps) frame window
+const TOTAL_CHUNKS = 5; // firmware requires exactly 5 chunks per frame to avoid memcpy over-read past UDP packet buffer
+const MAX_CHUNKS = TOTAL_CHUNKS - 1;  // max 4 data chunks (5th is completion). DMA reads all 2500 slots from frame buffer.
+const FILL_TARGET = 1000; // ~1000 pts x 30fps = ~30kpps, matching the DAC playback rate
 const PPS = 30;
 
 const DAC_TYPE = 'Showbridge';
@@ -52,91 +54,134 @@ function log(...args) {
 
 // =============== PACKET BUILDING ===============
 
+function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk, dataOff) {
+    let lastX = 0, lastY = 0;
+    for (let i = 0; i < ptsPerChunk; i++) {
+        const off = dataOff + i * POINT_SIZE;
+        let x = 0, y = 0, blanking = 1, r = 0, g = 0, b = 0;
+
+        if (i < ptsInChunk) {
+            const pi = pointOffset + i;
+            if (isTyped) {
+                const poff = pi * 8;
+                x = points[poff] || 0;
+                y = points[poff + 1] || 0;
+                r = points[poff + 3] || 0;
+                g = points[poff + 4] || 0;
+                b = points[poff + 5] || 0;
+                blanking = (points[poff + 6] || 0) > 0.5 ? 1 : 0;
+            } else {
+                const p = points[pi];
+                if (p instanceof Float32Array || Array.isArray(p)) {
+                    x = p[0] || 0;
+                    y = p[1] || 0;
+                    r = p[3] || 0;
+                    g = p[4] || 0;
+                    b = p[5] || 0;
+                    blanking = (p[6] || 0) > 0.5 ? 1 : 0;
+                } else if (typeof p === 'object') {
+                    x = p.x || 0;
+                    y = p.y || 0;
+                    r = p.r || 0;
+                    g = p.g || 0;
+                    b = p.b || 0;
+                    blanking = p.blanking ? 1 : 0;
+                }
+            }
+
+            x = clamp(x, -1.0, 1.0);
+            y = clamp(y, -1.0, 1.0);
+            lastX = x;
+            lastY = y;
+            if (r > 1) r /= 255;
+            if (g > 1) g /= 255;
+            if (b > 1) b /= 255;
+            r = clamp(r, 0, 1);
+            g = clamp(g, 0, 1);
+            b = clamp(b, 0, 1);
+        } else {
+            x = lastX;
+            y = lastY;
+        }
+
+        const dacBlanking = blanking > 0.5 ? 0 : 0xFF;
+        const ix = Math.round((x + 1.0) * 2047.5);
+        const iy = Math.round((y + 1.0) * 2047.5);
+        buf.writeInt16LE(ix, off);
+        buf.writeInt16LE(iy, off + 2);
+        buf.writeUInt8(dacBlanking, off + 4);
+        buf.writeUInt8(Math.round(r * 255), off + 5);
+        buf.writeUInt8(Math.round(g * 255), off + 6);
+        buf.writeUInt8(Math.round(b * 255), off + 7);
+    }
+}
+
 function buildFrameChunks(chType, pps, points) {
     const isTyped = points instanceof Float32Array;
-    const totalPoints = isTyped ? Math.floor(points.length / 8) : (points ? points.length : 0);
+    let totalPoints = isTyped ? Math.floor(points.length / 8) : (points ? points.length : 0);
     if (totalPoints === 0) return [];
 
-    const ptsPerChunk = PTS_FULL;                           // 575
-    const numChunks = Math.min(Math.ceil(totalPoints / ptsPerChunk), MAX_CHUNKS);
+    const ptsPerChunk = PTS_FULL;
+
+    // Frame loop: repeat the entire point sequence to fill all chunks.
+    // This keeps animation speed correct at 30 Kpps instead of dwelling per-point.
+    if (totalPoints > 0 && totalPoints < FILL_TARGET && points instanceof Float32Array) {
+        const filled = new Float32Array(FILL_TARGET * 8);
+        const repeats = Math.ceil(FILL_TARGET / totalPoints);
+        for (let r = 0; r < repeats; r++) {
+            for (let i = 0; i < totalPoints; i++) {
+                const dstOff = (r * totalPoints + i) * 8;
+                if (dstOff >= FILL_TARGET * 8) break;
+                for (let j = 0; j < 8; j++) {
+                    filled[dstOff + j] = points[i * 8 + j];
+                }
+            }
+        }
+        points = filled;
+        totalPoints = FILL_TARGET;
+    }
+
+    const dataChunks = Math.min(Math.ceil(totalPoints / ptsPerChunk), MAX_CHUNKS);
     const chunks = [];
     let pointOffset = 0;
 
-    // No completion chunk — seq change between frames signals the boundary
-    for (let ci = 0; ci < numChunks; ci++) {
+    for (let ci = 0; ci < TOTAL_CHUNKS; ci++) {
         const buf = Buffer.alloc(UDP_PACKET_SIZE);
-        buf.writeUInt8(numChunks, 0);                       // total_chunks = actual count
-        buf.writeUInt8(ci, 1);                               // chunk_index
-        buf.writeUInt8(0, 2);                                // seq (set by caller)
-        buf.writeUInt8(chType, 3);                           // type
-        buf.writeInt16LE(0x01D2, 4);                         // laser_ctrl = ON
-        buf.writeUInt8(0, 6);
-        buf.writeUInt8(pps, 7);
+        buf.writeUInt8(TOTAL_CHUNKS, 0);
+        buf.writeUInt8(ci, 1);
+        buf.writeUInt8(0, 2);
+        buf.writeUInt8(chType, 3);
 
-        const ptsInChunk = Math.min(totalPoints - pointOffset, ptsPerChunk);
-        let lastX = 0, lastY = 0;
+        const isData = ci < dataChunks;
+        const ptsInChunk = isData ? Math.min(totalPoints - pointOffset, ptsPerChunk) : 0;
+        const dataOff = HEADER_SIZE + 4;
 
-        for (let i = 0; i < ptsPerChunk; i++) {
-            const off = HEADER_SIZE + 4 + i * POINT_SIZE;
-            let x = 0, y = 0, blanking = 1, r = 0, g = 0, b = 0;
-
-            if (i < ptsInChunk) {
-                const pi = pointOffset + i;
-                if (isTyped) {
-                    const poff = pi * 8;
-                    x = points[poff] || 0;
-                    y = points[poff + 1] || 0;
-                    r = points[poff + 3] || 0;
-                    g = points[poff + 4] || 0;
-                    b = points[poff + 5] || 0;
-                    blanking = (points[poff + 6] || 0) > 0.5 ? 1 : 0;
-                } else {
-                    const p = points[pi];
-                    if (p instanceof Float32Array || Array.isArray(p)) {
-                        x = p[0] || 0;
-                        y = p[1] || 0;
-                        r = p[3] || 0;
-                        g = p[4] || 0;
-                        b = p[5] || 0;
-                        blanking = (p[6] || 0) > 0.5 ? 1 : 0;
-                    } else if (typeof p === 'object') {
-                        x = p.x || 0;
-                        y = p.y || 0;
-                        r = p.r || 0;
-                        g = p.g || 0;
-                        b = p.b || 0;
-                        blanking = p.blanking ? 1 : 0;
-                    }
-                }
-
-                x = clamp(x, -1.0, 1.0);
-                y = clamp(y, -1.0, 1.0);
-                lastX = x;
-                lastY = y;
-                if (r > 1) r /= 255;
-                if (g > 1) g /= 255;
-                if (b > 1) b /= 255;
-                r = clamp(r, 0, 1);
-                g = clamp(g, 0, 1);
-                b = clamp(b, 0, 1);
-            } else {
-                x = lastX;
-                y = lastY;
-            }
-
-            const dacBlanking = blanking > 0.5 ? 0 : 0xFF;
-
-            const ix = Math.round((x + 1.0) * 2047.5);
-            const iy = Math.round((y + 1.0) * 2047.5);
-            buf.writeInt16LE(ix, off);
-            buf.writeInt16LE(iy, off + 2);
-            buf.writeUInt8(dacBlanking, off + 4);
-            buf.writeUInt8(Math.round(r * 255), off + 5);
-            buf.writeUInt8(Math.round(g * 255), off + 6);
-            buf.writeUInt8(Math.round(b * 255), off + 7);
+        if (ci === 0) {
+            buf.writeInt16LE(isData ? 0x01D2 : 0, 4);
+            buf.writeUInt8(0, 6);
+            buf.writeUInt8(pps, 7);
+        } else {
+            buf.writeUInt16LE(0, 4);
+            buf.writeUInt16LE(0, 6);
         }
 
-        pointOffset += ptsInChunk;
+        if (isData) {
+            writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk, dataOff);
+            pointOffset += ptsInChunk;
+        } else {
+            const cx = Math.round((0 + 1.0) * 2047.5);
+            const cy = Math.round((0 + 1.0) * 2047.5);
+            for (let i = 0; i < ptsPerChunk; i++) {
+                const off = dataOff + i * POINT_SIZE;
+                buf.writeInt16LE(cx, off);
+                buf.writeInt16LE(cy, off + 2);
+                buf.writeUInt8(0, off + 4);
+                buf.writeUInt8(0, off + 5);
+                buf.writeUInt8(0, off + 6);
+                buf.writeUInt8(0, off + 7);
+            }
+        }
+
         chunks.push(buf);
     }
 
@@ -208,7 +253,7 @@ async function discoverDacs(timeout = 3000) {
                 }
             });
 
-            sock.on('error', () => {});
+            sock.on('error', () => { });
 
             const ipParts = iface.ip.split('.').map(Number);
             const cmd = Buffer.alloc(6);
@@ -225,7 +270,7 @@ async function discoverDacs(timeout = 3000) {
                 readyCount++;
                 if (readyCount >= ifaces.length) {
                     setTimeout(() => {
-                        for (const s of sockets) { try { s.close(); } catch (e) {} }
+                        for (const s of sockets) { try { s.close(); } catch (e) { } }
                         resolve(discovered);
                     }, timeout);
                 }
@@ -279,21 +324,21 @@ function sendFrame(ip, channel, points, fps, type, options) {
         st = {
             socket: dgram.createSocket('udp4'),
             pendingTimers: [],
-            heartbeatSent: false,
+            heartbeatTimer: null,
             running: true,
             seq: 0,
         };
-        st.socket.on('error', () => {});
+        st.socket.on('error', () => { });
         channelState.set(key, st);
+
+        // Send heartbeat every second during output
+        sendHeartbeat(ip);
+        st.heartbeatTimer = setInterval(() => {
+            if (st.running) sendHeartbeat(ip);
+        }, 1000);
     }
 
     if (!st.running) return;
-
-    // Send heartbeat once per channel session
-    if (!st.heartbeatSent) {
-        sendHeartbeat(ip);
-        st.heartbeatSent = true;
-    }
 
     // Cancel any pending chunk sends from previous frame
     for (const t of st.pendingTimers) {
@@ -305,10 +350,9 @@ function sendFrame(ip, channel, points, fps, type, options) {
     const chunks = buildFrameChunks(chType, pps, points);
     if (chunks.length === 0) return;
 
+    // Seq is per-frame — same value on all 5 chunks
     const seq = st.seq & 0xFF;
     st.seq = (st.seq + 1) & 0xFF;
-
-    // Set seq on all chunks
     for (const c of chunks) {
         c.writeUInt8(seq, 2);
     }
@@ -344,49 +388,61 @@ function sendBlankFrame(ip, channel) {
     const chType = channel === 2 ? 0x01 : 0x00;
 
     const socket = dgram.createSocket('udp4');
-    socket.on('error', () => {});
+    socket.on('error', () => { });
 
-    // Build blank frame: chunk 0 with center-dark points + laser OFF, chunk 1 completion
-    const buf0 = Buffer.alloc(UDP_PACKET_SIZE);
-    buf0.writeUInt8(2, 0);
-    buf0.writeUInt8(0, 1);
-    buf0.writeUInt8(0, 2);
-    buf0.writeUInt8(chType, 3);
-    buf0.writeInt16LE(0, 4);     // laser_ctrl = OFF
-    buf0.writeUInt8(0, 6);
-    buf0.writeUInt8(PPS, 7);
-    for (let i = 0; i < PTS_FULL; i++) {
-        const off = HEADER_SIZE + 4 + i * POINT_SIZE;
-        const ix = Math.round((0 + 1.0) * 2047.5);
-        const iy = Math.round((0 + 1.0) * 2047.5);
-        buf0.writeInt16LE(ix, off);
-        buf0.writeInt16LE(iy, off + 2);
-        buf0.writeUInt8(0, off + 4);
-        buf0.writeUInt8(0, off + 5);
-        buf0.writeUInt8(0, off + 6);
-        buf0.writeUInt8(0, off + 7);
+    const chunks = [];
+    const cx = Math.round((0 + 1.0) * 2047.5);
+    const cy = Math.round((0 + 1.0) * 2047.5);
+    for (let ci = 0; ci < TOTAL_CHUNKS; ci++) {
+        const buf = Buffer.alloc(UDP_PACKET_SIZE);
+        buf.writeUInt8(TOTAL_CHUNKS, 0);
+        buf.writeUInt8(ci, 1);
+        buf.writeUInt8(0, 2);
+        buf.writeUInt8(chType, 3);
+        if (ci === 0) {
+            buf.writeInt16LE(0, 4);
+            buf.writeUInt8(0, 6);
+            buf.writeUInt8(PPS, 7);
+        } else {
+            buf.writeUInt16LE(0, 4);
+            buf.writeUInt16LE(0, 6);
+        }
+        const dataOff = HEADER_SIZE + 4;
+        for (let i = 0; i < PTS_FULL; i++) {
+            const off = dataOff + i * POINT_SIZE;
+            buf.writeInt16LE(cx, off);
+            buf.writeInt16LE(cy, off + 2);
+            buf.writeUInt8(0, off + 4);
+            buf.writeUInt8(0, off + 5);
+            buf.writeUInt8(0, off + 6);
+            buf.writeUInt8(0, off + 7);
+        }
+        chunks.push(buf);
     }
 
-    const buf1 = Buffer.alloc(UDP_PACKET_SIZE);
-    buf1.writeUInt8(2, 0);
-    buf1.writeUInt8(1, 1);
-    buf1.writeUInt8(0, 2);
-    buf1.writeUInt8(chType, 3);
-    buf1.writeInt16LE(0, 4);
-    buf1.writeUInt8(0, 6);
-    buf1.writeUInt8(PPS, 7);
-
     let closed = false;
-    socket.send(buf0, 0, UDP_PACKET_SIZE, DAC_PORT, ip, () => {
-        setTimeout(() => {
-            if (closed) return;
-            socket.send(buf1, 0, UDP_PACKET_SIZE, DAC_PORT, ip, () => {
-                setTimeout(() => {
-                    if (!closed) { closed = true; try { socket.close(); } catch (e) {} }
-                }, 10);
+    let idx = 0;
+    function sendNext() {
+        if (closed || idx >= chunks.length) {
+            if (!closed) { closed = true; try { socket.close(); } catch (e) { } }
+            return;
+        }
+        try {
+            socket.send(chunks[idx], 0, UDP_PACKET_SIZE, DAC_PORT, ip, () => {
+                idx++;
+                if (idx < chunks.length) {
+                    setTimeout(sendNext, CHUNK_STAGGER_MS);
+                } else {
+                    setTimeout(() => {
+                        if (!closed) { closed = true; try { socket.close(); } catch (e) { } }
+                    }, 10);
+                }
             });
-        }, CHUNK_STAGGER_MS);
-    });
+        } catch (e) {
+            if (!closed) { closed = true; try { socket.close(); } catch (e) { } }
+        }
+    }
+    sendNext();
 }
 
 // =============== STOP / CLEANUP ===============
@@ -402,12 +458,18 @@ function stopSending(ip) {
         }
         st.pendingTimers = [];
 
+        // Stop heartbeat
+        if (st.heartbeatTimer) {
+            clearInterval(st.heartbeatTimer);
+            st.heartbeatTimer = null;
+        }
+
         // Send blank frames to turn off laser
         const ch = parseInt(key.split(':')[1], 10);
         sendBlankFrame(ip, ch);
 
         // Close the socket
-        try { st.socket.close(); } catch (e) {}
+        try { st.socket.close(); } catch (e) { }
 
         channelState.delete(key);
         log(`Stopped sending to ${key}`);
@@ -423,12 +485,17 @@ function closeAll() {
         }
         st.pendingTimers = [];
 
+        if (st.heartbeatTimer) {
+            clearInterval(st.heartbeatTimer);
+            st.heartbeatTimer = null;
+        }
+
         // Send blank frames before closing
         const [ip, chStr] = key.split(':');
         const ch = parseInt(chStr, 10);
         sendBlankFrame(ip, ch);
 
-        try { st.socket.close(); } catch (e) {}
+        try { st.socket.close(); } catch (e) { }
     }
     channelState.clear();
     discoveryCache.clear();

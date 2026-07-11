@@ -47,14 +47,10 @@ function sendFrame(ip, channel, points, fps, type, options) {
         return etherdream.sendFrame(ip, channel, points, fps, options);
     }
     if (type === 'Showbridge') {
-        // PPS (Kpps) = total padded points per frame × target fps / 1000
-        // Each chunk uses 575 point slots (including blank padding at end)
-        const isTyped = points instanceof Float32Array;
-        const pointCount = isTyped ? Math.floor(points.length / 8) : (points ? points.length : 0);
-        const paddedChunks = Math.min(Math.ceil(pointCount / 575), 2);
-        const paddedPoints = paddedChunks * 575;
-        const pps = options && options.pps != null ? options.pps : Math.round(Math.max(20, Math.min(80, paddedPoints * 60 / 1000)));
-        return showbridge.sendFrame(ip, channel, points, fps, null, { ...options, pps });
+        // Fixed PPS = 30 Kpps (Truwave default). Dynamic PPS caused instability.
+        // Frame rate is determined by the DAC's double-buffered DMA — frames that
+        // arrive faster than the DAC can scan are dropped gracefully.
+        return showbridge.sendFrame(ip, channel, points, fps, null, options);
     }
     return idn.sendFrame(ip, channel, points, fps);
 }
