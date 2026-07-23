@@ -3,7 +3,7 @@ import IldaThumbnail from './IldaThumbnail';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
 
-const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect }) => {
+const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -190,7 +190,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
         >
 			{activeClipData ? (
                 shouldShowLive ? (
-                    <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} effects={combinedEffects} />
+                    <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} frames={activeClipData?.frames} effects={combinedEffects} ildaParserWorker={ildaParserWorker} workerId={activeClipData?.workerId} />
                 ) : (
                     activeClipData.thumbnailPath ? (
                         <img 

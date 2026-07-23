@@ -204,7 +204,7 @@ function sendFrame(ip, channel, points, fps) {
     packet.writeUInt8(IDNVAL_SMOD_LPGRF_DISCRETE, offset++);
     dictionary.copy(packet, offset);
     offset += dictionary.length;
-    const duration = Math.round(1000000 / (fps || 60));
+    const duration = Math.round(1000000 / (fps || 30));
     packet.writeUInt32BE(duration & 0x00FFFFFF, offset);
     offset += 4;
     for (let i = 0; i < numPoints; i++) {

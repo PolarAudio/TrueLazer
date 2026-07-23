@@ -255,15 +255,18 @@ async function renderThumbnailToBitmap(points, width = 128, height = 128) {
         const screenX = (p.x + 1) * 0.5 * width;
         const screenY = (1 - (p.y + 1) * 0.5) * height;
 
-        if (!p.blanking && lastX !== null) {
+        if (!p.blanking && !lastWasBlanked && lastX !== null) {
             ctx.beginPath();
             ctx.moveTo(lastX, lastY);
             ctx.lineTo(screenX, screenY);
             ctx.strokeStyle = `rgb(${p.r},${p.g},${p.b})`;
             ctx.stroke();
         }
-        lastX = screenX;
-        lastY = screenY;
+        if (!p.blanking) {
+            lastX = screenX;
+            lastY = screenY;
+        }
+        lastWasBlanked = p.blanking;
     }
 
     // Automatically close the loop for the thumbnail if the frame is a closed shape

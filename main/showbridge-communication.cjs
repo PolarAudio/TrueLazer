@@ -11,10 +11,10 @@ const UDP_PACKET_SIZE = 0x1204;          // 4612 bytes
 const HEADER_SIZE = 4;
 const POINT_SIZE = 8;
 const PTS_FULL = 575;                    // points per full chunk (chunk 0)
-const CHUNK_STAGGER_MS = 6;   // 5 chunks x 6ms = 30ms within 33ms (30fps) frame window
-const TOTAL_CHUNKS = 5; // firmware requires exactly 5 chunks per frame to avoid memcpy over-read past UDP packet buffer
-const MAX_CHUNKS = TOTAL_CHUNKS - 1;  // max 4 data chunks (5th is completion). DMA reads all 2500 slots from frame buffer.
-const FILL_TARGET = 1000; // ~1000 pts x 30fps = ~30kpps, matching the DAC playback rate
+const CHUNK_STAGGER_MS = 6;   // 3 chunks x 6ms = 18ms within 33ms (30fps) frame window
+const TOTAL_CHUNKS = 3; // 2 data chunks + 1 completion, matches Truwave behavior
+const MAX_CHUNKS = TOTAL_CHUNKS - 1;  // 2 data chunks. DMA reads 3 x 575 = 1725 slots (~1000 real pts + blanks)
+const FILL_TARGET = 575; // Match PTS_FULL so all data fits in chunk 0 (DMA only reads first chunk)
 const PPS = 30;
 
 const DAC_TYPE = 'Showbridge';
@@ -46,10 +46,6 @@ function getPrimaryIp() {
 
 function clamp(val, min, max) {
     return Math.max(min, Math.min(max, val));
-}
-
-function log(...args) {
-    console.log(`[Showbridge]`, ...args);
 }
 
 // =============== PACKET BUILDING ===============
@@ -104,15 +100,16 @@ function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk,
             y = lastY;
         }
 
-        const dacBlanking = blanking > 0.5 ? 0 : 0xFF;
+        const dacBlanking = blanking > 0.5 ? 0 : 1;
+        const isDark = dacBlanking === 0;
         const ix = Math.round((x + 1.0) * 2047.5);
         const iy = Math.round((y + 1.0) * 2047.5);
         buf.writeInt16LE(ix, off);
         buf.writeInt16LE(iy, off + 2);
         buf.writeUInt8(dacBlanking, off + 4);
-        buf.writeUInt8(Math.round(r * 255), off + 5);
-        buf.writeUInt8(Math.round(g * 255), off + 6);
-        buf.writeUInt8(Math.round(b * 255), off + 7);
+        buf.writeUInt8(isDark ? 0 : Math.round(r * 255), off + 5);
+        buf.writeUInt8(isDark ? 0 : Math.round(g * 255), off + 6);
+        buf.writeUInt8(isDark ? 0 : Math.round(b * 255), off + 7);
     }
 }
 
@@ -123,21 +120,49 @@ function buildFrameChunks(chType, pps, points) {
 
     const ptsPerChunk = PTS_FULL;
 
-    // Frame loop: repeat the entire point sequence to fill all chunks.
-    // This keeps animation speed correct at 30 Kpps instead of dwelling per-point.
+    // Interpolation fill: when fewer source points than FILL_TARGET, linearly
+    // interpolate between consecutive points to reach the target.  This avoids
+    // frame-loop repetition jumps and makes better use of 30 Kpps bandwidth.
     if (totalPoints > 0 && totalPoints < FILL_TARGET && points instanceof Float32Array) {
-        const filled = new Float32Array(FILL_TARGET * 8);
-        const repeats = Math.ceil(FILL_TARGET / totalPoints);
-        for (let r = 0; r < repeats; r++) {
-            for (let i = 0; i < totalPoints; i++) {
-                const dstOff = (r * totalPoints + i) * 8;
-                if (dstOff >= FILL_TARGET * 8) break;
-                for (let j = 0; j < 8; j++) {
-                    filled[dstOff + j] = points[i * 8 + j];
-                }
+        const padded = new Float32Array(FILL_TARGET * 8);
+
+        // Find first lit, non-center point — skip leading blanked and/or center
+        // dwell points so the body doesn't start from center toward the shape
+        // (common in ILDA draw animations).
+        let bodyStart = 0;
+        for (let i = 0; i < totalPoints; i++) {
+            const off = i * 8;
+            const bx = points[off];
+            const by = points[off + 1];
+            const atCenter = Math.abs(bx) < 0.05 && Math.abs(by) < 0.05;
+            const lit = (points[off + 6] || 0) <= 0.5;
+            if (lit && !atCenter) { bodyStart = i; break; }
+        }
+        if (bodyStart >= totalPoints) bodyStart = 0;
+        const bodyOff = bodyStart * 8;
+        const bodyLen = totalPoints - bodyStart;
+
+        // Repeat source points (loop fill).  Include the generator's closing point
+        // (copy of first point) so adjacent points in the sequence are always
+        // geometrically close — no lit diagonals across the shape.  Blank the
+        // closing copy so the zero-distance dwell at the start point is invisible.
+        const srcLen = bodyLen;
+        for (let i = 0; i < FILL_TARGET; i++) {
+            const srcOff = bodyOff + ((i % srcLen) * 8);
+            const dstOff = i * 8;
+            const isClosingPt = (i % srcLen) === srcLen - 1;
+            for (let j = 0; j < 8; j++) {
+                padded[dstOff + j] = points[srcOff + j];
+            }
+            if (isClosingPt) {
+                padded[dstOff + 3] = 0;
+                padded[dstOff + 4] = 0;
+                padded[dstOff + 5] = 0;
+                padded[dstOff + 6] = 1;
             }
         }
-        points = filled;
+
+        points = padded;
         totalPoints = FILL_TARGET;
     }
 
@@ -296,7 +321,6 @@ function getDacServices(ip) {
 
 // =============== HEARTBEAT ===============
 function sendHeartbeat(ip) {
-    const socket = dgram.createSocket('udp4');
     const localIp = getPrimaryIp();
     const ipParts = localIp.split('.').map(Number);
     const buf = Buffer.alloc(6);
@@ -306,9 +330,12 @@ function sendHeartbeat(ip) {
     buf.writeUInt8(ipParts[2], 3);
     buf.writeUInt8(ipParts[3], 4);
     buf.writeUInt8(0, 5);
-    socket.send(buf, 0, 6, DAC_PORT, ip, () => {
-        socket.close();
-    });
+    for (const [key, st] of channelState) {
+        if (key.startsWith(ip + ':') && st.socket) {
+            st.socket.send(buf, 0, 6, DAC_PORT, ip);
+            break;
+        }
+    }
 }
 
 // =============== FRAME SENDING ===============
@@ -361,7 +388,7 @@ function sendFrame(ip, channel, points, fps, type, options) {
     try {
         st.socket.send(chunks[0], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
     } catch (e) {
-        log(`send error on ${key}: ${e.message}`);
+        console.error(`[Showbridge] send error on ${key}: ${e.message}`);
         return;
     }
 
@@ -373,7 +400,7 @@ function sendFrame(ip, channel, points, fps, type, options) {
             try {
                 st.socket.send(chunks[i], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
             } catch (e) {
-                log(`send error on ${key}: ${e.message}`);
+                console.error(`[Showbridge] send error on ${key}: ${e.message}`);
             }
             const idx = st.pendingTimers.indexOf(timer);
             if (idx >= 0) st.pendingTimers.splice(idx, 1);
@@ -472,7 +499,6 @@ function stopSending(ip) {
         try { st.socket.close(); } catch (e) { }
 
         channelState.delete(key);
-        log(`Stopped sending to ${key}`);
     }
 }
 
@@ -499,7 +525,6 @@ function closeAll() {
     }
     channelState.clear();
     discoveryCache.clear();
-    log('All Showbridge channels closed');
 }
 
 // =============== EXPORTS ===============

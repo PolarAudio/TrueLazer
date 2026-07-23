@@ -229,10 +229,10 @@ function sendFrame(ip, channel, points, fps, options = {}) {
         }
         
         // STABLE PPS CALCULATION: 
-        // We want to output at 60 FPS. 
-        // Ideal PPS = pointCount * 60.
-        // But we cap it at hardware limits (e.g. 35k for stable EtherDream).
-        const targetPPS = Math.max(10000, Math.min(35000, optimized.length * 60));
+        // We want to output at 30 FPS.
+        // Ideal PPS = pointCount * 30.
+        // But we cap it at hardware limits (e.g. 30k PPS).
+        const targetPPS = Math.max(10000, Math.min(30000, optimized.length * 30));
         
         instance.frameQueue.push({ points: optimized, rate: targetPPS });
         if (instance.frameQueue.length > 30) instance.frameQueue.shift();

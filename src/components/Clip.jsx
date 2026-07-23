@@ -212,7 +212,7 @@ const Clip = ({
               {/* Render Mode Logic */}
               {shouldShowLive && hasActualContent ? (
                 /* Live/Hover Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
-                <IldaThumbnail frame={liveFrame || stillFrame} effects={clipContent?.effects} />
+                <IldaThumbnail frame={liveFrame || stillFrame} frames={clipContent?.frames} effects={clipContent?.effects} ildaParserWorker={ildaParserWorker} workerId={clipContent?.workerId} />
               ) : (
                 /* Still Frame Mode */
                 /* If we have a generated thumbnail path, use it for efficiency */

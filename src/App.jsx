@@ -194,7 +194,7 @@ const getInitialState = (initialSettings) => ({
   showBeamEffect: initialSettings?.renderSettings?.showBeamEffect ?? true,
   beamAlpha: initialSettings?.renderSettings?.beamAlpha ?? 0.1,
   fadeAlpha: initialSettings?.renderSettings?.fadeAlpha ?? 0.13,
-  playbackFps: initialSettings?.renderSettings?.playbackFps ?? 60,
+  playbackFps: initialSettings?.renderSettings?.playbackFps ?? 30,
   previewScanRate: initialSettings?.renderSettings?.previewScanRate ?? 1,
   beamRenderMode: initialSettings?.renderSettings?.beamRenderMode ?? 'both',
   worldShowBeamEffect: initialSettings?.renderSettings?.worldShowBeamEffect ?? true,
@@ -2208,7 +2208,7 @@ function App() {
     let animationFrameId;
     let dacProcessTimeoutId;
     let lastFrameTime = 0;
-    const OUTPUT_FPS = 60;
+    const OUTPUT_FPS = 30;
     const dacFrameInterval = 1000 / OUTPUT_FPS;
 
     // Helper to merge multiple frames into one for a single DAC channel
@@ -2217,11 +2217,18 @@ function App() {
       if (frames.length === 1) {
           const f = frames[0];
           const isTyped = f.points instanceof Float32Array || f.isTypedArray;
-          return {
-              ...f,
-              points: isTyped ? new Float32Array(f.points) : f.points.map(p => ({ ...p })),
-              isTypedArray: isTyped
-          };
+          if (isTyped) {
+              return { ...f, points: new Float32Array(f.points), isTypedArray: true };
+          }
+          // Convert object points to Float32Array for consistent DAC pipeline
+          const pts = new Float32Array(f.points.length * 8);
+          for (let i = 0; i < f.points.length; i++) {
+              const p = f.points[i];
+              pts[i * 8] = p.x; pts[i * 8 + 1] = p.y; pts[i * 8 + 2] = p.z || 0;
+              pts[i * 8 + 3] = p.r; pts[i * 8 + 4] = p.g; pts[i * 8 + 5] = p.b;
+              pts[i * 8 + 6] = p.blanking ? 1 : 0; pts[i * 8 + 7] = 0;
+          }
+          return { ...f, points: pts, isTypedArray: true };
       }
 
       let totalPoints = 0;
@@ -2467,6 +2474,37 @@ function App() {
                   modifiedFrame.isTypedArray = true;
               }
 
+              // Point budget: cap at ~1000 pts/frame to stay within 30k PPS at 30 FPS
+              const MAX_PTS_PER_FRAME = 1000;
+              if (modifiedFrame.points) {
+                  const pts = modifiedFrame.points;
+                  const isT = modifiedFrame.isTypedArray || pts instanceof Float32Array;
+                  const n = isT ? (pts.length / 8) : pts.length;
+                  if (n > MAX_PTS_PER_FRAME) {
+                      const step = n / MAX_PTS_PER_FRAME;
+                      const newPts = [];
+                      let prevBlank = null;
+                      for (let i = 0; i < n; i++) {
+                          const blank = isT ? (pts[i * 8 + 6] === 1) : !!pts[i].blanking;
+                          const blankChanged = prevBlank !== null && blank !== prevBlank;
+                          const keep = (i === 0) || (i === n - 1) ||
+                              blankChanged ||
+                              (Math.floor(i / step) !== Math.floor((i - 1) / step));
+                          if (keep) {
+                              if (isT) {
+                                  for (let k = 0; k < 8; k++) newPts.push(pts[i * 8 + k]);
+                              } else {
+                                  const p = pts[i];
+                                  newPts.push(p.x, p.y, p.z || 0, p.r, p.g, p.b, p.blanking ? 1 : 0, p.lastPoint ? 1 : 0);
+                              }
+                          }
+                          prevBlank = blank;
+                      }
+                      modifiedFrame.points = new Float32Array(newPts);
+                      modifiedFrame.isTypedArray = true;
+                  }
+              }
+
               dacList.forEach((targetDac, dacIndex) => {
                 const ip = targetDac.ip;
                 const channel = targetDac.channel || (targetDac.channels && targetDac.channels.length > 0 ? targetDac.channels[0].serviceID : 0);
@@ -2640,7 +2678,7 @@ function App() {
           let targetIndex = frameIndexesRef.current[workerId] || 0;
           let currentProgress = 0;
           const totalFrames = clip.totalFrames || 1;
-          const pSettings = clip.playbackSettings || { mode: 'fps', duration: totalFrames / 60, beats: 8, speedMultiplier: 1 };
+          const pSettings = clip.playbackSettings || { mode: 'fps', duration: totalFrames / 30, beats: 8, speedMultiplier: 1 };
 
           if (audioInfo && isPlayingRef.current && !audioInfo.paused) {
               currentProgress = audioInfo.duration > 0 ? (audioInfo.currentTime / audioInfo.duration) : 0;
@@ -2660,7 +2698,7 @@ function App() {
               }
           } else {
               // FPS Mode (Default)
-              const clipFps = pSettings.fps || 60;
+              const clipFps = pSettings.fps || 30;
               const clipFrameInterval = 1000 / (clipFps * (pSettings.speedMultiplier || 1));
               
               const isSingleFrameGen = clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1);
@@ -2751,7 +2789,7 @@ function App() {
               if (clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1)) {
                   clipDuration = pSettings.duration || 1.0;
               } else {
-                  clipDuration = totalFrames / (pSettings.fps || 60);
+                  clipDuration = totalFrames / (pSettings.fps || 30);
               }
           }
 
@@ -2940,7 +2978,7 @@ function App() {
                           
                           const exportGenerator = async () => {
                               const { framesToIlda } = await import('./utils/ilda-writer.js');
-                              const fps = playbackFps || 60;
+                              const fps = playbackFps || 30;
                               let duration = 2.0;
                               
                               const pb = clipToExport.playbackSettings || {};
@@ -5049,6 +5087,7 @@ function App() {
                   onToggleBlackout={handleToggleLayerBlackout}
                   onToggleSolo={handleToggleLayerSolo}
                   onLayerSelect={handleLayerSelect}
+                  ildaParserWorker={ildaParserWorker}
                 />
               );
             })}          </div>

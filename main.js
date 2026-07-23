@@ -871,9 +871,9 @@ function createWindow() {
     return await getDacServices(ip, localIp, 1000, type);
   });
 
-  // DAC frame accumulator + send loop — the renderer pushes frames at 60fps via
-  // dac-frame-update. We accumulate 2 frames' worth of points per channel, then
-  // send them at 30fps via the send loop, so no renderer frame is wasted.
+  // DAC frame store + send loop — the renderer pushes frames at 60fps via
+  // dac-frame-update. We store only the latest frame per channel and send at
+  // 30fps, sampling every other render frame without mixing animation states.
   let dacFrameAccumulator = {};
   let dacSendLoopTimer = null;
   const DAC_SEND_INTERVAL = 1000 / 30; // 30 fps per channel (Truwave default)
@@ -885,13 +885,14 @@ function createWindow() {
         delete dacFrameAccumulator[id];
       }
     }
-    // Accumulate new frames
+    // Store only the latest frame per channel — no concatenation of different
+    // animation states (renderer runs at 60fps, we sample at 30fps).
     for (const id of Object.keys(frames)) {
       const f = frames[id];
       if (!dacFrameAccumulator[id]) {
-        dacFrameAccumulator[id] = { frames: [], ip: f.ip, channel: f.channel, type: f.type, options: f.options || {} };
+        dacFrameAccumulator[id] = { frame: null, ip: f.ip, channel: f.channel, type: f.type, options: f.options || {} };
       }
-      dacFrameAccumulator[id].frames.push(f.points);
+      dacFrameAccumulator[id].frame = f.points;
     }
   });
 
@@ -900,21 +901,10 @@ function createWindow() {
     dacSendLoopTimer = setInterval(() => {
       for (const id of Object.keys(dacFrameAccumulator)) {
         const acc = dacFrameAccumulator[id];
-        if (acc.frames.length === 0) continue;
+        if (!acc.frame) continue;
 
-        // Concatenate all accumulated Float32Arrays into one
-        const totalLen = acc.frames.reduce((s, a) => s + a.length, 0);
-        const merged = new Float32Array(totalLen);
-        let off = 0;
-        for (const arr of acc.frames) {
-          merged.set(arr, off);
-          off += arr.length;
-        }
-        const pts = merged;
-        console.log(`[Main] ${id}: accumulated=${acc.frames.length} totalPts=${pts.length/8}`);
-        acc.frames = [];
-
-        sendFrame(acc.ip, acc.channel, pts, 30, acc.type, acc.options);
+        sendFrame(acc.ip, acc.channel, acc.frame, 30, acc.type, acc.options);
+        acc.frame = null;
       }
     }, DAC_SEND_INTERVAL);
   };

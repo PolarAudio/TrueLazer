@@ -2,7 +2,7 @@ import React from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 
 const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) => {
-  const { mode = 'fps', duration = 1, beats = 8, speedMultiplier = 1, fps = 60 } = settings || {};
+  const { mode = 'fps', duration = 1, beats = 8, speedMultiplier = 1, fps = 30 } = settings || {};
 
   const collapsedPanels = uiState?.collapsedPanels || {};
 
@@ -22,7 +22,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
   };
 
   const adjustValue = (key, delta, isMultiply = false) => {
-    let newVal = settings[key] || (key === 'beats' ? 8 : (key === 'fps' ? 60 : 1));
+    let newVal = settings[key] || (key === 'beats' ? 8 : (key === 'fps' ? 30 : 1));
     if (isMultiply) {
       newVal = delta > 1 ? newVal * 2 : newVal / 2;
     } else {
