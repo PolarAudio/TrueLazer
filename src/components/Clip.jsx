@@ -27,11 +27,15 @@ const Clip = ({
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [thumbnailError, setThumbnailError] = useState(false);
 
   // Determine the display name for the clip
   const displayName = clipName;
 
-  const shouldShowLive = (thumbnailRenderMode === 'active') || (thumbnailRenderMode === 'hover' && isHovered);
+  const isTempTrigger = clipContent?.triggerStyle === 'temp';
+  const shouldShowLive = (thumbnailRenderMode === 'active' && !isTempTrigger) || (thumbnailRenderMode === 'hover' && isHovered);
+  const hasActualContent = clipContent && (clipContent.type === 'ilda' || clipContent.type === 'generator');
+  const hasLiveFrame = shouldShowLive && (liveFrame || stillFrame);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -63,7 +67,10 @@ const Clip = ({
 
   const handleMouseLeave = () => {
     setIsHovered(false);
-    handleActivate(false); // Use local wrapper
+    const triggerStyle = clipContent?.triggerStyle || 'normal';
+    if (triggerStyle !== 'flash' && triggerStyle !== 'temp') {
+      handleActivate(false);
+    }
     if (onClipHover) onClipHover(layerIndex, colIndex, false);
   };
 
@@ -186,8 +193,6 @@ const Clip = ({
     }
   };
 
-  const hasActualContent = clipContent && (clipContent.type === 'ilda' || clipContent.type === 'generator');
-
   return (
     <div
       className={`clip ${isDragging ? 'dragging' : ''} ${isActive ? 'active-clip' : ''} `} onDragEnter={handleDragEnter}
@@ -210,17 +215,17 @@ const Clip = ({
           ) : (
             <>
               {/* Render Mode Logic */}
-              {shouldShowLive && hasActualContent ? (
+              {shouldShowLive && hasActualContent && hasLiveFrame ? (
                 /* Live/Hover Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
                 <IldaThumbnail frame={liveFrame || stillFrame} frames={clipContent?.frames} effects={clipContent?.effects} ildaParserWorker={ildaParserWorker} workerId={clipContent?.workerId} />
               ) : (
                 /* Still Frame Mode */
                 /* If we have a generated thumbnail path, use it for efficiency */
-                (clipContent?.thumbnailPath) ? (
+                (clipContent?.thumbnailPath && !thumbnailError) ? (
                   <img
                     src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
                     alt="thumbnail"
-                    onError={() => onThumbnailError && onThumbnailError(layerIndex, colIndex)}
+                    onError={() => { setThumbnailError(true); onThumbnailError && onThumbnailError(layerIndex, colIndex); }}
                     style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
                   />
                 ) : (
@@ -238,6 +243,11 @@ const Clip = ({
                   {clipContent.triggerStyle === 'flash' && (
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-lightning-fill" viewBox="0 0 16 16">
                       <path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641z" />
+                    </svg>
+                  )}
+                  {clipContent.triggerStyle === 'temp' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                      <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM7.5 3.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-3zM8 11a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1z"/>
                     </svg>
                   )}
                 </p>

@@ -152,6 +152,39 @@ export const listenToStateChange = (callback) => {
 };
 
 /**
+ * Serialises the current device list for comparison (avoids unnecessary updates
+ * when only the underlying JS object reference changes).
+ * @param {Array<{id: string, name: string}>} inputs
+ * @return {string}
+ */
+const deviceListKey = (inputs) =>
+    inputs.map(i => `${i.id}:${i.name}`).sort().join('|');
+
+/**
+ * Polls the current MIDI input list and calls the callback only when the set of
+ * connected devices actually changes.  This is a reliable fallback for
+ * environments where the Web MIDI API's statechange event doesn't fire
+ * dependably (e.g. Electron after window focus changes).
+ *
+ * @param {Function} callback  Called with the new device list on change.
+ * @param {number}  [intervalMs=2000]  Polling interval.
+ * @return {Function} Cleanup function that stops polling.
+ */
+export const pollMidiInputs = (callback, intervalMs = 2000) => {
+    if (!WebMidi.enabled) return () => {};
+    let lastKey = deviceListKey(getMidiInputs());
+    const id = setInterval(() => {
+        const current = getMidiInputs();
+        const key = deviceListKey(current);
+        if (key !== lastKey) {
+            lastKey = key;
+            callback(current);
+        }
+    }, intervalMs);
+    return () => clearInterval(id);
+};
+
+/**
  * Stops all listeners for a specific MIDI input.
  * @param {string} inputId - The device ID.
  */

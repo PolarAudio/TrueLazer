@@ -40,7 +40,6 @@ export const generatorDefinitions = [
     defaultParams: {
       width: 1,
       height: 1,
-      pointDensity: 12,
       x: 0,
       y: 0,
       r: 255,
@@ -53,7 +52,6 @@ export const generatorDefinitions = [
     paramControls: [
       { id: 'width', label: 'Width', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
       { id: 'height', label: 'Height', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
-      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 25, step: 1 },
       { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
           { label: 'Normal', value: 'normal' },
           { label: 'Dotted', value: 'dotted' },
@@ -75,7 +73,6 @@ export const generatorDefinitions = [
     description: 'Generates a simple symmetrical triangle.',
     defaultParams: {
       size: 1,
-      pointDensity: 12,
       x: 0,
       y: 0,
       r: 255,
@@ -87,7 +84,6 @@ export const generatorDefinitions = [
     },
     paramControls: [
       { id: 'size', label: 'Size', type: 'range', min: 0.01, max: 2.0, step: 0.01 },
-      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 25, step: 1 },
       { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
           { label: 'Normal', value: 'normal' },
           { label: 'Dotted', value: 'dotted' },
@@ -112,7 +108,6 @@ export const generatorDefinitions = [
       y1: 0,
       x2: 0.5,
       y2: 0,
-      pointDensity: 50,
       r: 255,
       g: 255,
       b: 255,
@@ -125,7 +120,6 @@ export const generatorDefinitions = [
       { id: 'y1', label: 'Y1', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'x2', label: 'X2', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y2', label: 'Y2', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
-      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 2, max: 100, step: 1 },
       { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
           { label: 'Normal', value: 'normal' },
           { label: 'Dotted', value: 'dotted' },
@@ -185,7 +179,6 @@ export const generatorDefinitions = [
       outerRadius: 0.5,
       innerRadius: 0.2,
       numSpikes: 5,
-      pointDensity: 5,
       x: 0,
       y: 0,
       r: 255,
@@ -199,7 +192,6 @@ export const generatorDefinitions = [
       { id: 'outerRadius', label: 'Outer Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
       { id: 'innerRadius', label: 'Inner Radius', type: 'range', min: 0.01, max: 1.0, step: 0.01 },
       { id: 'numSpikes', label: 'Number of Spikes', type: 'range', min: 3, max: 20, step: 1 },
-      { id: 'pointDensity', label: 'Point Density', type: 'range', min: 1, max: 20, step: 1 },
       { id: 'renderingStyle', label: 'Beam Style', type: 'select', options: [
           { label: 'Normal', value: 'normal' },
           { label: 'Dotted', value: 'dotted' },

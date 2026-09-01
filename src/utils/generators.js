@@ -215,10 +215,9 @@ export function generateCircle(params) {
 
 export function generateSquare(params) {
   try {
-    const { width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
+    const { width, height, x, y, r, g, b } = withDefaults(params, {
       width: 1,
       height: 1,
-      pointDensity: 12,
       x: 0,
       y: 0,
       r: 255,
@@ -231,27 +230,22 @@ export function generateSquare(params) {
       { x: width / 2 + x, y: -height / 2 + y },
       { x: width / 2 + x, y: height / 2 + y },
       { x: -width / 2 + x, y: height / 2 + y },
-      { x: -width / 2 + x, y: -height / 2 + y },
     ];
 
-    const points = [];
-    for (let i = 0; i < corners.length - 1; i++) {
-      const start = corners[i];
-      const end = corners[i + 1];
-      for (let j = 0; j < pointDensity; j++) {
-        const t = j / pointDensity;
+    const STEPS = 30;
+    const points = [{ x: corners[0].x, y: corners[0].y, r, g, b, lastPoint: false }];
+    for (let i = 0; i < corners.length; i++) {
+      const next = (i + 1) % corners.length;
+      for (let s = 1; s <= STEPS; s++) {
+        const t = s / STEPS;
         points.push({
-          x: start.x + (end.x - start.x) * t,
-          y: start.y + (end.y - start.y) * t,
+          x: corners[i].x + (corners[next].x - corners[i].x) * t,
+          y: corners[i].y + (corners[next].y - corners[i].y) * t,
           r, g, b,
           lastPoint: false
         });
       }
     }
-    // Close the loop: duplicate the first point so padPoints detects isClosed
-    // without relying on the optimizer. Must be added before applyRenderingStyle
-    // so non-normal rendering styles also get the closing point.
-    points.push({ ...points[0], lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
@@ -260,27 +254,13 @@ export function generateSquare(params) {
   }
 }
 
-/**
- * Generates point data for a parametric triangle.
- * @param {Object} params Configuration parameters.
- * @param {number} [params.size] Symmetrical size (overrides width/height).
- * @param {number} [params.width] Base width.
- * @param {number} [params.height] Height.
- * @param {number} [params.pointDensity] Points per segment.
- * @param {number} [params.x] Center X offset.
- * @param {number} [params.y] Center Y offset.
- * @param {number} [params.r] Red component (0-255).
- * @param {number} [params.g] Green component (0-255).
- * @param {number} [params.b] Blue component (0-255).
- * @returns {Object} Object containing an array of points and rendering style.
- */
+/** @param {Object} params */
 export function generateTriangle(params) {
   try {
-    const { size, width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
+    const { size, width, height, x, y, r, g, b } = withDefaults(params, {
       size: null,
       width: 1,
       height: 1,
-      pointDensity: 12,
       x: 0,
       y: 0,
       r: 255,
@@ -292,30 +272,25 @@ export function generateTriangle(params) {
     const h = size !== null ? (w * Math.sqrt(3) / 2) : height;
 
     const corners = [
-      { x: -w / 2 + x, y: -h / 2 + y }, // Bottom-left
-      { x: w / 2 + x, y: -h / 2 + y },  // Bottom-right
-      { x: x, y: h / 2 + y },           // Top-center
-      { x: -w / 2 + x, y: -h / 2 + y }, // Back to start
+      { x: -w / 2 + x, y: -h / 2 + y },
+      { x: w / 2 + x, y: -h / 2 + y },
+      { x: x, y: h / 2 + y },
     ];
 
-    const points = [];
-    for (let i = 0; i < corners.length - 1; i++) {
-      const start = corners[i];
-      const end = corners[i + 1];
-      for (let j = 0; j < pointDensity; j++) {
-        const t = j / pointDensity;
+    const STEPS = 30;
+    const points = [{ x: corners[0].x, y: corners[0].y, r, g, b, lastPoint: false }];
+    for (let i = 0; i < corners.length; i++) {
+      const next = (i + 1) % corners.length;
+      for (let s = 1; s <= STEPS; s++) {
+        const t = s / STEPS;
         points.push({
-          x: start.x + (end.x - start.x) * t,
-          y: start.y + (end.y - start.y) * t,
+          x: corners[i].x + (corners[next].x - corners[i].x) * t,
+          y: corners[i].y + (corners[next].y - corners[i].y) * t,
           r, g, b,
           lastPoint: false
         });
       }
     }
-    // Close the loop: duplicate the first point so padPoints detects isClosed
-    // without relying on the optimizer. Must be added before applyRenderingStyle
-    // so non-normal rendering styles also get the closing point.
-    points.push({ ...points[0], lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
@@ -326,25 +301,25 @@ export function generateTriangle(params) {
 
 export function generateLine(params) {
   try {
-    const { x1, y1, x2, y2, pointDensity, r, g, b } = withDefaults(params, {
+    const { x1, y1, x2, y2, r, g, b } = withDefaults(params, {
       x1: -0.5,
       y1: 0,
       x2: 0.5,
       y2: 0,
-      pointDensity: 50,
       r: 255,
       g: 255,
       b: 255
     });
 
-    const points = [];
-    for (let i = 0; i <= pointDensity; i++) {
-      const t = i / pointDensity;
+    const STEPS = 60;
+    const points = [{ x: x1, y: y1, r, g, b, lastPoint: false }];
+    for (let s = 1; s <= STEPS; s++) {
+      const t = s / STEPS;
       points.push({
         x: x1 + (x2 - x1) * t,
         y: y1 + (y2 - y1) * t,
         r, g, b,
-        lastPoint: i === pointDensity
+        lastPoint: s === STEPS
       });
     }
 
@@ -357,11 +332,10 @@ export function generateLine(params) {
 
 export function generateStar(params) {
   try {
-    const { outerRadius, innerRadius, numSpikes, pointDensity, x, y, r, g, b } = withDefaults(params, {
+    const { outerRadius, innerRadius, numSpikes, x, y, r, g, b } = withDefaults(params, {
       outerRadius: 0.5,
       innerRadius: 0.2,
       numSpikes: 5,
-      pointDensity: 5,
       x: 0,
       y: 0,
       r: 255,
@@ -375,28 +349,24 @@ export function generateStar(params) {
       const angle = (i / (numSpikes * 2)) * 2 * Math.PI - Math.PI / 2;
       vertices.push({
         x: radius * Math.cos(angle) + x,
-        y: radius * Math.sin(angle) + y
+        y: radius * Math.sin(angle) + y,
       });
     }
-    vertices.push({ ...vertices[0] });
 
-    const points = [];
-    for (let i = 0; i < vertices.length - 1; i++) {
-      const start = vertices[i];
-      const end = vertices[i + 1];
-      for (let j = 0; j < pointDensity; j++) {
-        const t = j / pointDensity;
+    const STEPS = 12;
+    const points = [{ x: vertices[0].x, y: vertices[0].y, r, g, b, lastPoint: false }];
+    for (let i = 0; i < vertices.length; i++) {
+      const next = (i + 1) % vertices.length;
+      for (let s = 1; s <= STEPS; s++) {
+        const t = s / STEPS;
         points.push({
-          x: start.x + (end.x - start.x) * t,
-          y: start.y + (end.y - start.y) * t,
+          x: vertices[i].x + (vertices[next].x - vertices[i].x) * t,
+          y: vertices[i].y + (vertices[next].y - vertices[i].y) * t,
           r, g, b,
           lastPoint: false
         });
       }
     }
-    // Star already has a closing vertex in the array (vertices[0] is duplicated at the end),
-    // so the loop above draws the closing edge.  No need to push a closing point here.
-    points.push({ ...vertices[vertices.length - 1], r, g, b, lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {

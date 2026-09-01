@@ -13,7 +13,8 @@ const SettingsPanel = ({
   onToggleButton,
   onAssign,
   renderSettings = {},
-  onSetRenderSetting
+  onSetRenderSetting,
+  onClearThumbnailCache
 }) => {
   const { 
     midiInitialized, 
@@ -309,7 +310,7 @@ const SettingsPanel = ({
             </CollapsiblePanel>
           )}
 
-          {enabledShortcuts.osc && (
+{enabledShortcuts.osc && (
             <CollapsiblePanel 
                 title="OSC Shortcuts"
                 isCollapsed={!!collapsedStates['osc']}
@@ -322,6 +323,25 @@ const SettingsPanel = ({
           )}
         </div>
       )}
+
+      <CollapsiblePanel 
+        title="Cache"
+        isCollapsed={!!collapsedStates['cache']}
+        onToggle={(val) => handleToggle('cache', val)}
+      >
+        <div className="param-editor" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <button 
+            className="small-btn clear" 
+            onClick={onClearThumbnailCache}
+            style={{ width: '100%' }}
+          >
+            Clear Thumbnail Cache
+          </button>
+          <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '5px' }}>
+            Removes all cached file thumbnails. They will be regenerated on next view.
+          </p>
+        </div>
+      </CollapsiblePanel>
     </div>
   );
 };

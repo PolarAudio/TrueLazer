@@ -52,7 +52,6 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
     const handleKeyDown = (e) => {
       if (!enabled) return;
 
-      // Prevent shortcuts if typing in input
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
         return;
       }
@@ -68,7 +67,6 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
         return;
       }
 
-      // Normal trigger
       Object.entries(mappings).forEach(([controlId, mapping]) => {
         if (e.code === mapping.key) {
           e.preventDefault();
@@ -79,8 +77,29 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
       });
     };
 
+    const handleKeyUp = (e) => {
+      if (!enabled) return;
+
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+        return;
+      }
+
+      Object.entries(mappings).forEach(([controlId, mapping]) => {
+        if (e.code === mapping.key) {
+          e.preventDefault();
+          if (onCommandRef.current) {
+            onCommandRef.current(controlId, 0, 1, 'keyup');
+          }
+        }
+      });
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, [enabled, isMapping, learningId, mappings]);
 
   const value = {

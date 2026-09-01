@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { WebGLRenderer } from '../utils/WebGLRenderer';
 import { applyEffects } from '../utils/effects';
 
@@ -10,15 +10,21 @@ const IldaThumbnail = ({ frame, frames: framesProp, effects, width = 100, height
   const rafRef = useRef(null);
   const localFramesRef = useRef([]);
   const [fetchedFrames, setFetchedFrames] = useState(null);
+  const mountedRef = useRef(true);
 
   // Request all frames from worker when workerId is available
   useEffect(() => {
-    if (!workerId || !ildaParserWorker) return;
+    if (!workerId || !ildaParserWorker) {
+      setFetchedFrames(null);
+      return;
+    }
 
     let cancelled = false;
     const handler = (e) => {
       if (e.data.type === 'get-all-frames' && e.data.success && e.data.workerId === workerId) {
-        if (!cancelled) setFetchedFrames(e.data.frames);
+        if (!cancelled && mountedRef.current) {
+          setFetchedFrames(e.data.frames);
+        }
         ildaParserWorker.removeEventListener('message', handler);
       }
     };
@@ -32,16 +38,29 @@ const IldaThumbnail = ({ frame, frames: framesProp, effects, width = 100, height
   }, [workerId, ildaParserWorker]);
 
   useEffect(() => {
+    mountedRef.current = true;
     if (canvasRef.current && !rendererRef.current) {
       rendererRef.current = new WebGLRenderer(canvasRef.current, 'single');
     }
     return () => {
+      mountedRef.current = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
       if (rendererRef.current) {
         rendererRef.current.destroy();
         rendererRef.current = null;
       }
     };
+  }, []);
+
+  const renderFrames = useCallback((framesToRender) => {
+    const renderer = rendererRef.current;
+    if (!renderer || !mountedRef.current) return;
+    
+    renderer.render({
+      ildaFrames: framesToRender, previewScanRate: 1, intensity: 1,
+      effects: [], syncSettings: {}
+    });
   }, []);
 
   useEffect(() => {
@@ -75,30 +94,32 @@ const IldaThumbnail = ({ frame, frames: framesProp, effects, width = 100, height
     localFramesRef.current = processed;
 
     if (processed.length === 1) {
-      renderer.render({
-        ildaFrames: processed, previewScanRate: 1, intensity: 1,
-        effects: [], syncSettings: {}
-      });
+      renderFrames(processed);
       return;
     }
 
     const interval = 1000 / FPS;
     let lastTime = 0;
     const animate = (time) => {
+      if (!mountedRef.current) return;
       if (time - lastTime >= interval) {
         lastTime = time;
         const frames = localFramesRef.current;
         if (frames.length > 0) {
-          renderer.render({
-            ildaFrames: frames, previewScanRate: 1, intensity: 1,
-            effects: [], syncSettings: {}
-          });
+          renderFrames(frames);
         }
       }
       rafRef.current = requestAnimationFrame(animate);
     };
     rafRef.current = requestAnimationFrame(animate);
-  }, [frame, framesProp, fetchedFrames, effects]);
+
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [frame, framesProp, fetchedFrames, effects, renderFrames]);
 
   return (
     <div className="clip-thumbnail" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' }}>

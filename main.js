@@ -651,7 +651,9 @@ function buildApplicationMenu(mode) {
             },
             { label: 'FFT Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-fft'); } }
           ]
-        }
+        },
+        { type: 'separator' },
+        { label: 'Clear Thumbnail Cache', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clear-thumbnail-cache'); } }
       ],
     },
     {
@@ -885,24 +887,42 @@ function createWindow() {
         delete dacFrameAccumulator[id];
       }
     }
-    // Store only the latest frame per channel — no concatenation of different
-    // animation states (renderer runs at 60fps, we sample at 30fps).
     for (const id of Object.keys(frames)) {
       const f = frames[id];
       if (!dacFrameAccumulator[id]) {
-        dacFrameAccumulator[id] = { frame: null, ip: f.ip, channel: f.channel, type: f.type, options: f.options || {} };
+        dacFrameAccumulator[id] = { frame: null, sent: null, missed: 0, blanked: false, ip: f.ip, channel: f.channel, type: f.type, options: f.options || {} };
       }
       dacFrameAccumulator[id].frame = f.points;
+      dacFrameAccumulator[id].blanked = false;
     }
   });
 
   const startDacSendLoop = () => {
     if (dacSendLoopTimer) return;
+    const MAX_MISSED = 5; // ~167ms without new frame before blanking
     dacSendLoopTimer = setInterval(() => {
       for (const id of Object.keys(dacFrameAccumulator)) {
         const acc = dacFrameAccumulator[id];
-        if (!acc.frame) continue;
+        if (!acc.frame) {
+          acc.missed++;
+          if (acc.missed >= MAX_MISSED) {
+            // Sustained silence — send blank frame once
+            if (!acc.blanked) {
+              const blank = new Float32Array(8);
+              blank[6] = 1;
+              sendFrame(acc.ip, acc.channel, blank, 30, acc.type, acc.options);
+              acc.blanked = true;
+            }
+          } else if (acc.sent) {
+            // Brief hiccup — repeat last known frame
+            sendFrame(acc.ip, acc.channel, acc.sent, 30, acc.type, acc.options);
+          }
+          continue;
+        }
 
+        acc.missed = 0;
+        acc.blanked = false;
+        acc.sent = acc.frame;
         sendFrame(acc.ip, acc.channel, acc.frame, 30, acc.type, acc.options);
         acc.frame = null;
       }
@@ -1001,7 +1021,8 @@ function createWindow() {
         submenu: [
           { label: 'Normal', type: 'radio', checked: currentTriggerStyle === 'normal', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } },
           { label: 'Toggle', type: 'radio', checked: currentTriggerStyle === 'toggle', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } },
-          { label: 'Flash', type: 'radio', checked: currentTriggerStyle === 'flash', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); } },
+          { label: 'Flash', type: 'radio', checked: currentTriggerStyle === 'flash', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); }, toolTip: '⚠ Flash clips run continuously in background. Use sparingly.' },
+          { label: 'Temp', type: 'radio', checked: currentTriggerStyle === 'temp', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-temp', layerIndex, colIndex); } },
         ]
       },
       { type: 'separator' },
@@ -1118,6 +1139,38 @@ function createWindow() {
     } catch (error) {
       console.error('Error reading file:', error);
       throw error;
+    }
+  });
+
+  ipcMain.handle('get-file-stats', async (event, filePath) => {
+    try {
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+      const stats = await fs.promises.stat(fullPath);
+      return { size: stats.size, mtime: stats.mtimeMs };
+    } catch (error) {
+      return null;
+    }
+  });
+
+  ipcMain.handle('get-cached-thumbnail', async (event, cacheKey) => {
+    try {
+      const thumbnailsDir = path.join(app.getPath('userData'), 'thumbnails');
+      const filePath = path.join(thumbnailsDir, cacheKey);
+      const buffer = await fs.promises.readFile(filePath);
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    } catch (error) {
+      return null;
+    }
+  });
+
+  ipcMain.handle('clear-thumbnail-cache', async () => {
+    try {
+      const thumbnailsDir = path.join(app.getPath('userData'), 'thumbnails');
+      const files = await fs.promises.readdir(thumbnailsDir);
+      await Promise.all(files.map(file => fs.promises.unlink(path.join(thumbnailsDir, file))));
+      return { success: true, count: files.length };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   });
 

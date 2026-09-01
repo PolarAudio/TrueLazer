@@ -26,6 +26,8 @@ let discoveryCache = new Map();
 // Per-channel state
 //   "ip:channel" -> { socket, pendingTimer, heartbeatSent, running }
 const channelState = new Map();
+// Heartbeat timers keyed by IP (one per IP, not per channel)
+const heartbeatTimers = new Map();
 
 // =============== HELPERS ===============
 function setStatusCallback(cb) {
@@ -96,8 +98,11 @@ function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk,
             g = clamp(g, 0, 1);
             b = clamp(b, 0, 1);
         } else {
-            x = lastX;
-            y = lastY;
+            // Hold at center so the transition to the next chunk's center hold
+            // is zero-distance. The fill's lead-in blanked dwell handles the
+            // approach to the first shape point in the next frame.
+            x = 0;
+            y = 0;
         }
 
         const dacBlanking = blanking > 0.5 ? 0 : 1;
@@ -120,46 +125,125 @@ function buildFrameChunks(chType, pps, points) {
 
     const ptsPerChunk = PTS_FULL;
 
+    // Home position: the point where the frame ends so the next frame can begin
+    // seamlessly. Defaults to center (0,0); updated to first source position when
+    // the interpolation fill runs.
+    let homeX = 0, homeY = 0;
+
     // Interpolation fill: when fewer source points than FILL_TARGET, linearly
     // interpolate between consecutive points to reach the target.  This avoids
     // frame-loop repetition jumps and makes better use of 30 Kpps bandwidth.
     if (totalPoints > 0 && totalPoints < FILL_TARGET && points instanceof Float32Array) {
         const padded = new Float32Array(FILL_TARGET * 8);
 
-        // Find first lit, non-center point — skip leading blanked and/or center
-        // dwell points so the body doesn't start from center toward the shape
-        // (common in ILDA draw animations).
-        let bodyStart = 0;
-        for (let i = 0; i < totalPoints; i++) {
-            const off = i * 8;
-            const bx = points[off];
-            const by = points[off + 1];
-            const atCenter = Math.abs(bx) < 0.05 && Math.abs(by) < 0.05;
-            const lit = (points[off + 6] || 0) <= 0.5;
-            if (lit && !atCenter) { bodyStart = i; break; }
-        }
-        if (bodyStart >= totalPoints) bodyStart = 0;
-        const bodyOff = bodyStart * 8;
-        const bodyLen = totalPoints - bodyStart;
-
-        // Repeat source points (loop fill).  Include the generator's closing point
-        // (copy of first point) so adjacent points in the sequence are always
-        // geometrically close — no lit diagonals across the shape.  Blank the
-        // closing copy so the zero-distance dwell at the start point is invisible.
-        const srcLen = bodyLen;
-        for (let i = 0; i < FILL_TARGET; i++) {
-            const srcOff = bodyOff + ((i % srcLen) * 8);
+        // Blanked lead-in at the first source position. The frame's end-padding
+        // also sits at firstSrcX/Y, so the loop transition back to this lead-in
+        // is zero-distance — no between-frame jump.
+        const srcLen = totalPoints;
+        const LEAD_IN = Math.min(10, FILL_TARGET - srcLen);
+        const firstSrcX = points[0];
+        const firstSrcY = points[1];
+        homeX = firstSrcX;
+        homeY = firstSrcY;
+        for (let i = 0; i < LEAD_IN; i++) {
             const dstOff = i * 8;
-            const isClosingPt = (i % srcLen) === srcLen - 1;
-            for (let j = 0; j < 8; j++) {
-                padded[dstOff + j] = points[srcOff + j];
+            padded[dstOff] = firstSrcX;
+            padded[dstOff + 1] = firstSrcY;
+            padded[dstOff + 6] = 1;
+        }
+
+        // Detect whether the shape is closed (first ≈ last point) or open (e.g. a
+        // line).  Only closed shapes are wrapped cyclically — open shapes are drawn
+        // once, then the beam returns to center.  Cycling an open shape would create
+        // a visible fold-back line at the cycle boundary.
+        const lastSrcOff = (srcLen - 1) * 8;
+        const firstX = points[0], firstY = points[1];
+        const lastX = points[lastSrcOff] || 0, lastY = points[lastSrcOff + 1] || 0;
+        const closeDist = Math.sqrt(Math.pow(firstX - lastX, 2) + Math.pow(firstY - lastY, 2));
+        const isOpenShape = closeDist >= 0.05;
+
+        const availableSlots = FILL_TARGET - LEAD_IN;
+        let padStart;
+
+        if (isOpenShape) {
+            // Open shape: write the source once, then blanked center.
+            const copyCount = Math.min(srcLen, availableSlots);
+            for (let i = 0; i < copyCount; i++) {
+                const srcOff = i * 8;
+                const dstOff = (LEAD_IN + i) * 8;
+                for (let j = 0; j < 8; j++) {
+                    padded[dstOff + j] = points[srcOff + j];
+                }
             }
-            if (isClosingPt) {
-                padded[dstOff + 3] = 0;
-                padded[dstOff + 4] = 0;
-                padded[dstOff + 5] = 0;
-                padded[dstOff + 6] = 1;
+            padStart = LEAD_IN + copyCount;
+        } else {
+            // Closed shape: wrap the source cyclically.
+            const numCompleteCycles = Math.floor(availableSlots / srcLen);
+            const totalBodyPoints = numCompleteCycles * srcLen;
+
+            for (let i = 0; i < totalBodyPoints; i++) {
+                const srcOff = (i % srcLen) * 8;
+                const dstOff = (LEAD_IN + i) * 8;
+                const isSrcLastPt = ((i % srcLen) === srcLen - 1);
+                for (let j = 0; j < 8; j++) {
+                    padded[dstOff + j] = points[srcOff + j];
+                }
+                // Force-blank the closing point of each source cycle so the retrace
+                // between cycles is invisible.
+                if (isSrcLastPt) {
+                    padded[dstOff + 3] = 0;
+                    padded[dstOff + 4] = 0;
+                    padded[dstOff + 5] = 0;
+                    padded[dstOff + 6] = 1;
+                }
             }
+            padStart = LEAD_IN + totalBodyPoints;
+        }
+
+        // Blanked hold at the last position.
+        if (padStart < FILL_TARGET && padStart > 0) {
+            const lastBodyOff = (padStart - 1) * 8;
+            const holdX = padded[lastBodyOff] || 0;
+            const holdY = padded[lastBodyOff + 1] || 0;
+            const holdCount = Math.min(20, FILL_TARGET - padStart);
+            for (let h = 0; h < holdCount; h++) {
+                const off = (padStart + h) * 8;
+                padded[off] = holdX;
+                padded[off + 1] = holdY;
+                padded[off + 6] = 1;
+            }
+            padStart += holdCount;
+        }
+
+        // Blanked interpolation from the last body position back to the first
+        // source position.
+        if (padStart < FILL_TARGET && padStart > 0) {
+            const lastBodyOff = (padStart - 1) * 8;
+            const lx = padded[lastBodyOff] || 0;
+            const ly = padded[lastBodyOff + 1] || 0;
+            const dx = firstSrcX - lx;
+            const dy = firstSrcY - ly;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0.02) {
+                const interpSteps = Math.min(Math.ceil(dist / 0.05), FILL_TARGET - padStart);
+                for (let s = 1; s <= interpSteps; s++) {
+                    const t = s / (interpSteps + 1);
+                    const off = (padStart + s - 1) * 8;
+                    if (off >= FILL_TARGET * 8) break;
+                    padded[off] = lx + dx * t;
+                    padded[off + 1] = ly + dy * t;
+                    padded[off + 6] = 1;
+                }
+                padStart += interpSteps;
+            }
+        }
+
+        // Pad remaining slots blanked at the first source position.
+        for (let i = padStart; i < FILL_TARGET; i++) {
+            const dstOff = i * 8;
+            padded[dstOff] = firstSrcX;
+            padded[dstOff + 1] = firstSrcY;
+            padded[dstOff + 6] = 1;
         }
 
         points = padded;
@@ -194,12 +278,12 @@ function buildFrameChunks(chType, pps, points) {
             writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk, dataOff);
             pointOffset += ptsInChunk;
         } else {
-            const cx = Math.round((0 + 1.0) * 2047.5);
-            const cy = Math.round((0 + 1.0) * 2047.5);
+            const hx = Math.round((homeX + 1.0) * 2047.5);
+            const hy = Math.round((homeY + 1.0) * 2047.5);
             for (let i = 0; i < ptsPerChunk; i++) {
                 const off = dataOff + i * POINT_SIZE;
-                buf.writeInt16LE(cx, off);
-                buf.writeInt16LE(cy, off + 2);
+                buf.writeInt16LE(hx, off);
+                buf.writeInt16LE(hy, off + 2);
                 buf.writeUInt8(0, off + 4);
                 buf.writeUInt8(0, off + 5);
                 buf.writeUInt8(0, off + 6);
@@ -351,18 +435,19 @@ function sendFrame(ip, channel, points, fps, type, options) {
         st = {
             socket: dgram.createSocket('udp4'),
             pendingTimers: [],
-            heartbeatTimer: null,
             running: true,
             seq: 0,
         };
         st.socket.on('error', () => { });
         channelState.set(key, st);
+    }
 
-        // Send heartbeat every second during output
+    // Start heartbeat once per IP, not once per channel
+    if (!heartbeatTimers.has(ip)) {
         sendHeartbeat(ip);
-        st.heartbeatTimer = setInterval(() => {
-            if (st.running) sendHeartbeat(ip);
-        }, 1000);
+        heartbeatTimers.set(ip, setInterval(() => {
+            sendHeartbeat(ip);
+        }, 1000));
     }
 
     if (!st.running) return;
@@ -474,6 +559,13 @@ function sendBlankFrame(ip, channel) {
 
 // =============== STOP / CLEANUP ===============
 function stopSending(ip) {
+    // Stop heartbeat for this IP
+    const hbTimer = heartbeatTimers.get(ip);
+    if (hbTimer) {
+        clearInterval(hbTimer);
+        heartbeatTimers.delete(ip);
+    }
+
     for (const [key, st] of channelState) {
         if (!key.startsWith(ip + ':')) continue;
 
@@ -484,12 +576,6 @@ function stopSending(ip) {
             clearTimeout(t);
         }
         st.pendingTimers = [];
-
-        // Stop heartbeat
-        if (st.heartbeatTimer) {
-            clearInterval(st.heartbeatTimer);
-            st.heartbeatTimer = null;
-        }
 
         // Send blank frames to turn off laser
         const ch = parseInt(key.split(':')[1], 10);
@@ -503,6 +589,12 @@ function stopSending(ip) {
 }
 
 function closeAll() {
+    // Stop all heartbeat timers
+    for (const [ip, timer] of heartbeatTimers) {
+        clearInterval(timer);
+    }
+    heartbeatTimers.clear();
+
     for (const [key, st] of channelState) {
         st.running = false;
 
@@ -510,11 +602,6 @@ function closeAll() {
             clearTimeout(t);
         }
         st.pendingTimers = [];
-
-        if (st.heartbeatTimer) {
-            clearInterval(st.heartbeatTimer);
-            st.heartbeatTimer = null;
-        }
 
         // Send blank frames before closing
         const [ip, chStr] = key.split(':');

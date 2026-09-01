@@ -63,6 +63,9 @@ contextBridge.exposeInMainWorld(
     checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
 	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
+    getFileStats: (filePath) => ipcRenderer.invoke('get-file-stats', filePath),
+    getCachedThumbnail: (cacheKey) => ipcRenderer.invoke('get-cached-thumbnail', cacheKey),
+    clearThumbnailCache: () => ipcRenderer.invoke('clear-thumbnail-cache'),
 	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
 	    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
 	            // New IPC functions for thumbnail mode synchronization

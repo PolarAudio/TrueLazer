@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { WebMidi } from 'webmidi';
-import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote, listenToStateChange } from '../utils/midi';
+import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote, listenToStateChange, pollMidiInputs } from '../utils/midi';
 import { THEME_COLORS } from '../utils/midiColors';
 
 const MidiContext = createContext(null);
@@ -59,7 +59,7 @@ export const generateFeedbackMap = (mappings) => {
     return map;
 };
 
-export const MidiProvider = ({ children, onMidiCommand, theme = 'orange' }) => {
+export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enabledShortcuts = {} }) => {
   const [midiInitialized, setMidiInitialized] = useState(false);
   const [midiInputs, setMidiInputs] = useState([]);
   const [selectedMidiInputId, setSelectedMidiInputId] = useState('');
@@ -94,7 +94,15 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange' }) => {
   // Initialize MIDI and Load Mappings
   useEffect(() => {
     let isMounted = true;
+    let cleanupStateChange = () => {};
+    let cleanupPoll = () => {};
     const init = async () => {
+      // Only initialize MIDI if enabled as shortcuts
+      if (!enabledShortcuts.midi) {
+        console.log("MIDI: Skipped initialization - MIDI shortcuts disabled");
+        setMidiInitialized(true); // Mark as initialized so auto-select doesn't retry
+        return;
+      }
       try {
         console.log("MIDI: Starting initialization...");
         await initializeMidi();
@@ -106,12 +114,25 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange' }) => {
         console.log(`MIDI: Initialized with ${inputs.length} inputs.`);
         setMidiInputs(inputs);
         
-        // Listen for connection changes (hotplugging)
-        listenToStateChange(() => {
+        const refreshInputs = () => {
+            if (!isMounted) return;
+            setMidiInputs(getMidiInputs());
+        };
+
+        // Fast path: Web MIDI API statechange events
+        cleanupStateChange = listenToStateChange(() => {
             if (!isMounted) return;
             console.log("MIDI Device change detected, refreshing inputs...");
-            setMidiInputs(getMidiInputs());
+            refreshInputs();
         });
+
+        // Reliable fallback: poll every 2 s — the statechange event can be
+        // unreliable in Electron (e.g. after window focus changes).
+        cleanupPoll = pollMidiInputs((current) => {
+            if (!isMounted) return;
+            console.log("MIDI: Poll detected device change");
+            setMidiInputs(current);
+        }, 2000);
 
         // Load saved mappings from store
         if (window.electronAPI && window.electronAPI.getMidiMappings) {
@@ -127,12 +148,15 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange' }) => {
         if (isMounted) setMidiInitialized(false);
       }
     };
-    init();
+
+    if (enabledShortcuts.midi) {
+      init();
+    }
 
     return () => {
         isMounted = false;
-        // We stop listening to the state changes, but we don't disable WebMidi globally
-        // as it can cause issues with simultaneous initialization on re-mounts.
+        cleanupStateChange();
+        cleanupPoll();
     };
   }, []);
 

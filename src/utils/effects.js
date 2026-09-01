@@ -12,7 +12,7 @@ const withDefaults = (params, defaults) => {
     return { ...defaults, ...params };
 };
 
-function calculateAnimPhase(rawProgress, settings, baseValue, range) {
+export function calculateAnimPhase(rawProgress, settings, baseValue, range) {
     const style = settings.style || 'loop';
     const direction = settings.direction || 'forward';
     if (direction === 'pause') return baseValue;
@@ -138,7 +138,13 @@ function ensureBufferSize(numPoints) {
 }
 
 export function applyEffects(frame, effects, context = {}) {
-    const { progress = 0, time = performance.now(), effectStates, syncSettings = {}, fftLevels } = context;
+    const { progress = 0, time = performance.now(), effectStates, syncSettings = {}, fftLevels, direction = 'forward', style = 'loop' } = context;
+
+    // Apply playback direction and style to progress for effects
+    let effectiveProgress = progress;
+    if (direction !== 'forward' || style !== 'loop') {
+        effectiveProgress = calculateAnimPhase(progress, { style, direction }, 0, [0, 1]);
+    }
 
     if (!effects || effects.length === 0) return frame;
 
@@ -196,7 +202,7 @@ export function applyEffects(frame, effects, context = {}) {
         // Dispatch to appropriate handler
         switch (effect.id) {
             // --- Existing effects ---
-            case 'rotate': applyRotate(activePoints, currentNumPoints, resolvedParams, progress, time); break;
+            case 'rotate': applyRotate(activePoints, currentNumPoints, resolvedParams, effectiveProgress, time); break;
             case 'scale': applyScale(activePoints, currentNumPoints, resolvedParams); break;
             case 'translate': applyTranslate(activePoints, currentNumPoints, resolvedParams); break;
             case 'color': applyColor(activePoints, currentNumPoints, resolvedParams, time); break;

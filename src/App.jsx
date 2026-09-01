@@ -36,7 +36,7 @@ import { ArtnetProvider, useArtnet } from './contexts/ArtnetContext'; // Add thi
 import { KeyboardProvider, useKeyboard } from './contexts/KeyboardContext'; // Add this
 import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
-import { applyEffects, applyOutputProcessing, resolveParam } from './utils/effects';
+import { applyEffects, applyOutputProcessing, resolveParam, calculateAnimPhase } from './utils/effects';
 import { optimizePoints } from './utils/optimizer';
 import { effectDefinitions } from './utils/effectDefinitions';
 import { THEME_COLORS } from './utils/midiColors';
@@ -1601,6 +1601,7 @@ const SidePanelContainer = React.memo(({
             if (clip) {
               let workerId = clip.type === 'ilda' ? clip.workerId : `generator-${activeInfo.pageId}-${layerIndex}-${activeInfo.colIndex}`;
               if (workerId && liveFramesRef.current[workerId]) {
+                const playbackSettings = clip.playbackSettings || {};
                 frames[workerId] = {
                   frame: liveFramesRef.current[workerId],
                   effects: [...(clip.effects || []), ...(layerEffects[layerIndex] || [])],
@@ -1615,7 +1616,10 @@ const SidePanelContainer = React.memo(({
                   })(),
                   progress: progressRef.current[workerId] || 0,
                   effectStates: effectStatesRef.current,
-                  clipActivationTime: clipActivationTimesRef.current[layerIndex] || 0
+                  clipActivationTime: clipActivationTimesRef.current[layerIndex] || 0,
+                  // Playback direction and style for effects
+                  playbackDirection: playbackSettings.direction || 'forward',
+                  playbackStyle: playbackSettings.style || 'loop'
                 };
               }
             }
@@ -1713,6 +1717,8 @@ function App() {
 
   const lastFrameFetchTimeRef = useRef({});
   const frameIndexesRef = useRef({});
+  const backgroundRunningClipsRef = useRef(new Set()); // {layerIndex, clipWorkerId, pageIdx, clipType}
+  const backgroundRafRef = useRef(null);
   const workerLoadedFontsRef = useRef(new Set()); // Track fonts already sent to worker
   const lastMidiValuesRef = useRef({}); // For 'fake_relative' mode mapping
 
@@ -1939,6 +1945,8 @@ function App() {
 
     const dacsRef = useRef(dacs);
 
+    const dacSentFramesRef = useRef({});
+
     const activeClipsDataRef = useRef([]);
 
     // const clipContentsRef = useRef(clipContents); // Removed, handled above with live logic
@@ -2014,19 +2022,92 @@ function App() {
         selectedIldaTotalFramesRef.current = selectedIldaTotalFrames;
       }, [layerIntensities, layerAssignedDacs, layerAutopilots, layerEffects, masterIntensity, layerBlackouts, layerSolos, globalBlackout, dacOutputSettings, dacs, activeClipsData, clipContents, activeClipIndexes, clipNames, selectedIldaWorkerId, selectedIldaTotalFrames]);
 
-  const generateTestLineFrame = useCallback((yPos) => {
-      // yPos: 0 (top) to 1 (bottom). ILDA: 1 to -1.
-      const y = 1 - (yPos * 2);
-      const points = [];
-      const numPoints = 100;
-      for (let i = 0; i < numPoints; i++) {
-          const x = (i / (numPoints - 1)) * 2 - 1; // -1 to 1
-          points.push({ x, y, r: 0, g: 255, b: 0, blanking: false });
-      }
-      return { points, isTypedArray: false };
-  }, []);
+     const generateTestLineFrame = useCallback((yPos, compStart, compEnd, shiftX) => {
+        const y = 1 - (yPos * 2);
+        const points = [];
+        const numPoints = 175;
+        const cs = compStart || 0, ce = compEnd || 0;
+        const sx = shiftX || 0;
+        const x1 = -1, x2 = 1;
+        const push = (x, y, r, g, b, blanking) => points.push({ x: x + sx, y, r, g, b, blanking });
+        push(x1, y, 0, 0, 0, true);
+        for (let h = 0; h < 10; h++) {
+            push(x1, y, 0, 0, 0, true);
+        }
+        // Blue dwell dot at the TRUE START position (not compensated): the galvo
+        // settles here, marking the real x=-1 endpoint. The line's blue point is
+        // then measured against it the same way the red end is.
+        for (let d = 0; d < 6; d++) {
+            push(x1, y, 0, 0, 255, false);
+        }
+        for (let i = 0; i < numPoints; i++) {
+            const t = i / (numPoints - 1);
+            // Shift commanded points by a linear profile: compStart at the line
+            // start, compEnd at the line end. The galvo's tracking error is
+            // non-uniform along the draw, so a single uniform shift can't fix
+            // both ends and the middle at once. (The middle itself is pinned by
+            // the galvo's natural trajectory from the start-hold, so it only
+            // responds to the global shiftX, which moves the whole pattern.)
+            const comp = cs * (1 - t) + ce * t;
+            const x = x1 + (x2 - x1) * t + comp;
+            let r = 0, g = 0, b = 0;
+            if (i === 0) { b = 255; }
+            else if (i === numPoints - 1) { r = 255; }
+            else { g = 255; }
+            push(x, y, r, g, b, false);
+        }
+        // Red dwell dot at the TRUE END position (not compensated): the galvo
+        // settles here, marking the real x=1 endpoint.
+        for (let d = 0; d < 20; d++) {
+            push(x2, y, 255, 0, 0, false);
+        }
+        for (let h = 0; h < 5; h++) {
+            push(x2, y, 0, 0, 0, true);
+        }
+        return { points, isTypedArray: false };
+     }, []);
 
-  const handleUpdateDacSettings = useCallback((dacId, settings) => {
+     const generateVerticalTestLineFrame = useCallback((xPos, compStart, compEnd, shiftY) => {
+        const x = (xPos * 2) - 1;
+        const points = [];
+        const numPoints = 175;
+        const cs = compStart || 0, ce = compEnd || 0;
+        const sy = shiftY || 0;
+        const y1 = 1, y2 = -1;
+        const push = (x, y, r, g, b, blanking) => points.push({ x, y: y + sy, r, g, b, blanking });
+        push(x, y1, 0, 0, 0, true);
+        for (let h = 0; h < 10; h++) {
+            push(x, y1, 0, 0, 0, true);
+        }
+        // Blue dwell dot at the TRUE START position (not compensated): the galvo
+        // settles here, marking the real y=1 endpoint.
+        for (let d = 0; d < 6; d++) {
+            push(x, y1, 0, 0, 255, false);
+        }
+        for (let i = 0; i < numPoints; i++) {
+            const t = i / (numPoints - 1);
+            // Shift commanded points by a linear profile: compStart at the line
+            // start, compEnd at the line end (applied against -y motion).
+            const comp = cs * (1 - t) + ce * t;
+            const y = y1 + (y2 - y1) * t - comp;
+            let r = 0, g = 0, b = 0;
+            if (i === 0) { b = 255; }
+            else if (i === numPoints - 1) { r = 255; }
+            else { g = 255; }
+            push(x, y, r, g, b, false);
+        }
+        // Red dwell dot at the TRUE END position (not compensated): the galvo
+        // settles here, marking the real y=-1 endpoint.
+        for (let d = 0; d < 20; d++) {
+            push(x, y2, 255, 0, 0, false);
+        }
+        for (let h = 0; h < 5; h++) {
+            push(x, y2, 0, 0, 0, true);
+        }
+        return { points, isTypedArray: false };
+    }, []);
+
+   const handleUpdateDacSettings = useCallback((dacId, settings) => {
     // 1. Direct Mutation
     if (liveDacOutputSettingsRef.current) {
         liveDacOutputSettingsRef.current[dacId] = settings;
@@ -2231,14 +2312,15 @@ function App() {
           return { ...f, points: pts, isTypedArray: true };
       }
 
+      const TRANSITION_STEPS = 20;
       let totalPoints = 0;
       frames.forEach((f, idx) => {
         const isTyped = f.points instanceof Float32Array || f.isTypedArray;
         const numPoints = isTyped ? (f.points.length / 8) : f.points.length;
         totalPoints += numPoints;
-        // Add 2 transition points between each clip
+        // Add transition points between each clip
         if (idx < frames.length - 1) {
-          totalPoints += 2;
+          totalPoints += TRANSITION_STEPS;
         }
       });
 
@@ -2291,25 +2373,20 @@ function App() {
             nextY = nextFrame.points[0].y;
           }
 
-          // Transition Point 1: At current clip's last position but blanked
-          let t1Offset = currentPointOffset * 8;
-          mergedPoints[t1Offset] = lastX;
-          mergedPoints[t1Offset + 1] = lastY;
-          mergedPoints[t1Offset + 6] = 1; // blanking
-          mergedPoints[t1Offset + 3] = 0; // r
-          mergedPoints[t1Offset + 4] = 0; // g
-          mergedPoints[t1Offset + 5] = 0; // b
-
-          // Transition Point 2: At next clip's first position and blanked
-          let t2Offset = (currentPointOffset + 1) * 8;
-          mergedPoints[t2Offset] = nextX;
-          mergedPoints[t2Offset + 1] = nextY;
-          mergedPoints[t2Offset + 6] = 1; // blanking
-          mergedPoints[t2Offset + 3] = 0; // r
-          mergedPoints[t2Offset + 4] = 0; // g
-          mergedPoints[t2Offset + 5] = 0; // b
-
-          currentPointOffset += 2;
+          // Interpolate blanked points from last to next position so the
+          // blanking circuit has enough time to settle. More steps = slower
+          // movement = more time for blanking to engage per step.
+          for (let s = 1; s <= TRANSITION_STEPS; s++) {
+              const t = s / TRANSITION_STEPS;
+              const off = (currentPointOffset + s - 1) * 8;
+              mergedPoints[off] = lastX + (nextX - lastX) * t;
+              mergedPoints[off + 1] = lastY + (nextY - lastY) * t;
+              mergedPoints[off + 6] = 1;
+              mergedPoints[off + 3] = 0;
+              mergedPoints[off + 4] = 0;
+              mergedPoints[off + 5] = 0;
+          }
+          currentPointOffset += TRANSITION_STEPS;
         }
       });
 
@@ -2463,45 +2540,67 @@ function App() {
                   fftLevels: getFftLevels ? getFftLevels() : fftLevels // Use helper for fresh data
               });
 
-              // Optimization AFTER effects ensures all transitions (Mirror, Delay, Blanking) are handled
+              // Optimization AFTER effects ensures all transitions (Mirror, Delay, Blanking) are handled.
+              // The optimizer is now budget-aware (maxPoints) and handles corner dwell and interpolation
+              // within the point budget, so the post-hoc subsample below is only a safety net.
               if (optimizationEnabledRef.current) {
                   const optimizedPts = optimizePoints(modifiedFrame.points, {
                       maxDist: Number(optimizationMaxDistRef.current || 0.02),
                       pathDwell: Number(optimizationPathDwellRef.current || 2),
+                      maxPoints: 1000,
                       isClosed: modifiedFrame.isClosed
                   });
                   modifiedFrame.points = optimizedPts;
                   modifiedFrame.isTypedArray = true;
-              }
-
-              // Point budget: cap at ~1000 pts/frame to stay within 30k PPS at 30 FPS
-              const MAX_PTS_PER_FRAME = 1000;
-              if (modifiedFrame.points) {
-                  const pts = modifiedFrame.points;
-                  const isT = modifiedFrame.isTypedArray || pts instanceof Float32Array;
-                  const n = isT ? (pts.length / 8) : pts.length;
-                  if (n > MAX_PTS_PER_FRAME) {
-                      const step = n / MAX_PTS_PER_FRAME;
-                      const newPts = [];
-                      let prevBlank = null;
+              } else {
+                  // Convert to Float32Array so the Showbridge fill's interpolation
+                  // block (which requires Float32Array) runs. Without this, only
+                  // one raw cycle reaches the DAC — the shape is too dim.
+                  if (modifiedFrame.points && !(modifiedFrame.points instanceof Float32Array)) {
+                      const pts = modifiedFrame.points;
+                      const n = pts.length;
+                      const arr = new Float32Array(n * 8);
                       for (let i = 0; i < n; i++) {
-                          const blank = isT ? (pts[i * 8 + 6] === 1) : !!pts[i].blanking;
-                          const blankChanged = prevBlank !== null && blank !== prevBlank;
-                          const keep = (i === 0) || (i === n - 1) ||
-                              blankChanged ||
-                              (Math.floor(i / step) !== Math.floor((i - 1) / step));
-                          if (keep) {
-                              if (isT) {
-                                  for (let k = 0; k < 8; k++) newPts.push(pts[i * 8 + k]);
-                              } else {
-                                  const p = pts[i];
-                                  newPts.push(p.x, p.y, p.z || 0, p.r, p.g, p.b, p.blanking ? 1 : 0, p.lastPoint ? 1 : 0);
-                              }
-                          }
-                          prevBlank = blank;
+                          const p = pts[i];
+                          const off = i * 8;
+                          arr[off] = p.x; arr[off + 1] = p.y; arr[off + 2] = p.z || 0;
+                          arr[off + 3] = p.r; arr[off + 4] = p.g; arr[off + 5] = p.b;
+                          arr[off + 6] = p.blanking ? 1 : 0;
+                          arr[off + 7] = p.lastPoint ? 1 : 0;
                       }
-                      modifiedFrame.points = new Float32Array(newPts);
+                      modifiedFrame.points = arr;
                       modifiedFrame.isTypedArray = true;
+                  }
+
+                  // Safety cap when optimizer is off
+                  const MAX_PTS_PER_FRAME = 1000;
+                  if (modifiedFrame.points) {
+                      const pts = modifiedFrame.points;
+                      const isT = modifiedFrame.isTypedArray || pts instanceof Float32Array;
+                      const n = isT ? (pts.length / 8) : pts.length;
+                      if (n > MAX_PTS_PER_FRAME) {
+                          const step = n / MAX_PTS_PER_FRAME;
+                          const newPts = [];
+                          let prevBlank = null;
+                          for (let i = 0; i < n; i++) {
+                              const blank = isT ? (pts[i * 8 + 6] === 1) : !!pts[i].blanking;
+                              const blankChanged = prevBlank !== null && blank !== prevBlank;
+                              const keep = (i === 0) || (i === n - 1) ||
+                                  blankChanged ||
+                                  (Math.floor(i / step) !== Math.floor((i - 1) / step));
+                              if (keep) {
+                                  if (isT) {
+                                      for (let k = 0; k < 8; k++) newPts.push(pts[i * 8 + k]);
+                                  } else {
+                                      const p = pts[i];
+                                      newPts.push(p.x, p.y, p.z || 0, p.r, p.g, p.b, p.blanking ? 1 : 0, p.lastPoint ? 1 : 0);
+                                  }
+                              }
+                              prevBlank = blank;
+                          }
+                          modifiedFrame.points = new Float32Array(newPts);
+                          modifiedFrame.isTypedArray = true;
+                      }
                   }
               }
 
@@ -2572,10 +2671,26 @@ function App() {
                       
                       const group = dacGroups.get(id);
                       
-                      if (settings.testLineEnabled) {
-                          const testFrame = generateTestLineFrame(settings.testLineY !== undefined ? settings.testLineY : 0.5);
-                          group.frames = [testFrame]; // Override existing frames
-                      }
+                       if (settings.testLineEnabled || settings.verticalTestLineEnabled) {
+                           const frames = [];
+                           if (settings.testLineEnabled) {
+                               frames.push(generateTestLineFrame(
+                                   settings.testLineY !== undefined ? settings.testLineY : 0.5,
+                                   settings.testLineLagCompStart || 0,
+                                   settings.testLineLagCompEnd !== undefined ? settings.testLineLagCompEnd : (settings.testLineLagComp || 0),
+                                   settings.testLineShiftX || 0
+                               ));
+                           }
+                           if (settings.verticalTestLineEnabled) {
+                               frames.push(generateVerticalTestLineFrame(
+                                   settings.testLineX !== undefined ? settings.testLineX : 0.5,
+                                   settings.testLineLagCompStart || 0,
+                                   settings.testLineLagCompEnd !== undefined ? settings.testLineLagCompEnd : (settings.testLineLagComp || 0),
+                                   settings.testLineShiftY || 0
+                               ));
+                           }
+                           group.frames = frames;
+                       }
                   }
               });
           });
@@ -2626,6 +2741,9 @@ function App() {
             }
           });
           activeChannelsCountRef.current = activeCount;
+          // Expose the processed frames per channel for the Output Settings
+          // canvas preview background (already flip/scale-transformed).
+          dacSentFramesRef.current = framesToSend;
           // Send the latest processed frames to the main process, which has its own
           // event loop and sends them to the DAC on a reliable setInterval timer
           // completely independent of React rendering.
@@ -2735,6 +2853,19 @@ function App() {
 
           if (isNaN(targetIndex)) targetIndex = 0;
           if (isNaN(currentProgress)) currentProgress = 0;
+
+          // Apply playback direction and style for ILDA clips (not generators)
+          if (clip.type === 'ilda' && clip.playbackSettings) {
+            const playbackSettings = clip.playbackSettings;
+            const direction = playbackSettings.direction || 'forward';
+            const style = playbackSettings.style || 'loop';
+            
+            if (direction !== 'forward' || style !== 'loop') {
+              // Use calculateAnimPhase to get the modified progress
+              const animPhase = calculateAnimPhase(currentProgress, { style, direction }, 0, [0, totalFrames - 1]);
+              targetIndex = Math.floor(animPhase);
+            }
+          }
 
           const prevProgress = previousProgressRef.current[workerId] || 0;
           // Check for loop/completion
@@ -3219,6 +3350,8 @@ function App() {
                   dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'toggle' } });
               } else if (command === 'set-trigger-style-flash') {
                   dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'flash' } });
+              } else if (command === 'set-trigger-style-temp') {
+                  dispatch({ type: 'SET_CLIP_TRIGGER_STYLE', payload: { layerIndex, colIndex, style: 'temp' } });
               }
           });
 
@@ -3512,6 +3645,14 @@ function App() {
                 const isEnabled = parts[2] === 'true';
                 setEnabledShortcuts(prev => ({ ...prev, [protocol]: isEnabled }));
             }
+        } else if (action === 'clear-thumbnail-cache') {
+            window.electronAPI.clearThumbnailCache().then(result => {
+                if (result.success) {
+                    console.log(`Cleared ${result.count} cached thumbnails`);
+                } else {
+                    console.error('Failed to clear thumbnail cache:', result.error);
+                }
+            });
         }
       });
 
@@ -3930,7 +4071,101 @@ function App() {
     dispatch({ type: 'SET_IS_PLAYING', payload: false });
     dispatch({ type: 'SET_IS_STOPPED', payload: true });
     frameIndexesRef.current = {};
+    // Stop background render loop
+    if (backgroundRafRef.current) {
+      cancelAnimationFrame(backgroundRafRef.current);
+      backgroundRafRef.current = null;
+    }
+    backgroundRunningClipsRef.current.clear();
   }, [resetAllAudio, pauseAllAudio]);
+
+  const startBackgroundRenderLoop = useCallback(() => {
+    if (backgroundRafRef.current) return; // Already running
+    
+    // Track elapsed time per clip for proper frame advancement
+    const bgClipTimersRef = useRef(new Map());
+    
+    const loop = () => {
+      if (!isPlayingRef.current) {
+        // Global playback stopped/paused - clear all background clips
+        backgroundRunningClipsRef.current.clear();
+        bgClipTimersRef.current.clear();
+        backgroundRafRef.current = null;
+        return;
+      }
+      
+      const clipsToRemove = [];
+      const now = performance.now();
+      
+      for (const bgClip of backgroundRunningClipsRef.current) {
+        const { pageIdx, layerIndex, colIndex, workerId } = bgClip;
+        
+        // Verify clip still exists and is flash trigger
+        const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+        
+        if (!clip || clip.triggerStyle !== 'flash' || !clip.frames || clip.frames.length === 0) {
+          clipsToRemove.push(bgClip);
+          continue;
+        }
+        
+        // Time-based frame advancement based on clip playback settings
+        const timer = bgClipTimersRef.current.get(workerId) || { lastTime: now, accumulated: 0 };
+        const dt = now - timer.lastTime;
+        timer.lastTime = now;
+        timer.accumulated += dt;
+        
+        const pSettings = clip.playbackSettings || { mode: 'fps', duration: clip.frames.length / 30, beats: 8, speedMultiplier: 1 };
+        const totalFrames = clip.totalFrames || clip.frames.length;
+        
+        let framesToAdvance = 0;
+        
+        if (pSettings.mode === 'fps') {
+          const clipFps = pSettings.fps || 30;
+          const clipFrameInterval = 1000 / (clipFps * (pSettings.speedMultiplier || 1));
+          framesToAdvance = Math.floor(timer.accumulated / clipFrameInterval);
+          if (framesToAdvance > 0) {
+            timer.accumulated %= clipFrameInterval;
+          }
+        } else if (pSettings.mode === 'timeline') {
+          const totalDurationMs = (pSettings.duration * 1000) / (pSettings.speedMultiplier || 1);
+          if (totalDurationMs > 0) {
+            const progressPerMs = totalFrames / totalDurationMs;
+            framesToAdvance = Math.floor(dt * progressPerMs);
+          }
+        } else if (pSettings.mode === 'bpm') {
+          const oneBeatMs = 60000 / (bpmRef.current || 120);
+          const totalDurationMs = (pSettings.beats * oneBeatMs) / (pSettings.speedMultiplier || 1);
+          if (totalDurationMs > 0) {
+            const progressPerMs = totalFrames / totalDurationMs;
+            framesToAdvance = Math.floor(dt * progressPerMs);
+          }
+        }
+        
+        if (framesToAdvance > 0) {
+          const currentIndex = frameIndexesRef.current[workerId] || 0;
+          frameIndexesRef.current[workerId] = (currentIndex + framesToAdvance) % totalFrames;
+        }
+        
+        bgClipTimersRef.current.set(workerId, timer);
+      }
+      
+      // Remove invalid clips
+      clipsToRemove.forEach(clip => {
+        backgroundRunningClipsRef.current.delete(clip);
+        bgClipTimersRef.current.delete(clip.workerId);
+      });
+      
+      // Continue loop if there are still clips
+      if (backgroundRunningClipsRef.current.size > 0) {
+        backgroundRafRef.current = requestAnimationFrame(loop);
+      } else {
+        backgroundRafRef.current = null;
+        bgClipTimersRef.current.clear();
+      }
+    };
+    
+    backgroundRafRef.current = requestAnimationFrame(loop);
+  }, [clipContents, bpmRef]);
 
   const handleToggleWorldOutput = useCallback(() => {
     const nextActive = !isWorldOutputActive;
@@ -4008,37 +4243,74 @@ function App() {
         const style = clip.triggerStyle || 'normal';
     const activeInfo = activeClipIndexesRef.current[layerIndex];
     const isCurrentActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
+    const clipWorkerId = clip.workerId || (clip.type === 'generator' ? `generator-${pageIdx}-${layerIndex}-${colIndex}` : null);
+
+    // Handle keyboard auto-repeat: don't retrigger if already active and receiving another press
+    if (isPress && isCurrentActive && (style === 'flash' || style === 'toggle' || style === 'normal' || style === 'temp')) {
+      return; // Already active, ignore auto-repeat
+    }
 
     if (style === 'normal') {
         if (!isPress) return;
-        // Proceed to activate
+        // Proceed to activate - reset frame index only on NEW activation
+        if (clipWorkerId) frameIndexesRef.current[clipWorkerId] = 0;
     } else if (style === 'toggle') {
         if (!isPress) return;
         if (isCurrentActive) {
             handleDeactivateLayerClips(layerIndex);
             return;
         }
-        // Proceed to activate
+        // Proceed to activate - reset frame index only on NEW activation
+        if (clipWorkerId) frameIndexesRef.current[clipWorkerId] = 0;
     } else if (style === 'flash') {
         if (isPress) {
             // Proceed to activate
+            // If clip was running in background, remove from background set
+            if (clipWorkerId) {
+              const bgClip = { pageIdx, layerIndex, colIndex, workerId: clipWorkerId };
+              backgroundRunningClipsRef.current.delete(bgClip);
+            }
+            // Add to active clips (output enabled) - PRESERVE frame index
         } else {
             if (isCurrentActive) {
-                handleDeactivateLayerClips(layerIndex);
+              // Option B: Remove from activeClipIndexesRef (stops DAC output), keep frame index running in background
+              if (activeClipIndexesRef.current) activeClipIndexesRef.current[layerIndex] = null;
+              dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex: null } });
+              // Add to background running clips if it's an ILDA or generator clip with frames
+              if (clipWorkerId && clip.frames && clip.frames.length > 0) {
+                const bgClip = { pageIdx, layerIndex, colIndex, workerId: clipWorkerId };
+                backgroundRunningClipsRef.current.add(bgClip);
+                // Start background render loop if not running
+                if (!backgroundRafRef.current && isPlayingRef.current) {
+                  startBackgroundRenderLoop();
+                }
+              }
             }
             return; // CRITICAL: Stop here on release
         }
+    } else if (style === 'temp') {
+        if (isPress) {
+            // Reset frame index to 0 for restart (intended behavior for temp)
+            if (clipWorkerId) frameIndexesRef.current[clipWorkerId] = 0;
+            // Proceed to activate
+        } else {
+            if (isCurrentActive) {
+              handleDeactivateLayerClips(layerIndex);
+            }
+            return;
+        }
     }
 
+    // Common activation logic for all trigger styles (frame index already handled above)
     if (clip && clip.type === 'generator' && clip.frames && clip.frames.length > 0) {
       const generatorWorkerId = `generator-${pageIdx}-${layerIndex}-${colIndex}`;
       // Ensure the frame is in liveFrames so WorldPreview can render it.
       liveFramesRef.current[generatorWorkerId] = clip.frames[0];
       lastFrameFetchTimeRef.current[generatorWorkerId] = performance.now();
-      frameIndexesRef.current[generatorWorkerId] = 0;
+      // frameIndexesRef already set above per trigger style
     } else if (clip && clip.type === 'ilda' && clip.workerId) {
       lastFrameFetchTimeRef.current[clip.workerId] = performance.now();
-      frameIndexesRef.current[clip.workerId] = 0;
+      // frameIndexesRef already set above per trigger style
     }
 
     // Manage associated audio
@@ -4142,10 +4414,20 @@ function App() {
     const pageIdx = state.activePageId;
     layers.forEach((_, layerIndex) => {
       const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
-      if (clip && (clip.type === 'ilda' || clip.type === 'generator')) {
-        handleActivateClick(layerIndex, colIndex);
-      } else {
+      if (!clip || (clip.type !== 'ilda' && clip.type !== 'generator')) {
         handleDeactivateLayerClips(layerIndex);
+        return;
+      }
+      const triggerStyle = clip.triggerStyle || 'normal';
+      if (triggerStyle === 'toggle') {
+        handleActivateClick(layerIndex, colIndex, true);
+      } else if (triggerStyle === 'normal') {
+        handleActivateClick(layerIndex, colIndex, true);
+      } else if (triggerStyle === 'flash' || triggerStyle === 'temp') {
+        handleActivateClick(layerIndex, colIndex, true);
+        setTimeout(() => {
+          handleActivateClick(layerIndex, colIndex, false);
+        }, 200);
       }
     });
   };
@@ -4994,7 +5276,7 @@ function App() {
   });
 
   return (
-    <MidiProvider onMidiCommand={handleMidiCommand} theme={theme}>
+    <MidiProvider onMidiCommand={handleMidiCommand} theme={theme} enabledShortcuts={enabledShortcuts}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
     <KeyboardProvider onCommand={handleMidiCommand} enabled={enabledShortcuts.keyboard}>
             <MidiFeedbackHandler 
@@ -5025,6 +5307,7 @@ function App() {
             dacs={dacs}
             dacSettings={dacOutputSettings}
             onUpdateDacSettings={handleUpdateDacSettings}
+            sentFramesRef={dacSentFramesRef}
         />
         <AudioSettingsWindow
             show={showAudioSettingsWindow || showFftSettingsWindow}
@@ -5356,6 +5639,14 @@ function App() {
                   handleToggleQuickButton(i);
               }}
               onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
+              onClearThumbnailCache={async () => {
+                  const result = await window.electronAPI.clearThumbnailCache();
+                  if (result.success) {
+                      console.log(`Cleared ${result.count} cached thumbnails`);
+                  } else {
+                      console.error('Failed to clear thumbnail cache:', result.error);
+                  }
+              }}
             />
           </div>
 			<div className="SystemMonitor">

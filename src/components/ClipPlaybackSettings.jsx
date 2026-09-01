@@ -2,23 +2,39 @@ import React from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 
 const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) => {
-  const { mode = 'fps', duration = 1, beats = 8, speedMultiplier = 1, fps = 30 } = settings || {};
+  const {
+    mode = 'fps',
+    duration = 1,
+    beats = 8,
+    speedMultiplier = 1,
+    fps = 30,
+    direction = 'forward',
+    style = 'loop'
+  } = settings || {};
 
   const collapsedPanels = uiState?.collapsedPanels || {};
 
   const handleToggle = (val) => {
     if (onUpdateUiState) {
-        onUpdateUiState({
-            collapsedPanels: {
-                ...collapsedPanels,
-                playback: val
-            }
-        });
+      onUpdateUiState({
+        collapsedPanels: {
+          ...collapsedPanels,
+          playback: val
+        }
+      });
     }
   };
 
   const handleModeChange = (newMode) => {
     onUpdate({ mode: newMode });
+  };
+
+  const handleDirectionChange = (newDirection) => {
+    onUpdate({ direction: newDirection });
+  };
+
+  const handleStyleChange = (newStyle) => {
+    onUpdate({ style: newStyle });
   };
 
   const adjustValue = (key, delta, isMultiply = false) => {
@@ -33,105 +49,179 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
   };
 
   return (
-    <CollapsiblePanel 
-        title="Clip Playback"
-        isCollapsed={!!collapsedPanels['playback']}
-        onToggle={handleToggle}
+    <CollapsiblePanel
+      title="Clip Playback"
+      isCollapsed={!!collapsedPanels['playback']}
+      onToggle={handleToggle}
     >
-        <div className="playback-mode-selector">
-          <button 
-              className={mode === 'fps' ? 'active' : 'button_inactive'} 
-              onClick={() => handleModeChange('fps')}
-          >FPS</button>
-          <button 
-              className={mode === 'timeline' ? 'active' : 'button_inactive'} 
-              onClick={() => handleModeChange('timeline')}
-          >Timeline</button>
-          <button 
-              className={mode === 'bpm' ? 'active' : 'button_inactive'}
-              onClick={() => handleModeChange('bpm')}
-          >BPM Sync</button>
-        </div>
+      <div className="playback-mode-selector">
+        <button
+          className={mode === 'fps' ? 'active' : 'button_inactive'}
+          onClick={() => handleModeChange('fps')}
+        >FPS</button>
+        <button
+          className={mode === 'timeline' ? 'active' : 'button_inactive'}
+          onClick={() => handleModeChange('timeline')}
+        >Timeline</button>
+        <button
+          className={mode === 'bpm' ? 'active' : 'button_inactive'}
+          onClick={() => handleModeChange('bpm')}
+        >BPM Sync</button>
+      </div>
 
-        <div className="playback-controls">
-          {mode === 'fps' && (
-            <>
-              <div className="control-group">
-                <label>Speed (FPS)</label>
-                <div className="value-adjuster">
-                  <button onClick={() => adjustValue('fps', -1)}>-1</button>
-                  <input 
-                    type="number" 
-                    value={fps} 
-                    onChange={(e) => onUpdate({ fps: parseInt(e.target.value) || 60 })}
-                  />
-                  <button onClick={() => adjustValue('fps', 1)}>+1</button>
-                  <button onClick={() => adjustValue('fps', 0.5, true)}>/2</button>
-                  <button onClick={() => adjustValue('fps', 2, true)}>*2</button>
-                </div>
-              </div>
-              <div className="control-group">
-                <label>Duration (s) (for effects)</label>
-                <div className="value-adjuster">
-                  <input 
-                    type="number" 
-                    value={duration.toFixed(2)} 
-                    onChange={(e) => onUpdate({ duration: parseFloat(e.target.value) || 1 })}
-                  />
-                </div>
-              </div>
-            </>
-          )}
-
-          {mode === 'timeline' && (
+      <div className="playback-controls">
+        {mode === 'fps' && (
+          <>
             <div className="control-group">
-              <label>Duration (s)</label>
+              <label>Speed (FPS)</label>
               <div className="value-adjuster">
-                <button onClick={() => adjustValue('duration', -1)}>-1</button>
-                <input 
-                  type="number" 
-                  value={duration.toFixed(2)} 
+                <button onClick={() => adjustValue('fps', -1)}>-1</button>
+                <input
+                  type="number"
+                  value={fps}
+                  onChange={(e) => onUpdate({ fps: parseInt(e.target.value) || 60 })}
+                />
+                <button onClick={() => adjustValue('fps', 1)}>+1</button>
+                <button onClick={() => adjustValue('fps', 0.5, true)}>/2</button>
+                <button onClick={() => adjustValue('fps', 2, true)}>*2</button>
+              </div>
+            </div>
+            <div className="control-group">
+              <label>Duration (s) (for effects)</label>
+              <div className="value-adjuster">
+                <input
+                  type="number"
+                  value={duration.toFixed(2)}
                   onChange={(e) => onUpdate({ duration: parseFloat(e.target.value) || 1 })}
                 />
-                <button onClick={() => adjustValue('duration', 1)}>+1</button>
-                <button onClick={() => adjustValue('duration', 0.5, true)}>/2</button>
-                <button onClick={() => adjustValue('duration', 2, true)}>*2</button>
               </div>
             </div>
-          )}
+          </>
+        )}
 
-          {mode === 'bpm' && (
-            <div className="control-group">
-              <label>Beats</label>
-              <div className="value-adjuster">
-                <button onClick={() => adjustValue('beats', -1)}>-1</button>
-                <input 
-                  type="number" 
-                  value={beats} 
-                  onChange={(e) => onUpdate({ beats: parseInt(e.target.value) || 1 })}
+        {mode === 'timeline' && (
+          <div className="control-group">
+            <label>Duration (s)</label>
+            <div className="value-adjuster">
+              <button onClick={() => adjustValue('duration', -1)}>-1</button>
+              <input
+                type="number"
+                value={duration.toFixed(2)}
+                onChange={(e) => onUpdate({ duration: parseFloat(e.target.value) || 1 })}
+              />
+              <button onClick={() => adjustValue('duration', 1)}>+1</button>
+              <button onClick={() => adjustValue('duration', 0.5, true)}>/2</button>
+              <button onClick={() => adjustValue('duration', 2, true)}>*2</button>
+            </div>
+          </div>
+        )}
+
+        {mode === 'bpm' && (
+          <div className="control-group">
+            <label>Beats</label>
+            <div className="value-adjuster">
+              <button onClick={() => adjustValue('beats', -1)}>-1</button>
+              <input
+                type="number"
+                value={beats}
+                onChange={(e) => onUpdate({ beats: parseInt(e.target.value) || 1 })}
+              />
+              <button onClick={() => adjustValue('beats', 1)}>+1</button>
+              <button onClick={() => adjustValue('beats', 0.5, true)}>/2</button>
+              <button onClick={() => adjustValue('beats', 2, true)}>*2</button>
+            </div>
+          </div>
+        )}
+
+        {(mode === 'timeline' || mode === 'bpm') && (
+          <div className="control-group">
+            <label>Speed Multiplier</label>
+            <div className="value-adjuster">
+              <button onClick={() => adjustValue('speedMultiplier', -0.1)}>-0.1</button>
+              <input
+                type="number"
+                value={speedMultiplier.toFixed(2)}
+                onChange={(e) => onUpdate({ speedMultiplier: parseFloat(e.target.value) || 1 })}
+              />
+              <button onClick={() => adjustValue('speedMultiplier', 0.1)}>+0.1</button>
+            </div>
+          </div>
+        )}
+
+        <div className="playback-direction-style" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #333' }}>
+          <label>In Development (Experimental)</label>
+          <div className="control-group">
+            <label>Direction</label>
+            <div className="radio-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="direction"
+                  value="forward"
+                  checked={direction === 'forward'}
+                  onChange={() => handleDirectionChange('forward')}
                 />
-                <button onClick={() => adjustValue('beats', 1)}>+1</button>
-                <button onClick={() => adjustValue('beats', 0.5, true)}>/2</button>
-                <button onClick={() => adjustValue('beats', 2, true)}>*2</button>
-              </div>
+                Forward
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="direction"
+                  value="backward"
+                  checked={direction === 'backward'}
+                  onChange={() => handleDirectionChange('backward')}
+                />
+                Backward
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="direction"
+                  value="pause"
+                  checked={direction === 'pause'}
+                  onChange={() => handleDirectionChange('pause')}
+                />
+                Pause
+              </label>
             </div>
-          )}
-
-          {(mode === 'timeline' || mode === 'bpm') && (
-              <div className="control-group">
-                  <label>Speed Multiplier</label>
-                  <div className="value-adjuster">
-                      <button onClick={() => adjustValue('speedMultiplier', -0.1)}>-0.1</button>
-                      <input 
-                          type="number" 
-                          value={speedMultiplier.toFixed(2)} 
-                          onChange={(e) => onUpdate({ speedMultiplier: parseFloat(e.target.value) || 1 })}
-                      />
-                      <button onClick={() => adjustValue('speedMultiplier', 0.1)}>+0.1</button>
-                  </div>
-              </div>
-          )}
+          </div>
+          <div className="control-group">
+            <label>Style</label>
+            <div className="radio-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="style"
+                  value="loop"
+                  checked={style === 'loop'}
+                  onChange={() => handleStyleChange('loop')}
+                />
+                Loop
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="style"
+                  value="once"
+                  checked={style === 'once'}
+                  onChange={() => handleStyleChange('once')}
+                />
+                Once
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="style"
+                  value="bounce"
+                  checked={style === 'bounce'}
+                  onChange={() => handleStyleChange('bounce')}
+                />
+                Bounce
+              </label>
+            </div>
+          </div>
         </div>
+      </div>
     </CollapsiblePanel>
   );
 };

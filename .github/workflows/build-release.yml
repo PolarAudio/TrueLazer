@@ -1,0 +1,79 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Check if software version changed
+        id: check_version
+        shell: bash
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+
+          BEFORE_SHA="${{ github.event.before }}"
+          if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            COMPARE_REF="$BEFORE_SHA"
+          else
+            COMPARE_REF="HEAD~1"
+          fi
+
+          PREV_VERSION=$(git show ${COMPARE_REF}:package.json 2>/dev/null | node -p "try { JSON.parse(require('fs').readFileSync(0, 'utf-8')).version } catch(e) { '' }" || echo "")
+          echo "Previous version ($COMPARE_REF): $PREV_VERSION"
+
+          if [ -z "$PREV_VERSION" ]; then
+            echo "Could not determine previous version. Triggering build."
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          elif [ "$CURRENT_VERSION" != "$PREV_VERSION" ]; then
+            echo "Version changed from '$PREV_VERSION' to '$CURRENT_VERSION'. Triggering build."
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "Version ($CURRENT_VERSION) did not change from previous version ($PREV_VERSION). Skipping build."
+            echo "version_changed=false" >> $GITHUB_OUTPUT
+            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies & build native addons
+        if: steps.check_version.outputs.version_changed == 'true'
+        run: npm ci
+
+      - name: Build application
+        if: steps.check_version.outputs.version_changed == 'true'
+        run: npm run build
+
+      - name: Create GitHub Release
+        if: steps.check_version.outputs.version_changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.check_version.outputs.current_version }}
+          name: TrueLazer v${{ steps.check_version.outputs.current_version }}
+          draft: false
+          prerelease: false
+          files: |
+            release/*.exe
+            release/*.blockmap
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

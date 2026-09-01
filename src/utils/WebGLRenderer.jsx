@@ -219,7 +219,7 @@ export class WebGLRenderer {
     const progress = progressOverride !== null ? progressOverride : (frameIndex / ildaFrames.length);
     const time = previewTime !== null ? previewTime : performance.now();
 
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled, 'forward', 'loop');
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -258,7 +258,7 @@ export class WebGLRenderer {
             // Skip rendering if intensity is effectively zero
             if (finalIntensity > 0.001) {
                 const progress = clip.progress !== undefined ? clip.progress : (this.frameIndexes[layerIndex] % clip.frames.length) / clip.frames.length;
-                const { syncSettings = {}, bpm = 120, clipDuration = 1, effectStates = null } = clip;
+                const { syncSettings = {}, bpm = 120, clipDuration = 1, effectStates = null, playbackDirection = 'forward', playbackStyle = 'loop' } = clip;
                 
                 // If dacSettings provided, we apply them.
                 // In exact copy mode, we might want to apply settings after merge, but here we apply per layer for simplicity if we don't want to refactor the draw loop.
@@ -290,7 +290,7 @@ export class WebGLRenderer {
                 }
 
                 // Pass layerIndex, progress and time to draw
-                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
+                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled, playbackDirection, playbackStyle);
             }
         }
       }
@@ -335,7 +335,7 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true, playbackDirection = 'forward', playbackStyle = 'loop') {
     const gl = this.gl;
     if (!frame || !frame.points || this.contextLost) return;
 
@@ -358,7 +358,7 @@ export class WebGLRenderer {
 
     // Apply effects before drawing
     // We pass syncSettings and bpm in the context
-    const modifiedFrame = applyEffects(frameToProcess, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates });
+    const modifiedFrame = applyEffects(frameToProcess, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, direction: playbackDirection, style: playbackStyle });
     const points = modifiedFrame.points;
     const isTyped = modifiedFrame.isTypedArray;
     const numPoints = isTyped ? (points.length / 8) : points.length;

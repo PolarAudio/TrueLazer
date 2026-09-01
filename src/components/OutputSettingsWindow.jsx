@@ -5,7 +5,9 @@ const OutputCanvas = ({
   safetyZones, 
   outputArea, 
   testLineY, 
-  testLineEnabled, 
+  testLineX = 0.5,
+  testLineEnabled,
+  verticalTestLineEnabled = false,
   transformationEnabled,
   transformationMode,
   flipX,
@@ -15,7 +17,9 @@ const OutputCanvas = ({
   selectedZoneIndex, 
   onSelectZone,
   gridSize = 20,
-  snapToGrid = false
+  snapToGrid = false,
+  sentFramesRef,
+  channelId
 }) => {
   const canvasRef = useRef(null);
   const [dragging, setDragging] = useState(null); // { type, index, handle, startX, startY, originalRect }
@@ -49,6 +53,11 @@ const OutputCanvas = ({
     ctx.fillText('1,0', width - 25, 12);
     ctx.fillText('0,1', 5, height - 5);
     ctx.fillText('1,1', width - 25, height - 5);
+
+    // Label the physical center (DAC cartesian 0,0) so the corner "0,0" label
+    // isn't mistaken for it.
+    ctx.fillStyle = '#ddd';
+    ctx.fillText('physical 0,0', width / 2 - 42, height / 2 + 14);
   };
 
   const drawRect = (ctx, rect, color, isSelected = false, isOutputArea = false) => {
@@ -81,6 +90,71 @@ const OutputCanvas = ({
     }
   };
 
+  const drawSentFrame = (ctx, width, height) => {
+    if (!sentFramesRef || !sentFramesRef.current || !channelId) return;
+    const entry = sentFramesRef.current[channelId];
+    if (!entry || !entry.points) return;
+    const pts = entry.points;
+    const isT = pts instanceof Float32Array;
+    const n = isT ? Math.floor(pts.length / 8) : pts.length;
+    if (n === 0) return;
+
+    // Colors may be 0..255 or 0..1 depending on the frame source.
+    let maxC = 0;
+    const probe = Math.min(n, 100);
+    for (let i = 0; i < probe; i++) {
+      if (isT) {
+        maxC = Math.max(maxC, pts[i * 8 + 3], pts[i * 8 + 4], pts[i * 8 + 5]);
+      } else {
+        maxC = Math.max(maxC, pts[i].r, pts[i].g, pts[i].b);
+      }
+    }
+    const cScale = maxC > 1.5 ? 1 / 255 : 1;
+
+    const getPt = (i) => {
+      if (isT) {
+        return {
+          x: pts[i * 8], y: pts[i * 8 + 1],
+          r: pts[i * 8 + 3], g: pts[i * 8 + 4], b: pts[i * 8 + 5],
+          blank: pts[i * 8 + 6] > 0.5
+        };
+      }
+      const p = pts[i];
+      return { x: p.x, y: p.y, r: p.r, g: p.g, b: p.b, blank: !!p.blanking };
+    };
+
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.35;
+
+    // Beam path between consecutive lit points.
+    ctx.beginPath();
+    let penDown = false;
+    for (let i = 0; i < n; i++) {
+      const p = getPt(i);
+      const px = (p.x + 1) / 2 * width;
+      const py = (1 - p.y) / 2 * height;
+      if (p.blank) { penDown = false; continue; }
+      if (penDown) ctx.lineTo(px, py);
+      else ctx.moveTo(px, py);
+      penDown = true;
+    }
+    ctx.strokeStyle = 'rgba(0, 255, 128, 0.9)';
+    ctx.stroke();
+
+    // Lit points as small colored dots.
+    ctx.globalAlpha = 0.85;
+    for (let i = 0; i < n; i++) {
+      const p = getPt(i);
+      if (p.blank) continue;
+      const px = (p.x + 1) / 2 * width;
+      const py = (1 - p.y) / 2 * height;
+      ctx.fillStyle = `rgb(${Math.round(p.r * cScale * 255)}, ${Math.round(p.g * cScale * 255)}, ${Math.round(p.b * cScale * 255)})`;
+      ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    }
+    ctx.restore();
+  };
+
   const render = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -88,6 +162,7 @@ const OutputCanvas = ({
     const { width, height } = canvas;
 
     ctx.clearRect(0, 0, width, height);
+    drawSentFrame(ctx, width, height);
     drawGrid(ctx, width, height);
 
     // Draw Output Area FIRST so it is behind Safety Zones
@@ -112,87 +187,152 @@ const OutputCanvas = ({
 
     // Draw Test Line
     if (testLineEnabled) {
-      // 1. Coordinates are ABSOLUTE in the UI. 
-      // Hardware Flips are NOT applied to the preview to ensure 'Up is Up'.
       let finalLineY = testLineY;
-
-      // 2. Apply Transformation (Preview where it lands on the hardware area)
       let startX = 0;
       let endX = 1;
-      
+
       if (transformationEnabled && outputArea) {
           if (transformationMode === 'scale') {
               startX = outputArea.x;
               endX = outputArea.x + outputArea.w;
               finalLineY = outputArea.y + (finalLineY * outputArea.h);
           } else if (transformationMode === 'crop') {
-              // In crop mode, inputs outside the area are blanked.
               if (finalLineY < outputArea.y || finalLineY > outputArea.y + outputArea.h) {
-                  // Line is vertically outside crop area, don't draw
-                  return; 
+                  finalLineY = -1;
+              } else {
+                  startX = Math.max(0, outputArea.x);
+                  endX = Math.min(1, outputArea.x + outputArea.w);
               }
-              startX = Math.max(0, outputArea.x);
-              endX = Math.min(1, outputArea.x + outputArea.w);
           }
       }
 
-      // Convert to pixels
-      const yPx = finalLineY * height;
-      const startPx = startX * width;
-      const endPx = endX * width;
+      if (finalLineY >= 0) {
+          const yPx = finalLineY * height;
+          const startPx = startX * width;
+          const endPx = endX * width;
+          let segments = [[startPx, endPx]];
 
-      // 3. Apply Safety Zones (Subtraction)
-      let segments = [[startPx, endPx]];
-
-      if (safetyZones && safetyZones.length > 0) {
-          safetyZones.forEach(zone => {
-              const zY = zone.y * height;
-              const zH = zone.h * height;
-              const zX = zone.x * width;
-              const zW = zone.w * width;
-
-              // Check if zone overlaps with line Y
-              if (yPx >= zY && yPx <= zY + zH) {
-                  // Subtract horizontal range [zX, zX + zW]
-                  const newSegments = [];
-                  segments.forEach(seg => {
-                      const [s, e] = seg;
-                      const holeStart = zX;
-                      const holeEnd = zX + zW;
-
-                      if (holeEnd <= s || holeStart >= e) {
-                          // No overlap
-                          newSegments.push(seg);
-                      } else {
-                          // Overlap
-                          if (holeStart > s) {
-                              newSegments.push([s, holeStart]);
+          if (safetyZones && safetyZones.length > 0) {
+              safetyZones.forEach(zone => {
+                  const zY = zone.y * height;
+                  const zH = zone.h * height;
+                  const zX = zone.x * width;
+                  const zW = zone.w * width;
+                  if (yPx >= zY && yPx <= zY + zH) {
+                      const newSegments = [];
+                      segments.forEach(seg => {
+                          const [s, e] = seg;
+                          const holeStart = zX;
+                          const holeEnd = zX + zW;
+                          if (holeEnd <= s || holeStart >= e) {
+                              newSegments.push(seg);
+                          } else {
+                              if (holeStart > s) newSegments.push([s, holeStart]);
+                              if (holeEnd < e) newSegments.push([holeEnd, e]);
                           }
-                          if (holeEnd < e) {
-                              newSegments.push([holeEnd, e]);
-                          }
-                      }
-                  });
-                  segments = newSegments;
-              }
+                      });
+                      segments = newSegments;
+                  }
+              });
+          }
+
+          ctx.strokeStyle = '#00ff00';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          segments.forEach(seg => {
+              ctx.moveTo(seg[0], yPx);
+              ctx.lineTo(seg[1], yPx);
           });
+          ctx.stroke();
+      }
+    }
+
+    // Draw Vertical Test Line
+    if (verticalTestLineEnabled) {
+      let finalLineX = testLineX;
+      let startY = 0;
+      let endY = 1;
+
+      if (transformationEnabled && outputArea) {
+          if (transformationMode === 'scale') {
+              startY = outputArea.y;
+              endY = outputArea.y + outputArea.h;
+              finalLineX = outputArea.x + (finalLineX * outputArea.w);
+          } else if (transformationMode === 'crop') {
+              if (finalLineX < outputArea.x || finalLineX > outputArea.x + outputArea.w) {
+                  finalLineX = -1;
+              } else {
+                  startY = Math.max(0, outputArea.y);
+                  endY = Math.min(1, outputArea.y + outputArea.h);
+              }
+          }
       }
 
-      // Draw segments
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      segments.forEach(seg => {
-          ctx.moveTo(seg[0], yPx);
-          ctx.lineTo(seg[1], yPx);
-      });
-      ctx.stroke();
+      if (finalLineX >= 0) {
+          const xPx = finalLineX * width;
+          const startPx = startY * height;
+          const endPx = endY * height;
+          let segments = [[startPx, endPx]];
+
+          if (safetyZones && safetyZones.length > 0) {
+              safetyZones.forEach(zone => {
+                  const zY = zone.y * height;
+                  const zH = zone.h * height;
+                  const zX = zone.x * width;
+                  const zW = zone.w * width;
+                  if (xPx >= zX && xPx <= zX + zW) {
+                      const newSegments = [];
+                      segments.forEach(seg => {
+                          const [s, e] = seg;
+                          const holeStart = zY;
+                          const holeEnd = zY + zH;
+                          if (holeEnd <= s || holeStart >= e) {
+                              newSegments.push(seg);
+                          } else {
+                              if (holeStart > s) newSegments.push([s, holeStart]);
+                              if (holeEnd < e) newSegments.push([holeEnd, e]);
+                          }
+                      });
+                      segments = newSegments;
+                  }
+              });
+          }
+
+          ctx.strokeStyle = '#00ff00';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          segments.forEach(seg => {
+              ctx.moveTo(xPx, seg[0]);
+              ctx.lineTo(xPx, seg[1]);
+          });
+          ctx.stroke();
+      }
     }
   };
 
   useEffect(() => {
     render();
-  }, [safetyZones, outputArea, testLineY, testLineEnabled, transformationEnabled, selectedZoneIndex, gridSize, flipX, flipY]);
+  }, [safetyZones, outputArea, testLineY, testLineX, testLineEnabled, verticalTestLineEnabled, transformationEnabled, transformationMode, selectedZoneIndex, gridSize, flipX, flipY]);
+
+  // Live frame-preview background: poll the sent-frames ref (updated by the DAC
+  // loop without React re-renders) and redraw when the channel's frame changes.
+  const renderRef = useRef(null);
+  renderRef.current = render;
+  useEffect(() => {
+    let lastPoints = null;
+    let raf;
+    const tick = () => {
+      const entry = sentFramesRef && sentFramesRef.current && channelId ? sentFramesRef.current[channelId] : null;
+      const pts = entry ? entry.points : null;
+      if (pts !== lastPoints) {
+        lastPoints = pts;
+        if (renderRef.current) renderRef.current();
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [sentFramesRef, channelId]);
 
   // Interaction Helpers
   const getMousePos = (e) => {
@@ -347,7 +487,7 @@ const OutputCanvas = ({
   );
 };
 
-const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUpdateDacSettings }) => {
+const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUpdateDacSettings, sentFramesRef }) => {
   const [selectedOutputId, setSelectedOutputId] = useState(null);
   const [selectedZoneIndex, setSelectedZoneIndex] = useState(null);
   const [gridSize, setGridSize] = useState(20);
@@ -398,6 +538,13 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       transformationMode: 'crop',
       testLineEnabled: false,
       testLineY: 0.5,
+      verticalTestLineEnabled: false,
+      testLineX: 0.5,
+      testLineLagComp: 0,
+      testLineLagCompStart: 0,
+      testLineLagCompEnd: 0,
+      testLineShiftX: 0,
+      testLineShiftY: 0,
       flipX: false,
       flipY: false
   };
@@ -499,7 +646,9 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 safetyZones={currentSettings.safetyZones}
                 outputArea={currentSettings.outputArea}
                 testLineY={currentSettings.testLineY}
+                testLineX={currentSettings.testLineX ?? 0.5}
                 testLineEnabled={currentSettings.testLineEnabled}
+                verticalTestLineEnabled={currentSettings.verticalTestLineEnabled ?? false}
                 transformationEnabled={currentSettings.transformationEnabled}
                 transformationMode={currentSettings.transformationMode}
                 flipX={currentSettings.flipX}
@@ -510,6 +659,8 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 onSelectZone={setSelectedZoneIndex}
                 gridSize={gridSize}
                 snapToGrid={snapToGrid}
+                sentFramesRef={sentFramesRef}
+                channelId={selectedOutputId}
             />
           </div>
 
@@ -573,7 +724,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                     <div className="settings-group">
                         <h4>Test Output</h4>
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>Enable Test Line</label>
+                            <label style={{flex:1}}>Horizontal Test Line</label>
                              <input type="checkbox" checked={currentSettings.testLineEnabled} onChange={(e) => updateCurrentSettings({ testLineEnabled: e.target.checked })} />
                         </div>
                         {currentSettings.testLineEnabled && (
@@ -588,6 +739,70 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                                 />
                             </div>
                         )}
+                        {currentSettings.testLineEnabled && (
+                            <div className="control-row">
+                                <label>Center Shift X</label>
+                                <input 
+                                    type="range" 
+                                    min="-0.1" max="0.1" step="0.001" 
+                                    value={currentSettings.testLineShiftX ?? 0} 
+                                    onChange={(e) => updateCurrentSettings({ testLineShiftX: parseFloat(e.target.value) })} 
+                                    className="param-slider"
+                                />
+                                <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineShiftX ?? 0}</span>
+                            </div>
+                        )}
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Vertical Test Line</label>
+                             <input type="checkbox" checked={currentSettings.verticalTestLineEnabled ?? false} onChange={(e) => updateCurrentSettings({ verticalTestLineEnabled: e.target.checked })} />
+                        </div>
+                        {(currentSettings.verticalTestLineEnabled ?? false) && (
+                            <div className="control-row">
+                                <label>X Position</label>
+                                <input 
+                                    type="range" 
+                                    min="0" max="1" step="0.01" 
+                                    value={currentSettings.testLineX ?? 0.5} 
+                                    onChange={(e) => updateCurrentSettings({ testLineX: parseFloat(e.target.value) })} 
+                                    className="param-slider"
+                                />
+                            </div>
+                        )}
+                        {(currentSettings.verticalTestLineEnabled ?? false) && (
+                            <div className="control-row">
+                                <label>Center Shift Y</label>
+                                <input 
+                                    type="range" 
+                                    min="-0.1" max="0.1" step="0.001" 
+                                    value={currentSettings.testLineShiftY ?? 0} 
+                                    onChange={(e) => updateCurrentSettings({ testLineShiftY: parseFloat(e.target.value) })} 
+                                    className="param-slider"
+                                />
+                                <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineShiftY ?? 0}</span>
+                            </div>
+                        )}
+                        <div className="control-row" style={{marginBottom:10, marginTop:5}}>
+                            <label style={{flex:1}}>End Lag Comp</label>
+                            <input 
+                                type="range" 
+                                min="-0.1" max="0.1" step="0.001" 
+                                value={currentSettings.testLineLagCompEnd !== undefined ? currentSettings.testLineLagCompEnd : (currentSettings.testLineLagComp ?? 0)} 
+                                onChange={(e) => updateCurrentSettings({ testLineLagCompEnd: parseFloat(e.target.value) })} 
+                                className="param-slider"
+                            />
+                            <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineLagCompEnd !== undefined ? currentSettings.testLineLagCompEnd : (currentSettings.testLineLagComp ?? 0)}</span>
+                        </div>
+                        <div className="control-row" style={{marginBottom:5}}>
+                            <label style={{flex:1}}>Start Lag Comp</label>
+                            <input 
+                                type="range" 
+                                min="-0.1" max="0.1" step="0.001" 
+                                value={currentSettings.testLineLagCompStart ?? 0} 
+                                onChange={(e) => updateCurrentSettings({ testLineLagCompStart: parseFloat(e.target.value) })} 
+                                className="param-slider"
+                            />
+                            <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineLagCompStart ?? 0}</span>
+                        </div>
                     </div>
                  </>
              ) : (
