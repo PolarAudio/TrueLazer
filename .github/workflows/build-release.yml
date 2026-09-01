@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout repository
@@ -23,11 +23,6 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-
-      - name: Set up Visual Studio 2022 Build Environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
 
       - name: Check if software version changed
         id: check_version
@@ -63,8 +58,6 @@ jobs:
       - name: Install dependencies & build native addons
         if: steps.check_version.outputs.version_changed == 'true'
         run: npm ci
-        env:
-          GYP_MSVS_VERSION: 2022
 
       - name: Build application
         if: steps.check_version.outputs.version_changed == 'true'

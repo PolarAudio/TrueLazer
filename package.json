@@ -1,6 +1,6 @@
 {
   "name": "truelazer",
-  "version": "0.0.9",
+  "version": "0.0.7",
   "description": "development build",
   "main": "main.js",
   "scripts": {
