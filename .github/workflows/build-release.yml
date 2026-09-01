@@ -21,8 +21,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
+
+      - name: Configure MSVC for node-gyp
+        shell: bash
+        run: npm config set msvs_version 2022
 
       - name: Check if software version changed
         id: check_version
