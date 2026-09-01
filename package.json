@@ -1,6 +1,6 @@
 {
   "name": "truelazer",
-  "version": "0.0.7",
+  "version": "0.0.75",
   "description": "development build",
   "main": "main.js",
   "scripts": {
@@ -8,7 +8,7 @@
     "start": "concurrently --kill-others \"npm run start-renderer\" \"cross-env NODE_ENV=development electron .\"",
     "build-native": "node-gyp rebuild --directory native",
     "postinstall": "npm run build-native",
-    "build": "vite build && electron-builder",
+    "build": "vite build && electron-builder --publish never",
     "test": "vitest run"
   },
   "build": {
