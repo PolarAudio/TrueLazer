@@ -890,8 +890,10 @@ function createWindow() {
     for (const id of Object.keys(frames)) {
       const f = frames[id];
       if (!dacFrameAccumulator[id]) {
-        dacFrameAccumulator[id] = { frame: null, sent: null, missed: 0, blanked: false, ip: f.ip, channel: f.channel, type: f.type, options: f.options || {} };
+        dacFrameAccumulator[id] = { frame: null, sent: null, missed: 0, blanked: false, ip: f.ip, channel: f.channel, type: f.type, options: f.options || {}, fps: f.fps || 30 };
       }
+      dacFrameAccumulator[id].options = f.options || dacFrameAccumulator[id].options || {};
+      if (f.fps) dacFrameAccumulator[id].fps = f.fps;
       dacFrameAccumulator[id].frame = f.points;
       dacFrameAccumulator[id].blanked = false;
     }
@@ -910,12 +912,12 @@ function createWindow() {
             if (!acc.blanked) {
               const blank = new Float32Array(8);
               blank[6] = 1;
-              sendFrame(acc.ip, acc.channel, blank, 30, acc.type, acc.options);
+              sendFrame(acc.ip, acc.channel, blank, acc.fps || 30, acc.type, acc.options);
               acc.blanked = true;
             }
           } else if (acc.sent) {
             // Brief hiccup — repeat last known frame
-            sendFrame(acc.ip, acc.channel, acc.sent, 30, acc.type, acc.options);
+            sendFrame(acc.ip, acc.channel, acc.sent, acc.fps || 30, acc.type, acc.options);
           }
           continue;
         }
@@ -923,7 +925,7 @@ function createWindow() {
         acc.missed = 0;
         acc.blanked = false;
         acc.sent = acc.frame;
-        sendFrame(acc.ip, acc.channel, acc.frame, 30, acc.type, acc.options);
+        sendFrame(acc.ip, acc.channel, acc.frame, acc.fps || 30, acc.type, acc.options);
         acc.frame = null;
       }
     }, DAC_SEND_INTERVAL);
@@ -1271,6 +1273,20 @@ function createWindow() {
     if (canceled || !filePath) return { success: false, canceled: true };
     try {
       await fs.promises.writeFile(filePath, Buffer.from(arrayBuffer));
+      return { success: true, filePath };
+    } catch (error) { return { success: false, error: error.message }; }
+  });
+
+  ipcMain.handle('save-clip-file', async (event, content, defaultName = 'shape.clip') => {
+    const userClipPath = path.join(app.getPath('documents'), 'TrueLazer', 'SHAPES');
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save As Vector Clip',
+      defaultPath: path.join(userClipPath, defaultName),
+      filters: [{ name: 'TrueLazer Shape Clips', extensions: ['clip'] }]
+    });
+    if (canceled || !filePath) return { success: false, canceled: true };
+    try {
+      await fs.promises.writeFile(filePath, content, 'utf8');
       return { success: true, filePath };
     } catch (error) { return { success: false, error: error.message }; }
   });

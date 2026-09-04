@@ -1,8 +1,72 @@
-const OPT_MAX_DIST = 0.02;
-const OPT_PATH_DWELL = 2;
-const OPT_CORNER_DWELL = 2;
-const OPT_CORNER_COS = 0.866; // cos(30°) — angle change > 30° = corner
-const OPT_MAX_POINTS = 1000;
+// optimizer.js
+// Budget-aware point optimizer (in-place rewrite).
+//
+// Given a source frame (object points or Float32Array of 8 values), produces an
+// optimized Float32Array of 8 values per point (x,y,z,r,g,b,blanking,lastPoint)
+// that applies laser-hardware optimizations:
+//
+//   - Blanking transitions  (start/end dwell)
+//   - Anchor points         (start/end dwell)
+//   - Lit point dwell       (start/end)
+//   - Corner dwell + threshold
+//   - Linear interpolation  (lit only) driven by interpolation distance
+//   - Point-to-color timing shift (global + per-channel R/G/B)
+//   - Minimum point padding
+//   - Point budget enforcement (from target PPS/FPS)
+//
+// The optimizer reads its defaults from hardwarePresets.js so hardware presets
+// and this module share one source of truth. Any setting passed in `settings`
+// overrides the defaults/preset.
+
+import {
+    OPT_DEFAULTS,
+    getOptimizerSettings,
+    interpToDisplayUnits,
+    cornerDegreesToCos,
+} from './hardwarePresets.js';
+
+const DEFAULTS = OPT_DEFAULTS;
+const OPT_MAX_SOURCE_PASSTHROUGH = 4000; // above this, bypass geometry optimization
+
+function numSetting(settings, key) {
+    const v = settings && settings[key];
+    if (v === undefined || v === null || Number.isNaN(Number(v))) return DEFAULTS[key];
+    return Number(v);
+}
+
+function makeGet(points, isTyped) {
+    return (i) => {
+        if (isTyped) {
+            const off = i * 8;
+            return {
+                x: points[off], y: points[off + 1], z: points[off + 2],
+                r: points[off + 3], g: points[off + 4], b: points[off + 5],
+                blanking: points[off + 6] > 0.5,
+                lastPoint: points[off + 7] > 0.5,
+            };
+        }
+        const p = points[i];
+        return {
+            x: p.x || 0, y: p.y || 0, z: p.z || 0,
+            r: p.r || 0, g: p.g || 0, b: p.b || 0,
+            blanking: !!p.blanking,
+            lastPoint: !!p.lastPoint,
+        };
+    };
+}
+
+function passthrough(points, isTyped, numPoints) {
+    if (isTyped) return points;
+    const res = new Float32Array(numPoints * 8);
+    for (let i = 0; i < numPoints; i++) {
+        const p = points[i];
+        const off = i * 8;
+        res[off] = p.x; res[off + 1] = p.y; res[off + 2] = p.z || 0;
+        res[off + 3] = p.r; res[off + 4] = p.g; res[off + 5] = p.b;
+        res[off + 6] = p.blanking ? 1 : 0; res[off + 7] = p.lastPoint ? 1 : 0;
+    }
+    return res;
+}
 
 export function optimizePoints(points, settings = {}) {
     if (!points) return new Float32Array(0);
@@ -11,53 +75,65 @@ export function optimizePoints(points, settings = {}) {
     const numPoints = isTyped ? (points.length / 8) : points.length;
     if (numPoints === 0) return new Float32Array(0);
 
-    const maxDist = Math.max(0.001, Number(settings.maxDist ?? OPT_MAX_DIST));
-    const pathDwell = Math.max(0, Math.floor(Number(settings.pathDwell ?? OPT_PATH_DWELL)));
-    const maxPoints = Math.max(10, Math.floor(Number(settings.maxPoints ?? OPT_MAX_POINTS)));
-    const cornerDwell = Math.max(0, Math.floor(Number(settings.cornerDwell ?? OPT_CORNER_DWELL)));
-    const cornerCos = Math.min(0.999, Math.max(-0.999, Number(settings.cornerAngle ?? OPT_CORNER_COS)));
+    // Merge preset defaults + explicit overrides.
+    const presetSettings = getOptimizerSettings(settings.preset, settings.overrides || null);
+    const totalSettings = { ...presetSettings, ...settings };
 
-    if (numPoints > 4000) {
-        if (points instanceof Float32Array) return points;
-        const res = new Float32Array(numPoints * 8);
-        for (let i = 0; i < numPoints; i++) {
-            const p = points[i];
-            const off = i * 8;
-            res[off] = p.x; res[off + 1] = p.y; res[off + 2] = p.z || 0;
-            res[off + 3] = p.r; res[off + 4] = p.g; res[off + 5] = p.b;
-            res[off + 6] = p.blanking ? 1 : 0;
-            res[off + 7] = p.lastPoint ? 1 : 0;
-        }
+    const maxDist = Math.max(0.0005, interpToDisplayUnits(numSetting(totalSettings, 'interpDistance')));
+    const blankingStart = Math.max(0, Math.floor(numSetting(totalSettings, 'blankingStart')));
+    const blankingEnd = Math.max(0, Math.floor(numSetting(totalSettings, 'blankingEnd')));
+    const shift = Math.max(-20, Math.min(20, numSetting(totalSettings, 'shift')));
+    const shiftR = Math.max(-20, Math.min(20, numSetting(totalSettings, 'shiftR')));
+    const shiftG = Math.max(-20, Math.min(20, numSetting(totalSettings, 'shiftG')));
+    const shiftB = Math.max(-20, Math.min(20, numSetting(totalSettings, 'shiftB')));
+    const anchorStart = Math.max(0, Math.floor(numSetting(totalSettings, 'anchorStart')));
+    const anchorEnd = Math.max(0, Math.floor(numSetting(totalSettings, 'anchorEnd')));
+    const litDwellStart = Math.max(0, Math.floor(numSetting(totalSettings, 'litDwellStart')));
+    const litDwellEnd = Math.max(0, Math.floor(numSetting(totalSettings, 'litDwellEnd')));
+    const cornerDwell = Math.max(0, Math.floor(numSetting(totalSettings, 'cornerDwell')));
+    const cornerCos = cornerDegreesToCos(numSetting(totalSettings, 'cornerThreshold'));
+    const minPadding = Math.max(0, Math.floor(numSetting(totalSettings, 'minPadding')));
+
+    let maxPoints;
+    if (settings.maxPoints && settings.maxPoints > 0) {
+        maxPoints = Math.max(10, Math.floor(settings.maxPoints));
+    } else if (totalSettings.targetPps && totalSettings.targetFps) {
+        maxPoints = Math.max(10, Math.floor(totalSettings.targetPps / totalSettings.targetFps));
+    } else {
+        maxPoints = Math.max(10, Math.floor(numSetting(totalSettings, 'pointBudget') || 1000));
+    }
+    // Enforce the minimum-point padding floor as a hard minimum budget.
+    maxPoints = Math.max(maxPoints, minPadding);
+
+    if (numPoints > OPT_MAX_SOURCE_PASSTHROUGH) {
+        const res = passthrough(points, isTyped, numPoints);
+        if (points._channelDistributions) res._channelDistributions = points._channelDistributions;
         return res;
     }
 
+    const get = makeGet(points, isTyped);
     const result = [];
-    const push = (x, y, z, r, g, b, blk, last = 0) => {
-        const finalR = blk ? 0 : r;
-        const finalG = blk ? 0 : g;
-        const finalB = blk ? 0 : b;
-        result.push(x, y, z, finalR, finalG, finalB, blk ? 1 : 0, last);
+
+    // Color shift model: for an output point emitted from source span around
+    // source index `srcIdx`, the RGB is read from source index
+    //   colorIdx = clamp(srcIdx + shift + channelShift, 0, numPoints-1)
+    // For interpolated points, srcIdx advances continuously; for dwell repeats
+    // we keep the same source index. The source color lookup is bound to the
+    // *geometric* source index that produced the current position.
+    const colorIndexFor = (srcIdx, channelShift) =>
+        Math.max(0, Math.min(numPoints - 1, Math.round(srcIdx + shift + channelShift)));
+
+    // Emit a point with explicit geometry and color lookup keyed to srcIdx.
+    // `srcIdx` may be fractional (interpolated) — colors use the rounded index.
+    const push = (x, y, z, blk, srcIdx, last = 0) => {
+        const r = blk ? 0 : get(colorIndexFor(srcIdx, shiftR)).r;
+        const g = blk ? 0 : get(colorIndexFor(srcIdx, shiftG)).g;
+        const b = blk ? 0 : get(colorIndexFor(srcIdx, shiftB)).b;
+        result.push(x, y, z, r, g, b, blk ? 1 : 0, last);
     };
 
-    const get = (i) => {
-        if (isTyped) {
-            const off = i * 8;
-            return {
-                x: points[off], y: points[off + 1], z: points[off + 2],
-                r: points[off + 3], g: points[off + 4], b: points[off + 5],
-                blanking: points[off + 6] > 0.5,
-                lastPoint: points[off + 7] > 0.5
-            };
-        } else {
-            const p = points[i];
-            return {
-                x: p.x || 0, y: p.y || 0, z: p.z || 0,
-                r: p.r || 0, g: p.g || 0, b: p.b || 0,
-                blanking: !!p.blanking,
-                lastPoint: !!p.lastPoint
-            };
-        }
-    };
+    // Convenience: emit using a specific integer source index (dwell/anchor).
+    const pushAt = (x, y, z, blk, idx, last = 0) => push(x, y, z, blk, idx, last);
 
     // --- SEGMENT ANALYSIS ---
     const segments = [];
@@ -123,9 +199,7 @@ export function optimizePoints(points, settings = {}) {
         totalInterpDesired += Math.max(1, Math.floor(dist / maxDist));
 
         if (prev.blanking !== curr.blanking) {
-            if (!(skipDwellAtIdx[i] === 1)) {
-                totalBlankTransitions++;
-            }
+            if (!(skipDwellAtIdx[i] === 1)) totalBlankTransitions++;
         }
 
         if (!prev.blanking && !curr.blanking && i > 1) {
@@ -143,7 +217,6 @@ export function optimizePoints(points, settings = {}) {
         }
     }
 
-    // Wrap-around edge for closed shapes
     let wrapDist = 0;
     if (isClosed && firstVisibleIdx !== -1 && lastVisibleIdx !== -1) {
         const fv = get(firstVisibleIdx);
@@ -158,7 +231,8 @@ export function optimizePoints(points, settings = {}) {
     }
 
     // --- PHASE 2: Compute effective parameters within budget ---
-    const fixedCost = processEndIdx + totalBlankTransitions * pathDwell;
+    const blankTransitionCost = totalBlankTransitions * (blankingStart + blankingEnd);
+    const fixedCost = processEndIdx + blankTransitionCost;
     const dwellCost = totalCornerCount * cornerDwell;
     const totalDesired = fixedCost + dwellCost + totalInterpDesired;
 
@@ -170,7 +244,6 @@ export function optimizePoints(points, settings = {}) {
         const ratio = availableForInterp / totalInterpDesired;
         effectiveMaxDist = totalDist / Math.max(1, (totalInterpDesired * ratio));
 
-        // If still over budget, reduce corner dwells
         const testOutput = fixedCost + totalCornerCount * effectiveCornerDwell +
             Math.floor(totalDist / effectiveMaxDist);
         if (testOutput > maxPoints && totalCornerCount > 0) {
@@ -179,32 +252,37 @@ export function optimizePoints(points, settings = {}) {
         }
     }
 
-    // If under budget, keep effectiveMaxDist = maxDist for best quality
-
     // --- PHASE 3: Generate output points ---
     let prevPoint = get(0);
-    push(prevPoint.x, prevPoint.y, prevPoint.z,
-        prevPoint.r, prevPoint.g, prevPoint.b, prevPoint.blanking);
+
+    // Start anchor dwell at the first lit point.
+    if (!prevPoint.blanking && anchorStart > 0) {
+        for (let d = 0; d < anchorStart; d++) pushAt(prevPoint.x, prevPoint.y, prevPoint.z, false, 0);
+    }
+    if (!prevPoint.blanking && litDwellStart > 0) {
+        for (let d = 0; d < litDwellStart; d++) pushAt(prevPoint.x, prevPoint.y, prevPoint.z, false, 0);
+    }
+    pushAt(prevPoint.x, prevPoint.y, prevPoint.z, prevPoint.blanking, 0);
 
     for (let i = 1; i < processEndIdx; i++) {
         const currPoint = get(i);
 
-        // Blanking transition dwell
+        // Blanking transition dwell (start/end counts)
         if (prevPoint.blanking !== currPoint.blanking) {
             if (!(skipDwellAtIdx[i] === 1)) {
                 if (currPoint.blanking) {
-                    for (let d = 0; d < pathDwell; d++) {
-                        push(prevPoint.x, prevPoint.y, prevPoint.z, 0, 0, 0, true);
-                    }
+                    // lit -> blank : blankingStart dwell at prev (blanked)
+                    for (let d = 0; d < blankingStart; d++) push(prevPoint.x, prevPoint.y, prevPoint.z, true, i - 1);
                 } else {
-                    push(currPoint.x, currPoint.y, currPoint.z, 0, 0, 0, true);
-                    for (let d = 0; d < pathDwell; d++) {
-                        push(currPoint.x, currPoint.y, currPoint.z, 0, 0, 0, true);
+                    // blank -> lit : blankingEnd dwell at curr (blanked) then lit dwell at curr
+                    for (let d = 0; d < blankingEnd; d++) push(currPoint.x, currPoint.y, currPoint.z, true, i);
+                    if (litDwellStart > 0) {
+                        for (let d = 0; d < litDwellStart; d++) pushAt(currPoint.x, currPoint.y, currPoint.z, false, i);
                     }
                 }
             }
         } else if (!prevPoint.blanking && !currPoint.blanking && effectiveCornerDwell > 0 && i > 1) {
-            // Corner dwell at prevPoint (the end of the previous edge)
+            // Corner dwell at prevPoint (end of previous edge)
             const prev2 = get(i - 2);
             const ax = prevPoint.x - prev2.x;
             const ay = prevPoint.y - prev2.y;
@@ -215,15 +293,12 @@ export function optimizePoints(points, settings = {}) {
             if (aLen > 0.0001 && bLen > 0.0001) {
                 const dot = (ax * bx + ay * by) / (aLen * bLen);
                 if (dot < cornerCos) {
-                    for (let d = 0; d < effectiveCornerDwell; d++) {
-                        push(prevPoint.x, prevPoint.y, prevPoint.z,
-                            prevPoint.r, prevPoint.g, prevPoint.b, false);
-                    }
+                    for (let d = 0; d < effectiveCornerDwell; d++) pushAt(prevPoint.x, prevPoint.y, prevPoint.z, false, i - 1);
                 }
             }
         }
 
-        // Interpolation between prevPoint and currPoint
+        // Interpolation between prevPoint and currPoint.
         const dx = currPoint.x - prevPoint.x;
         const dy = currPoint.y - prevPoint.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -232,20 +307,27 @@ export function optimizePoints(points, settings = {}) {
             const steps = Math.floor(dist / effectiveMaxDist);
             for (let s = 1; s < steps; s++) {
                 const t = s / steps;
+                const srcIdx = (i - 1) + t; // fractional source index for color shift
                 push(
                     prevPoint.x + dx * t,
                     prevPoint.y + dy * t,
                     prevPoint.z + (currPoint.z - prevPoint.z) * t,
-                    currPoint.blanking ? 0 : currPoint.r,
-                    currPoint.blanking ? 0 : currPoint.g,
-                    currPoint.blanking ? 0 : currPoint.b,
-                    currPoint.blanking
+                    currPoint.blanking,
+                    srcIdx,
                 );
             }
         }
 
-        push(currPoint.x, currPoint.y, currPoint.z,
-            currPoint.r, currPoint.g, currPoint.b, currPoint.blanking);
+        // End lit dwell on the last lit point of the path.
+        const isPathEnd = (i === processEndIdx - 1);
+        if (!currPoint.blanking && isPathEnd && litDwellEnd > 0) {
+            for (let d = 0; d < litDwellEnd; d++) pushAt(currPoint.x, currPoint.y, currPoint.z, false, i);
+        }
+        if (!currPoint.blanking && isPathEnd && anchorEnd > 0) {
+            for (let d = 0; d < anchorEnd; d++) pushAt(currPoint.x, currPoint.y, currPoint.z, false, i);
+        }
+
+        pushAt(currPoint.x, currPoint.y, currPoint.z, currPoint.blanking, i);
         prevPoint = currPoint;
     }
 
@@ -261,66 +343,110 @@ export function optimizePoints(points, settings = {}) {
                 const steps = Math.floor(wd / effectiveMaxDist);
                 for (let s = 1; s < steps; s++) {
                     const t = s / steps;
+                    const srcIdx = (lastVisibleIdx - 1) + t;
                     push(
                         closePoint.x + wdx * t,
                         closePoint.y + wdy * t,
                         closePoint.z + (firstPoint.z - closePoint.z) * t,
-                        firstPoint.r, firstPoint.g, firstPoint.b, false
+                        false,
+                        srcIdx,
                     );
                 }
             }
-            push(firstPoint.x, firstPoint.y, firstPoint.z,
-                firstPoint.r, firstPoint.g, firstPoint.b, false);
+            if (anchorEnd > 0) {
+                for (let d = 0; d < anchorEnd; d++) pushAt(firstPoint.x, firstPoint.y, firstPoint.z, false, firstVisibleIdx);
+            }
+            pushAt(firstPoint.x, firstPoint.y, firstPoint.z, false, firstVisibleIdx);
         }
     } else {
         if (!prevPoint.blanking) {
-            for (let d = 0; d < pathDwell; d++) {
-                push(prevPoint.x, prevPoint.y, prevPoint.z, 0, 0, 0, true);
+            if (anchorEnd > 0) {
+                for (let d = 0; d < anchorEnd; d++) pushAt(prevPoint.x, prevPoint.y, prevPoint.z, true, processEndIdx - 1);
             }
+            for (let d = 0; d < blankingEnd; d++) push(prevPoint.x, prevPoint.y, prevPoint.z, true, processEndIdx - 1);
         }
         const owdx = firstPoint.x - prevPoint.x;
         const owdy = firstPoint.y - prevPoint.y;
         const owd = Math.sqrt(owdx * owdx + owdy * owdy);
-        if (owd > 0.1) {
-            push(firstPoint.x, firstPoint.y, firstPoint.z, 0, 0, 0, true);
-            for (let d = 0; d < pathDwell; d++) {
-                push(firstPoint.x, firstPoint.y, firstPoint.z, 0, 0, 0, true);
+        if (owd > 0.02) {
+            // Interpolate a BLANKED return sweep back to the first point. Without
+            // interpolation the galvos would be commanded to fly across the full
+            // path in one point step, which physical DACs show as a visible
+            // "jump to center" / "line from first to last" artifact. Step the sweep
+            // every <=0.04 display units (never fewer than 2 points) so each DAC's
+            // retrace is gradual and dark.
+            const stepSize = Math.min(effectiveMaxDist || 0.02, 0.04);
+            const steps = Math.max(2, Math.floor(owd / stepSize));
+            for (let s = 1; s <= steps; s++) {
+                const t = s / steps;
+                push(
+                    prevPoint.x + owdx * t,
+                    prevPoint.y + owdy * t,
+                    prevPoint.z + (firstPoint.z - prevPoint.z) * t,
+                    true,
+                    Math.max(0, processEndIdx - 1),
+                );
             }
         }
+        if (anchorEnd > 0) {
+            for (let d = 0; d < anchorEnd; d++) pushAt(firstPoint.x, firstPoint.y, firstPoint.z, true, 0);
+        }
+        for (let d = 0; d < blankingEnd; d++) pushAt(firstPoint.x, firstPoint.y, firstPoint.z, true, 0);
     }
 
     if (result.length >= 8) {
         result[result.length - 1] = 1;
     }
 
-    // --- PHASE 4: Safety trim (should rarely trigger now) ---
-    if (result.length / 8 > maxPoints) {
-        const n = result.length / 8;
+    // --- PHASE 4: Point padding to the minimum floor ---
+    let finalArray;
+    const currentCount = result.length / 8;
+    if (minPadding > 0 && currentCount < minPadding) {
+        const padded = new Float32Array(minPadding * 8);
+        for (let i = 0; i < currentCount; i++) {
+            const srcOff = i * 8;
+            const dstOff = i * 8;
+            for (let k = 0; k < 8; k++) padded[dstOff + k] = result[srcOff + k];
+        }
+        const lastOff = (currentCount - 1) * 8;
+        const lx = result[lastOff] || 0;
+        const ly = result[lastOff + 1] || 0;
+        const lz = result[lastOff + 2] || 0;
+        for (let i = currentCount; i < minPadding; i++) {
+            const off = i * 8;
+            padded[off] = lx; padded[off + 1] = ly; padded[off + 2] = lz;
+            padded[off + 3] = 0; padded[off + 4] = 0; padded[off + 5] = 0;
+            padded[off + 6] = 1; padded[off + 7] = 0;
+        }
+        padded[(minPadding - 1) * 8 + 7] = 1;
+        finalArray = padded;
+    } else {
+        finalArray = new Float32Array(result);
+    }
+
+    // --- PHASE 5: Safety trim (should rarely trigger now) ---
+    if (finalArray.length / 8 > maxPoints) {
+        const n = finalArray.length / 8;
         const step = n / maxPoints;
         const trimmed = [];
         let prevBlank = null;
         for (let i = 0; i < n; i++) {
             const off = i * 8;
-            const blank = result[off + 6] === 1;
+            const blank = finalArray[off + 6] === 1;
             const blankChanged = prevBlank !== null && blank !== prevBlank;
             const keep = (i === 0) || (i === n - 1) ||
                 blankChanged ||
                 (Math.floor(i / step) !== Math.floor((i - 1) / step));
             if (keep) {
-                for (let k = 0; k < 8; k++) trimmed.push(result[off + k]);
+                for (let k = 0; k < 8; k++) trimmed.push(finalArray[off + k]);
             }
             prevBlank = blank;
         }
-        const finalBuffer = new Float32Array(trimmed);
-        if (points._channelDistributions) {
-            finalBuffer._channelDistributions = points._channelDistributions;
-        }
-        return finalBuffer;
+        const trimmedBuffer = new Float32Array(trimmed);
+        if (points._channelDistributions) trimmedBuffer._channelDistributions = points._channelDistributions;
+        return trimmedBuffer;
     }
 
-    const finalBuffer = new Float32Array(result);
-    if (points._channelDistributions) {
-        finalBuffer._channelDistributions = points._channelDistributions;
-    }
-    return finalBuffer;
+    if (points._channelDistributions) finalArray._channelDistributions = points._channelDistributions;
+    return finalArray;
 }

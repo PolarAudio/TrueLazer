@@ -10,11 +10,24 @@ const NATIVE_RESPONSE_PORT = 8099;
 const UDP_PACKET_SIZE = 0x1204;          // 4612 bytes
 const HEADER_SIZE = 4;
 const POINT_SIZE = 8;
-const PTS_FULL = 575;                    // points per full chunk (chunk 0)
+const PTS_FULL = 575;                    // points per full chunk (chunk 0); also the bench-verified point cap
 const CHUNK_STAGGER_MS = 6;   // 3 chunks x 6ms = 18ms within 33ms (30fps) frame window
 const TOTAL_CHUNKS = 3; // 2 data chunks + 1 completion, matches Truwave behavior
 const MAX_CHUNKS = TOTAL_CHUNKS - 1;  // 2 data chunks. DMA reads 3 x 575 = 1725 slots (~1000 real pts + blanks)
-const FILL_TARGET = 575; // Match PTS_FULL so all data fits in chunk 0 (DMA only reads first chunk)
+// Firmware (FUN_08012310) shows each 0x1204-byte datagram carries 0x1200 (4608)
+// payload bytes reassembled into a 0x4e24 (20004) frame buffer; points are 8 bytes.
+//
+// AUTO-SIZE: the hardware copies each chunk into the frame buffer at a fixed
+// 0x1200 stride. Because a chunk is 4608 bytes and the frame header is 4 bytes,
+// the first chunk fits exactly 575 points (4 + 575*8 = 4604) + 4 spare bytes.
+// That 4-byte residue breaks byte alignment when a frame crosses into a second
+// chunk, so the DMA injects a dark center point at the boundary -> a visible arc
+// (last point -> center -> first point). The clean fix is to keep every frame
+// within a single data chunk (<= PTS_FULL). FILL_TARGET is set to PTS_FULL so the
+// padding/interpolation fill only targets the one-chunk budget (never 1000).
+// srcPts is otherwise whatever the optimizer produces; frames whose real content
+// fits in one chunk are auto-clipped below so they never trigger the 2-chunk arc.
+const FILL_TARGET = PTS_FULL;
 const PPS = 30;
 
 const DAC_TYPE = 'Showbridge';
@@ -250,9 +263,24 @@ function buildFrameChunks(chType, pps, points) {
         totalPoints = FILL_TARGET;
     }
 
-    const dataChunks = Math.min(Math.ceil(totalPoints / ptsPerChunk), MAX_CHUNKS);
+    const payloadLen = UDP_PACKET_SIZE - HEADER_SIZE; // 4608: bytes per chunk payload
+    const logicalLen = HEADER_SIZE + totalPoints * POINT_SIZE; // frame header + all points
+    const dataChunks = Math.min(Math.ceil(logicalLen / payloadLen), MAX_CHUNKS);
     const chunks = [];
-    let pointOffset = 0;
+
+    // Build one contiguous point stream matching the firmware's reassembled frame
+    // buffer layout: [count(2) status(1) pps(1)] followed by [N×8-byte points].
+    // This buffer is sliced at 4608-byte boundaries into chunk payloads so that a
+    // point straddling a chunk boundary is reassembled correctly — the firmware
+    // copies each chunk's payload into the DMA buffer at a fixed 0x1200 stride
+    // with NO gap, so a point split at the slice boundary is reconstructed as a
+    // single contiguous 8-byte point by the DMA.  Only 1 point may straddle the
+    // boundary and that point is fully preserved (zero data loss).
+    const frameBuf = Buffer.alloc(dataChunks * payloadLen);
+    frameBuf.writeInt16LE(totalPoints, 0);  // count (read by DMA as 16-bit LE)
+    frameBuf.writeUInt8(0, 2);              // status (firmware overwrites with 0xfa when complete)
+    frameBuf.writeUInt8(pps, 3);            // PPS (DMA timing)
+    writePoints(frameBuf, 0, isTyped, points, totalPoints, totalPoints, HEADER_SIZE);
 
     for (let ci = 0; ci < TOTAL_CHUNKS; ci++) {
         const buf = Buffer.alloc(UDP_PACKET_SIZE);
@@ -261,27 +289,13 @@ function buildFrameChunks(chType, pps, points) {
         buf.writeUInt8(0, 2);
         buf.writeUInt8(chType, 3);
 
-        const isData = ci < dataChunks;
-        const ptsInChunk = isData ? Math.min(totalPoints - pointOffset, ptsPerChunk) : 0;
-        const dataOff = HEADER_SIZE + 4;
-
-        if (ci === 0) {
-            buf.writeInt16LE(isData ? 0x01D2 : 0, 4);
-            buf.writeUInt8(0, 6);
-            buf.writeUInt8(pps, 7);
-        } else {
-            buf.writeUInt16LE(0, 4);
-            buf.writeUInt16LE(0, 6);
-        }
-
-        if (isData) {
-            writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk, dataOff);
-            pointOffset += ptsInChunk;
+        if (ci < dataChunks) {
+            frameBuf.copy(buf, HEADER_SIZE, ci * payloadLen, (ci + 1) * payloadLen);
         } else {
             const hx = Math.round((homeX + 1.0) * 2047.5);
             const hy = Math.round((homeY + 1.0) * 2047.5);
             for (let i = 0; i < ptsPerChunk; i++) {
-                const off = dataOff + i * POINT_SIZE;
+                const off = HEADER_SIZE + 4 + i * POINT_SIZE;
                 buf.writeInt16LE(hx, off);
                 buf.writeInt16LE(hy, off + 2);
                 buf.writeUInt8(0, off + 4);
@@ -427,7 +441,9 @@ function sendHeartbeat(ip) {
 function sendFrame(ip, channel, points, fps, type, options) {
     const key = `${ip}:${channel}`;
     const chType = channel === 2 ? 0x01 : 0x00;
-    const pps = (options && options.pps != null) ? options.pps : PPS;
+    // Showbridge control byte 3 expects Points Per Second / 1000 (Kpps),
+    // e.g. 30 for 30000 PPS. options.pps arrives as full PPS, so divide here.
+    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
 
     // Get or create per-channel state
     let st = channelState.get(key);

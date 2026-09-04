@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { PRESET_ORDER, DEFAULT_PRESET, getPreset } from '../utils/hardwarePresets';
+import { TARGET_MODES } from '../utils/speedTarget';
 
 // Canvas component for the safety zones and output area interaction
 const OutputCanvas = ({ 
@@ -546,7 +548,11 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       testLineShiftX: 0,
       testLineShiftY: 0,
       flipX: false,
-      flipY: false
+      flipY: false,
+      targetMode: TARGET_MODES.VAR_FPS_FIXED_PPS,
+      ppsPreset: DEFAULT_PRESET,
+      ppsOverride: 0,
+      targetFps: 0
   };
 
   const updateCurrentSettings = (updates) => {
@@ -695,6 +701,62 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                                 </select>
                             </div>
                         )}
+                    </div>
+
+                    <div className="settings-group">
+                        <h4>Timing Target</h4>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Target Mode</label>
+                            <select
+                                className="param-select"
+                                value={currentSettings.targetMode || TARGET_MODES.VAR_FPS_FIXED_PPS}
+                                onChange={(e) => updateCurrentSettings({ targetMode: e.target.value })}
+                            >
+                                <option value={TARGET_MODES.VAR_FPS_FIXED_PPS}>Variable FPS → Fixed PPS</option>
+                                <option value={TARGET_MODES.VAR_PPS_FIXED_FPS}>Variable PPS → Fixed FPS</option>
+                            </select>
+                        </div>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Hardware Preset</label>
+                            <select
+                                className="param-select"
+                                value={currentSettings.ppsPreset || DEFAULT_PRESET}
+                                onChange={(e) => updateCurrentSettings({ ppsPreset: e.target.value })}
+                            >
+                                {PRESET_ORDER.map(p => (
+                                    <option key={p.id} value={p.id}>{p.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '6px 0' }}>
+                            Target PPS: {getPreset(currentSettings.ppsPreset || DEFAULT_PRESET).targetPps.toLocaleString()} pps
+                            ({(currentSettings.ppsPreset || DEFAULT_PRESET) === 'slow' ? '15-20k' : (currentSettings.ppsPreset || DEFAULT_PRESET) === 'fast' ? '35k+' : '25-35k'} band)
+                        </p>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>PPS Override</label>
+                            <input
+                                type="number"
+                                min="0" max="120000" step="1000"
+                                value={currentSettings.ppsOverride ?? 0}
+                                onChange={(e) => updateCurrentSettings({ ppsOverride: parseInt(e.target.value) || 0 })}
+                                style={{ width: '85px', fontSize: '11px' }}
+                            />
+                        </div>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Target FPS</label>
+                            <input
+                                type="number"
+                                min="1" max="360" step="1"
+                                value={currentSettings.targetFps ?? 0}
+                                onChange={(e) => updateCurrentSettings({ targetFps: parseInt(e.target.value) || 0 })}
+                                style={{ width: '85px', fontSize: '11px' }}
+                            />
+                            <span style={{ fontSize: '9px', color: '#888' }}>0 = use UI rate</span>
+                        </div>
+                        <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '6px' }}>
+                            Per-channel PPS/FPS target. When unset (0/empty), the UI main-thread
+                            values are used for frame-buffer construction.
+                        </p>
                     </div>
 
                     <div className="settings-group">

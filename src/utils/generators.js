@@ -1,6 +1,18 @@
 import opentype from 'opentype.js';
+import { samplePath, sampleCircle } from './vectorPath.js';
 
 const withDefaults = (params, defaults) => ({ ...defaults, ...params });
+
+// Maps bare {x,y} samples produced by the vector-path helpers into full
+// (r,g,b,lastPoint) point objects emitted by generators.
+function colorize(vertices, { r, g, b, lastPoint = false, blanking } = {}) {
+  return vertices.map((v, i) => ({
+    x: v.x, y: v.y,
+    r, g, b,
+    lastPoint: i === vertices.length - 1 ? lastPoint : false,
+    ...(blanking !== undefined ? { blanking } : {}),
+  }));
+}
 
 // Persistent font cache using a simple object or Map
 const parsedFontCache = new Map();
@@ -190,16 +202,11 @@ export function generateCircle(params) {
       b: 255
     });
 
-    const points = [];
-    for (let i = 0; i < numPoints; i++) {
-      const angle = (i / numPoints) * 2 * Math.PI;
-      points.push({
-        x: radius * Math.cos(angle) + x,
-        y: radius * Math.sin(angle) + y,
-        r, g, b,
-        lastPoint: false
-      });
-    }
+    // Vector-path construction: sample the circle uniformly by arc length so
+    // the density follows the requested point budget (Area 4).
+    const samples = sampleCircle(x, y, radius, numPoints);
+    const points = colorize(samples, { r, g, b });
+
     // Close the loop: add the first point at the end so the data is geometrically
     // closed without relying on the optimizer.  This keeps padPoints from inserting
     // trailing blanking and the renderer's closing fallback from needing an upper
@@ -215,9 +222,10 @@ export function generateCircle(params) {
 
 export function generateSquare(params) {
   try {
-    const { width, height, x, y, r, g, b } = withDefaults(params, {
+    const { width, height, numPoints, x, y, r, g, b } = withDefaults(params, {
       width: 1,
       height: 1,
+      numPoints: 120,
       x: 0,
       y: 0,
       r: 255,
@@ -225,6 +233,8 @@ export function generateSquare(params) {
       b: 255
     });
 
+    // Vector-path construction: uniform arc-length sampling lets the point
+    // count follow the target budget regardless of aspect ratio (Area 4).
     const corners = [
       { x: -width / 2 + x, y: -height / 2 + y },
       { x: width / 2 + x, y: -height / 2 + y },
@@ -232,20 +242,9 @@ export function generateSquare(params) {
       { x: -width / 2 + x, y: height / 2 + y },
     ];
 
-    const STEPS = 30;
-    const points = [{ x: corners[0].x, y: corners[0].y, r, g, b, lastPoint: false }];
-    for (let i = 0; i < corners.length; i++) {
-      const next = (i + 1) % corners.length;
-      for (let s = 1; s <= STEPS; s++) {
-        const t = s / STEPS;
-        points.push({
-          x: corners[i].x + (corners[next].x - corners[i].x) * t,
-          y: corners[i].y + (corners[next].y - corners[i].y) * t,
-          r, g, b,
-          lastPoint: false
-        });
-      }
-    }
+    const samples = samplePath(corners, numPoints, { closed: true });
+    const points = colorize(samples, { r, g, b });
+    points.push({ ...samples[0], r, g, b, lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
@@ -257,10 +256,11 @@ export function generateSquare(params) {
 /** @param {Object} params */
 export function generateTriangle(params) {
   try {
-    const { size, width, height, x, y, r, g, b } = withDefaults(params, {
+    const { size, width, height, numPoints, x, y, r, g, b } = withDefaults(params, {
       size: null,
       width: 1,
       height: 1,
+      numPoints: 90,
       x: 0,
       y: 0,
       r: 255,
@@ -271,26 +271,16 @@ export function generateTriangle(params) {
     const w = size !== null ? size : width;
     const h = size !== null ? (w * Math.sqrt(3) / 2) : height;
 
+    // Vector-path construction (Area 4).
     const corners = [
       { x: -w / 2 + x, y: -h / 2 + y },
       { x: w / 2 + x, y: -h / 2 + y },
       { x: x, y: h / 2 + y },
     ];
 
-    const STEPS = 30;
-    const points = [{ x: corners[0].x, y: corners[0].y, r, g, b, lastPoint: false }];
-    for (let i = 0; i < corners.length; i++) {
-      const next = (i + 1) % corners.length;
-      for (let s = 1; s <= STEPS; s++) {
-        const t = s / STEPS;
-        points.push({
-          x: corners[i].x + (corners[next].x - corners[i].x) * t,
-          y: corners[i].y + (corners[next].y - corners[i].y) * t,
-          r, g, b,
-          lastPoint: false
-        });
-      }
-    }
+    const samples = samplePath(corners, numPoints, { closed: true });
+    const points = colorize(samples, { r, g, b });
+    points.push({ ...samples[0], r, g, b, lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
@@ -301,27 +291,24 @@ export function generateTriangle(params) {
 
 export function generateLine(params) {
   try {
-    const { x1, y1, x2, y2, r, g, b } = withDefaults(params, {
+    const { x1, y1, x2, y2, numPoints, r, g, b } = withDefaults(params, {
       x1: -0.5,
       y1: 0,
       x2: 0.5,
       y2: 0,
+      numPoints: 60,
       r: 255,
       g: 255,
       b: 255
     });
 
-    const STEPS = 60;
-    const points = [{ x: x1, y: y1, r, g, b, lastPoint: false }];
-    for (let s = 1; s <= STEPS; s++) {
-      const t = s / STEPS;
-      points.push({
-        x: x1 + (x2 - x1) * t,
-        y: y1 + (y2 - y1) * t,
-        r, g, b,
-        lastPoint: s === STEPS
-      });
-    }
+    // Vector-path construction (Area 4).
+    const samples = samplePath(
+      [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+      numPoints,
+      { closed: false }
+    );
+    const points = colorize(samples, { r, g, b, lastPoint: true });
 
     return { points: applyRenderingStyle(points, params) };
   } catch (error) {
@@ -332,10 +319,11 @@ export function generateLine(params) {
 
 export function generateStar(params) {
   try {
-    const { outerRadius, innerRadius, numSpikes, x, y, r, g, b } = withDefaults(params, {
+    const { outerRadius, innerRadius, numSpikes, numPoints, x, y, r, g, b } = withDefaults(params, {
       outerRadius: 0.5,
       innerRadius: 0.2,
       numSpikes: 5,
+      numPoints: 120,
       x: 0,
       y: 0,
       r: 255,
@@ -353,20 +341,10 @@ export function generateStar(params) {
       });
     }
 
-    const STEPS = 12;
-    const points = [{ x: vertices[0].x, y: vertices[0].y, r, g, b, lastPoint: false }];
-    for (let i = 0; i < vertices.length; i++) {
-      const next = (i + 1) % vertices.length;
-      for (let s = 1; s <= STEPS; s++) {
-        const t = s / STEPS;
-        points.push({
-          x: vertices[i].x + (vertices[next].x - vertices[i].x) * t,
-          y: vertices[i].y + (vertices[next].y - vertices[i].y) * t,
-          r, g, b,
-          lastPoint: false
-        });
-      }
-    }
+    // Vector-path construction (Area 4).
+    const samples = samplePath(vertices, numPoints, { closed: true });
+    const points = colorize(samples, { r, g, b });
+    points.push({ ...samples[0], r, g, b, lastPoint: false });
 
     return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {

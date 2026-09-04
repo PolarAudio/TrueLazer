@@ -228,12 +228,17 @@ function sendFrame(ip, channel, points, fps, options = {}) {
             }
         }
         
-        // STABLE PPS CALCULATION: 
-        // We want to output at 30 FPS.
-        // Ideal PPS = pointCount * 30.
-        // But we cap it at hardware limits (e.g. 30k PPS).
-        const targetPPS = Math.max(10000, Math.min(30000, optimized.length * 30));
-        
+        // PPS CALCULATION: default keeps the old stable behavior (fit ~30fps),
+        // but a per-channel target PPS from options.pps/targetPps takes priority
+        // (Area 2 — Variable FPS -> Fixed PPS / Variable PPS -> Fixed FPS).
+        let targetPPS;
+        if (options && options.pps && options.pps > 0) {
+            targetPPS = Math.max(5000, Math.min(120000, options.pps));
+        } else if (options && options.targetPps && options.targetPps > 0) {
+            targetPPS = Math.max(5000, Math.min(120000, options.targetPps));
+        } else {
+            targetPPS = Math.max(10000, Math.min(30000, optimized.length * 30));
+        }
         instance.frameQueue.push({ points: optimized, rate: targetPPS });
         if (instance.frameQueue.length > 30) instance.frameQueue.shift();
         instance.lastFrameTime = Date.now();
@@ -368,11 +373,23 @@ async function startOutput(ip) {
                         unackedPoints += batch.length;
                         unackedBatches.push(batch.length);
 
-                        const writeData = () => {
-                            const pkt = Buffer.alloc(3 + (batch.length * 18));
-                            pkt[0] = 0x64; pkt.writeUInt16LE(batch.length, 1);
-                            let off = 3;
-                            for (const p of batch) {
+                            const writeData = () => {
+                                if (process.env.TRUE_LAZER_DEBUG_POINTS) {
+                                    let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity;
+                                    for (const p of batch) {
+                                        if (p.x < mnX) mnX = p.x; if (p.x > mxX) mxX = p.x;
+                                        if (p.y < mnY) mnY = p.y; if (p.y > mxY) mxY = p.y;
+                                    }
+                                    const rx = Math.round((mnX + 1.0) / 2 * 65535 - 32768);
+                                    const rxMax = Math.round((mxX + 1.0) / 2 * 65535 - 32768);
+                                    const ry = Math.round((mnY + 1.0) / 2 * 65535 - 32768);
+                                    const ryMax = Math.round((mxY + 1.0) / 2 * 65535 - 32768);
+                                    console.log(`[EtherDream] in x[${mnX.toFixed(3)}, ${mxX.toFixed(3)}] y[${mnY.toFixed(3)}, ${mxY.toFixed(3)}] | raw x[${rx}, ${rxMax}] y[${ry}, ${ryMax}] n=${batch.length}`);
+                                }
+                                const pkt = Buffer.alloc(3 + (batch.length * 18));
+                                pkt[0] = 0x64; pkt.writeUInt16LE(batch.length, 1);
+                                let off = 3;
+                                for (const p of batch) {
                                 const isBlank = !!p.blanking;
                                 pkt.writeUInt16LE(0, off); off += 2;
                                 pkt.writeInt16LE(toHWPos(p.x), off); off += 2;

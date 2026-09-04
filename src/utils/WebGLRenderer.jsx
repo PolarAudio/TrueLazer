@@ -2,6 +2,17 @@ import { applyEffects, applyOutputProcessing } from './effects.js';
 import { effectDefinitions } from './effectDefinitions';
 import { optimizePoints } from './optimizer.js';
 
+// Stable ids for frame objects so a WeakMap-valued identity survives across
+// rAF ticks without mutating the shared frame data.
+const frameIdMap = new WeakMap();
+let nextFrameId = 1;
+const frameId = (obj) => {
+  if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return 0;
+  let id = frameIdMap.get(obj);
+  if (!id) { id = nextFrameId++; frameIdMap.set(obj, id); }
+  return id;
+};
+
 export class WebGLRenderer {
   constructor(canvas, type) {
     this.canvas = canvas;
@@ -24,6 +35,20 @@ export class WebGLRenderer {
     this._reusableColors = new Float32Array(131072 * 3);
     this._reusableBeamPositions = new Float32Array(131072 * 4);
     this._reusableBeamColors = new Float32Array(131072 * 6);
+
+    // Buffers for building full-frame renders (contiguous, both draw passes)
+    // plus the pooled snapshot that backs the replay cache — pre-allocated so
+    // no per-frame allocation happens even when the draw is never cached.
+    this._buildPositions = new Float32Array(131072 * 4 + 8);
+    this._buildColors = new Float32Array(131072 * 6 + 8);
+    this._cachePositions = new Float32Array(131072 * 4 + 8);
+    this._cacheColors = new Float32Array(131072 * 6 + 8);
+
+    // Cached full-frame draw (static geometry). Keyed by frame identity +
+    // intensity + draw modes; when the UI re-paints the same full frame each
+    // rAF (the default preview, previewScanRate=1), the CPU-side point->buffer
+    // conversion is skipped entirely and the prebuilt ops are replayed.
+    this._fullFrameCache = null;
 
     this.lastPointDrawTime = 0; // Tracks the last time points were drawn
     this.contextLost = false;
@@ -369,6 +394,16 @@ export class WebGLRenderer {
     let startIndex = this.pointIndexes[layerIndex] || 0;
     if (startIndex >= numPoints) startIndex = 0;
 
+    // Full-frame draws (pointsToDraw === numPoints ⇒ startIndex settles to 0)
+    // are deterministic per frame, so consecutive rAF paints of the same frame
+    // can replay the prebuilt GPU ops instead of re-converting points -> buffers.
+    // Non-full draws intentionally roll a window across the points and must not
+    // be cached.
+    const canCacheFullFrame = pointsToDraw === numPoints;
+    const cacheKey = canCacheFullFrame
+      ? `${frameId(modifiedFrame)}|${startIndex}|${intensity}|${this.beamRenderMode}`
+      : null;
+
     // Helper to get point data
     const getPointData = (idx) => {
         const i = (startIndex + idx) % numPoints;
@@ -404,25 +439,68 @@ export class WebGLRenderer {
       let lastProcessedPoint = firstPoint;
       const isClosed = modifiedFrame?.isClosed;
 
+      // Replay path: identical full-frame draw — skip the CPU conversion loop.
+      if (cacheKey !== null && this._fullFrameCache && this._fullFrameCache.key === cacheKey) {
+          const cache = this._fullFrameCache;
+          for (let i = 0; i < cache.ops.length; i++) {
+              const op = cache.ops[i];
+              this._drawSegment(cache.positions.subarray(op.p0, op.p0 + op.n * 2), cache.colors.subarray(op.c0, op.c0 + op.n * 3), 1.0, op.n, op.usePoints);
+          }
+          return;
+      }
+
+      // Build path: when this full-frame draw can be cached, segments are
+      // appended *contiguously* into dedicated arrays (with absolute offsets) so
+      // they can be replayed later. Non-cached rolling-window draws reuse the
+      // fixed reusable buffers exactly as before (segments start at offset 0 and
+      // are uploaded immediately).
+      const useContig = cacheKey !== null;
+      const positions = useContig ? this._buildPositions : this._reusablePositions;
+      const colors = useContig ? this._buildColors : this._reusableColors;
+      const ops = useContig ? [] : null;
+      let cPos = 0;  // absolute append pointer (contig)
+      let cCol = 0;  // absolute color append pointer (contig)
+      let runP0 = -1; // start offsets of the currently open run (contig)
+      let runC0 = -1;
+      let inRun = false;
+
       if (drawLines) {
           let posIdx = 0;
           let colIdx = 0;
           let prevPoint = firstPoint;
 
           const flushSegment = () => {
-            if (posIdx >= 4) {
+            if (useContig) {
+              if (inRun && cPos - runP0 >= 4) {
+                const n = (cPos - runP0) / 2;
+                ops.push({ p0: runP0, c0: runC0, n, usePoints: false });
+                this._drawSegment(positions.subarray(runP0, cPos), colors.subarray(runC0, cCol), 1.0, n, false);
+              }
+            } else if (posIdx >= 4) {
               this._drawSegment(this._reusablePositions.subarray(0, posIdx), this._reusableColors.subarray(0, colIdx), 1.0, posIdx / 2, false);
             }
             posIdx = 0;
             colIdx = 0;
+            runP0 = -1;
+            runC0 = -1;
+            inRun = false;
           };
 
           const addPoint = (p) => {
-            this._reusablePositions[posIdx++] = p.x;
-            this._reusablePositions[posIdx++] = p.y;
-            this._reusableColors[colIdx++] = p.r / 255 * intensity;
-            this._reusableColors[colIdx++] = p.g / 255 * intensity;
-            this._reusableColors[colIdx++] = p.b / 255 * intensity;
+            if (useContig) {
+              if (!inRun) { runP0 = cPos; runC0 = cCol; inRun = true; }
+              positions[cPos++] = p.x;
+              positions[cPos++] = p.y;
+              colors[cCol++] = p.r / 255 * intensity;
+              colors[cCol++] = p.g / 255 * intensity;
+              colors[cCol++] = p.b / 255 * intensity;
+            } else {
+              positions[posIdx++] = p.x;
+              positions[posIdx++] = p.y;
+              colors[colIdx++] = p.r / 255 * intensity;
+              colors[colIdx++] = p.g / 255 * intensity;
+              colors[colIdx++] = p.b / 255 * intensity;
+            }
           };
 
           for (let i = 1; i < pointsToDraw; i++) {
@@ -435,8 +513,9 @@ export class WebGLRenderer {
             // For closed shapes, don't flush at wrap boundaries — the buffer
             // wrap is a continuation of the loop, not a break.
             const shouldFlush = point.blanking || prevPoint.blanking || (isWrap && !isClosed);
+            const runStarted = useContig ? inRun : posIdx === 0;
             if (!shouldFlush) {
-              if (posIdx === 0) addPoint(prevPoint);
+              if (!runStarted) addPoint(prevPoint);
               addPoint(point);
             } else {
               flushSegment();
@@ -450,19 +529,35 @@ export class WebGLRenderer {
       if (drawPoints) {
           let posIdx = 0;
           let colIdx = 0;
+          const dotsP0 = cPos;
+          const dotsC0 = cCol;
           for (let i = 0; i < pointsToDraw; i++) {
             const point = getPointData(i);
             if (!point.blanking) {
-              this._reusablePositions[posIdx++] = point.x;
-              this._reusablePositions[posIdx++] = point.y;
-              this._reusableColors[colIdx++] = point.r / 255 * intensity;
-              this._reusableColors[colIdx++] = point.g / 255 * intensity;
-              this._reusableColors[colIdx++] = point.b / 255 * intensity;
+              if (useContig) {
+                positions[cPos++] = point.x;
+                positions[cPos++] = point.y;
+                colors[cCol++] = point.r / 255 * intensity;
+                colors[cCol++] = point.g / 255 * intensity;
+                colors[cCol++] = point.b / 255 * intensity;
+              } else {
+                positions[posIdx++] = point.x;
+                positions[posIdx++] = point.y;
+                colors[colIdx++] = point.r / 255 * intensity;
+                colors[colIdx++] = point.g / 255 * intensity;
+                colors[colIdx++] = point.b / 255 * intensity;
+              }
             }
             lastProcessedPoint = point;
           }
-          if (posIdx > 0) {
-            this._drawSegment(this._reusablePositions.subarray(0, posIdx), this._reusableColors.subarray(0, colIdx), 1.0, posIdx / 2, true);
+          if (useContig ? (cPos - dotsP0) > 0 : posIdx > 0) {
+            if (useContig) {
+              const n = (cPos - dotsP0) / 2;
+              ops.push({ p0: dotsP0, c0: dotsC0, n, usePoints: true });
+              this._drawSegment(positions.subarray(dotsP0, cPos), colors.subarray(dotsC0, cCol), 1.0, n, true);
+            } else {
+              this._drawSegment(this._reusablePositions.subarray(0, posIdx), this._reusableColors.subarray(0, colIdx), 1.0, posIdx / 2, true);
+            }
           }
       }
 
@@ -473,18 +568,47 @@ export class WebGLRenderer {
           // distance.  The upper bound (0.5) previously broke coarse geometry
           // (3-5 pt circles) where chords exceed 0.5 units.
           if (dist > 0.001) {
-              this._reusablePositions[0] = lastProcessedPoint.x;
-              this._reusablePositions[1] = lastProcessedPoint.y;
-              this._reusablePositions[2] = firstPoint.x;
-              this._reusablePositions[3] = firstPoint.y;
-              this._reusableColors[0] = lastProcessedPoint.r / 255 * intensity;
-              this._reusableColors[1] = lastProcessedPoint.g / 255 * intensity;
-              this._reusableColors[2] = lastProcessedPoint.b / 255 * intensity;
-              this._reusableColors[3] = firstPoint.r / 255 * intensity;
-              this._reusableColors[4] = firstPoint.g / 255 * intensity;
-              this._reusableColors[5] = firstPoint.b / 255 * intensity;
-              this._drawSegment(this._reusablePositions.subarray(0, 4), this._reusableColors.subarray(0, 6), 1.0, 2, false);
+              if (useContig) {
+                  const eP0 = cPos, eC0 = cCol;
+                  positions[cPos++] = lastProcessedPoint.x;
+                  positions[cPos++] = lastProcessedPoint.y;
+                  positions[cPos++] = firstPoint.x;
+                  positions[cPos++] = firstPoint.y;
+                  colors[cCol++] = lastProcessedPoint.r / 255 * intensity;
+                  colors[cCol++] = lastProcessedPoint.g / 255 * intensity;
+                  colors[cCol++] = lastProcessedPoint.b / 255 * intensity;
+                  colors[cCol++] = firstPoint.r / 255 * intensity;
+                  colors[cCol++] = firstPoint.g / 255 * intensity;
+                  colors[cCol++] = firstPoint.b / 255 * intensity;
+                  ops.push({ p0: eP0, c0: eC0, n: 2, usePoints: false });
+                  this._drawSegment(positions.subarray(eP0, cPos), colors.subarray(eC0, cCol), 1.0, 2, false);
+              } else {
+                  this._reusablePositions[0] = lastProcessedPoint.x;
+                  this._reusablePositions[1] = lastProcessedPoint.y;
+                  this._reusablePositions[2] = firstPoint.x;
+                  this._reusablePositions[3] = firstPoint.y;
+                  this._reusableColors[0] = lastProcessedPoint.r / 255 * intensity;
+                  this._reusableColors[1] = lastProcessedPoint.g / 255 * intensity;
+                  this._reusableColors[2] = lastProcessedPoint.b / 255 * intensity;
+                  this._reusableColors[3] = firstPoint.r / 255 * intensity;
+                  this._reusableColors[4] = firstPoint.g / 255 * intensity;
+                  this._reusableColors[5] = firstPoint.b / 255 * intensity;
+                  this._drawSegment(this._reusablePositions.subarray(0, 4), this._reusableColors.subarray(0, 6), 1.0, 2, false);
+              }
           }
+      }
+
+      if (useContig) {
+        // Snapshot the used build range into the pooled cache buffers (memcpy,
+        // no allocation) so the recorded ops replay against stable data.
+        this._cachePositions.set(positions.subarray(0, cPos));
+        this._cacheColors.set(colors.subarray(0, cCol));
+        this._fullFrameCache = {
+          key: cacheKey,
+          positions: this._cachePositions.subarray(0, cPos),
+          colors: this._cacheColors.subarray(0, cCol),
+          ops
+        };
       }
     };
 

@@ -113,6 +113,7 @@ contextBridge.exposeInMainWorld(
                                             getDesktopAudioSourceId: () => ipcRenderer.invoke('get-desktop-audio-source-id'),
                                               saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
                                               saveIldaFile: (arrayBuffer, defaultName) => ipcRenderer.invoke('save-ilda-file', arrayBuffer, defaultName),
+                                              saveClipFile: (content, defaultName) => ipcRenderer.invoke('save-clip-file', content, defaultName),
                                               deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),                                            // ArtNet
                                             initializeArtnet: () => ipcRenderer.invoke('initialize-artnet'),
                                             getArtnetUniverses: () => ipcRenderer.invoke('get-artnet-universes'),

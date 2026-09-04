@@ -263,4 +263,10 @@ const Clip = ({
   );
 };
 
-export default React.memo(Clip);
+export default React.memo(Clip, (prev, next) => {
+    // Default shallow-equal check
+    for (const k of Object.keys(next)) {
+        if (prev[k] !== next[k]) return false;
+    }
+    return true;
+});

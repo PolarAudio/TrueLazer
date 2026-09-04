@@ -1183,7 +1183,7 @@ export function applyChase(points, numPoints, params, time, context = {}) {
 
 export function applyOutputProcessing(frame, settings, inPlace = false) {
     if (!settings || !frame || !frame.points) return frame;
-    const { safetyZones, outputArea, transformationEnabled, transformationMode, flipX, flipY } = settings;
+    const { safetyZones, outputArea, transformationEnabled, transformationMode } = settings;
     let points = frame.points;
     const isTyped = frame.isTypedArray || points instanceof Float32Array;
     const numPoints = isTyped ? (points.length / 8) : points.length;
@@ -1230,10 +1230,6 @@ export function applyOutputProcessing(frame, settings, inPlace = false) {
                 }
             }
         }
-
-        // 3. Hardware Correction (Flip) - MUST BE LAST
-        if (flipX) x = -x;
-        if (flipY) y = -y;
 
         // 4. Clamping - Prevent hardware wraparound/halo effects
         x = Math.max(-1, Math.min(1, x));

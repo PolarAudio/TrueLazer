@@ -3,7 +3,10 @@ import IldaThumbnail from './IldaThumbnail';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
 
-const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker }) => {
+const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects,
+  activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu,
+  thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo,
+  onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker, blendMode, onBlendModeChange }) => {
   const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -171,10 +174,13 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
             </span>
           </Mappable>
         </div>
-		<select className="layer-blend-dropdown">
-          <option>Normal</option>
-          <option>Add</option>
-          <option>Subtract</option>
+		<select className="layer-blend-dropdown"
+            value={blendMode || 'normal'}
+            title="Layer blend / z-order priority"
+            onChange={(e) => onBlendModeChange && onBlendModeChange(index, e.target.value)}>
+          <option value="normal">Normal</option>
+          <option value="add">Add</option>
+          <option value="subtract">Subtract</option>
         </select>
       </div>
 		<div className="layer-control-row">

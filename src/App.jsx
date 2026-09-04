@@ -38,6 +38,7 @@ import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
 import { applyEffects, applyOutputProcessing, resolveParam, calculateAnimPhase } from './utils/effects';
 import { optimizePoints } from './utils/optimizer';
+import { DEFAULT_PRESET, getPreset, OPT_DEFAULTS } from './utils/hardwarePresets';
 import { effectDefinitions } from './utils/effectDefinitions';
 import { THEME_COLORS } from './utils/midiColors';
 import { sendNote } from './utils/midi';
@@ -202,6 +203,7 @@ const getInitialState = (initialSettings) => ({
   optimizationEnabled: initialSettings?.renderSettings?.optimizationEnabled ?? true,
   optimizationMaxDist: Number(initialSettings?.renderSettings?.optimizationMaxDist ?? 0.02),
   optimizationPathDwell: Number(initialSettings?.renderSettings?.optimizationPathDwell ?? 2),
+  optimizationSettings: initialSettings?.renderSettings?.optimizationSettings ?? { ...OPT_DEFAULTS },
   activeClipIndexes: initialSettings?.activeClipIndexes ?? Array(5).fill(null),
   isPlaying: false,
   isStopped: true, // Add this
@@ -491,6 +493,16 @@ function reducer(state, action) {
         return { ...state, globalBlackout: !state.globalBlackout };
     }
     case 'SET_RENDER_SETTING': {
+        if (typeof action.payload.setting === 'string' && action.payload.setting.startsWith('opt.')) {
+            const key = action.payload.setting.slice(4);
+            return {
+                ...state,
+                optimizationSettings: {
+                    ...(state.optimizationSettings || {}),
+                    [key]: action.payload.value,
+                },
+            };
+        }
         return { ...state, [action.payload.setting]: action.payload.value };
 	}
     case 'SET_FILE_BROWSER_VIEW_MODE': {
@@ -1790,6 +1802,7 @@ function App() {
     optimizationEnabled,
     optimizationMaxDist,
     optimizationPathDwell,
+    optimizationSettings,
     activeClipIndexes,
     isPlaying,
     isStopped, // Add this
@@ -1927,6 +1940,16 @@ function App() {
     const optimizationEnabledRef = useRef(optimizationEnabled);
     const optimizationMaxDistRef = useRef(optimizationMaxDist);
     const optimizationPathDwellRef = useRef(optimizationPathDwell);
+    const optimizationSettingsRef = useRef(optimizationSettings);
+    useEffect(() => { optimizationSettingsRef.current = optimizationSettings; }, [optimizationSettings]);
+    useEffect(() => {
+        if (window.electronAPI && window.electronAPI.setRenderSettings) {
+            window.electronAPI.setRenderSettings({
+                ...state.renderSettings,
+                optimizationSettings: optimizationSettings,
+            });
+        }
+    }, [optimizationSettings]);
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
     useEffect(() => { isWorldOutputActiveRef.current = isWorldOutputActive; }, [isWorldOutputActive]);
     useEffect(() => { selectedDacRef.current = selectedDac; }, [selectedDac]);
@@ -2126,12 +2149,12 @@ function App() {
     setPlaybackRate(rate);
   }, [playbackFps, setPlaybackRate]);
 
-  const showNotification = (message) => {
+  const showNotification = useCallback((message) => {
     dispatch({ type: 'SET_NOTIFICATION', payload: { message, visible: true } });
     setTimeout(() => {
       dispatch({ type: 'SET_NOTIFICATION', payload: { message: '', visible: false } });
     }, 3000);
-  };
+  }, [dispatch]);
 
   // Update CSS variables when theme changes
   useEffect(() => {
@@ -2545,6 +2568,7 @@ function App() {
               // within the point budget, so the post-hoc subsample below is only a safety net.
               if (optimizationEnabledRef.current) {
                   const optimizedPts = optimizePoints(modifiedFrame.points, {
+                      ...(optimizationSettingsRef.current || {}),
                       maxDist: Number(optimizationMaxDistRef.current || 0.02),
                       pathDwell: Number(optimizationPathDwellRef.current || 2),
                       maxPoints: 1000,
@@ -2731,12 +2755,36 @@ function App() {
               activeCount++;
               const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
               totalPointsSentRef.current += numPts;
+
+              // Per-channel hardware-correction invert + timing target. These ride
+              // along on `options` so the main-process sendFrame() applies the X/Y
+              // flip exactly at the physical DAC boundary and feeds the per-channel
+              // PPS target into the EtherDream/Showbridge frame rate. ppsOverride
+              // (explicit) wins over the hardware preset's targetPps. A channel may
+              // have frame data before any output settings exist, so fall back to
+              // safe defaults here and never assume `settings` is defined.
+              const s = settings || {};
+              const preset = (s.ppsPreset && getPreset(s.ppsPreset)) ? getPreset(s.ppsPreset) : getPreset(DEFAULT_PRESET);
+              const targetPpsValue = (s.ppsOverride && s.ppsOverride > 0)
+                  ? s.ppsOverride
+                  : (preset && preset.targetPps ? preset.targetPps : 30000);
+
+              const optionsForFrame = {
+                  skipOptimization: optimizationEnabledRef.current,
+                  flipX: !!s.flipX,
+                  flipY: !!s.flipY,
+                  pps: targetPpsValue,
+                  targetPps: targetPpsValue,
+              };
+              if (s.targetFps && s.targetFps > 0) optionsForFrame.targetFps = s.targetFps;
+              if (s.targetMode) optionsForFrame.targetMode = s.targetMode;
+
               framesToSend[id] = {
                   points: mergedFrame.points,
                   ip: group.ip,
                   channel: group.channel,
                   type: group.type,
-                  options: { skipOptimization: optimizationEnabledRef.current }
+                  options: optionsForFrame
               };
             }
           });
@@ -2753,7 +2801,8 @@ function App() {
         }
         lastFrameTime = now;
       }
-      dacProcessTimeoutId = setTimeout(animate, dacFrameInterval);
+      const elapsedThisTick = performance.now() - now;
+      dacProcessTimeoutId = setTimeout(animate, Math.max(0, dacFrameInterval - elapsedThisTick));
     };
 
     function isTypedArray(obj) {
@@ -4188,8 +4237,8 @@ function App() {
   }, [isWorldOutputActive, state.dacs]);
 
     const handleClipPreview = useCallback((layerIndex, colIndex) => {
-        const pageIdx = state.activePageId;
-        const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+        const pageIdx = stateRef.current.activePageId;
+        const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
         const hasActualContent = clip && (clip.type === 'ilda' || clip.type === 'generator');
   
         if (!hasActualContent) return;
@@ -4201,7 +4250,7 @@ function App() {
             const generatorWorkerId = `generator-${pageIdx}-${layerIndex}-${colIndex}`;
             dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
         }
-    }, [clipContents, state.activePageId]);
+    }, [dispatch]);
     const handleClipHover = useCallback((layerIndex, colIndex, isHovering) => {
       if (isHovering) {
           hoveredClipRef.current = { layerIndex, colIndex };
@@ -4230,8 +4279,8 @@ function App() {
   }, [dispatch]);
 
   const handleActivateClick = useCallback((layerIndex, colIndex, isPress = true) => {
-    const pageIdx = state.activePageId;
-    const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+    const pageIdx = stateRef.current.activePageId;
+    const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
     const hasActualContent = clip && (clip.type === 'ilda' || clip.type === 'generator');
 
          if (!hasActualContent) {
@@ -4245,8 +4294,10 @@ function App() {
     const isCurrentActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
     const clipWorkerId = clip.workerId || (clip.type === 'generator' ? `generator-${pageIdx}-${layerIndex}-${colIndex}` : null);
 
-    // Handle keyboard auto-repeat: don't retrigger if already active and receiving another press
-    if (isPress && isCurrentActive && (style === 'flash' || style === 'toggle' || style === 'normal' || style === 'temp')) {
+    // Handle keyboard auto-repeat: don't retrigger if already active and receiving another press.
+    // NOTE: 'toggle' is intentionally excluded so a second press on an active toggle clip reaches
+    // the deactivate branch below (otherwise the toggle can never be turned off).
+    if (isPress && isCurrentActive && (style === 'flash' || style === 'normal' || style === 'temp')) {
       return; // Already active, ignore auto-repeat
     }
 
@@ -4352,7 +4403,7 @@ function App() {
             }
         }
     }
-  }, [clipContents, activeClipIndexes, state.activePageId, handleDeactivateLayerClips, playAudio, isPlaying, stopAudio, handleClipPreview]);
+  }, [handleDeactivateLayerClips, playAudio, stopAudio, handleClipPreview]);
 	
   const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectData) => {
       const pageIdx = state.activePageId;
@@ -4410,10 +4461,11 @@ function App() {
     }
   };
 
-  const handleColumnTrigger = (colIndex) => {
-    const pageIdx = state.activePageId;
+  const handleColumnTrigger = useCallback((colIndex) => {
+    const pageIdx = stateRef.current.activePageId;
+    const clipSource = clipContentsRef.current;
     layers.forEach((_, layerIndex) => {
-      const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+      const clip = clipSource[pageIdx]?.[layerIndex]?.[colIndex];
       if (!clip || (clip.type !== 'ilda' && clip.type !== 'generator')) {
         handleDeactivateLayerClips(layerIndex);
         return;
@@ -4430,7 +4482,7 @@ function App() {
         }, 200);
       }
     });
-  };
+  }, [layers, handleActivateClick, handleDeactivateLayerClips]);
 
   const handleDacSelected = useCallback((dac) => {
     dispatch({ type: 'SET_SELECTED_DAC', payload: dac });
@@ -4514,6 +4566,8 @@ function App() {
       regenerateGeneratorClip(selectedLayerIndex, selectedColIndex, currentClip.generatorDefinition, paramsSource, seq, false, true, null, null, pageIdx);
     }
   };
+  const handleGeneratorParameterChangeRef = useRef(handleGeneratorParameterChange);
+  handleGeneratorParameterChangeRef.current = handleGeneratorParameterChange;
 
   const selectedClip = selectedLayerIndex !== null && selectedColIndex !== null
     ? clipContents[state.activePageId]?.[selectedLayerIndex]?.[selectedColIndex]
@@ -5275,6 +5329,210 @@ function App() {
     return null;
   });
 
+  // Memoized bottom-panel subtree: none of its inputs change on a clip trigger
+  // (activation only changes activeClipIndexes), so React reuses this element and
+  // skips diffing the entire panel, avoiding a large per-trigger reconcilation.
+  const bottomPanelMemo = useMemo(() => (
+    <>
+        <div className="bottom-panel">
+            <div className="bottom-panel-tabs-container-1">
+                <div className="bottom-panel-tabs-1">
+                    <button className={`tab-button-1 ${activeBottomTab_1 === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('files')}>Files</button>
+                    <button className={`tab-button-1 ${activeBottomTab_1 === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('generators')}>Generators</button>
+                    <button className={`tab-button-1 ${activeBottomTab_1 === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('effects')}>Effects</button>
+                </div>
+                <div className="bottom-panel-tab-content-1">
+                    {activeBottomTab_1 === 'files' && <FileBrowser 
+                        viewMode={fileBrowserViewMode}
+                        onViewModeChange={(mode) => dispatch({ type: 'SET_FILE_BROWSER_VIEW_MODE', payload: mode })}
+                        path={fileBrowserPath}
+                        onPathChange={(newPath) => dispatch({ type: 'SET_FILE_BROWSER_PATH', payload: newPath })}
+                        onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex, pageId: activePageId })} 
+                    />}
+                    {activeBottomTab_1 === 'generators' && <GeneratorPanel />}
+                    {activeBottomTab_1 === 'effects' && <EffectPanel />}
+                </div>
+            </div>
+            
+            
+        <div className="bottom-panel-tabs-container-2">
+        <div className="bottom-panel-tabs-2">
+        <button className={`tab-button-2 ${activeBottomTab_2 === 'clip' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('clip')}>Clip-Settings</button>
+        <button className={`tab-button-2 ${activeBottomTab_2 === 'layer' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('layer')}>Layer-Settings</button>
+        </div>
+        <div className="bottom-panel-tab-content-2">
+        {activeBottomTab_2 === 'clip' && <ClipSettingsPanel
+        selectedLayerIndex={selectedLayerIndex}
+        selectedColIndex={selectedColIndex}
+        clip={selectedClip}
+        audioInfo={getAudioInfo(selectedLayerIndex)}
+        bpm={bpm}
+        getFftLevels={getFftLevels}
+        onAssignAudio={async () => {
+        const filePath = await window.electronAPI.showAudioFileDialog();
+        if (filePath) {
+        const fileName = filePath.split(/[\\/]/).pop();
+        dispatch({ type: 'SET_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, audioFile: { path: filePath, name: fileName } } });
+        }
+        }}
+        onRemoveAudio={() => {
+        stopAudio(selectedLayerIndex);
+        dispatch({ type: 'REMOVE_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex } });
+        }}
+        onUpdateAudioVolume={(lIdx, cIdx, volume) => {
+        dispatch({ type: 'SET_CLIP_AUDIO_VOLUME', payload: { layerIndex: lIdx, colIndex: cIdx, volume } });
+        setClipVolume(lIdx, volume);
+        }}
+        onUpdatePlaybackSettings={(lIdx, cIdx, settings) => dispatch({ type: 'UPDATE_CLIP_PLAYBACK_SETTINGS', payload: { layerIndex: lIdx, colIndex: cIdx, settings } })}
+        onSetParamSync={(paramId, syncMode) => dispatch({ type: 'SET_CLIP_PARAM_SYNC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, paramId, syncMode } })}
+        onToggleDacMirror={(lIdx, cIdx, dIdx, axis) => dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex: dIdx, axis } })}
+        onRemoveDac={(dacIndex) => dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } })}
+        onRemoveEffect={(lIdx, cIdx, eIdx) => dispatch({ type: 'REMOVE_CLIP_EFFECT', payload: { layerIndex: lIdx, colIndex: cIdx, effectIndex: eIdx } })}
+        onReorderEffects={(lIdx, cIdx, oldIdx, newIdx) => dispatch({ type: 'REORDER_CLIP_EFFECTS', payload: { layerIndex: lIdx, colIndex: cIdx, oldIndex: oldIdx, newIndex: newIdx } })}
+        onAddEffect={(effect) => dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effect } })}
+        onUpdateClipUiState={(layerIndex, colIndex, uiState) => dispatch({ type: 'UPDATE_CLIP_UI_STATE', payload: { layerIndex, colIndex, uiState } })}
+        onParameterChange={handleEffectParameterChange}
+        onGeneratorParameterChange={handleGeneratorParameterChangeRef.current}
+        progressRef={progressRef}
+        onAudioError={handleAudioError}
+        onRegisterPreset={handleRegisterPreset}
+        liveFramesRef={liveFramesRef}
+        activePageId={activePageId}
+        />}
+        {activeBottomTab_2 === 'layer' && <LayerSettingsPanel
+        selectedLayerIndex={selectedLayerIndex}
+        autopilotMode={selectedLayerIndex !== null ? layerAutopilots[selectedLayerIndex] : 'off'}
+        onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
+        layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
+        assignedDacs={selectedLayerIndex !== null && layerAssignedDacs ? layerAssignedDacs[selectedLayerIndex] : []}
+        onToggleDacMirror={(layerIndex, dacIndex, axis) => dispatch({ type: 'TOGGLE_LAYER_DAC_MIRROR', payload: { layerIndex, dacIndex, axis } })}
+        onRemoveDac={(layerIndex, dacIndex) => dispatch({ type: 'REMOVE_LAYER_DAC', payload: { layerIndex, dacIndex } })}
+        onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
+        onRemoveEffect={(index) => selectedLayerIndex !== null && dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex: index } })}
+        onParamChange={(effectIndex, paramName, val) => selectedLayerIndex !== null && dispatch({ type: 'UPDATE_LAYER_EFFECT_PARAMETER', payload: { layerIndex: selectedLayerIndex, effectIndex, paramName, newValue: val } })}
+        uiState={selectedLayerIndex !== null ? layerUiStates[selectedLayerIndex] : {}}
+        onUpdateUiState={(uiState) => dispatch({ type: 'UPDATE_LAYER_UI_STATE', payload: { layerIndex: selectedLayerIndex, uiState } })}
+        onRegisterPreset={handleRegisterPreset}
+        />}
+        </div>
+        </div>
+            
+        <DacPanel 
+        dacs={dacs} 
+        onDacSelected={handleDacSelected} 
+        onDacsDiscovered={handleDacsDiscovered} 
+        dacSettings={dacOutputSettings}
+        onUpdateDacSettings={handleUpdateDacSettings}
+        onApplyGroup={handleApplyDacGroup}
+        />
+
+			<SettingsPanel
+              enabledShortcuts={enabledShortcuts}
+              onOpenOutputSettings={() => setShowOutputSettingsWindow(true)}
+              onOpenShortcutsSettings={() => setShowShortcutsWindow(true)}
+              quickAssigns={quickAssigns}
+              renderSettings={{
+                  showBeamEffect,
+                  beamAlpha,
+                  fadeAlpha,
+                  previewScanRate,
+                  beamRenderMode,
+                  worldShowBeamEffect,
+                  worldBeamRenderMode,
+                  settingsPanelCollapsed: state.settingsPanelCollapsed,
+                  optimizationEnabled: optimizationEnabled,
+                  optimizationMaxDist: optimizationMaxDist,
+                  optimizationPathDwell: optimizationPathDwell,
+                  optimizationSettings: optimizationSettings
+              }}
+              onSetRenderSetting={(setting, value) => {
+                  if (setting === 'optimizationEnabled' || setting === 'optimizationMaxDist' || setting === 'optimizationPathDwell') {
+                      const actionType = `SET_${setting.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
+                      dispatch({ type: actionType, payload: Number(value) });
+                  } else {
+                      dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } });
+                  }
+              }}
+              onUpdateKnob={(i, v) => {
+                  handleUpdateQuickControl('knob', i, v);
+              }}
+              onToggleButton={(i) => {
+                  handleToggleQuickButton(i);
+              }}
+              onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
+              onClearThumbnailCache={async () => {
+                  const result = await window.electronAPI.clearThumbnailCache();
+                  if (result.success) {
+                      console.log(`Cleared ${result.count} cached thumbnails`);
+                  } else {
+                      console.error('Failed to clear thumbnail cache:', result.error);
+                  }
+              }}
+            />
+        </div>
+        
+                
+                <div className="SystemMonitor">
+                <SystemMonitor
+                playbackFps={playbackFps}
+                previewScanRate={previewScanRate}
+                previewFrameCountRef={previewFrameCountRef}
+                totalPointsSentRef={totalPointsSentRef}
+                activeChannelsCountRef={activeChannelsCountRef}
+                lastStatUpdateTimeRef={lastStatUpdateTimeRef}
+                />
+                </div>
+    </>
+  ), [activeBottomTab_1, activeBottomTab_2, fileBrowserViewMode, fileBrowserPath, ildaParserWorker, activePageId, setActiveBottomTab_1, setActiveBottomTab_2, dispatch, selectedLayerIndex, selectedColIndex, selectedClip, getAudioInfo, bpm, getFftLevels, stopAudio, setClipVolume, handleEffectParameterChange, handleAudioError, handleRegisterPreset, liveFramesRef, layerAutopilots, layerEffects, layerUiStates, layerAssignedDacs, dacs, dacOutputSettings, handleDacSelected, handleDacsDiscovered, handleUpdateDacSettings, handleApplyDacGroup, enabledShortcuts, quickAssigns, setShowOutputSettingsWindow, setShowShortcutsWindow, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, worldShowBeamEffect, worldBeamRenderMode, state.settingsPanelCollapsed, optimizationEnabled, optimizationMaxDist, optimizationPathDwell, optimizationSettings, handleUpdateQuickControl, handleToggleQuickButton, playbackFps, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef]);
+
+  // Memoized middle-bar subtree: none of its inputs change on a clip trigger, so
+  // React reuses this element and skips diffing it, reducing per-trigger work.
+  const middleBarMemo = useMemo(() => (
+            <div className="middle-bar">
+                <div className="middle-bar-left-area">
+                    <BPMControls
+                        bpm={bpm}
+                        onBpmChange={(newBpm) => dispatch({ type: 'SET_BPM', payload: newBpm })}
+                    />
+                </div>
+                <div className="middle-bar-mid-area">
+                    <div className="page-navigation">
+                    {Array.from({ length: numPages || 8 }).map((_, i) => (
+                        <Mappable key={i} id={`middle_bar_page_${i}`}>
+                            <button 
+                                className={`page-btn ${activePageId === i ? 'active' : ''}`}
+                                onClick={() => dispatch({ type: 'SET_ACTIVE_PAGE', payload: i })}
+                                style={{
+                                    background: activePageId === i ? 'var(--theme-color)' : '#333',
+                                    color: activePageId === i ? '#000' : '#ccc',
+                                    border: 'none',
+                                    padding: '2px 8px',
+                                    margin: '0 2px',
+                                    borderRadius: '3px',
+                                    fontSize: '11px',
+                                    cursor: 'pointer',
+                                    fontWeight: 'bold'
+                                }}
+                            >
+                                {i + 1}
+                            </button>
+                        </Mappable>
+                    ))}
+                    </div>
+                </div>
+            <div className="middle-bar-right-area">
+                    <TransportControls
+                        onPlay={handlePlay}
+                        onPause={handlePause}
+                        onStop={handleStop}
+                        isPlaying={isPlaying}
+                        isStopped={isStopped}
+                    />
+                <MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
+            </div>
+            </div>
+  ), [bpm, dispatch, numPages, activePageId, isPlaying, isStopped, playbackFps, handlePlay, handlePause, handleStop, handlePlaybackFpsChange]);
+
   return (
     <MidiProvider onMidiCommand={handleMidiCommand} theme={theme} enabledShortcuts={enabledShortcuts}>
     <ArtnetProvider onArtnetCommand={(id, value) => handleMidiCommand(id, value, 255)}>
@@ -5472,193 +5730,8 @@ function App() {
                 optimizationEnabled={optimizationEnabled}
                 activePageId={activePageId}
             />
-            <div className="middle-bar">
-                <div className="middle-bar-left-area">
-                    <BPMControls
-                        bpm={bpm}
-                        onBpmChange={(newBpm) => dispatch({ type: 'SET_BPM', payload: newBpm })}
-                    />
-                </div>
-                    <div className="middle-bar-mid-area">
-						<div className="page-navigation">
-                        {Array.from({ length: numPages || 8 }).map((_, i) => (
-                            <Mappable key={i} id={`middle_bar_page_${i}`}>
-                                <button 
-                                    className={`page-btn ${activePageId === i ? 'active' : ''}`}
-                                    onClick={() => dispatch({ type: 'SET_ACTIVE_PAGE', payload: i })}
-                                    style={{
-                                        background: activePageId === i ? 'var(--theme-color)' : '#333',
-                                        color: activePageId === i ? '#000' : '#ccc',
-                                        border: 'none',
-                                        padding: '2px 8px',
-                                        margin: '0 2px',
-                                        borderRadius: '3px',
-                                        fontSize: '11px',
-                                        cursor: 'pointer',
-                                        fontWeight: 'bold'
-                                    }}
-                                >
-                                    {i + 1}
-                                </button>
-                            </Mappable>
-                        ))}
-						</div>
-                    </div>
-				<div className="middle-bar-right-area">
-					    <TransportControls
-                            onPlay={handlePlay}
-                            onPause={handlePause}
-                            onStop={handleStop}
-                            isPlaying={isPlaying}
-                            isStopped={isStopped}
-                        />
-						<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
-                </div>
-            </div>
-		<div className="bottom-panel">
-            <div className="bottom-panel-tabs-container-1">
-                <div className="bottom-panel-tabs-1">
-                    <button className={`tab-button-1 ${activeBottomTab_1 === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('files')}>Files</button>
-                    <button className={`tab-button-1 ${activeBottomTab_1 === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('generators')}>Generators</button>
-                    <button className={`tab-button-1 ${activeBottomTab_1 === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('effects')}>Effects</button>
-                </div>
-                <div className="bottom-panel-tab-content-1">
-                    {activeBottomTab_1 === 'files' && <FileBrowser 
-                        viewMode={fileBrowserViewMode}
-                        onViewModeChange={(mode) => dispatch({ type: 'SET_FILE_BROWSER_VIEW_MODE', payload: mode })}
-                        path={fileBrowserPath}
-                        onPathChange={(newPath) => dispatch({ type: 'SET_FILE_BROWSER_PATH', payload: newPath })}
-                        onDropIld={(layerIndex, colIndex, file) => ildaParserWorker.postMessage({ type: 'parse-ilda', file, layerIndex, colIndex, pageId: activePageId })} 
-                    />}
-                    {activeBottomTab_1 === 'generators' && <GeneratorPanel />}
-                    {activeBottomTab_1 === 'effects' && <EffectPanel />}
-                </div>
-            </div>
-            
-			<div className="bottom-panel-tabs-container-2">
-				<div className="bottom-panel-tabs-2">
-					<button className={`tab-button-2 ${activeBottomTab_2 === 'clip' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('clip')}>Clip-Settings</button>
-					<button className={`tab-button-2 ${activeBottomTab_2 === 'layer' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('layer')}>Layer-Settings</button>
-				</div>
-				<div className="bottom-panel-tab-content-2">
-					{activeBottomTab_2 === 'clip' && <ClipSettingsPanel
-						selectedLayerIndex={selectedLayerIndex}
-						selectedColIndex={selectedColIndex}
-						clip={selectedClip}
-						audioInfo={getAudioInfo(selectedLayerIndex)}
-						bpm={bpm}
-						getFftLevels={getFftLevels}
-						onAssignAudio={async () => {
-							const filePath = await window.electronAPI.showAudioFileDialog();
-							if (filePath) {
-								const fileName = filePath.split(/[\\/]/).pop();
-								dispatch({ type: 'SET_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, audioFile: { path: filePath, name: fileName } } });
-							}
-						}}
-						onRemoveAudio={() => {
-							stopAudio(selectedLayerIndex);
-							dispatch({ type: 'REMOVE_CLIP_AUDIO', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex } });
-						}}
-						onUpdateAudioVolume={(lIdx, cIdx, volume) => {
-							dispatch({ type: 'SET_CLIP_AUDIO_VOLUME', payload: { layerIndex: lIdx, colIndex: cIdx, volume } });
-							setClipVolume(lIdx, volume);
-						}}
-						onUpdatePlaybackSettings={(lIdx, cIdx, settings) => dispatch({ type: 'UPDATE_CLIP_PLAYBACK_SETTINGS', payload: { layerIndex: lIdx, colIndex: cIdx, settings } })}
-						onSetParamSync={(paramId, syncMode) => dispatch({ type: 'SET_CLIP_PARAM_SYNC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, paramId, syncMode } })}
-						onToggleDacMirror={(lIdx, cIdx, dIdx, axis) => dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex: dIdx, axis } })}
-						onRemoveDac={(dacIndex) => dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } })}
-						onRemoveEffect={(lIdx, cIdx, eIdx) => dispatch({ type: 'REMOVE_CLIP_EFFECT', payload: { layerIndex: lIdx, colIndex: cIdx, effectIndex: eIdx } })}
-						onReorderEffects={(lIdx, cIdx, oldIdx, newIdx) => dispatch({ type: 'REORDER_CLIP_EFFECTS', payload: { layerIndex: lIdx, colIndex: cIdx, oldIndex: oldIdx, newIndex: newIdx } })}
-						onAddEffect={(effect) => dispatch({ type: 'ADD_CLIP_EFFECT', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effect } })}
-						onUpdateClipUiState={(layerIndex, colIndex, uiState) => dispatch({ type: 'UPDATE_CLIP_UI_STATE', payload: { layerIndex, colIndex, uiState } })}
-						onParameterChange={handleEffectParameterChange}
-						onGeneratorParameterChange={handleGeneratorParameterChange}
-						progressRef={progressRef}
-						onAudioError={handleAudioError}
-						onRegisterPreset={handleRegisterPreset}
-						liveFramesRef={liveFramesRef}
-						activePageId={activePageId}
-					/>}
-					{activeBottomTab_2 === 'layer' && <LayerSettingsPanel
-						selectedLayerIndex={selectedLayerIndex}
-						autopilotMode={selectedLayerIndex !== null ? layerAutopilots[selectedLayerIndex] : 'off'}
-						onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
-						layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
-						assignedDacs={selectedLayerIndex !== null && layerAssignedDacs ? layerAssignedDacs[selectedLayerIndex] : []}
-						onToggleDacMirror={(layerIndex, dacIndex, axis) => dispatch({ type: 'TOGGLE_LAYER_DAC_MIRROR', payload: { layerIndex, dacIndex, axis } })}
-						onRemoveDac={(layerIndex, dacIndex) => dispatch({ type: 'REMOVE_LAYER_DAC', payload: { layerIndex, dacIndex } })}
-						onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
-						onRemoveEffect={(index) => selectedLayerIndex !== null && dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex: index } })}
-						onParamChange={(effectIndex, paramName, val) => selectedLayerIndex !== null && dispatch({ type: 'UPDATE_LAYER_EFFECT_PARAMETER', payload: { layerIndex: selectedLayerIndex, effectIndex, paramName, newValue: val } })}
-						uiState={selectedLayerIndex !== null ? layerUiStates[selectedLayerIndex] : {}}
-						onUpdateUiState={(uiState) => dispatch({ type: 'UPDATE_LAYER_UI_STATE', payload: { layerIndex: selectedLayerIndex, uiState } })}
-						onRegisterPreset={handleRegisterPreset}
-					/>}
-				</div>
-			</div>
-			
-            <DacPanel 
-                dacs={dacs} 
-                onDacSelected={handleDacSelected} 
-                onDacsDiscovered={handleDacsDiscovered} 
-                dacSettings={dacOutputSettings}
-                onUpdateDacSettings={handleUpdateDacSettings}
-                onApplyGroup={handleApplyDacGroup}
-            />
-
-			<SettingsPanel
-              enabledShortcuts={enabledShortcuts}
-              onOpenOutputSettings={() => setShowOutputSettingsWindow(true)}
-              onOpenShortcutsSettings={() => setShowShortcutsWindow(true)}
-              quickAssigns={quickAssigns}
-              renderSettings={{
-                  showBeamEffect,
-                  beamAlpha,
-                  fadeAlpha,
-                  previewScanRate,
-                  beamRenderMode,
-                  worldShowBeamEffect,
-                  worldBeamRenderMode,
-                  settingsPanelCollapsed: state.settingsPanelCollapsed,
-                  optimizationEnabled: optimizationEnabled,
-                  optimizationMaxDist: optimizationMaxDist,
-                  optimizationPathDwell: optimizationPathDwell
-              }}
-              onSetRenderSetting={(setting, value) => {
-                  if (setting === 'optimizationEnabled' || setting === 'optimizationMaxDist' || setting === 'optimizationPathDwell') {
-                      const actionType = `SET_${setting.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
-                      dispatch({ type: actionType, payload: Number(value) });
-                  } else {
-                      dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } });
-                  }
-              }}
-              onUpdateKnob={(i, v) => {
-                  handleUpdateQuickControl('knob', i, v);
-              }}
-              onToggleButton={(i) => {
-                  handleToggleQuickButton(i);
-              }}
-              onAssign={(type, index, link) => dispatch({ type: 'ASSIGN_QUICK_CONTROL', payload: { type, index, link } })}
-              onClearThumbnailCache={async () => {
-                  const result = await window.electronAPI.clearThumbnailCache();
-                  if (result.success) {
-                      console.log(`Cleared ${result.count} cached thumbnails`);
-                  } else {
-                      console.error('Failed to clear thumbnail cache:', result.error);
-                  }
-              }}
-            />
-          </div>
-			<div className="SystemMonitor">
-				<SystemMonitor
-					playbackFps={playbackFps}
-					previewScanRate={previewScanRate}
-					previewFrameCountRef={previewFrameCountRef}
-					totalPointsSentRef={totalPointsSentRef}
-					activeChannelsCountRef={activeChannelsCountRef}
-					lastStatUpdateTimeRef={lastStatUpdateTimeRef}
-				/>
-			</div>
+                                        {middleBarMemo}
+                                        {bottomPanelMemo}
         </div>
       </ErrorBoundary>
     </div>

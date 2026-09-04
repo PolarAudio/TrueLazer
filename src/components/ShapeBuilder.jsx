@@ -1603,9 +1603,26 @@ const ShapeBuilder = ({ onBack }) => {
 
   const importClip = async () => {
       if (!window.electronAPI) return;
-      const path = await window.electronAPI.showOpenDialog({ title: 'Import ILDA', filters: [{ name: 'ILDA Files', extensions: ['ild'] }], properties: ['openFile'] });
+      const path = await window.electronAPI.showOpenDialog({ title: 'Import ILDA or Shape Clip', filters: [
+          { name: 'Laser Files', extensions: ['ild', 'clip'] },
+          { name: 'ILDA Files', extensions: ['ild'] },
+          { name: 'TrueLazer Shape Clips', extensions: ['clip'] }
+      ], properties: ['openFile'] });
       if (!path) return; setIsLoading(true);
       try {
+          // Vector-native .clip: load the editable shape objects directly.
+          if (path.toLowerCase().endsWith('.clip')) {
+              const content = await window.electronAPI.readFileContent(path);
+              const clipData = JSON.parse(new TextDecoder().decode(content));
+              const loadedFrames = clipData && clipData.format === 'truelazer-shapeclip' ? clipData.frames : null;
+              if (!loadedFrames || !Array.isArray(loadedFrames) || loadedFrames.length === 0) {
+                  throw new Error('Invalid shape clip file');
+              }
+              setFrames(loadedFrames);
+              recordHistory(loadedFrames);
+              setFrameCount(loadedFrames.length); setCurrentFrameIndex(0);
+              return;
+          }
           const buffer = await window.electronAPI.readFileAsBinary(path); const { frames: parsedFrames } = parseIldaFile(buffer);
           if (parsedFrames && parsedFrames.length > 0) {
               const newFrames = parsedFrames.map(pf => {
@@ -1924,7 +1941,23 @@ const ShapeBuilder = ({ onBack }) => {
       });
   };
 
-  const saveAsClip = async () => {
+  const saveClip = async () => {
+      if (frames.every(f => f.length === 0)) return; setIsExporting(true);
+      try {
+          const exportFrames = frames.slice(timelineStartFrame);
+          // Vector-native export: keep the editable shape objects (no point
+          // soup). JSON round-trip drops functions/undefined and preserves the
+          // crop/draw region coordinates exactly as edited.
+          const clipData = {
+              format: 'truelazer-shapeclip',
+              version: 1,
+              frames: JSON.parse(JSON.stringify(exportFrames))
+          };
+          await window.electronAPI.saveClipFile(JSON.stringify(clipData), 'built_shape.clip');
+      } catch (e) { console.error(e); } finally { setIsExporting(false); }
+  };
+
+  const exportIlda = async () => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
       try {
           const exportFrames = frames.slice(timelineStartFrame);
@@ -3567,8 +3600,12 @@ const ShapeBuilder = ({ onBack }) => {
           </div>
           
           <div className="save-container" style={{ padding: '15px', borderTop: '1px solid #333', background: '#1a1a1a' }}>
-              <button className="primary-btn" style={{ width: '100%', padding: '12px' }} onClick={saveAsClip} disabled={frames.every(f => f.length === 0) || isExporting}>
+              <button className="primary-btn" style={{ width: '100%', padding: '12px' }} onClick={saveClip} disabled={frames.every(f => f.length === 0) || isExporting}>
                   {isExporting ? 'EXPORTING...' : 'SAVE AS CLIP'}
+              </button>
+              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>keeps vector shapes editable (.clip)</div>
+              <button className="primary-btn" style={{ width: '100%', padding: '8px', marginTop: '8px', background: 'transparent !important', border: '1px solid var(--theme-color) !important', color: 'var(--theme-color) !important' }} onClick={exportIlda} disabled={frames.every(f => f.length === 0) || isExporting}>
+                  {isExporting ? 'EXPORTING...' : 'Export ILDA (.ild)'}
               </button>
           </div>
         </aside>
