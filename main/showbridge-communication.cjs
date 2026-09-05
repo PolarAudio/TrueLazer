@@ -266,6 +266,15 @@ function buildFrameChunks(chType, pps, points) {
     const payloadLen = UDP_PACKET_SIZE - HEADER_SIZE; // 4608: bytes per chunk payload
     const logicalLen = HEADER_SIZE + totalPoints * POINT_SIZE; // frame header + all points
     const dataChunks = Math.min(Math.ceil(logicalLen / payloadLen), MAX_CHUNKS);
+    // Hard protocol limit: MAX_CHUNKS data chunks must fit the full point stream
+    // (chunk index TOTAL_CHUNKS-1 is the dedicated home/completion chunk and
+    // cannot carry data). Without this cap a large frame (e.g. >1151 points on a
+    // 2-chunk budget) would write past the end of frameBuf and throw RangeError.
+    const maxFitPoints = Math.floor((dataChunks * payloadLen - HEADER_SIZE) / POINT_SIZE);
+    if (totalPoints > maxFitPoints) {
+        console.warn(`[Showbridge] clipping frame from ${totalPoints} to ${maxFitPoints} points (2-chunk hardware limit)`);
+        totalPoints = maxFitPoints;
+    }
     const chunks = [];
 
     // Build one contiguous point stream matching the firmware's reassembled frame

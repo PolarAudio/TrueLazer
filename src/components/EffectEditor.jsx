@@ -155,11 +155,16 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
     );
 };
 
-const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) => {
+const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], dacSettings = {}, onChange }) => {
     const [draggedItem, setDraggedItem] = useState(null);
+    const resolveDacLabel = (d) => {
+        const custom = dacSettings[`${d.ip}:${d.channel}`]?.name;
+        if (custom) return custom;
+        return `Ch ${d.channel} (${d.hostName || d.ip})`;
+    };
     const items = (customOrder && customOrder.length > 0) 
-        ? customOrder 
-        : assignedDacs.map((d, i) => ({ ip: d.ip, channel: d.channel, label: `Ch ${d.channel} (${d.hostName || d.ip})`, originalIndex: i }));
+        ? customOrder.map(item => ({ ...item, label: item.label || resolveDacLabel(item) }))
+        : assignedDacs.map((d, i) => ({ ip: d.ip, channel: d.channel, label: resolveDacLabel(d), originalIndex: i }));
 
     const handleDragStart = (e, index) => {
         setDraggedItem(items[index]);
@@ -196,7 +201,7 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) =>
                         }}
                     >
                         <span style={{marginRight: '5px', color: '#666'}}>☰</span>
-                        {item.label || `Ch ${item.channel} ${item.ip ? `(${item.ip})` : ''}`}
+                        {item.label || dacSettings[`${item.ip}:${item.channel}`]?.name || `Ch ${item.channel} ${item.ip ? `(${item.ip})` : ''}`}
                     </li>
                 ))}
             </ul>
@@ -380,7 +385,7 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
     );
 };
 
-const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle, onRegisterPreset, currentPointCount }) => {
+const EffectEditor = ({ effect, assignedDacs = [], dacSettings = {}, onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle, onRegisterPreset, currentPointCount }) => {
   if (!effect) return null;
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
   if (!effectDefinition) return null;
@@ -477,6 +482,7 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                             <CustomOrderEditor 
                                 customOrder={effect.params.customOrder} 
                                 assignedDacs={assignedDacs}
+                                dacSettings={dacSettings}
                                 onChange={(newOrder) => onParamChange('customOrder', newOrder)}
                             />
                         )}

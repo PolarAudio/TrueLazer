@@ -93,16 +93,21 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
 
   // Initialize MIDI and Load Mappings
   useEffect(() => {
+    // This effect must re-run whenever the MIDI shortcut is toggled. Previously it
+    // ran only once on mount (when MIDI is off by default), so enabling MIDI later
+    // never started WebMidi — the UI stayed on "Initializing MIDI...".
+    if (!enabledShortcuts.midi) {
+      console.log("MIDI: MIDI shortcuts disabled - resetting state");
+      setMidiInitialized(false);
+      setMidiInputs([]);
+      setSelectedMidiInputId('');
+      return;
+    }
+
     let isMounted = true;
     let cleanupStateChange = () => {};
     let cleanupPoll = () => {};
     const init = async () => {
-      // Only initialize MIDI if enabled as shortcuts
-      if (!enabledShortcuts.midi) {
-        console.log("MIDI: Skipped initialization - MIDI shortcuts disabled");
-        setMidiInitialized(true); // Mark as initialized so auto-select doesn't retry
-        return;
-      }
       try {
         console.log("MIDI: Starting initialization...");
         await initializeMidi();
@@ -149,16 +154,14 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
       }
     };
 
-    if (enabledShortcuts.midi) {
-      init();
-    }
+    init();
 
     return () => {
         isMounted = false;
         cleanupStateChange();
         cleanupPoll();
     };
-  }, []);
+  }, [enabledShortcuts.midi]);
 
   // Reactive Auto-Selection for MIDI Inputs
   useEffect(() => {

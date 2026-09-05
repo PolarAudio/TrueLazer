@@ -86,6 +86,7 @@ contextBridge.exposeInMainWorld(
 	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+	            saveDacOutputSettings: (settings) => ipcRenderer.invoke('set-dac-output-settings', settings),
                 getDacGroups: () => ipcRenderer.invoke('get-dac-groups'),
                 	            saveDacGroups: (groups) => ipcRenderer.invoke('save-dac-groups', groups),
                                 getPresets: (type, subType) => ipcRenderer.invoke('get-presets', type, subType),

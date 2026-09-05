@@ -228,7 +228,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                         onChange={(e) => { e.stopPropagation(); toggleDacSelection(dac, channel.serviceID); }}
                         onClick={(e) => e.stopPropagation()} 
                       />
-                      <span style={{ flex: 1 }}>Channel {channel.serviceID} ({channel.name})</span>
+                      <span style={{ flex: 1 }} title={`Channel ${channel.name || `CH ${channel.serviceID}`}`}>{dacSettings[`${dac.ip}:${channel.serviceID}`]?.name || `Channel ${channel.serviceID} (${channel.name})`}</span>
                     </div>
                   );
                 })
@@ -298,17 +298,38 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                     const settings = dacSettings[id] || {};
                     const dimmerVal = settings.dimmer !== undefined ? settings.dimmer : 1;
                     
+                    const handleDragStart = (e) => {
+                        e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
+                            type: 'range',
+                            paramName: 'dimmer',
+                            targetType: 'dac',
+                            dacId: id,
+                            label: `Ch${ch.serviceID} Dim`,
+                            min: 0,
+                            max: 1,
+                            step: 0.01
+                        }));
+                    };
+                    
                     return (
                         <Mappable key={`dimmer_${id}`} id={`dimmer_${id.replace(/\./g, '_')}`}>
-                            <RadialKnob
-                                label={`${dac.hostName || dac.ip} Ch${ch.serviceID}`}
-                                value={dimmerVal}
-                                onChange={(val) => {
-                                    if (onUpdateDacSettings) {
-                                        onUpdateDacSettings(id, { ...settings, dimmer: val });
-                                    }
-                                }}
-                            />
+                            <div className="dac-dimmer-item">
+                                <div
+                                    className="draggable-param-label dac-dimmer-drag-handle"
+                                    draggable
+                                    onDragStart={handleDragStart}
+                                    title="Drag to a Quick-Assign knob"
+                                >≡</div>
+                                <RadialKnob
+                                    label={settings.name || `${dac.hostName || dac.ip} Ch${ch.serviceID}`}
+                                    value={dimmerVal}
+                                    onChange={(val) => {
+                                        if (onUpdateDacSettings) {
+                                            onUpdateDacSettings(id, { ...settings, dimmer: val });
+                                        }
+                                    }}
+                                />
+                            </div>
                         </Mappable>
                     );
                 })}

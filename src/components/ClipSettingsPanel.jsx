@@ -14,6 +14,7 @@ const ClipSettingsPanel = ({
   audioInfo,
   bpm,
   getFftLevels,
+  dacSettings = {},
   onAssignAudio,
   onRemoveAudio,
   onUpdateAudioVolume,
@@ -217,7 +218,7 @@ const ClipSettingsPanel = ({
                 return (
                 <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
                   <div className="dac-info-block">
-                      <span className="dac-name-tiny">{dac.hostName || dac.ip} - Ch {dac.channel}</span>
+                      <span className="dac-name-tiny">{dacSettings[`${dac.ip}:${dac.channel}`]?.name || `${dac.hostName || dac.ip} - Ch ${dac.channel}`}</span>
                       {status && (
                           <div className="dac-status-tiny" style={{fontSize: '9px', color: '#888'}}>
                               State: {status.playback_state === 2 ? 'PLAYING' : status.playback_state === 1 ? 'PREPARED' : 'IDLE'} | 
@@ -281,6 +282,7 @@ const ClipSettingsPanel = ({
                 <EffectEditor
                   effect={effect}
                   assignedDacs={assignedDacs}
+                  dacSettings={dacSettings}
                   syncSettings={syncSettings}
                   onSetParamSync={onSetParamSync}
                   context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect', workerId: derivedWorkerId }}

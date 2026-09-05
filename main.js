@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, session } from 'electron';
 import url, { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import fs from 'fs';
@@ -366,6 +366,10 @@ ipcMain.handle('set-selected-audio-input', (event, deviceId) => {
 
 ipcMain.handle('set-theme', (event, theme) => {
   store.set('theme', theme);
+});
+
+ipcMain.handle('set-dac-output-settings', (event, dacOutputSettings) => {
+  store.set('dacOutputSettings', dacOutputSettings);
 });
 
 ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
@@ -878,42 +882,64 @@ function createWindow() {
   // 30fps, sampling every other render frame without mixing animation states.
   let dacFrameAccumulator = {};
   let dacSendLoopTimer = null;
+  let stoppedDacIps = new Set(); // DACs whose output was explicitly stopped (stale renderer frames are dropped)
   const DAC_SEND_INTERVAL = 1000 / 30; // 30 fps per channel (Truwave default)
+  const MAX_MISSED = 5; // ~167ms without a new frame before blanking
+  const SILENT_TTL_MS = 3000; // feed laser-off blank/clear frames this long, then retire the channel
 
   ipcMain.on('dac-frame-update', (event, frames) => {
-    // Remove accumulator entries for channels no longer in the update
+    const now = Date.now();
+    // Channels that were live but are missing from this update keep their entry
+    // (with no new frame) so the send loop can feed them a proper laser-off
+    // blank/clear packet — instead of deleting them on the spot, which starved
+    // the DAC and made Showbridge cut output abruptly without a clean blank.
+    // They are retired by the send loop after SILENT_TTL_MS of blanking.
     for (const id of Object.keys(dacFrameAccumulator)) {
       if (!frames[id]) {
-        delete dacFrameAccumulator[id];
+        dacFrameAccumulator[id].frame = null;
       }
     }
     for (const id of Object.keys(frames)) {
       const f = frames[id];
+      // Drop stale frames for DACs whose output has been stopped (e.g. the renderer
+      // sent one last update during the world-output toggle-off window). If we
+      // stored them, the send loop would re-open a wired that stop-dac-output+
+      // stopSending() just blanked and closed — defeating the clean laser-off.
+      if (stoppedDacIps.has(f.ip)) continue;
       if (!dacFrameAccumulator[id]) {
-        dacFrameAccumulator[id] = { frame: null, sent: null, missed: 0, blanked: false, ip: f.ip, channel: f.channel, type: f.type, options: f.options || {}, fps: f.fps || 30 };
+        dacFrameAccumulator[id] = { frame: null, sent: null, missed: 0, blanked: false, blank: null, lastActivity: now, ip: f.ip, channel: f.channel, type: f.type, options: f.options || {}, fps: f.fps || 30 };
       }
       dacFrameAccumulator[id].options = f.options || dacFrameAccumulator[id].options || {};
       if (f.fps) dacFrameAccumulator[id].fps = f.fps;
       dacFrameAccumulator[id].frame = f.points;
-      dacFrameAccumulator[id].blanked = false;
+      dacFrameAccumulator[id].lastActivity = now;
     }
   });
 
   const startDacSendLoop = () => {
     if (dacSendLoopTimer) return;
-    const MAX_MISSED = 5; // ~167ms without new frame before blanking
     dacSendLoopTimer = setInterval(() => {
+      const now = Date.now();
       for (const id of Object.keys(dacFrameAccumulator)) {
         const acc = dacFrameAccumulator[id];
         if (!acc.frame) {
           acc.missed++;
           if (acc.missed >= MAX_MISSED) {
-            // Sustained silence — send blank frame once
+            // Sustained silence — keep a proper laser-off blank/clear frame flowing
+            // every tick rather than sending it once and going silent. Showbridge
+            // holds its output via a live datagram stream, so a single packet is
+            // not enough to blank cleanly — repeated blanks prevent the abrupt cut.
             if (!acc.blanked) {
               const blank = new Float32Array(8);
               blank[6] = 1;
-              sendFrame(acc.ip, acc.channel, blank, acc.fps || 30, acc.type, acc.options);
+              acc.blank = blank;
               acc.blanked = true;
+            }
+            sendFrame(acc.ip, acc.channel, acc.blank, acc.fps || 30, acc.type, acc.options);
+            // Retire the channel once it has been blanking for a while, so we don't
+            // keep sending into the void to a DAC the app is no longer using.
+            if (now - (acc.lastActivity || now) >= SILENT_TTL_MS) {
+              delete dacFrameAccumulator[id];
             }
           } else if (acc.sent) {
             // Brief hiccup — repeat last known frame
@@ -924,6 +950,8 @@ function createWindow() {
 
         acc.missed = 0;
         acc.blanked = false;
+        acc.blank = null;
+        acc.lastActivity = now;
         acc.sent = acc.frame;
         sendFrame(acc.ip, acc.channel, acc.frame, acc.fps || 30, acc.type, acc.options);
         acc.frame = null;
@@ -942,10 +970,15 @@ function createWindow() {
   ipcMain.on('stop-dac-send-loop', stopDacSendLoop);
 
   ipcMain.handle('start-dac-output', async (event, ip, type) => {
+    stoppedDacIps.delete(ip);
     dacCommunication.startOutput(ip, type);
   });
 
   ipcMain.handle('stop-dac-output', async (event, ip, type) => {
+    // Mark this DAC as stopped so any stale dac-frame-update that is already in
+    // flight from the renderer (an animate() tick that fired right at the toggle)
+    // cannot recreate the accumulator entry behind our back and reopen the wires.
+    stoppedDacIps.add(ip);
     // Remove this DAC's frames from the accumulator
     for (const id of Object.keys(dacFrameAccumulator)) {
       if (dacFrameAccumulator[id].ip === ip) {
@@ -1461,6 +1494,17 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // Web MIDI in Electron is gated behind a main-process permission grant. Without
+  // these handlers, navigator.requestMIDIAccess() (awaited by webmidi's
+  // WebMidi.enable()) never resolves and the renderer stays on "Initializing
+  // MIDI...". Grant midi/midiSysex explicitly and keep Electron's default
+  // allow-everything behavior for all other permissions (e.g. media so the
+  // audio visualizer's getUserMedia() still works).
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(true);
+  });
+  session.defaultSession.setPermissionCheckHandler(() => true);
+
   await initializeUserData();
   createWindow();
 

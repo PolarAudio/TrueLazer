@@ -8,6 +8,7 @@ const LayerSettingsPanel = ({
     onAutopilotChange,
     layerEffects,
     assignedDacs = [],
+    dacSettings = {},
     onToggleDacMirror,
     onRemoveDac,
     onAddEffect,
@@ -83,7 +84,7 @@ const LayerSettingsPanel = ({
                         return (
                         <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
                         <div className="dac-info-block">
-                            <span className="dac-name-tiny">{dac.hostName || dac.ip} - Ch {dac.channel}</span>
+                            <span className="dac-name-tiny">{dacSettings[`${dac.ip}:${dac.channel}`]?.name || `${dac.hostName || dac.ip} - Ch ${dac.channel}`}</span>
                             {status && (
                                 <div className="dac-status-tiny" style={{fontSize: '9px', color: '#888'}}>
                                     State: {status.playback_state === 2 ? 'PLAYING' : status.playback_state === 1 ? 'PREPARED' : 'IDLE'} | 
@@ -152,6 +153,8 @@ const LayerSettingsPanel = ({
                          <div key={effect.instanceId || index} style={{ marginBottom: '4px' }}>
                             <EffectEditor
                                 effect={effect}
+                                assignedDacs={assignedDacs}
+                                dacSettings={dacSettings}
                                 onRemove={() => onRemoveEffect(index)}
                                 onParamChange={(paramId, val) => onParamChange(index, paramId, val)}
                                 syncSettings={{}} 

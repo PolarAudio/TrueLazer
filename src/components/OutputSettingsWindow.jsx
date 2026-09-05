@@ -494,6 +494,20 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   const [selectedZoneIndex, setSelectedZoneIndex] = useState(null);
   const [gridSize, setGridSize] = useState(20);
   const [snapToGrid, setSnapToGrid] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null);
+  const saveStatusTimerRef = useRef(null);
+
+  const handleSave = () => {
+      const payload = dacSettings;
+      if (window.electronAPI && window.electronAPI.saveDacOutputSettings) {
+          window.electronAPI.saveDacOutputSettings(payload);
+      }
+      setSaveStatus('Saved');
+      if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current);
+      saveStatusTimerRef.current = setTimeout(() => setSaveStatus(null), 2000);
+  };
+
+  useEffect(() => () => { if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current); }, []);
 
   // Flatten DACs to Outputs (Channels)
   const outputs = useMemo(() => {
@@ -503,9 +517,11 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       // Otherwise, treat it as a single-channel device (Channel 0).
       if (dac.channels && dac.channels.length > 0) {
         dac.channels.forEach(ch => {
+           const id = `${dac.ip}:${ch.serviceID}`;
+           const custom = dacSettings[id]?.name;
            list.push({
-             id: `${dac.ip}:${ch.serviceID}`,
-             displayName: `${dac.hostName || dac.unitID || 'DAC'} : ${ch.name || `CH ${ch.serviceID}`}`,
+             id,
+             displayName: custom || `${dac.hostName || dac.unitID || 'DAC'} : ${ch.name || `CH ${ch.serviceID}`}`,
              ip: dac.ip,
              channel: ch.serviceID,
              dacName: dac.hostName || dac.unitID
@@ -522,7 +538,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       }
     });
     return list;
-  }, [dacs]);
+  }, [dacs, dacSettings]);
 
   useEffect(() => {
     if (outputs.length > 0 && !selectedOutputId) {
@@ -589,7 +605,11 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       <div className="output-settings-modal-content">
         <div className="output-settings-header">
           <h2>Output Settings</h2>
-          <button className="close-btn" onClick={onClose}>Close</button>
+          <div className="output-settings-header-actions">
+            {saveStatus && <span className="output-settings-save-status">{saveStatus}</span>}
+            <button className="save-btn" onClick={handleSave}>Save Output Settings</button>
+            <button className="close-btn" onClick={onClose}>Close</button>
+          </div>
         </div>
         
         <div className="output-settings-body">
@@ -674,6 +694,24 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
           <div className="output-settings-col">
              {selectedOutputId ? (
                  <>
+                    <div className="settings-group">
+                        <h4>Channel</h4>
+                        <div className="control-row" style={{marginBottom: 5}}>
+                            <label style={{flex: 1}}>Name</label>
+                            <input
+                                type="text"
+                                className="param-text-input"
+                                value={currentSettings.name || ''}
+                                placeholder={(() => { const o = outputs.find(x => x.id === selectedOutputId); return o ? o.displayName : ''; })()}
+                                onChange={(e) => updateCurrentSettings({ name: e.target.value })}
+                                style={{ flex: 2, minWidth: 0 }}
+                            />
+                        </div>
+                        <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '2px 0 0' }}>
+                            Custom name shown everywhere this channel appears (main list, channel list, dimmers, effect routing). Leave empty for the default.
+                        </p>
+                    </div>
+
                     <div className="settings-group">
                         <h4>Output Transformation</h4>
                         <div className="control-row" style={{marginBottom:10}}>

@@ -57,7 +57,11 @@ const RadialKnob = ({ value, onChange, label, onDrop, size = 40, isAssigned, cla
     const handleWheelLocal = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const change = e.deltaY * -0.01;
+        // Normalize delta: some mice report line-based deltas (deltaMode 1),
+        // most report pixels (~100 per notch). Convert to a value step that is
+        // ~1% per wheel notch; trackpads produce smaller, smoother deltas.
+        const delta = e.deltaMode === 1 ? e.deltaY * 3 : e.deltaY;
+        const change = delta * -0.0001;
         const newVal = Math.max(0, Math.min(1, draggingValueRef.current + change));
         draggingValueRef.current = newVal;
         updateDOM(newVal);

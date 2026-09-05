@@ -1051,7 +1051,7 @@ function reducer(state, action) {
 
         newAssigns[collection][index] = {
             ...newAssigns[collection][index],
-            label: link.paramName || link.paramId,
+            label: link.label || link.paramName || link.paramId,
             link: { ...link, pageId },
             // Store range data for scaling
             min: link.min,
@@ -1126,6 +1126,20 @@ function reducer(state, action) {
                             } else if (targetType === 'global') {
                                 if (paramName === 'master_intensity') newState = { ...newState, masterIntensity: targetValue };
                                 else if (paramName === 'master_speed') newState = { ...newState, playbackFps: targetValue };
+                            } else if (targetType === 'dac') {
+                                const dacId = control.link.dacId;
+                                if (dacId) {
+                                    newState = {
+                                        ...newState,
+                                        dacOutputSettings: {
+                                            ...(newState.dacOutputSettings || {}),
+                                            [dacId]: {
+                                                ...(newState.dacOutputSettings[dacId] || {}),
+                                                [paramName]: targetValue
+                                            }
+                                        }
+                                    };
+                                }
                             } else {
                                 const updatedClipContents = [...newState.clipContents];
                                 const pageIdx = control.link.pageId ?? state.activePageId;
@@ -2024,6 +2038,20 @@ function App() {
           }
       }, [dacOutputSettings]);
 
+      // Persist output settings (dimmer, safety zones, output area, test lines,
+      // transforms, PPS config) to the settings store so they survive a restart
+      // even without a full project save. Debounced to avoid a store write per
+      // drag event.
+      useEffect(() => {
+          if (!initialSettingsLoaded) return;
+          const t = setTimeout(() => {
+              if (window.electronAPI && window.electronAPI.saveDacOutputSettings) {
+                  window.electronAPI.saveDacOutputSettings(dacOutputSettings);
+              }
+          }, 300);
+          return () => clearTimeout(t);
+      }, [dacOutputSettings, initialSettingsLoaded]);
+
       useEffect(() => {
         layerIntensitiesRef.current = layerIntensities;
         layerAutopilotsRef.current = layerAutopilots;
@@ -2705,7 +2733,7 @@ function App() {
                                    settings.testLineShiftX || 0
                                ));
                            }
-                           if (settings.verticalTestLineEnabled) {
+if (settings.verticalTestLineEnabled) {
                                frames.push(generateVerticalTestLineFrame(
                                    settings.testLineX !== undefined ? settings.testLineX : 0.5,
                                    settings.testLineLagCompStart || 0,
@@ -2714,7 +2742,21 @@ function App() {
                                ));
                            }
                            group.frames = frames;
-                       }
+                        }
+
+                        // Configured DAC channel with no active clip / test-line
+                        // content: push a laser-off blank frame so the channel still
+                        // appears in dac-frame-update. Without this, an idle channel
+                        // is omitted entirely and (esp. for Showbridge) the DAC would
+                        // be starved of packets and cut output abruptly instead of
+                        // receiving a proper laser-off blank/clear frame.
+                        if (group.frames.length === 0) {
+                            group.frames.push({
+                                points: new Float32Array([0, 0, 0, 0, 0, 0, 1, 0]),
+                                isTypedArray: true,
+                                _idleBlank: true
+                            });
+                        }
                   }
               });
           });
@@ -2752,9 +2794,15 @@ function App() {
             }
 
             if (mergedFrame) {
-              activeCount++;
-              const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
-              totalPointsSentRef.current += numPts;
+              // Idle laser-off blank frames keep the DAC fed with a clean clear
+              // packet, but must not count as an active channel (would skew the
+              // active-channel count and average PPS in the stats display).
+              const isIdleBlank = !!mergedFrame._idleBlank;
+              if (!isIdleBlank) {
+                activeCount++;
+                const numPts = isTypedArray(mergedFrame.points) ? (mergedFrame.points.length / 8) : mergedFrame.points.length;
+                totalPointsSentRef.current += numPts;
+              }
 
               // Per-channel hardware-correction invert + timing target. These ride
               // along on `options` so the main-process sendFrame() applies the X/Y
@@ -4697,6 +4745,13 @@ function App() {
           if (targetType === 'global') {
               if (paramName === 'master_intensity') masterIntensityRef.current = targetValue;
               else if (paramName === 'master_speed') playbackFpsRef.current = targetValue;
+          } else if (targetType === 'dac') {
+              const dacId = control.link.dacId;
+              if (dacId && liveDacOutputSettingsRef.current) {
+                  const cur = liveDacOutputSettingsRef.current[dacId] || (liveDacOutputSettingsRef.current[dacId] = {});
+                  cur[paramName] = targetValue;
+                  hasPendingDacUpdate.current = true;
+              }
           } else if (targetType === 'layerEffect') {
               if (layerEffectsRef.current[layerIndex] && layerEffectsRef.current[layerIndex][effectIndex]) {
                   layerEffectsRef.current[layerIndex][effectIndex].params[paramName] = targetValue;
@@ -5368,6 +5423,7 @@ function App() {
         audioInfo={getAudioInfo(selectedLayerIndex)}
         bpm={bpm}
         getFftLevels={getFftLevels}
+        dacSettings={dacOutputSettings}
         onAssignAudio={async () => {
         const filePath = await window.electronAPI.showAudioFileDialog();
         if (filePath) {
@@ -5405,6 +5461,7 @@ function App() {
         onAutopilotChange={(mode) => dispatch({ type: 'SET_LAYER_AUTOPILOT', payload: { layerIndex: selectedLayerIndex, mode } })}
         layerEffects={selectedLayerIndex !== null ? layerEffects[selectedLayerIndex] : []}
         assignedDacs={selectedLayerIndex !== null && layerAssignedDacs ? layerAssignedDacs[selectedLayerIndex] : []}
+        dacSettings={dacOutputSettings}
         onToggleDacMirror={(layerIndex, dacIndex, axis) => dispatch({ type: 'TOGGLE_LAYER_DAC_MIRROR', payload: { layerIndex, dacIndex, axis } })}
         onRemoveDac={(layerIndex, dacIndex) => dispatch({ type: 'REMOVE_LAYER_DAC', payload: { layerIndex, dacIndex } })}
         onAddEffect={(effect) => selectedLayerIndex !== null && dispatch({ type: 'ADD_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effect } })}
