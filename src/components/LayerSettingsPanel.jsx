@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import EffectEditor from './EffectEditor';
+import LayerEffectSpeedSettings from './LayerEffectSpeedSettings';
 
 const LayerSettingsPanel = ({ 
     selectedLayerIndex, 
@@ -11,12 +12,23 @@ const LayerSettingsPanel = ({
     dacSettings = {},
     onToggleDacMirror,
     onRemoveDac,
+    onReorderDacs,
     onAddEffect,
     onRemoveEffect,
     onParamChange,
     uiState,
     onUpdateUiState,
-    onRegisterPreset // Add this
+    onRegisterPreset, // Add this
+    effectSpeed,
+    onEffectSpeedChange,
+    globalBpm,
+    globalFps,
+    layerSyncSettings = {},
+    onSetParamSync,
+    activeClip,
+    activeWorkerId: activeWorkerIdProp = null,
+    progressRef,
+    getFftLevels
 }) => {
     const [dacStatuses, setDacStatuses] = useState({});
 
@@ -69,6 +81,30 @@ const LayerSettingsPanel = ({
         e.dataTransfer.dropEffect = 'copy';
     };
 
+    // Drive the animated-value playhead for layer effects from the clip currently
+    // active on this layer, using the layer's Effect Speed Control timing when set
+    // (mirrors the runtime layer-effects pass) and the clip's timing otherwise.
+    const activeWorkerId = activeWorkerIdProp ? activeWorkerIdProp : (activeClip?.workerId || null);
+    let animClipDuration = 1;
+    const activePlayback = activeClip?.playbackSettings || {};
+    if (effectSpeed && effectSpeed.mode) {
+        if (effectSpeed.mode === 'bpm') {
+            animClipDuration = ((effectSpeed.beats || 8) * 60) / (globalBpm || 120);
+        } else if (effectSpeed.mode === 'fps') {
+            animClipDuration = (activeClip?.totalFrames || 30) / (globalFps || 30);
+        } else {
+            animClipDuration = effectSpeed.duration || 1;
+        }
+        const speedMult = effectSpeed.speedMultiplier || 1;
+        if (speedMult !== 0) animClipDuration /= speedMult;
+    } else if (activePlayback.mode === 'timeline') {
+        animClipDuration = activePlayback.duration || 1;
+    } else if (activePlayback.mode === 'bpm') {
+        animClipDuration = ((activePlayback.beats || 8) * 60) / (globalBpm || 120);
+    } else {
+        animClipDuration = (activeClip?.totalFrames || 30) / (activePlayback.fps || activeClip?.fps || globalFps || 30);
+    }
+
     return (
         <div className="settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
              {/* Assigned DACs Section */}
@@ -83,6 +119,21 @@ const LayerSettingsPanel = ({
                         const status = dacStatuses[dac.ip];
                         return (
                         <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
+                        <div className="dac-order-controls">
+                            <span className="dac-order-index">{index + 1}</span>
+                            <button
+                                className="dac-order-btn"
+                                disabled={index === 0}
+                                onClick={() => onReorderDacs(selectedLayerIndex, index, index - 1)}
+                                title="Move Up"
+                            >▲</button>
+                            <button
+                                className="dac-order-btn"
+                                disabled={index === assignedDacs.length - 1}
+                                onClick={() => onReorderDacs(selectedLayerIndex, index, index + 1)}
+                                title="Move Down"
+                            >▼</button>
+                        </div>
                         <div className="dac-info-block">
                             <span className="dac-name-tiny">{dacSettings[`${dac.ip}:${dac.channel}`]?.name || `${dac.hostName || dac.ip} - Ch ${dac.channel}`}</span>
                             {status && (
@@ -141,6 +192,18 @@ const LayerSettingsPanel = ({
                 </div>
              </CollapsiblePanel>
 
+             {/* Effect Speed Control Section */}
+             <LayerEffectSpeedSettings
+                enabled={!!effectSpeed}
+                settings={effectSpeed}
+                globalBpm={globalBpm}
+                globalFps={globalFps}
+                onToggle={(checked) => onEffectSpeedChange(checked ? { mode: 'fps', beats: 8, duration: 1, speedMultiplier: 1 } : null)}
+                onUpdate={(partial) => onEffectSpeedChange(partial)}
+                uiState={uiState}
+                onUpdateUiState={onUpdateUiState}
+             />
+
              {/* Layer Effects Section */}
              <CollapsiblePanel 
                 title="Layer Effects"
@@ -157,9 +220,13 @@ const LayerSettingsPanel = ({
                                 dacSettings={dacSettings}
                                 onRemove={() => onRemoveEffect(index)}
                                 onParamChange={(paramId, val) => onParamChange(index, paramId, val)}
-                                syncSettings={{}} 
-                                onSetParamSync={() => {}} 
-                                context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect' }}
+syncSettings={layerSyncSettings} 
+                                onSetParamSync={(paramId, syncMode) => onSetParamSync(paramId, syncMode)}
+                                context={{ layerIndex: selectedLayerIndex, colIndex: null, effectIndex: index, targetType: 'layerEffect', workerId: activeWorkerId }}
+                                progressRef={progressRef}
+                                clipDuration={animClipDuration}
+                                bpm={globalBpm}
+                                getFftLevels={getFftLevels}
                                 uiState={uiState}
                                 onUpdateUiState={onUpdateUiState}
                                 onRegisterPreset={onRegisterPreset}

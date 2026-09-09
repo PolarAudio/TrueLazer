@@ -20,6 +20,7 @@ const OutputCanvas = ({
   onSelectZone,
   gridSize = 20,
   snapToGrid = false,
+  showZoneOutlines = false,
   sentFramesRef,
   channelId
 }) => {
@@ -185,6 +186,17 @@ const OutputCanvas = ({
         w: zone.w * width,
         h: zone.h * height
       }, 'rgba(255, 0, 0, 0.3)', index === selectedZoneIndex);
+
+      // Optional crisp dashed outline so the zone boundary stays visible over
+      // busy frame-trace content (and on top of the translucent fill).
+      if (showZoneOutlines) {
+        ctx.save();
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = index === selectedZoneIndex ? 2.5 : 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(zone.x * width, zone.y * height, zone.w * width, zone.h * height);
+        ctx.restore();
+      }
     });
 
     // Draw Test Line
@@ -246,6 +258,16 @@ const OutputCanvas = ({
               ctx.lineTo(seg[1], yPx);
           });
           ctx.stroke();
+
+          // Cyan marker at the line's settled center dwell (commanded x=0),
+          // matching the center dwell dot the sent test-line frame places there.
+          const centerPX = (transformationEnabled && outputArea && transformationMode === 'scale')
+              ? (outputArea.x + 0.5 * outputArea.w) * width
+              : width / 2;
+          ctx.fillStyle = '#00ffff';
+          ctx.beginPath();
+          ctx.arc(centerPX, yPx, 3, 0, Math.PI * 2);
+          ctx.fill();
       }
     }
 
@@ -308,13 +330,24 @@ const OutputCanvas = ({
               ctx.lineTo(xPx, seg[1]);
           });
           ctx.stroke();
+
+          // Cyan marker at the line's settled center dwell (commanded y=0),
+          // matching the center dwell dot the sent vertical test-line frame
+          // places there.
+          const centerPY = (transformationEnabled && outputArea && transformationMode === 'scale')
+              ? (outputArea.y + 0.5 * outputArea.h) * height
+              : height / 2;
+          ctx.fillStyle = '#00ffff';
+          ctx.beginPath();
+          ctx.arc(xPx, centerPY, 3, 0, Math.PI * 2);
+          ctx.fill();
       }
     }
   };
 
   useEffect(() => {
     render();
-  }, [safetyZones, outputArea, testLineY, testLineX, testLineEnabled, verticalTestLineEnabled, transformationEnabled, transformationMode, selectedZoneIndex, gridSize, flipX, flipY]);
+  }, [safetyZones, outputArea, testLineY, testLineX, testLineEnabled, verticalTestLineEnabled, transformationEnabled, transformationMode, selectedZoneIndex, gridSize, flipX, flipY, showZoneOutlines]);
 
   // Live frame-preview background: poll the sent-frames ref (updated by the DAC
   // loop without React re-renders) and redraw when the channel's frame changes.
@@ -551,6 +584,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   // Get current settings or default
   const currentSettings = dacSettings[selectedOutputId] || {
       safetyZones: [],
+      zoneOutlineEnabled: false,
       outputArea: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
       transformationEnabled: false,
       transformationMode: 'crop',
@@ -657,6 +691,15 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 
                 <span style={{width: 1, background: '#555', margin: '0 5px'}}></span>
                 
+                <button className={`tool-btn ${currentSettings.zoneOutlineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ zoneOutlineEnabled: !currentSettings.zoneOutlineEnabled })} title="Toggle Zone Outlines (canvas + laser)">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-square-dashed" viewBox="0 0 16 16">
+						<path d="M5.466 1.17q.262.001.533.03h.004a1 1 0 0 1 .031.253V2.5a.5.5 0 0 1-1 0v-1a.5.5 0 0 1 .432-.33ZM7.5 1q.251.005.5.022a.5.5 0 0 1 .028.672l-.031.468a.5.5 0 0 1-1-.055v-1A.5.5 0 0 1 7.5 1ZM10.5 1.15a.5.5 0 0 1 .297.368l.03.201a.5.5 0 0 1-.97.179l-.032-.201a.5.5 0 0 1 .464-.58q.105-.006.211.033ZM15 10.5a.5.5 0 0 1-.478.5l-.371.02a.5.5 0 0 1 .044-.999l.37-.02a.5.5 0 0 1 .435.499ZM15 7.6a.5.5 0 0 1-.48.5l-.36.018a.5.5 0 0 1 .044-1l.36-.02a.5.5 0 0 1 .436.501ZM15 4.65a.5.5 0 0 1-.478.5l-.374.02a.5.5 0 0 1 .044-.998l.374-.02a.5.5 0 0 1 .434.498ZM8.5 4.5a.5.5 0 0 1 .5.5V5a.5.5 0 0 1-.969.147A.5.5 0 0 1 8 5a.5.5 0 0 1 .5-.5ZM12.5 1.7a.5.5 0 0 1 .474.615l-.38 1.751a.5.5 0 0 1-.968-.246l.38-1.75a.5.5 0 0 1 .494-.37ZM14.828 4.6a.5.5 0 0 1 .162.56l-.723 1.7a.5.5 0 0 1-.922-.388l.724-1.7a.5.5 0 0 1 .68-.246.5.5 0 0 1 .08-.057ZM14.828 7.6a.5.5 0 0 1 .16.562l-.715 1.66a.5.5 0 1 1-.924-.382l.715-1.66a.5.5 0 0 1 .599-.288.5.5 0 0 1 .165.108ZM14.828 10.6a.5.5 0 0 1 .158.565l-.697 1.62a.5.5 0 1 1-.93-.372l.698-1.62a.5.5 0 0 1 .854.135.5.5 0 0 1 .083-.327ZM12.5 14.3a.5.5 0 0 1-.46.355l-1.852.097a.5.5 0 0 1 .058-.998l1.84-.096a.5.5 0 0 1 .414.642ZM7.76 14.61a.5.5 0 0 1 .1-.95l2.006-.105a.5.5 0 0 1 .056.999l-2.006.105a.5.5 0 0 1-.156.947ZM4.5 14.7a.5.5 0 0 1-.464.33l-1.724.09a.5.5 0 0 1-.018-1l1.724-.09a.5.5 0 0 1 .486.67ZM1.5 13.82a.5.5 0 0 1-.46-.577l.216-1.73a.5.5 0 0 1 .984.176l-.18 1.44a.5.5 0 0 1-.56.69ZM1.172 7.6a.5.5 0 0 1 .503.53l-.02.4a.5.5 0 0 1-1-.053l.02-.4a.5.5 0 0 1 .497-.477ZM5.5 1.17a.5.5 0 0 1 .465.337l.088.31a.5.5 0 0 1-.94.339l-.088-.31A.5.5 0 0 1 5.5 1.17ZM10.5 14.8a.5.5 0 0 1-.465.337l-.088.31a.5.5 0 0 1-.94-.339l.088-.31a.5.5 0 0 1 .94.002ZM1.17 4.65a.5.5 0 0 1 .5-.48l.37.03a.5.5 0 0 1-.044.998l-.37-.03a.5.5 0 0 1-.456-.518ZM3.9 1.5a.5.5 0 0 1-.252.63l-.5.24a.5.5 0 0 1-.447-.894l.498-.24a.5.5 0 0 1 .401.264Z"/>
+						<path d="M2 1h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Zm4-8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Zm4-8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/>
+					</svg>
+				</button>
+                
+                <span style={{width: 1, background: '#555', margin: '0 5px'}}></span>
+                
                 <button className={`tool-btn ${snapToGrid ? 'active' : ''}`} onClick={() => setSnapToGrid(!snapToGrid)} title="Snap to Grid">
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-magnet-fill" viewBox="0 0 16 16">
 						<path d="M15 12h-4v3h4zM5 12H1v3h4zM0 8a8 8 0 1 1 16 0v8h-6V8a2 2 0 1 0-4 0v8H0z"/>
@@ -685,6 +728,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 onSelectZone={setSelectedZoneIndex}
                 gridSize={gridSize}
                 snapToGrid={snapToGrid}
+                showZoneOutlines={!!currentSettings.zoneOutlineEnabled}
                 sentFramesRef={sentFramesRef}
                 channelId={selectedOutputId}
             />
@@ -799,6 +843,10 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
 
                     <div className="settings-group">
                         <h4>Safety Zones</h4>
+                        <div className="control-row" style={{justifyContent: 'space-between', marginBottom: 5}}>
+                            <label style={{flex:1}}>Zone Outlines</label>
+                            <input type="checkbox" checked={!!currentSettings.zoneOutlineEnabled} onChange={(e) => updateCurrentSettings({ zoneOutlineEnabled: e.target.checked })} title="Show zone boundaries on canvas and on the laser" />
+                        </div>
                         <div className="control-row" style={{justifyContent: 'space-between', marginBottom: 5}}>
                             <button className="small-btn" onClick={handleAddZone}>Add New</button>
                             <button className="small-btn clear" onClick={handleClearZones}>Clear All</button>

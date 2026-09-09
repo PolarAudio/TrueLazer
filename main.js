@@ -631,7 +631,7 @@ function buildApplicationMenu(mode) {
     {
       label: 'Settings',
       submenu: [
-        { label: 'General', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
+        { label: 'General Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
         {
           label: 'Audio Settings',
           submenu: [
@@ -691,6 +691,7 @@ function buildApplicationMenu(mode) {
       label: 'Output',
       submenu: [
         { label: 'Open Output Settings', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'output-settings'); } },
+        { label: 'Processing Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'output-processing'); } },
       ],
     },
     {
@@ -1001,9 +1002,6 @@ function createWindow() {
 
   ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
     const layerFullContextMenu = Menu.buildFromTemplate([
-      { label: 'Insert Above', click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-above', layerIndex); } },
-      { label: 'Insert Below', click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-insert-below', layerIndex); } },
-      { type: 'separator' },
       {
         label: 'Set Thumbnail Mode',
         submenu: [
@@ -1036,6 +1034,15 @@ function createWindow() {
       { label: 'Clear Clips', click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex); } },
     ]);
     layerFullContextMenu.popup({ window: mainWindow });
+  });
+
+  ipcMain.on('show-page-context-menu', (event, pageIndex) => {
+    const pageContextMenu = Menu.buildFromTemplate([
+      { label: 'Clear Clips', click: () => { if (mainWindow) mainWindow.webContents.send('page-context-command', 'page-clear-clips', pageIndex); } },
+      { type: 'separator' },
+      { label: 'Rename Page', click: () => { if (mainWindow) mainWindow.webContents.send('page-context-command', 'page-rename', pageIndex); } },
+    ]);
+    pageContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-column-context-menu', (event, index) => {

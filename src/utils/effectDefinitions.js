@@ -23,11 +23,13 @@ export const effectDefinitions = [
     defaultParams: {
       scaleX: 1,
       scaleY: 1,
+      linkXY: true,
     },
     paramControls: [
       { id: 'scaleX', label: 'Scale X', type: 'range', min: 0.01, max: 5.0, step: 0.01 },
       { id: 'scaleY', label: 'Scale Y', type: 'range', min: 0.01, max: 5.0, step: 0.01 },
     ],
+    linkPairs: [['scaleX', 'scaleY']],
   },
   {
     id: 'translate',
@@ -37,11 +39,13 @@ export const effectDefinitions = [
     defaultParams: {
       translateX: 0,
       translateY: 0,
+      linkXY: true,
     },
     paramControls: [
       { id: 'translateX', label: 'Translate X', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'translateY', label: 'Translate Y', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
     ],
+    linkPairs: [['translateX', 'translateY']],
   },
   {
     id: 'color',
@@ -101,34 +105,24 @@ export const effectDefinitions = [
   {
     id: 'warp',
     name: 'Warp',
-    type: 'animation',
-    description: 'Symmetrical chaotic wave distortion.',
-    defaultParams: {
-      amount: 0.1,
-      chaos: 0.5,
-      speed: 1,
-    },
-    paramControls: [
-      { id: 'amount', label: 'Amount', type: 'range', min: 0, max: 1.0, step: 0.01 },
-      { id: 'chaos', label: 'Chaos', type: 'range', min: 0, max: 1.0, step: 0.01 },
-      { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 10, step: 0.1 },
-    ],
-  },
-  {
-    id: 'distortion',
-    name: 'Distortion',
     type: 'transform',
-    description: 'Distorts the point data.',
+    description: 'Black hole – pulls or pushes points toward/away from its position across a distance falloff.',
     defaultParams: {
-      amount: 0.1,
-      scale: 10,
-      speed: 0.5,
+      amount: 0.5,
+      posX: 0,
+      posY: 0,
+      radius: 0.5,
+      decay: 2,
+      linkXY: true,
     },
     paramControls: [
-      { id: 'amount', label: 'Amount', type: 'range', min: 0, max: 1.0, step: 0.01 },
-      { id: 'scale', label: 'Scale', type: 'range', min: 1, max: 50, step: 1 },
-      { id: 'speed', label: 'Speed', type: 'range', min: 0, max: 5, step: 0.1 },
+      { id: 'amount', label: 'Strength', type: 'range', min: -2.0, max: 2.0, step: 0.01 },
+      { id: 'posX', label: 'Position X', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'posY', label: 'Position Y', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
+      { id: 'radius', label: 'Radius', type: 'range', min: 0.1, max: 1.5, step: 0.01 },
+      { id: 'decay', label: 'Falloff', type: 'range', min: 0.5, max: 4.0, step: 0.1 },
     ],
+    linkPairs: [['posX', 'posY']],
   },
   {
     id: 'move',
@@ -138,11 +132,13 @@ export const effectDefinitions = [
     defaultParams: {
       speedX: 0.1,
       speedY: 0.1,
+      linkXY: true,
     },
     paramControls: [
       { id: 'speedX', label: 'Speed X', type: 'range', min: 0, max: 2.0, step: 0.01 },
       { id: 'speedY', label: 'Speed Y', type: 'range', min: 0, max: 2.0, step: 0.01 },
     ],
+    linkPairs: [['speedX', 'speedY']],
   },
   {
     id: 'delay',
@@ -310,6 +306,7 @@ export const effectDefinitions = [
       centerX: 0,
       centerY: 0,
       ease: 0,
+      linkXY: true,
     },
     paramControls: [
       { id: 'factor', label: 'Factor', type: 'range', min: 0.1, max: 3.0, step: 0.01 },
@@ -317,5 +314,6 @@ export const effectDefinitions = [
       { id: 'centerY', label: 'Center Y', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'ease', label: 'Ease', type: 'range', min: 0, max: 1, step: 0.01 },
     ],
+    linkPairs: [['centerX', 'centerY']],
   },
 ];

@@ -22,6 +22,8 @@ const ClipSettingsPanel = ({
   onSetParamSync,
   onToggleDacMirror,
   onRemoveDac,
+  onReorderDacs,
+  layerDacs = [],
   onRemoveEffect,
   onReorderEffects,
   onAddEffect,
@@ -38,6 +40,23 @@ const ClipSettingsPanel = ({
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
   const { seekAudio } = useAudio();
   const lastReorderTimeRef = useRef(0);
+
+  // The channels an effect actually sees at runtime are the layer's assigned
+  // DACs followed by the clip's own (deduped by ip:channel). Mirror that so
+  // Delay/Chase custom order lists channels even when they are assigned to the
+  // layer rather than to the clip. (Hooks must run before the early return.)
+  const clipAssignedDacs = clip?.assignedDacs || [];
+  const effectiveAssignedDacs = React.useMemo(() => {
+    const combined = [...(layerDacs || []), ...clipAssignedDacs];
+    const seen = new Set();
+    const list = [];
+    combined.forEach(d => {
+        const ch = d.channel !== undefined ? d.channel : (d.channels && d.channels.length > 0 ? d.channels[0].serviceID : 0);
+        const key = `${d.ip}:${ch}`;
+        if (!seen.has(key)) { seen.add(key); list.push({ ...d, channel: ch }); }
+    });
+    return list;
+  }, [layerDacs, clipAssignedDacs]);
 
   const uiState = clip?.uiState || {};
   const collapsedPanels = uiState.collapsedPanels || {};
@@ -217,6 +236,21 @@ const ClipSettingsPanel = ({
                 const status = dacStatuses[dac.ip];
                 return (
                 <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
+                  <div className="dac-order-controls">
+                    <span className="dac-order-index">{index + 1}</span>
+                    <button
+                        className="dac-order-btn"
+                        disabled={index === 0}
+                        onClick={() => onReorderDacs(selectedLayerIndex, selectedColIndex, index, index - 1)}
+                        title="Move Up"
+                    >▲</button>
+                    <button
+                        className="dac-order-btn"
+                        disabled={index === assignedDacs.length - 1}
+                        onClick={() => onReorderDacs(selectedLayerIndex, selectedColIndex, index, index + 1)}
+                        title="Move Down"
+                    >▼</button>
+                  </div>
                   <div className="dac-info-block">
                       <span className="dac-name-tiny">{dacSettings[`${dac.ip}:${dac.channel}`]?.name || `${dac.hostName || dac.ip} - Ch ${dac.channel}`}</span>
                       {status && (
@@ -281,7 +315,7 @@ const ClipSettingsPanel = ({
               >
                 <EffectEditor
                   effect={effect}
-                  assignedDacs={assignedDacs}
+                  assignedDacs={effectiveAssignedDacs}
                   dacSettings={dacSettings}
                   syncSettings={syncSettings}
                   onSetParamSync={onSetParamSync}

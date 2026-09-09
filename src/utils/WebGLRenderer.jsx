@@ -747,18 +747,24 @@ export class WebGLRenderer {
 
   _drawSegment(positions, colors, alpha, numPoints, usePoints = false) {
     const gl = this.gl;
+    if (numPoints < 1) return;
+
+    // Clamp to the preallocated vertex-buffer capacity; drawing a frame larger
+    // than the GPU buffers (e.g. channel-mode chase output) would otherwise
+    // trigger WebGL INVALID_VALUE buffer upload errors.
+    numPoints = Math.min(numPoints, 131072);
 
     gl.useProgram(this.program);
 
     // Positions
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions.subarray(0, numPoints * 2));
     gl.enableVertexAttribArray(this.positionAttributeLocation);
     gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
     // Colors
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors.subarray(0, numPoints * 3));
     gl.enableVertexAttribArray(this.colorAttributeLocation);
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
@@ -782,18 +788,20 @@ export class WebGLRenderer {
 
   _drawLines(positions, colors, alpha, numPoints) {
     const gl = this.gl;
+    if (numPoints < 1) return;
+    numPoints = Math.min(numPoints, 131072);
 
     gl.useProgram(this.program);
 
     // Positions
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions.subarray(0, numPoints * 2));
     gl.enableVertexAttribArray(this.positionAttributeLocation);
     gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
     // Colors
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors.subarray(0, numPoints * 3));
     gl.enableVertexAttribArray(this.colorAttributeLocation);
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
@@ -810,18 +818,20 @@ export class WebGLRenderer {
 
   _drawTriangles(positions, colors, alpha, numPoints) {
     const gl = this.gl;
+    if (numPoints < 1) return;
+    numPoints = Math.min(numPoints, 131072);
 
     gl.useProgram(this.program);
 
     // Positions
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions.subarray(0, numPoints * 2));
     gl.enableVertexAttribArray(this.positionAttributeLocation);
     gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
     // Colors
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors.subarray(0, numPoints * 3));
     gl.enableVertexAttribArray(this.colorAttributeLocation);
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 

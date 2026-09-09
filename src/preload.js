@@ -53,6 +53,12 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('layer-full-context-command', listener);
       return () => ipcRenderer.removeListener('layer-full-context-command', listener);
     },
+    showPageContextMenu: (index) => ipcRenderer.send('show-page-context-menu', index),
+    onPageContextMenuCommand: (callback) => {
+      const listener = (event, command, pageIndex) => callback(command, pageIndex);
+      ipcRenderer.on('page-context-command', listener);
+      return () => ipcRenderer.removeListener('page-context-command', listener);
+    },
     onRenderSettingsCommand: (callback) => {
       const listener = (event, command) => callback(command);
       ipcRenderer.on('render-settings-command', listener);

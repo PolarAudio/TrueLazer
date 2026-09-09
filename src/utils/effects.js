@@ -1,5 +1,20 @@
 import { effectDefinitions } from './effectDefinitions';
 
+// X/Y axis pairs that stay in lockstep when the effect's `linkXY` flag is on:
+// animating one axis also mirrors its resolved value onto the partner (unless
+// the partner has its own speed-sync setting).
+const linkedParamPairs = {};
+for (const def of effectDefinitions) {
+    if (!def.linkPairs) continue;
+    linkedParamPairs[def.id] = linkedParamPairs[def.id] || {};
+    for (const pair of def.linkPairs) {
+        if (Array.isArray(pair) && pair.length === 2) {
+            linkedParamPairs[def.id][pair[0]] = pair[1];
+            linkedParamPairs[def.id][pair[1]] = pair[0];
+        }
+    }
+}
+
 // Cache definitions by ID for O(1) lookup
 const definitionsById = effectDefinitions.reduce((acc, def) => {
     acc[def.id] = def;
@@ -154,6 +169,7 @@ export function applyEffects(frame, effects, context = {}) {
 
     // Copy source to global processing buffer
     let currentNumPoints = numPointsCount;
+    ensureBufferSize(numPointsCount);
     let activePoints = globalProcessingBuffer;
     if (isSourceTyped) {
         activePoints.set(sourcePoints);
@@ -191,10 +207,15 @@ export function applyEffects(frame, effects, context = {}) {
         let resolvedParams = params;
         if (needsResolution) {
             resolvedParams = { ...params };
+            const linkXY = params.linkXY !== false;
+            const pairs = linkedParamPairs[effect.id];
             for (const key in resolvedParams) {
                 const paramKey = instancePrefix + key;
                 if (syncSettings[paramKey]) {
                     resolvedParams[key] = resolveParam(key.replace(instancePrefix, ''), resolvedParams[key], syncSettings[paramKey], context);
+                    if (linkXY && pairs && pairs[key] && !syncSettings[instancePrefix + pairs[key]] && resolvedParams[pairs[key]] !== undefined) {
+                        resolvedParams[pairs[key]] = resolvedParams[key];
+                    }
                 }
             }
         }
@@ -213,8 +234,7 @@ export function applyEffects(frame, effects, context = {}) {
                 activePoints = applyMirror(activePoints, currentNumPoints, resolvedParams); 
                 currentNumPoints = activePoints.length / 8;
                 break;
-            case 'warp': applyWarp(activePoints, currentNumPoints, resolvedParams, time); break;
-            case 'distortion': applyDistortion(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'warp': applyWarp(activePoints, currentNumPoints, resolvedParams); break;
             case 'move': applyMove(activePoints, currentNumPoints, resolvedParams, time); break;
             case 'delay': 
                 if (effectStates && effect.instanceId) { 
@@ -236,8 +256,6 @@ export function applyEffects(frame, effects, context = {}) {
             // ... other existing effects continued ...
             default: /* no‑op */ break;
         }
-
-        ensureBufferSize(currentNumPoints);
     }
 
     // Final result must be a NEW buffer because it's passed around, but we've reduced intermediate ones
@@ -482,7 +500,18 @@ function applyStrobe(points, numPoints, params, time) {
 function applyMirror(points, numPoints, params) {
     const { mode, additive = true, axisOffset = 0, planeRotation = 0 } = params;
     if (mode === 'none' || numPoints === 0) {
-        return points.subarray(0, numPoints * 8);
+        // A subarray view silently drops the _channelDistributions property. When a
+        // channel-mode delay/chase frame passes through a mirror that is left at its
+        // default ('none') this would discard the per-channel map and every DAC would
+        // receive the entire concatenated buffer. Keep the full copy for dist-bearing
+        // frames so per-channel slicing survives downstream effects.
+        const out = points.subarray(0, numPoints * 8);
+        if (points._channelDistributions) {
+            const copy = new Float32Array(out);
+            copy._channelDistributions = points._channelDistributions;
+            return copy;
+        }
+        return out;
     }
 
     const angleRad = planeRotation * Math.PI / 180;
@@ -698,28 +727,37 @@ function applyMirror(points, numPoints, params) {
     }
 }
 
-function applyWarp(points, numPoints, params, time) {
-    const { amount, chaos, speed } = params;
-    const t = time * 0.001 * speed;
+// Gravitational warp: pulls (positive strength) or pushes (negative strength)
+// points radially toward/away from a center position, attenuated by distance
+// so the influence is strongest at the core and fades to zero at the radius.
+// Time-independent – a pure spatial field, but every parameter is still
+// animatable through the speed-sync methods.
+function applyWarp(points, numPoints, params) {
+    const { amount = 0.5, posX = 0, posY = 0, radius = 0.5, decay = 2 } = params;
+    const rad = Math.max(0.00001, Math.abs(radius));
     for (let i = 0; i < numPoints; i++) {
-        const off = i * 8;
-        const x = points[off]; const y = points[off + 1];
-        const symY = Math.abs(y);
-        points[off] += Math.sin(symY * 10 * (1 + chaos) + t) * amount * Math.cos(t * chaos);
-        points[off + 1] += Math.cos(Math.abs(x) * 10 * (1 + chaos) + t) * amount * Math.sin(t * chaos);
-    }
-}
+        const offset = i * 8;
+        const x = points[offset];
+        const y = points[offset + 1];
+        const dx = x - posX;
+        const dy = y - posY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= 0.000001) continue;
 
-function applyDistortion(points, numPoints, params, time) {
-    const { amount, scale, speed } = params;
-    const t = time * 0.001 * speed;
-    for (let i = 0; i < numPoints; i++) {
-        const off = i * 8;
-        const noiseX = Math.sin(points[off] * scale + t) * Math.cos(points[off + 1] * scale - t);
-        const noiseY = Math.cos(points[off] * scale - t) * Math.sin(points[off + 1] * scale + t);
-        points[off] += noiseX * amount;
-        points[off + 1] += noiseY * amount;
+        // Influence: 1.0 at the center, 0.0 at the radius edge
+        const t = Math.min(1, dist / rad);
+        const falloff = Math.pow(1 - t, decay);
+
+        // Signed strength: positive attracts, negative repels
+        const strength = amount * falloff;
+        if (Math.abs(strength) <= 0.000001) continue;
+
+        // Displacement capped at the point's distance so nothing crosses the center
+        const mag = Math.min(dist, Math.abs(strength)) * (strength < 0 ? 1 : -1);
+        points[offset] = x + (dx / dist) * mag;
+        points[offset + 1] = y + (dy / dist) * mag;
     }
+    return points;
 }
 
 function applyMove(points, numPoints, params, time) {
@@ -838,11 +876,58 @@ function applyGrow(points, numPoints, params) {
 // ---------- end of new helpers ----------
 
 
+// Trim the delay/chase frame history, safely ignoring invalid sizes.
+// Param values can arrive from MIDI/bindings outside the UI sliders' range, so
+// guard against negative/NaN/oversized lengths (setting Array#length to those
+// throws "Invalid array length").
+function safeTrimHistory(history, maxHistory) {
+    if (
+        history &&
+        Number.isFinite(maxHistory) &&
+        maxHistory > 0 &&
+        maxHistory <= 0xffffffff &&
+        history.length > maxHistory
+    ) {
+        history.length = Math.floor(maxHistory);
+    }
+}
+
+function resolveChannelStepOrder(customOrder, assignedDacs) {
+    const hasDacs = Array.isArray(assignedDacs) && assignedDacs.length > 0;
+    const hasOrder = Array.isArray(customOrder) && customOrder.length > 0;
+    if (!hasDacs) return hasOrder ? customOrder.map(item => item.originalIndex !== undefined ? item.originalIndex : 0) : [0];
+    if (!hasOrder) return assignedDacs.map((_, i) => i);
+
+    const keyOf = (d) => (d && d.ip !== undefined) ? `${d.ip}:${d.channel !== undefined ? d.channel : ''}` : null;
+    if (assignedDacs.every(d => keyOf(d) !== null)) {
+        // Identity-match the saved order against the actual per-channel list so it
+        // survives channel reordering/removal and the layer+clip list combination.
+        return assignedDacs
+            .map((d, i) => ({ d, i }))
+            .sort((A, B) => {
+                const ia = customOrder.findIndex(item => keyOf(item) === keyOf(A.d));
+                const ib = customOrder.findIndex(item => keyOf(item) === keyOf(B.d));
+                if (ia === -1) return 1;
+                if (ib === -1) return -1;
+                return ia - ib;
+            })
+            .map(e => e.i);
+    }
+
+    // Legacy order entries without identity info: fall back to saved positions.
+    return customOrder
+        .map(item => item.originalIndex !== undefined ? item.originalIndex : 0)
+        .filter(idx => idx >= 0 && idx < assignedDacs.length);
+}
+
 function applyDelay(points, numPoints, params, effectStates, instanceId, context) {
     const { mode = 'segment', delayAmount, decay, delayDirection, useCustomOrder, customOrder, playstyle = 'repeat', steps = 10 } = params;
+    // points may be the shared processing buffer whose physical length exceeds
+    // the logical frame size (numPoints * 8) — always size from numPoints.
+    const currentFrameLen = numPoints * 8;
     if (!effectStates.has(instanceId)) effectStates.set(instanceId, []);
     const history = effectStates.get(instanceId);
-    history.unshift(new Float32Array(points.subarray(0, numPoints * 8)));
+    history.unshift(new Float32Array(points.subarray(0, currentFrameLen)));
 
     if (mode === 'segment') {
         // SEGMENT MODE THRESHOLD: Minimum 5 points required
@@ -851,8 +936,8 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
         }
 
         const maxHistory = delayAmount * steps + 1;
-        if (history.length > maxHistory) history.length = maxHistory;
-        const newPoints = new Float32Array(points.length);
+        safeTrimHistory(history, maxHistory);
+        const newPoints = new Float32Array(currentFrameLen);
         for (let i = 0; i < numPoints; i++) {
             let step = 0;
             const norm = i / numPoints;
@@ -869,7 +954,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 
             if (echo && echo.length > 0) {
                 let echoOff;
-                if (echo.length === points.length) {
+                if (echo.length === currentFrameLen) {
                     echoOff = off;
                 } else {
                     const echoNumPoints = echo.length / 8;
@@ -926,7 +1011,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
     } else if (mode === 'frame') {
         const numEchoes = steps;
         const maxHistory = delayAmount * numEchoes + 1;
-        if (history.length > maxHistory) history.length = maxHistory;
+        safeTrimHistory(history, maxHistory);
 
         const echoes = [];
         for (let k = 0; k < numEchoes; k++) {
@@ -942,7 +1027,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
         let totalPointsNeeded = 0;
         for (let k = 0; k < echoes.length; k++) {
             const src = echoes[k].points || points;
-            totalPointsNeeded += (src.length / 8);
+            totalPointsNeeded += (src === points ? numPoints : src.length / 8);
             if (k < echoes.length - 1) totalPointsNeeded += 1; // Bridge
         }
         const newPoints = new Float32Array(totalPointsNeeded * 8);
@@ -952,7 +1037,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
             const echo = echoes[k];
             const src = echo.points || points;
             const factor = echo.factor;
-            const srcNumPoints = src.length / 8;
+            const srcNumPoints = src === points ? numPoints : src.length / 8;
 
             // Copy echo points
             for (let i = 0; i < srcNumPoints; i++) {
@@ -993,7 +1078,9 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
             }
         }
 
-        if (points._channelDistributions) newPoints._channelDistributions = points._channelDistributions;
+        // NOTE: frame-mode delay concatenates per-echo copies, so input channel
+        // distributions (if any) would describe echo 0 only — drop them instead of
+        // copying stale offsets. Use channel mode for per-channel output.
         return newPoints;
     } else {
         const { assignedDacs } = context || {};
@@ -1001,7 +1088,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
         let maxStep = 0;
         const isCustom = useCustomOrder || params.delayMode === 'channel';
         if (isCustom) {
-            const list = (customOrder && customOrder.length > 0) ? customOrder.map(item => item.originalIndex) : (assignedDacs ? assignedDacs.map((_, i) => i) : [0]);
+            const list = resolveChannelStepOrder(customOrder, assignedDacs);
             list.forEach((dacIdx, step) => { channelDelayMap.set(dacIdx, step); maxStep = Math.max(maxStep, step); });
         } else {
             const dacs = assignedDacs || [];
@@ -1016,37 +1103,59 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
         }
         const numEchoes = maxStep + 1;
         const maxHistory = delayAmount * numEchoes + 1;
-        if (history.length > maxHistory) history.length = maxHistory;
+        safeTrimHistory(history, maxHistory);
         const echoes = [];
         for (let k = 0; k < numEchoes; k++) {
             const index = k * delayAmount;
             echoes.push({ points: (index < history.length) ? history[index] : null, factor: Math.pow(decay, k), index: k });
         }
-        const totalPoints = echoes.reduce((sum, e) => sum + (e.points ? e.points.length / 8 : points.length / 8), 0);
-        const newBuffer = new Float32Array(totalPoints * 8);
+        // Total point count isn't known until we walk each echo's effective length,
+        // so allocate with a conservative cap and trim at the end (started at
+        // totalPoints and grows by a 1-pt blanked bridge between echoes).
+        const totalPoints = echoes.reduce((sum, e) => sum + (e.points ? e.points.length / 8 : numPoints), 0);
+        const bufferLen = (totalPoints + Math.max(0, echoes.length - 1)) * 8;
+        const newBuffer = new Float32Array(bufferLen);
         let offset = 0;
         const echoOffsets = new Array(echoes.length);
         for (let k = 0; k < echoes.length; k++) {
-            const echo = echoes[k]; const ePoints = echo.points; const eNum = ePoints ? ePoints.length / 8 : points.length / 8;
+            const echo = echoes[k]; const ePoints = echo.points; const eNum = ePoints ? ePoints.length / 8 : numPoints;
+            const factor = echo.factor;
             echoOffsets[k] = offset;
             for (let i = 0; i < eNum; i++) {
                 const srcOff = i * 8; const dstOff = offset + i * 8;
                 if (ePoints) {
                     newBuffer[dstOff] = ePoints[srcOff]; newBuffer[dstOff + 1] = ePoints[srcOff + 1]; newBuffer[dstOff + 2] = ePoints[srcOff + 2];
-                    newBuffer[dstOff + 3] = ePoints[srcOff + 3] * echo.factor; newBuffer[dstOff + 4] = ePoints[srcOff + 4] * echo.factor; newBuffer[dstOff + 5] = ePoints[srcOff + 5] * echo.factor;
+                    newBuffer[dstOff + 3] = ePoints[srcOff + 3] * factor; newBuffer[dstOff + 4] = ePoints[srcOff + 4] * factor; newBuffer[dstOff + 5] = ePoints[srcOff + 5] * factor;
                     newBuffer[dstOff + 6] = ePoints[srcOff + 6]; newBuffer[dstOff + 7] = ePoints[srcOff + 7];
                 } else {
                     newBuffer[dstOff + 6] = 1;
                 }
             }
             offset += eNum * 8;
+            // Blanked bridge point between echoes so the concatenated frame (drawn as one
+            // sequence in the preview) doesn't fire a visible line from the end of one echo
+            // to the start of the next. Per-channel DAC slices never include the bridge.
+            if (k < echoes.length - 1) {
+                const lastOff = offset - 8;
+                newBuffer[offset] = newBuffer[lastOff];
+                newBuffer[offset + 1] = newBuffer[lastOff + 1];
+                newBuffer[offset + 2] = newBuffer[lastOff + 2];
+                newBuffer[offset + 3] = 0;
+                newBuffer[offset + 4] = 0;
+                newBuffer[offset + 5] = 0;
+                newBuffer[offset + 6] = 1;
+                newBuffer[offset + 7] = 0;
+                offset += 8;
+            }
         }
+        const trimmed = new Float32Array(offset);
+        trimmed.set(newBuffer.subarray(0, offset));
         const distributions = new Map();
         channelDelayMap.forEach((step, dacIndex) => {
-            if (step < echoes.length) distributions.set(dacIndex, { start: echoOffsets[step], length: echoes[step].points ? echoes[step].points.length : points.length });
+            if (step < echoes.length) distributions.set(dacIndex, { start: echoOffsets[step], length: echoes[step].points ? echoes[step].points.length : currentFrameLen });
         });
-        newBuffer._channelDistributions = distributions;
-        return newBuffer;
+        trimmed._channelDistributions = distributions;
+        return trimmed;
     }
 }
 
@@ -1074,7 +1183,7 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             t = t % steps;
         }
 
-        const newPoints = new Float32Array(points.length);
+        const newPoints = new Float32Array(numPoints * 8);
         for (let i = 0; i < numPoints; i++) {
             const norm = i / numPoints;
             let stepIndex = 0;
@@ -1128,7 +1237,7 @@ export function applyChase(points, numPoints, params, time, context = {}) {
         let channelStepMap = new Map();
         let numChannels = 0;
         if (useCustomOrder) {
-            const list = (customOrder && customOrder.length > 0) ? customOrder.map(item => item.originalIndex) : (assignedDacs ? assignedDacs.map((_, i) => i) : [0]);
+            const list = resolveChannelStepOrder(customOrder, assignedDacs);
             list.forEach((dacIdx, stepIndex) => { channelStepMap.set(dacIdx, stepIndex); numChannels++; });
         } else {
             numChannels = (assignedDacs ? assignedDacs.length : 1) || 1;
@@ -1152,6 +1261,30 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             t = Math.min(t, cycleLength);
         } else {
             t = t % cycleLength;
+        }
+
+        // If the input is already a per-channel concatenation (e.g. it came from a
+        // channel-mode Delay), chase should modulate each channel's OWN slice by its
+        // step intensity and keep the buffer layout untouched. Duplicating the whole
+        // concatenated frame per channel would make every channel re-render every
+        // other channel's echoes ("double delay" / trailing shapes within a channel).
+        const sourceDists = points._channelDistributions;
+        if (sourceDists && sourceDists.size > 0) {
+            const newBuffer = new Float32Array(points);
+            for (const [dacIndex, dist] of sourceDists.entries()) {
+                const stepIndex = channelStepMap.get(dacIndex) || 0;
+                let chaseDist = Math.abs(t - stepIndex);
+                if (chaseDist > cycleLength / 2) chaseDist = cycleLength - chaseDist;
+                let intensity = (chaseDist < overlap) ? (1.0 - (chaseDist / overlap)) : 0;
+                if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
+                for (let i = 0; i < dist.length; i += 8) {
+                    const dstOff = dist.start + i;
+                    newBuffer[dstOff + 3] *= intensity; newBuffer[dstOff + 4] *= intensity; newBuffer[dstOff + 5] *= intensity;
+                    if (intensity < 0.05) newBuffer[dstOff + 6] = 1;
+                }
+            }
+            newBuffer._channelDistributions = sourceDists;
+            return newBuffer;
         }
 
         const totalPoints = numPoints * numChannels;

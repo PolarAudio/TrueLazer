@@ -75,6 +75,40 @@ export function optimizePoints(points, settings = {}) {
     const numPoints = isTyped ? (points.length / 8) : points.length;
     if (numPoints === 0) return new Float32Array(0);
 
+    // A frame produced by a channel-based effect (delay/chase) is a concatenation
+    // of per-DAC slices described by _channelDistributions element offsets. Must
+    // optimize each slice as its own coherent path and rebuild the distribution
+    // map, otherwise the geometry pass interpolates across DAC boundaries and the
+    // downstream per-DAC subarray() offsets would point into the wrong points.
+    if (points._channelDistributions && points._channelDistributions.size > 0) {
+        const dists = points._channelDistributions;
+        const keys = Array.from(dists.keys()).sort((a, b) => dists.get(a).start - dists.get(b).start);
+        const outSlices = [];
+        const newDists = new Map();
+        let outOffset = 0;
+        for (const key of keys) {
+            const d = dists.get(key);
+            const start = Math.max(0, d.start);
+            const end = Math.min(d.start + d.length, points.length);
+            if (end <= start) continue;
+            const slice = points.subarray(start, end);
+            const optimized = optimizePoints(slice, settings);
+            if (optimized.length === 0) continue;
+            newDists.set(key, { start: outOffset, length: optimized.length });
+            outSlices.push(optimized);
+            outOffset += optimized.length;
+        }
+        if (outSlices.length === 0) return new Float32Array(0);
+        const result = new Float32Array(outOffset);
+        let o = 0;
+        for (const s of outSlices) {
+            result.set(s, o);
+            o += s.length;
+        }
+        result._channelDistributions = newDists;
+        return result;
+    }
+
     // Merge preset defaults + explicit overrides.
     const presetSettings = getOptimizerSettings(settings.preset, settings.overrides || null);
     const totalSettings = { ...presetSettings, ...settings };
