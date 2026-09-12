@@ -16,7 +16,6 @@ const LayerEffectSpeedSettings = ({ enabled, settings, globalBpm, globalFps, onT
     if (onUpdateUiState) {
       onUpdateUiState({
         collapsedPanels: {
-          ...collapsedPanels,
           effectSpeed: val
         }
       });

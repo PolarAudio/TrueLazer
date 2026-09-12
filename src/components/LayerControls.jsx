@@ -7,14 +7,8 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
   activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu,
   thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo,
   onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker, blendMode, onBlendModeChange }) => {
-  const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
-
-  // Update internal state when layerEffects prop changes
-  useEffect(() => {
-    setAppliedEffects(layerEffects || []);
-  }, [layerEffects]);
 
   const handleClear = () => {
       if (onDeactivateLayerClips) onDeactivateLayerClips(index);
@@ -44,6 +38,15 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
       el.addEventListener('wheel', handler, { passive: false });
       return () => el.removeEventListener('wheel', handler);
   }, [intensity, index, onIntensityChange]);
+
+  const lastFxLenRef = useRef(null);
+  useEffect(() => {
+      const n = (layerEffects || []).length;
+      if (lastFxLenRef.current !== null && n > lastFxLenRef.current) {
+          console.debug('[fx-render] Badges grew:', lastFxLenRef.current, '->', n);
+      }
+      lastFxLenRef.current = n;
+  }, [layerEffects]);
 
   const handleLayerSelectLocal = () => {
       if (onLayerSelect) onLayerSelect(index);
@@ -194,7 +197,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
             onMouseLeave={() => setIsHovered(false)}
             style={{ overflow: 'hidden' }}
         >
-			{activeClipData ? (
+			{activeClipData && (
                 shouldShowLive ? (
                     <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} frames={activeClipData?.frames} effects={combinedEffects} ildaParserWorker={ildaParserWorker} workerId={activeClipData?.workerId} />
                 ) : (
@@ -208,15 +211,14 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
                         <StaticIldaThumbnail frame={activeClipData.stillFrame} />
                     )
                 )
-			) : (
-			appliedEffects.length > 0 && (
-            <div className="applied-effects">
-              {appliedEffects.map((effect, idx) => (
-                <span key={effect.instanceId || idx} className="effect-tag">{(effect.name || effect.id || '???').substring(0, 3).toUpperCase()}</span>
-              ))}
-            </div>
-          )
-                )}
+            )}
+            {(layerEffects || []).length > 0 && (
+                <div className="applied-effects">
+                    {(layerEffects || []).map((effect, idx) => (
+                        <span key={effect.instanceId || idx} className="effect-tag">{(effect.name || effect.id || '???').substring(0, 3).toUpperCase()}</span>
+                    ))}
+                </div>
+            )}
               </div>
               <span className="layer-name-label" onClick={handleLayerSelectLocal}>{layerName}</span>
             </div>

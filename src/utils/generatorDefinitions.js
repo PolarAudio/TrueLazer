@@ -25,7 +25,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -61,7 +61,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -95,7 +95,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -133,7 +133,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
@@ -171,7 +171,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'g', label: 'Green', type: 'range', min: 0, max: 255, step: 1 },
       { id: 'b', label: 'Blue', type: 'range', min: 0, max: 255, step: 1 },
@@ -207,7 +207,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },
@@ -248,7 +248,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'scale', label: 'Scale', type: 'range', min: 0.1, max: 2.0, step: 0.1 },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
@@ -286,7 +286,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'scale', label: 'Scale', type: 'range', min: 0.1, max: 2.0, step: 0.1 },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
@@ -327,7 +327,7 @@ export const generatorDefinitions = [
           { label: 'Dots', value: 'dots' }
       ]},
       { id: 'thickness', label: 'Thickness', type: 'range', min: 1, max: 10, step: 1, condition: (p) => p.renderingStyle === 'dotted' },
-      { id: 'blankingSize', label: 'Blanking Size', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
+      { id: 'blankingSize', label: 'Blanked Segments', type: 'range', min: 1, max: 20, step: 1, condition: (p) => p.renderingStyle === 'blanked' },
       { id: 'x', label: 'X Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'y', label: 'Y Position', type: 'range', min: -1.0, max: 1.0, step: 0.01 },
       { id: 'r', label: 'Red', type: 'range', min: 0, max: 255, step: 1 },

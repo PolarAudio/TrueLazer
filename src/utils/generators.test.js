@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { generateTriangle } from './generators';
+import { generateTriangle, generateCircle } from './generators';
 
 // Mock opentype.js
 vi.mock('opentype.js', () => ({
@@ -29,7 +29,7 @@ describe('generateTriangle', () => {
     expect(result.points.length).toBe(91);
   });
 
-  it('should have first point at corner and each edge end at a corner', () => {
+  it('should start at the first corner and hit every corner exactly', () => {
     const params = {
       width: 2,
       height: 2,
@@ -40,10 +40,16 @@ describe('generateTriangle', () => {
       b: 255
     };
     const result = generateTriangle(params);
+    expect(result.points.length).toBe(91);
     expect(result.points[0]).toMatchObject({ x: 0, y: 0 });
-    expect(result.points[30]).toMatchObject({ x: 2, y: 0 });
-    expect(result.points[60]).toMatchObject({ x: 1, y: 2 });
-    expect(result.points[90]).toMatchObject({ x: 0, y: 0 });
+
+    // Anchored corners: every vertex is sampled exactly (no straddling), so a
+    // physical scanner aims at the true corner instead of the closest sample.
+    const hasPoint = (px, py) =>
+      result.points.some(p => Math.abs(p.x - px) < 1e-9 && Math.abs(p.y - py) < 1e-9);
+    expect(hasPoint(0, 0)).toBe(true);
+    expect(hasPoint(2, 0)).toBe(true);
+    expect(hasPoint(1, 2)).toBe(true);
   });
 
   it('should generate an equilateral triangle when size is provided', () => {
@@ -114,6 +120,103 @@ describe('generateWaveform', () => {
     return result.then(res => {
         expect(res.points.length).toBe(32);
     });
+  });
+});
+
+describe('beam rendering styles', () => {
+  it('dots style dwells each stroke point into ~10 samples with blanked approach and tail', () => {
+    const normal = generateCircle({ numPoints: 4, renderingStyle: 'normal' });
+    const dots = generateCircle({ numPoints: 4, renderingStyle: 'dots' });
+    const inputCount = normal.points.length;
+
+    expect(dots.points.length).toBe(inputCount * 10); // 1 blanked approach + 8 lit dwell + 1 blanked tail
+
+    // First dot group: [blank approach][8 lit dwell][blank tail]
+    expect(dots.points[0].blanking).toBe(true);
+    expect(dots.points[1].blanking).toBe(false);
+    expect(dots.points[8].blanking).toBe(false);
+    expect(dots.points[9].blanking).toBe(true);
+
+    // All lit dwell samples sit on the same spot so the scanner settles
+    for (let i = 1; i < 9; i++) {
+      expect(dots.points[i].x).toBe(dots.points[0].x);
+      expect(dots.points[i].y).toBe(dots.points[0].y);
+    }
+
+    // Group boundaries are fully blanked so no connecting line can be drawn
+    expect(dots.points[10].blanking).toBe(true);
+    expect(dots.points[19].blanking).toBe(true);
+    expect(dots.points[dots.points.length - 1].blanking).toBe(true);
+  });
+
+  it('dots style keeps every dot lit and dark approach/tail strictly alternating', () => {
+    const dots = generateCircle({ numPoints: 4, renderingStyle: 'dots' });
+    for (let g = 0; g < dots.points.length / 10; g++) {
+      const base = g * 10;
+      expect(dots.points[base].blanking).toBe(true);
+      for (let i = 1; i < 9; i++) {
+        expect(dots.points[base + i].blanking).toBe(false);
+      }
+      expect(dots.points[base + 9].blanking).toBe(true);
+    }
+  });
+
+  it('dotted style is visible at default thickness and scales toward 10 samples', () => {
+    const normal = generateCircle({ numPoints: 4, renderingStyle: 'normal' });
+    const inputCount = normal.points.length;
+
+    const light = generateCircle({ numPoints: 4, renderingStyle: 'dotted' }); // thickness defaults to 1
+    expect(light.points.length).toBe(inputCount * 2); // thickness 1 -> 2 samples per point
+
+    const heavy = generateCircle({ numPoints: 4, renderingStyle: 'dotted', thickness: 9 });
+    expect(heavy.points.length).toBe(inputCount * 10); // capped at 10 samples per point
+
+    // Keeps the segment line: every stroke point stays lit
+    expect(light.points.every(p => !p.blanking)).toBe(true);
+    expect(heavy.points.every(p => !p.blanking)).toBe(true);
+  });
+});
+
+describe('blanked beam style', () => {
+  it('divides an even point count into equal lit/blanked segments', () => {
+    const normal = generateCircle({ numPoints: 50, renderingStyle: 'normal' });
+    // 50 samples + closing duplicate is stripped, leaving 50 stroke points.
+    expect(normal.points.length).toBe(51);
+
+    const blanked = generateCircle({ numPoints: 50, renderingStyle: 'blanked', blankingSize: 5 });
+    expect(blanked.points.length).toBe(50); // 10 blocks x 5 points
+
+    for (let b = 0; b < 10; b++) {
+      for (let p = 0; p < 5; p++) {
+        const idx = b * 5 + p;
+        expect(blanked.points[idx].blanking).toBe(b % 2 === 1);
+      }
+    }
+  });
+
+  it('rounds an odd point count up to the nearest divisible division', () => {
+    const blanked = generateCircle({ numPoints: 45, renderingStyle: 'blanked', blankingSize: 6 });
+    // 45 stroke points / (2*6) blocks = 3.75 -> rounded up to 48 points (4 per block).
+    expect(blanked.points.length).toBe(48);
+
+    for (let b = 0; b < 12; b++) {
+      for (let p = 0; p < 4; p++) {
+        const idx = b * 4 + p;
+        expect(blanked.points[idx].blanking).toBe(b % 2 === 1);
+      }
+    }
+  });
+
+  it('stretches duplicates without altering the geometry parity', () => {
+    const blanked = generateCircle({ numPoints: 45, renderingStyle: 'blanked', blankingSize: 6 });
+    const first = blanked.points[0];
+    const distinct = new Set(blanked.points.map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+    // First output sample is the first stroke point.
+    expect(first.x).toBeCloseTo(0.5, 6);
+    expect(first.y).toBeCloseTo(0, 6);
+    // Padding duplicates stay on existing stroke samples (never morph the shape).
+    expect(distinct.size).toBeLessThanOrEqual(45);
+    expect(distinct.size).toBeGreaterThan(30);
   });
 });
 

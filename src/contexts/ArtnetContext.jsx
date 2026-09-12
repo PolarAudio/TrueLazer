@@ -197,7 +197,7 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
     }
   }, [throttledArtnetCommand]); 
 
-  const saveMappings = async (newMappings = mappings) => {
+  const saveMappings = useCallback(async (newMappings = mappings) => {
       if (window.electronAPI && window.electronAPI.saveArtnetMappings) {
           const toSave = { 
               ...newMappings, 
@@ -205,15 +205,15 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
           };
           await window.electronAPI.saveArtnetMappings(toSave);
       }
-  };
+  }, [mappings, artnetInterface]);
 
-  const exportMappings = async () => {
+  const exportMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.exportMappings) {
           await window.electronAPI.exportMappings(mappings, 'artnet');
       }
-  };
+  }, [mappings]);
 
-  const importMappings = async () => {
+  const importMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.importMappings) {
           const result = await window.electronAPI.importMappings('artnet');
           if (result.success && result.mappings) {
@@ -221,15 +221,15 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
               setMappings(pureMappings);
           }
       }
-  };
+  }, []);
 
-  const startMapping = () => setIsMapping(true);
-  const stopMapping = () => {
+  const startMapping = useCallback(() => setIsMapping(true), []);
+  const stopMapping = useCallback(() => {
       setIsMapping(false);
       setLearningId(null);
-  };
+  }, []);
 
-  const autoPatchFixedFootprint = () => {
+  const autoPatchFixedFootprint = useCallback(() => {
       const newMappings = {};
       newMappings['master_intensity'] = { universe: 0, channel: 0, label: 'U0:CH1 (Fixed)' };
       newMappings['blackout'] = { universe: 0, channel: 1, label: 'U0:CH2 (Fixed)' };
@@ -245,17 +245,17 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
       }
 
       setMappings(prev => ({ ...prev, ...newMappings }));
-  };
+  }, []);
 
-  const removeMapping = (controlId) => {
+  const removeMapping = useCallback((controlId) => {
       setMappings(prev => {
           const next = { ...prev };
           delete next[controlId];
           return next;
       });
-  };
+  }, []);
 
-  const value = {
+  const value = useMemo(() => ({
     artnetInitialized,
     isMapping,
     startMapping,
@@ -275,7 +275,27 @@ export const ArtnetProvider = ({ children, onArtnetCommand }) => {
     autoPatchFixedFootprint,
     artnetInterface,
     setArtnetInterface
-  };
+  }), [
+    artnetInitialized,
+    isMapping,
+    learningId,
+    mappings,
+    lastDmxEvent,
+    dmxData,
+    universeFilter,
+    artnetInterface,
+    saveMappings,
+    exportMappings,
+    importMappings,
+    startMapping,
+    stopMapping,
+    autoPatchFixedFootprint,
+    removeMapping,
+    setMappings,
+    setLearningId,
+    setUniverseFilter,
+    setArtnetInterface
+  ]);
 
   return (
     <ArtnetContext.Provider value={value}>

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Mappable from './Mappable';
 
-const BPMControls = ({ bpm, onBpmChange }) => {
-  const [tapTimes, setTapTimes] = useState([]);
+const BPMControls = ({ bpm, onBpmChange, onTap }) => {
   const [localBpm, setLocalBpm] = useState(bpm);
 
   useEffect(() => {
@@ -10,19 +9,7 @@ const BPMControls = ({ bpm, onBpmChange }) => {
   }, [bpm]);
 
   const handleTap = () => {
-    const now = Date.now();
-    const newTapTimes = [...tapTimes, now].slice(-4);
-    setTapTimes(newTapTimes);
-
-    if (newTapTimes.length >= 2) {
-      const intervals = [];
-      for (let i = 1; i < newTapTimes.length; i++) {
-        intervals.push(newTapTimes[i] - newTapTimes[i - 1]);
-      }
-      const avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
-      const tappedBpm = Math.round(60000 / avgInterval);
-      onBpmChange(tappedBpm);
-    }
+    if (onTap) onTap();
   };
 
   const handleBpmInputChange = (e) => {

@@ -31,37 +31,87 @@ function applyRenderingStyle(points, params) {
     const styledPoints = [];
 
     if (renderingStyle === 'dotted') {
+        // Dashes keep the segment line: dwell each stroke point while staying lit.
+        // thickness+1 samples per point keeps the style slightly visible at the
+        // default thickness of 1 and grows toward 10 at max thickness.
+        const dwell = Math.min(10, Math.max(1, Math.round(thickness)) + 1);
         for (const p of points) {
-            // Repeat the same point multiple times to increase dwell time (thicken the beam)
-            for (let i = 0; i < thickness; i++) {
+            for (let i = 0; i < dwell; i++) {
                 styledPoints.push({ ...p });
             }
         }
     } else if (renderingStyle === 'blanked') {
-        // "Blank each 2nd line" with adjustable segment size
-        const size = Math.max(1, Math.floor(blankingSize));
-        for (let i = 0; i < points.length; i++) {
-            const p = points[i];
+        // `blankingSize` = number of blanked segments. The stroke is divided into
+        // 2 * blankingSize blocks (lit, blank, lit, blank, ...) of equal length.
+        // Closed generators append a duplicate closing point, so it is removed
+        // first or the equal division would be off by one (circle 50 points /
+        // 5 segments => 5 lit + 5 blanked, exactly).
+        //
+        // If the point count does not divide evenly into the block count the
+        // frame is padded up to the nearest divisible count (circle 45 points /
+        // 6 segments => 48 points = 6 lit blocks of 4 + 6 blanked blocks of 4)
+        // by stretching duplicate samples across the stroke.
+        const segments = Math.max(1, Math.floor(blankingSize));
+        const blocks = segments * 2;
+
+        let stroke = points;
+        const first = points[0];
+        const last = points[points.length - 1];
+        const hasClosingDup = first && last &&
+            Math.abs(last.x - first.x) < 1e-9 &&
+            Math.abs(last.y - first.y) < 1e-9;
+        if (hasClosingDup) stroke = points.slice(0, -1);
+        if (stroke.length === 0) return points;
+
+        const blockSize = Math.max(1, Math.ceil(stroke.length / blocks));
+        const targetCount = blockSize * blocks;
+
+        let frame = stroke;
+        if (targetCount !== stroke.length) {
+            // Stretch duplicates so every source point exists in the output and
+            // each block holds exactly `blockSize` samples.
+            frame = new Array(targetCount);
+            const ratio = stroke.length / targetCount;
+            for (let i = 0; i < targetCount; i++) {
+                frame[i] = stroke[Math.min(stroke.length - 1, Math.floor(i * ratio))];
+            }
+        }
+
+        for (let i = 0; i < frame.length; i++) {
+            const p = frame[i];
             if (p.blanking) {
+                // Respect intrinsic blanking (e.g. pen-up moves in text).
                 styledPoints.push({ ...p });
+                continue;
+            }
+            if (Math.floor(i / blockSize) % 2 === 0) {
+                styledPoints.push({ ...p, blanking: false });
             } else {
-                // Blocks of 'size' points on, 'size' points off
-                if (Math.floor(i / size) % 2 === 0) {
-                    styledPoints.push({ ...p });
-                } else {
-                    styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
-                }
+                styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
             }
         }
     } else if (renderingStyle === 'dots') {
-        // "Only show the points and no lines"
+        // "Only show the points and no lines". Each stroke point becomes its own
+        // dot: 1 blanked approach (beam off while the scanner flies in), 8 lit
+        // dwell samples so a physical projector settles into a true dot instead of
+        // a streak, and 1 blanked tail. ~10 points per dot matches the dwell found
+        // in dotted ILD shapes on disk. Both the approach and the tail are blanked
+        // because the optimizer colors gap interpolation from the destination
+        // point, so a blank tail directly followed by a lit point would redraw the
+        // connection line as a visible dash.
+        const DOT_APPROACH = 1;
+        const DOT_LIT = 8;
+        const DOT_TAIL = 1;
         for (const p of points) {
-            // 1. Move to point while blanked
-            styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
-            // 2. Show the point (Flash it)
-            styledPoints.push({ ...p, blanking: false });
-            // 3. Repeat to ensure visibility
-            styledPoints.push({ ...p, blanking: false });
+            for (let i = 0; i < DOT_APPROACH; i++) {
+                styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
+            }
+            for (let i = 0; i < DOT_LIT; i++) {
+                styledPoints.push({ ...p, blanking: false });
+            }
+            for (let i = 0; i < DOT_TAIL; i++) {
+                styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
+            }
         }
     }
 
@@ -271,14 +321,15 @@ export function generateTriangle(params) {
     const w = size !== null ? size : width;
     const h = size !== null ? (w * Math.sqrt(3) / 2) : height;
 
-    // Vector-path construction (Area 4).
+    // Vector-path construction (Area 4). Vertices are anchored so the sharp
+    // corners are aimed at exactly, not straddled by arc-length samples.
     const corners = [
       { x: -w / 2 + x, y: -h / 2 + y },
       { x: w / 2 + x, y: -h / 2 + y },
       { x: x, y: h / 2 + y },
     ];
 
-    const samples = samplePath(corners, numPoints, { closed: true });
+    const samples = samplePath(corners, numPoints, { closed: true, anchorVertices: true });
     const points = colorize(samples, { r, g, b });
     points.push({ ...samples[0], r, g, b, lastPoint: false });
 

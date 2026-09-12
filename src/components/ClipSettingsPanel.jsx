@@ -30,11 +30,13 @@ const ClipSettingsPanel = ({
   onParameterChange,
   onGeneratorParameterChange,
   onUpdateClipUiState,
+  uiState: uiStateProp,
   progressRef,
   onAudioError,
   onRegisterPreset,
   liveFramesRef,
-  activePageId
+  activePageId,
+  playbackSettingsOverride
 }) => {
   const [dacStatuses, setDacStatuses] = useState({});
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
@@ -58,14 +60,17 @@ const ClipSettingsPanel = ({
     return list;
   }, [layerDacs, clipAssignedDacs]);
 
-  const uiState = clip?.uiState || {};
+  // Collapse/UI state comes from committed state (always fresh), NOT from the
+  // live clip object - the live ref may lag state while a clip-effect param edit
+  // is pending, and a stale collapse map would let toggling one panel reset
+  // other panels' collapsed state.
+  const uiState = uiStateProp || clip?.uiState || {};
   const collapsedPanels = uiState.collapsedPanels || {};
 
   const togglePanel = (panelId, isNowCollapsed) => {
     if (onUpdateClipUiState) {
         onUpdateClipUiState(selectedLayerIndex, selectedColIndex, {
             collapsedPanels: {
-                ...collapsedPanels,
                 [panelId]: isNowCollapsed
             }
         });
@@ -141,7 +146,6 @@ const ClipSettingsPanel = ({
   const {
     effects = [],
     assignedDacs = [],
-    playbackSettings = {},
     syncSettings = {},
     audioFile = null,
     audioVolume = 1.0,
@@ -150,6 +154,11 @@ const ClipSettingsPanel = ({
     currentParams = {},
     workerId = null
   } = clip || {};
+
+  // Playback settings come from committed state when provided (so the UI updates the
+  // instant a control is touched) instead of the live ref clip, which only syncs
+  // after commit and would show stale values on the first interaction.
+  const playbackSettings = (playbackSettingsOverride !== undefined ? playbackSettingsOverride : clip?.playbackSettings) || {};
 
   const hasEffects = effects.length > 0;
   const hasGenerator = type === 'generator' && !!generatorDefinition;

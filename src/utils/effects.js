@@ -1,4 +1,24 @@
 import { effectDefinitions } from './effectDefinitions';
+import { reduceFramePoints } from './pointReducer';
+
+// Hard safety cap for the per-frame effect pipeline. Effects that multiply
+// points (mirror additive, delay/chase in frame mode) compound multiplicatively,
+// so a mirror×N + delay stack can run away to six-figure point counts and blow
+// past every consumer's assumptions ("out of range", giant allocations). No DAC
+// budget (~pps/fps, ~1000 at 30kpps/30fps, ILDA frames ≤ 4000) can ever render
+// beyond this, so capping early loses no visible output — it only stops the
+// runaway. `reduceFramePoints` is shape-preserving: blanks, corner dwell and
+// lit-run structure survive the reduction.
+export const MAX_EFFECT_POINTS = 16000;
+
+// Per-frame point budget used to bound frame-mode delay output. Frame mode
+// concatenates ~numPoints per echo, so steps>5 on a dense frame yields
+// thousands of points that no DAC frame can digest — the send stage decimates
+// to ~1k anyway, so the extra points are pure waste that inflates stats way
+// over 100% (and formerly crashed the pipeline). The effect preserves the
+// number of echoes and only trims per-echo fidelity when the concatenation
+// would exceed this budget. Overridable per-call via context.framePointBudget.
+export const DEFAULT_FRAME_POINT_BUDGET = 1000;
 
 // X/Y axis pairs that stay in lockstep when the effect's `linkXY` flag is on:
 // animating one axis also mirrors its resolved value onto the partner (unless
@@ -223,11 +243,11 @@ export function applyEffects(frame, effects, context = {}) {
         // Dispatch to appropriate handler
         switch (effect.id) {
             // --- Existing effects ---
-            case 'rotate': applyRotate(activePoints, currentNumPoints, resolvedParams, effectiveProgress, time); break;
+            case 'rotate': applyRotate(activePoints, currentNumPoints, resolvedParams, effectiveProgress, time, effectStates, effect.instanceId); break;
             case 'scale': applyScale(activePoints, currentNumPoints, resolvedParams); break;
             case 'translate': applyTranslate(activePoints, currentNumPoints, resolvedParams); break;
             case 'color': applyColor(activePoints, currentNumPoints, resolvedParams, time); break;
-            case 'wave': applyWave(activePoints, currentNumPoints, resolvedParams, time); break;
+            case 'wave': applyWave(activePoints, currentNumPoints, resolvedParams, time, effectStates, effect.instanceId); break;
             case 'blanking': applyBlanking(activePoints, currentNumPoints, resolvedParams); break;
             case 'strobe': applyStrobe(activePoints, currentNumPoints, resolvedParams, time); break;
             case 'mirror': 
@@ -254,7 +274,22 @@ export function applyEffects(frame, effects, context = {}) {
             case 'grow': applyGrow(activePoints, currentNumPoints, resolvedParams); break;
 
             // ... other existing effects continued ...
-            default: /* no‑op */ break;
+            default: /* no-op */ break;
+        }
+
+        // Runaway-frame guard: mirror (additive), delay and chase in frame mode
+        // multiply point counts multiplicatively — a mirror×N + delay stack can
+        // compound to >100k points and trip an out-of-range / giant-allocation
+        // failure downstream. Capping each stage keeps every intermediate buffer
+        // bounded; `reduceFramePoints` preserves blanks + lit-run structure, and
+        // since no DAC budget ever exceeds this, visible output is unaffected.
+        if (currentNumPoints > MAX_EFFECT_POINTS) {
+            const hadDistributions = !!activePoints._channelDistributions;
+            activePoints = reduceFramePoints(activePoints, currentNumPoints, MAX_EFFECT_POINTS);
+            currentNumPoints = activePoints.length / 8;
+            if (!hadDistributions || currentNumPoints > MAX_EFFECT_POINTS) {
+                console.warn(`[effects] Frame exceeded ${MAX_EFFECT_POINTS} points; reduced to ${currentNumPoints} to prevent runaway allocation.`);
+            }
         }
     }
 
@@ -266,11 +301,31 @@ export function applyEffects(frame, effects, context = {}) {
     }
     return { ...frame, points: finalPoints, isTypedArray: true, isClosed: frame.isClosed === true };
 }
-function applyRotate(points, numPoints, params, progress, time) {
+// Returns a continuous phase that integrates dt*speed instead of recomputing the
+// whole `time*speed` product, which jumps when speed changes mid-playback.
+// When effectStates (a Map) and a key are provided, the phase accumulates there;
+// otherwise it falls back to absolute time (e.g. thumbnails).
+function getContinuousPhase(effectStates, key, time, speed, dirMult = 1) {
+    const canAccumulate = effectStates && key && typeof effectStates.get === 'function';
+    if (!canAccumulate) {
+        return (time * 0.001) * speed * dirMult;
+    }
+    let state = effectStates.get(key);
+    if (!state) {
+        state = { phase: 0, lastTime: time };
+        effectStates.set(key, state);
+    } else if (time >= state.lastTime) {
+        state.phase += ((time - state.lastTime) * 0.001) * speed * dirMult;
+        state.lastTime = time;
+    }
+    return state.phase;
+}
+
+function applyRotate(points, numPoints, params, progress, time, effectStates, instanceId) {
     const { angle, speed, direction } = params;
     const dirMult = direction === 'CCW' ? -1 : 1;
-    const continuousRotation = (time * 0.001) * speed * dirMult;
-    const currentAngle = (angle * Math.PI / 180) + continuousRotation;
+    const phaseOffset = getContinuousPhase(effectStates, instanceId ? `rotate:${instanceId}` : null, time, speed, dirMult);
+    const currentAngle = (angle * Math.PI / 180) + phaseOffset;
     const sin = Math.sin(currentAngle);
     const cos = Math.cos(currentAngle);
     for (let i = 0; i < numPoints; i++) {
@@ -301,14 +356,30 @@ function applyTranslate(points, numPoints, params) {
     }
 }
 
+const hexColorCache = new Map();
 function hexToRgb(hex) {
     if (!hex) return { r: 255, g: 255, b: 255 };
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-        r: parseInt(result[1], 16),
-        g: parseInt(result[2], 16),
-        b: parseInt(result[3], 16)
-    } : { r: 255, g: 255, b: 255 };
+    const cached = hexColorCache.get(hex);
+    if (cached) return cached;
+
+    let clean = hex.charCodeAt(0) === 35 ? hex.slice(1) : hex;
+    if (clean.length === 3) {
+        clean = clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2];
+    }
+    const num = parseInt(clean, 16);
+    let parsed;
+    if (Number.isNaN(num) || clean.length !== 6) {
+        parsed = { r: 255, g: 255, b: 255 };
+    } else {
+        parsed = {
+            r: (num >> 16) & 255,
+            g: (num >> 8) & 255,
+            b: num & 255
+        };
+    }
+    if (hexColorCache.size > 256) hexColorCache.clear();
+    hexColorCache.set(hex, parsed);
+    return parsed;
 }
 
 function hsvToRgb(h, s, v) {
@@ -348,52 +419,142 @@ function rgbToHsv(r, g, b) {
     return { h, s, v };
 }
 
-function applyColor(points, numPoints, params, time) {
+const PRESET_PALETTES = {
+    fire: [
+        { r: 255, g: 0, b: 0 },
+        { r: 255, g: 128, b: 0 },
+        { r: 255, g: 255, b: 0 },
+        { r: 255, g: 0, b: 0 }
+    ],
+    ice: [
+        { r: 0, g: 0, b: 255 },
+        { r: 0, g: 255, b: 255 },
+        { r: 255, g: 255, b: 255 },
+        { r: 0, g: 0, b: 255 }
+    ],
+    cyber: [
+        { r: 255, g: 0, b: 255 },
+        { r: 0, g: 255, b: 255 },
+        { r: 0, g: 0, b: 255 },
+        { r: 255, g: 0, b: 255 }
+    ]
+};
+
+export function applyColor(points, numPoints, params, time = 0) {
+    if (!points || numPoints <= 0) return;
     const {
-        mode, r, g, b, color,
+        mode = 'solid', r = 255, g = 255, b = 255, color,
         hue, saturation, brightness,
-        cycleSpeed, rainbowSpread, rainbowOffset, rainbowPalette,
+        cycleSpeed = 0, rainbowSpread = 1.0, rainbowOffset = 0, rainbowPalette = 'rainbow',
         paletteColors = [], paletteSize = 4, paletteSpread = 1.0
     } = params;
+
     const cycleTime = time * 0.001 * cycleSpeed;
+    const isTyped = points instanceof Float32Array || (typeof points.length === 'number' && typeof points[0] === 'number');
 
     if (mode === 'palette') {
-        // ... existing palette logic ...
         const activeCount = Math.min(paletteColors.length, paletteSize);
-        const colors = paletteColors.slice(0, activeCount).map(hexToRgb);
-        if (colors.length === 0) colors.push({ r: 255, g: 255, b: 255 });
+        const colors = activeCount > 0
+            ? paletteColors.slice(0, activeCount).map(hexToRgb)
+            : [{ r: 255, g: 255, b: 255 }];
+
+        const colorCount = colors.length;
+        const invNumPoints = paletteSpread / numPoints;
+        const baseOffset = (cycleTime * 0.5) + (rainbowOffset / 360);
 
         for (let i = 0; i < numPoints; i++) {
-            const offset = i * 8;
-            const normalizedPos = ((i / numPoints * paletteSpread) + (cycleTime * 0.5) + (rainbowOffset / 360)) % 1.0;
+            let normalizedPos = (i * invNumPoints + baseOffset) % 1.0;
+            if (normalizedPos < 0) normalizedPos += 1.0;
 
-            const scaledPos = normalizedPos * (colors.length);
-            const index = Math.floor(scaledPos) % colors.length;
-            const nextIndex = (index + 1) % colors.length;
-            const factor = scaledPos - Math.floor(scaledPos);
+            const scaledPos = normalizedPos * colorCount;
+            const index = Math.floor(scaledPos);
+            const factor = scaledPos - index;
+            const c1 = colors[index % colorCount];
+            const c2 = colors[(index + 1) % colorCount];
 
-            const c1 = colors[index];
-            const c2 = colors[nextIndex];
+            const cr = Math.round(c1.r + (c2.r - c1.r) * factor);
+            const cg = Math.round(c1.g + (c2.g - c1.g) * factor);
+            const cb = Math.round(c1.b + (c2.b - c1.b) * factor);
 
-            points[offset + 3] = Math.round(c1.r + (c2.r - c1.r) * factor);
-            points[offset + 4] = Math.round(c1.g + (c2.g - c1.g) * factor);
-            points[offset + 5] = Math.round(c1.b + (c2.b - c1.b) * factor);
+            if (isTyped) {
+                const offset = i * 8;
+                points[offset + 3] = cr;
+                points[offset + 4] = cg;
+                points[offset + 5] = cb;
+            } else if (points[i]) {
+                points[i].r = cr;
+                points[i].g = cg;
+                points[i].b = cb;
+            }
         }
     } else if (mode === 'rainbow') {
-        // ... existing rainbow logic ...
         const palette = rainbowPalette || 'rainbow';
-        for (let i = 0; i < numPoints; i++) {
-            const offset = i * 8;
-            const normalizedPos = ((i / numPoints * rainbowSpread) + (cycleTime * 0.5) + (rainbowOffset / 360)) % 1.0;
-            let cr, cg, cb;
-            if (palette === 'rainbow') {
-                [cr, cg, cb] = hslToRgb(normalizedPos, 1, 0.5);
-            } else {
-                [cr, cg, cb] = getPaletteColor(palette, normalizedPos);
+        const invNumPoints = rainbowSpread / numPoints;
+        const baseOffset = (cycleTime * 0.5) + (rainbowOffset / 360);
+
+        if (palette === 'rainbow') {
+            // Direct zero-allocation HSL rainbow (S=1, L=0.5)
+            for (let i = 0; i < numPoints; i++) {
+                let pos = (i * invNumPoints + baseOffset) % 1.0;
+                if (pos < 0) pos += 1.0;
+
+                const h6 = pos * 6;
+                const sector = Math.floor(h6);
+                const f = h6 - sector;
+                const up = Math.round(f * 255);
+                const down = Math.round((1 - f) * 255);
+
+                let cr, cg, cb;
+                switch (sector) {
+                    case 0: cr = 255; cg = up; cb = 0; break;
+                    case 1: cr = down; cg = 255; cb = 0; break;
+                    case 2: cr = 0; cg = 255; cb = up; break;
+                    case 3: cr = 0; cg = down; cb = 255; break;
+                    case 4: cr = up; cg = 0; cb = 255; break;
+                    default: cr = 255; cg = 0; cb = down; break;
+                }
+
+                if (isTyped) {
+                    const offset = i * 8;
+                    points[offset + 3] = cr;
+                    points[offset + 4] = cg;
+                    points[offset + 5] = cb;
+                } else if (points[i]) {
+                    points[i].r = cr;
+                    points[i].g = cg;
+                    points[i].b = cb;
+                }
             }
-            points[offset + 3] = cr;
-            points[offset + 4] = cg;
-            points[offset + 5] = cb;
+        } else {
+            // Preset palettes (fire, ice, cyber)
+            const colors = PRESET_PALETTES[palette] || PRESET_PALETTES.fire;
+            const maxIndex = colors.length - 1;
+
+            for (let i = 0; i < numPoints; i++) {
+                let pos = (i * invNumPoints + baseOffset) % 1.0;
+                if (pos < 0) pos += 1.0;
+
+                const scaledPos = pos * maxIndex;
+                const index = Math.floor(scaledPos);
+                const factor = scaledPos - index;
+                const c1 = colors[index];
+                const c2 = colors[index + 1] || c1;
+
+                const cr = Math.round(c1.r + (c2.r - c1.r) * factor);
+                const cg = Math.round(c1.g + (c2.g - c1.g) * factor);
+                const cb = Math.round(c1.b + (c2.b - c1.b) * factor);
+
+                if (isTyped) {
+                    const offset = i * 8;
+                    points[offset + 3] = cr;
+                    points[offset + 4] = cg;
+                    points[offset + 5] = cb;
+                } else if (points[i]) {
+                    points[i].r = cr;
+                    points[i].g = cg;
+                    points[i].b = cb;
+                }
+            }
         }
     } else {
         let fr = r, fg = g, fb = b;
@@ -406,66 +567,78 @@ function applyColor(points, numPoints, params, time) {
             fr = c.r; fg = c.g; fb = c.b;
         }
 
-        if (cycleSpeed > 0) {
-            const hueCycle = (cycleTime * 50) % 360;
-            const [cr, cg, cb] = hslToRgb(hueCycle / 360, 1, 0.5);
+        if (cycleSpeed !== 0) {
+            let hueNorm = (cycleTime * (50 / 360)) % 1.0;
+            if (hueNorm < 0) hueNorm += 1.0;
+            const [cr, cg, cb] = hslToRgb(hueNorm, 1, 0.5);
             for (let i = 0; i < numPoints; i++) {
-                const offset = i * 8;
-                points[offset + 3] = cr;
-                points[offset + 4] = cg;
-                points[offset + 5] = cb;
+                if (isTyped) {
+                    const offset = i * 8;
+                    points[offset + 3] = cr;
+                    points[offset + 4] = cg;
+                    points[offset + 5] = cb;
+                } else if (points[i]) {
+                    points[i].r = cr;
+                    points[i].g = cg;
+                    points[i].b = cb;
+                }
             }
         } else {
             for (let i = 0; i < numPoints; i++) {
-                const offset = i * 8;
-                points[offset + 3] = fr;
-                points[offset + 4] = fg;
-                points[offset + 5] = fb;
+                if (isTyped) {
+                    const offset = i * 8;
+                    points[offset + 3] = fr;
+                    points[offset + 4] = fg;
+                    points[offset + 5] = fb;
+                } else if (points[i]) {
+                    points[i].r = fr;
+                    points[i].g = fg;
+                    points[i].b = fb;
+                }
             }
         }
     }
 }
 
 function getPaletteColor(paletteName, pos) {
-    const palettes = {
-        'fire': [{ r: 255, g: 0, b: 0 }, { r: 255, g: 128, b: 0 }, { r: 255, g: 255, b: 0 }, { r: 255, g: 0, b: 0 }],
-        'ice': [{ r: 0, g: 0, b: 255 }, { r: 0, g: 255, b: 255 }, { r: 255, g: 255, b: 255 }, { r: 0, g: 0, b: 255 }],
-        'cyber': [{ r: 255, g: 0, b: 255 }, { r: 0, g: 255, b: 255 }, { r: 0, g: 0, b: 255 }, { r: 255, g: 0, b: 255 }]
-    };
-    const colors = palettes[paletteName] || palettes['fire'];
-    const scaledPos = pos * (colors.length - 1);
+    const colors = PRESET_PALETTES[paletteName] || PRESET_PALETTES.fire;
+    const maxIndex = colors.length - 1;
+    let p = pos % 1.0;
+    if (p < 0) p += 1.0;
+    const scaledPos = p * maxIndex;
     const index = Math.floor(scaledPos);
     const factor = scaledPos - index;
     const c1 = colors[index];
-    const c2 = colors[index + 1] || colors[index];
+    const c2 = colors[index + 1] || c1;
     return [Math.round(c1.r + (c2.r - c1.r) * factor), Math.round(c1.g + (c2.g - c1.g) * factor), Math.round(c1.b + (c2.b - c1.b) * factor)];
 }
 
-function hslToRgb(h, s, l) {
-    let r, g, b;
-    if (s === 0) {
-        r = g = b = l;
-    } else {
-        const hue2rgb = (p, q, t) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1 / 6) return p + (q - p) * 6 * t;
-            if (t < 1 / 2) return q;
-            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-            return p;
-        };
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        r = hue2rgb(p, q, h + 1 / 3);
-        g = hue2rgb(p, q, h);
-        b = hue2rgb(p, q, h - 1 / 3);
-    }
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+function hue2rgb(p, q, t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
 }
 
-function applyWave(points, numPoints, params, time) {
+function hslToRgb(h, s, l) {
+    if (s === 0) {
+        const val = Math.round(l * 255);
+        return [val, val, val];
+    }
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    return [
+        Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+        Math.round(hue2rgb(p, q, h) * 255),
+        Math.round(hue2rgb(p, q, h - 1 / 3) * 255)
+    ];
+}
+
+function applyWave(points, numPoints, params, time, effectStates, instanceId) {
     const { amplitude, frequency, speed, direction } = params;
-    const timeShift = time * 0.001 * speed;
+    const timeShift = getContinuousPhase(effectStates, instanceId ? `wave:${instanceId}` : null, time, speed);
     for (let i = 0; i < numPoints; i++) {
         const offset = i * 8;
         if (direction === 'x') {
@@ -476,13 +649,34 @@ function applyWave(points, numPoints, params, time) {
     }
 }
 
-function applyBlanking(points, numPoints, params) {
-    const { blankingInterval, spacing = 0 } = params;
-    if (blankingInterval <= 0) return;
-    const step = blankingInterval + 1 + spacing;
-    for (let i = 0; i < numPoints; i++) {
-        if ((i % step) >= blankingInterval) {
-            points[i * 8 + 6] = 1;
+export function applyBlanking(points, numPoints, params) {
+    const blankingInterval = Number(params?.blankingInterval) || 0;
+    const spacing = Number(params?.spacing) || 0;
+    if (blankingInterval <= 0 || numPoints <= 0) return;
+
+    const numSegments = Math.max(1, Math.round(blankingInterval));
+    const effectiveSpacing = Math.max(0, spacing);
+    const isTyped = points instanceof Float32Array || (typeof points.length === 'number' && typeof points[0] === 'number');
+
+    for (let k = 0; k < numSegments; k++) {
+        const startIdx = Math.round((k * numPoints) / numSegments);
+        const endIdx = Math.round(((k + 1) * numPoints) / numSegments);
+        const segLen = endIdx - startIdx;
+        if (segLen <= 0) continue;
+
+        // Blanking width in points. At spacing = 0, default to 1 point cut.
+        // As spacing increases, the blanking width between the segments grows wider.
+        const blankWidth = segLen === 1
+            ? 1
+            : Math.min(segLen - 1, Math.max(1, Math.round(effectiveSpacing + 1)));
+
+        const blankStart = endIdx - blankWidth;
+        for (let i = blankStart; i < endIdx; i++) {
+            if (isTyped) {
+                points[i * 8 + 6] = 1;
+            } else if (points[i]) {
+                points[i].blanking = true;
+            }
         }
     }
 }
@@ -592,12 +786,12 @@ function applyMirror(points, numPoints, params) {
             }
 
             if (keptInSlice > 0) {
-                // 2. Bridge (at current position, blanked)
-                const lastKeptOff = currentOffset - 8;
-                newBuffer.set(newBuffer.subarray(lastKeptOff, lastKeptOff + 8), currentOffset);
-                newBuffer[currentOffset + 6] = 1;
-                newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
-                currentOffset += 8;
+                // 2. Bridge source (copy of the last kept original point, blanked). It is
+                // written AFTER the mirrored section so the buffer always ends blanked.
+                // Otherwise the renderer's frame-level closing edge (last -> first) would
+                // draw a lit connector line between the end of the mirrored copy and the
+                // start of the original copy on closed frames (e.g. generator shapes).
+                const bridgeSrcOff = currentOffset - 8;
 
                 // 3. Mirrored (with shifted blanking)
                 let lastWasInMirror = true;
@@ -641,6 +835,13 @@ function applyMirror(points, numPoints, params) {
                     }
                     lastWasInMirror = isIn;
                 }
+
+                // 2b. Bridge (at the end of the slice, blanked)
+                newBuffer.set(newBuffer.subarray(bridgeSrcOff, bridgeSrcOff + 8), currentOffset);
+                newBuffer[currentOffset + 6] = 1;
+                newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
+                currentOffset += 8;
+
                 newDists.set(id, { start: targetStart, length: (currentOffset - targetStart) });
             }
         }
@@ -673,12 +874,12 @@ function applyMirror(points, numPoints, params) {
         }
 
         if (keptPoints > 0) {
-            // 2. Bridge (at current position, blanked)
-            const lastKeptOff = currentOffset - 8;
-            newBuffer.set(newBuffer.subarray(lastKeptOff, lastKeptOff + 8), currentOffset);
-            newBuffer[currentOffset + 6] = 1;
-            newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
-            currentOffset += 8;
+            // 2. Bridge source (copy of the last kept original point, blanked). It is
+            // written AFTER the mirrored section so the buffer always ends blanked.
+            // Otherwise the renderer's frame-level closing edge (last -> first) would
+            // draw a lit connector line between the end of the mirrored copy and the
+            // start of the original copy on closed frames (e.g. generator shapes).
+            const bridgeSrcOff = currentOffset - 8;
 
             // 3. Mirrored (with shifted blanking)
             let lastWasInMirror = true;
@@ -722,6 +923,12 @@ function applyMirror(points, numPoints, params) {
                 }
                 lastWasInMirror = isIn;
             }
+
+            // 2b. Bridge (at the end, blanked)
+            newBuffer.set(newBuffer.subarray(bridgeSrcOff, bridgeSrcOff + 8), currentOffset);
+            newBuffer[currentOffset + 6] = 1;
+            newBuffer[currentOffset + 3] = 0; newBuffer[currentOffset + 4] = 0; newBuffer[currentOffset + 5] = 0;
+            currentOffset += 8;
         }
         return newBuffer.slice(0, currentOffset);
     }
@@ -761,23 +968,24 @@ function applyWarp(points, numPoints, params) {
 }
 
 function applyMove(points, numPoints, params, time) {
-    const { speedX, speedY } = params;
+    const { speedX, speedY, sizeX = 1.0, sizeY = 1.0 } = params;
     const t = time * 0.001;
     const offsetX = t * speedX;
     const offsetY = t * speedY;
-    const cycle = 4;
+    // Bounce the shape within [-sizeX, sizeX] x [-sizeY, sizeY] using a reflex
+    // triangle wave (cycle period 4*size, wrapping at twice the size).
+    const fold = (v, size) => {
+        if (!size || size <= 0) return v;
+        const cycle = size * 4;
+        let val = (v + size) % cycle;
+        if (val < 0) val += cycle;
+        if (val > size * 2) val = cycle - val;
+        return val - size;
+    };
     for (let i = 0; i < numPoints; i++) {
         const offset = i * 8;
-        let x = points[offset] + offsetX;
-        let y = points[offset + 1] + offsetY;
-        let valX = (x + 1) % cycle;
-        if (valX < 0) valX += cycle;
-        if (valX > 2) valX = 4 - valX;
-        x = valX - 1;
-        let valY = (y + 1) % cycle;
-        if (valY < 0) valY += cycle;
-        if (valY > 2) valY = 4 - valY;
-        y = valY - 1;
+        const x = fold(points[offset] + offsetX, sizeX);
+        const y = fold(points[offset + 1] + offsetY, sizeY);
         points[offset] = x; points[offset + 1] = y;
     }
 }
@@ -1030,6 +1238,36 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
             totalPointsNeeded += (src === points ? numPoints : src.length / 8);
             if (k < echoes.length - 1) totalPointsNeeded += 1; // Bridge
         }
+
+        // Frame-mode budget: each echo is a full copy of the frame, so steps
+        // >~5 on a dense frame multiplies the point count past what any DAC
+        // frame can hold. Instead of throwing echoes away (which would break
+        // the step count the artist asked for), reduce each echo's fidelity
+        // so the total concatenation fits the per-frame point budget. Only
+        // active when over budget — normal under-budget frames pass through
+        // untouched. The downstream DAC send decimates to ~1k regardless, so
+        // this changes nothing visible on laser output; it just stops the
+        // runaway counts that inflated stats to >300% (and crashed the
+        // pipeline before MAX_EFFECT_POINTS existed).
+        const frameBudget = Math.max(1, Math.floor((context && context.framePointBudget) || DEFAULT_FRAME_POINT_BUDGET));
+        if (totalPointsNeeded > frameBudget && numEchoes > 1) {
+            const perEchoBudget = Math.max(1, Math.floor((frameBudget - (numEchoes - 1)) / numEchoes));
+            for (let k = 0; k < echoes.length; k++) {
+                const echo = echoes[k];
+                const src = echo.points || points;
+                const srcNum = src === points ? numPoints : src.length / 8;
+                if (srcNum > perEchoBudget) {
+                    echo.points = reduceFramePoints(src, srcNum, perEchoBudget);
+                }
+            }
+            totalPointsNeeded = 0;
+            for (let k = 0; k < echoes.length; k++) {
+                const src = echoes[k].points || points;
+                totalPointsNeeded += (src === points ? numPoints : src.length / 8);
+                if (k < echoes.length - 1) totalPointsNeeded += 1; // Bridge
+            }
+        }
+
         const newPoints = new Float32Array(totalPointsNeeded * 8);
         let currentOffset = 0;
 
@@ -1160,7 +1398,7 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
-    const { mode = 'segment', steps: paramSteps, decay, speed, overlap, direction, useCustomOrder, customOrder, playstyle = 'loop' } = params;
+    const { mode = 'segment', steps: paramSteps, decay, speed, overlap, emptyStep, direction, useCustomOrder, customOrder, playstyle = 'loop' } = params;
     const { progress = 0, clipDuration = 1, syncSettings = {} } = context;
 
     // Check if THIS specific parameter ('speed') is synced
@@ -1270,12 +1508,16 @@ export function applyChase(points, numPoints, params, time, context = {}) {
         // other channel's echoes ("double delay" / trailing shapes within a channel).
         const sourceDists = points._channelDistributions;
         if (sourceDists && sourceDists.size > 0) {
+            // "Empty Step" (default) keeps a hard all-off plateau between beats;
+            // switching it off widens the effective overlap to the full cycle so
+            // the chase crossfades continuously with no channel ever blanked.
+            const effOverlap = emptyStep === false ? Math.max(cycleLength, overlap) : overlap;
             const newBuffer = new Float32Array(points);
             for (const [dacIndex, dist] of sourceDists.entries()) {
                 const stepIndex = channelStepMap.get(dacIndex) || 0;
                 let chaseDist = Math.abs(t - stepIndex);
                 if (chaseDist > cycleLength / 2) chaseDist = cycleLength - chaseDist;
-                let intensity = (chaseDist < overlap) ? (1.0 - (chaseDist / overlap)) : 0;
+                let intensity = (chaseDist < effOverlap) ? (1.0 - (chaseDist / effOverlap)) : 0;
                 if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
                 for (let i = 0; i < dist.length; i += 8) {
                     const dstOff = dist.start + i;
@@ -1290,6 +1532,10 @@ export function applyChase(points, numPoints, params, time, context = {}) {
         const totalPoints = numPoints * numChannels;
         const newBuffer = new Float32Array(totalPoints * 8);
         const distributions = new Map();
+        // "Empty Step" (default) keeps a hard all-off plateau between beats;
+        // switching it off widens the effective overlap to the full cycle so
+        // the chase crossfades continuously with no channel ever blanked.
+        const effOverlap = emptyStep === false ? Math.max(cycleLength, overlap) : overlap;
         let offset = 0;
         const dacIndices = Array.from(channelStepMap.keys());
         if (dacIndices.length === 0) dacIndices.push(0);
@@ -1297,7 +1543,7 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             const stepIndex = channelStepMap.get(dacIndex) || 0;
             let dist = Math.abs(t - stepIndex);
             if (dist > cycleLength / 2) dist = cycleLength - dist;
-            let intensity = (dist < overlap) ? (1.0 - (dist / overlap)) : 0;
+            let intensity = (dist < effOverlap) ? (1.0 - (dist / effOverlap)) : 0;
             if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
             const startOffset = offset;
             for (let i = 0; i < numPoints; i++) {

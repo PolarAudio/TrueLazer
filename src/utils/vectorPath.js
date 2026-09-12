@@ -14,9 +14,11 @@ const clampPointCount = (count) => Math.max(2, Math.round(count));
  * @param {number} count  requested number of samples
  * @param {Object} [opts]
  * @param {boolean} [opts.closed=false]  treat the vertex list as a closed loop
+ * @param {boolean} [opts.anchorVertices=false]  emit every vertex exactly and
+ *        spread the remaining budget along the edges (keeps sharp corners crisp)
  * @returns {Array<{x:number,y:number}>}
  */
-export function samplePath(vertices, count, { closed = false } = {}) {
+export function samplePath(vertices, count, { closed = false, anchorVertices = false } = {}) {
   const n = clampPointCount(count);
   if (!vertices || vertices.length < 2) return [];
 
@@ -35,6 +37,33 @@ export function samplePath(vertices, count, { closed = false } = {}) {
 
   if (total <= 0) {
     return Array.from({ length: n }, () => ({ x: vertices[0].x, y: vertices[0].y }));
+  }
+
+  // With anchored vertices the loop is reproduced vertex-for-vertex and the
+  // remaining `n - loop` samples are allocated to the edges by arc length
+  // (largest-remainder so the point budget is honored exactly). Without this,
+  // arc-length sampling straddles sharp corners and a physical scanner rounds
+  // them instead of aiming at the true vertex.
+  if (anchorVertices && closed && n > loop) {
+    const interior = n - loop;
+    const remainder = segs.map(s => (interior * s.len) / total);
+    const alloc = remainder.map(Math.floor);
+    let leftover = interior - alloc.reduce((a, b) => a + b, 0);
+    const order = segs
+      .map((_, i) => i)
+      .sort((a, b) => (remainder[b] % 1) - (remainder[a] % 1));
+    for (let k = 0; k < leftover; k++) alloc[order[k % order.length]]++;
+
+    const samples = [];
+    for (let i = 0; i < loop; i++) {
+      const { a, b, len } = segs[i];
+      samples.push({ x: a.x, y: a.y });
+      for (let k = 1; k <= alloc[i]; k++) {
+        const t = k / (alloc[i] + 1);
+        samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+    }
+    return samples;
   }
 
   const samples = [];

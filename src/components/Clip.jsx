@@ -29,6 +29,12 @@ const Clip = ({
   const [isDragging, setIsDragging] = useState(false);
   const [thumbnailError, setThumbnailError] = useState(false);
 
+  // If the thumbnail path or version changes (e.g. a regenerated thumbnail), clear
+  // the error latch so the new image is actually shown again.
+  useEffect(() => {
+    if (thumbnailError) setThumbnailError(false);
+  }, [clipContent?.thumbnailPath, clipContent?.thumbnailVersion]);
+
   // Determine the display name for the clip
   const displayName = clipName;
 

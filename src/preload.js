@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld(
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
     showClipContextMenu: (...args) => ipcRenderer.send('show-clip-context-menu', ...args),
       showColumnHeaderClipContextMenu: (colIndex) => ipcRenderer.send('show-column-header-clip-context-menu', colIndex),
-      showQuickAssignContextMenu: (type, index) => ipcRenderer.send('show-quick-assign-context-menu', type, index),
+      showQuickAssignContextMenu: (type, index, assignments = []) => ipcRenderer.send('show-quick-assign-context-menu', type, index, assignments),
       sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action),    onContextMenuActionFromMain: (callback) => {
       ipcRenderer.on('context-menu-action-from-main', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('context-menu-action-from-main', callback);

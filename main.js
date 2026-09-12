@@ -1125,11 +1125,22 @@ function createWindow() {
     buildApplicationMenu(currentThumbnailRenderMode);
   });
 
-  ipcMain.on('show-quick-assign-context-menu', (event, type, index) => {
-    const quickAssignMenu = Menu.buildFromTemplate([
+  ipcMain.on('show-quick-assign-context-menu', (event, type, index, assignments = []) => {
+    const menuItems = [];
+    if (Array.isArray(assignments) && assignments.length > 0) {
+      assignments.forEach((label, linkIndex) => {
+        menuItems.push({
+          label: `✕  ${label}`,
+          click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'remove-quick-assign-link', controlType: type, index: index, linkIndex: linkIndex }); }
+        });
+      });
+      menuItems.push({ type: 'separator' });
+    }
+    menuItems.push(
       { label: 'Reset Value', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); } },
-      { label: 'Clear Assignment', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); } },
-    ]);
+      { label: (assignments && assignments.length > 0) ? 'Clear All Assignments' : 'Clear Assignment', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); } }
+    );
+    const quickAssignMenu = Menu.buildFromTemplate(menuItems);
     quickAssignMenu.popup({ window: mainWindow });
   });
 
@@ -1467,7 +1478,7 @@ function createWindow() {
       }
     }
   };
-  setInterval(sendSystemStats, 2000);
+  setInterval(sendSystemStats, 4000);
 
   let ndiFlowControlTimeout = null;
 

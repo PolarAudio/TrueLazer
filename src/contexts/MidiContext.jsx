@@ -191,20 +191,20 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
       autoSelect();
   }, [midiInitialized, midiInputs, selectedMidiInputId]);
 
-  const saveMappings = async () => {
+  const saveMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.saveMidiMappings) {
           await window.electronAPI.saveMidiMappings(mappings);
           console.log("MIDI mappings saved to default.");
       }
-  };
+  }, [mappings]);
 
-  const exportMappings = async () => {
+  const exportMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.exportMappings) {
           await window.electronAPI.exportMappings(mappings, 'midi');
       }
-  };
+  }, [mappings]);
 
-  const importMappings = async () => {
+  const importMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.importMappings) {
           const result = await window.electronAPI.importMappings('midi');
           if (result.success && result.mappings) {
@@ -213,10 +213,10 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
               console.log("MIDI mappings imported and migrated.");
           }
       }
-  };
+  }, []);
 
   // APC40 Handshake / Initialization
-  const initializeApc40 = (inputId) => {
+  const initializeApc40 = useCallback((inputId) => {
     const input = midiInputs.find(i => i.id === inputId);
     if (input && input.name.toLowerCase().includes('apc40')) {
         console.log("Detected APC40, sending initialization SysEx...");
@@ -226,7 +226,7 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
         const initData = [0x7F, 0x29, 0x60, 0x00, 0x04, 0x41, 0x01, 0x01, 0x01];
         sendSysex(inputId, initData);
     }
-  };
+  }, [midiInputs]);
 
   useEffect(() => {
     if (selectedMidiInputId && window.electronAPI && window.electronAPI.saveSelectedMidiInput) {
@@ -393,13 +393,13 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
     }
   };
 
-  const startMapping = () => setIsMapping(true);
-  const stopMapping = () => {
+  const startMapping = useCallback(() => setIsMapping(true), []);
+  const stopMapping = useCallback(() => {
       setIsMapping(false);
       setLearningId(null);
-  }
+  }, []);
 
-  const removeMapping = (controlId) => {
+  const removeMapping = useCallback((controlId) => {
       setMappings(prev => {
           const next = { ...prev };
           Object.keys(next).forEach(key => {
@@ -408,9 +408,9 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
           });
           return next;
       });
-  };
+  }, []);
 
-  const removeAssignment = (key, controlId) => {
+  const removeAssignment = useCallback((key, controlId) => {
       setMappings(prev => {
           if (!prev[key]) return prev;
           const next = { ...prev };
@@ -418,9 +418,9 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
           if (next[key].length === 0) delete next[key];
           return next;
       });
-  };
+  }, []);
 
-  const value = {
+  const value = useMemo(() => ({
     midiInitialized,
     midiInputs,
     selectedMidiInputId,
@@ -441,7 +441,25 @@ export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enable
     sendFeedback,
     lastMidiEvent,
     isShiftDown
-  };
+  }), [
+    midiInitialized,
+    midiInputs,
+    selectedMidiInputId,
+    isMapping,
+    learningId,
+    mappings,
+    lastMidiEvent,
+    isShiftDown,
+    sendFeedback,
+    saveMappings,
+    exportMappings,
+    importMappings,
+    initializeApc40,
+    startMapping,
+    stopMapping,
+    removeMapping,
+    removeAssignment
+  ]);
 
   return (
     <MidiContext.Provider value={value}>

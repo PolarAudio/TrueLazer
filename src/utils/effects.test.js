@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { applyEffects } from './effects';
+import { applyEffects, applyBlanking, applyColor, DEFAULT_FRAME_POINT_BUDGET } from './effects';
+import { reduceFramePoints } from './pointReducer';
 
 describe('applyMirror', () => {
   const mockFrame = (points) => ({
@@ -29,10 +30,12 @@ describe('applyMirror', () => {
     // Mirror axis at 0.2
     // Mirrored point should be at 2 * 0.2 - 0.5 = -0.1
     
-    // Total points: 1 (original) + 1 (bridge) + 1 (mirrored) = 3
+    // Buffer layout: original + mirrored + blanked bridge = 3 points
     expect(pts.length).toBe(3);
     expect(pts[0].x).toBeCloseTo(0.5);
-    expect(pts[2].x).toBeCloseTo(-0.1);
+    expect(pts[1].x).toBeCloseTo(-0.1);
+    // The trailing bridge is a copy of the last original point, blanked
+    expect(result.points[2 * 8 + 6]).toBe(1);
   });
 
   it('should mirror with planeRotation', () => {
@@ -69,7 +72,37 @@ describe('applyMirror', () => {
     const frame2 = mockFrame([{ x: 0, y: 1 }]);
     const result2 = applyEffects(frame2, effects);
     const pts2 = getPoints(result2);
-    expect(pts2[2].y).toBeCloseTo(-1);
+    expect(pts2[1].y).toBeCloseTo(-1);
+  });
+
+  it('should keep the buffer end blanked on closed frames so no connector line is drawn', () => {
+    // A closed generator-style shape (e.g. circle) mirrored across X. The mirrored
+    // copy must sit between the original polyline and a trailing blanked bridge, so
+    // the renderer's frame-level closing edge (last -> first) can never draw a lit
+    // connector line between the tail of the mirrored copy and the head of the original.
+    const frame = mockFrame([
+      { x: 0.5, y: 0.5 },
+      { x: 0.6, y: 0.4 },
+      { x: 0.7, y: 0.5 },
+    ]);
+    frame.isClosed = true;
+    const effects = [{ id: 'mirror', params: { mode: 'x+', axisOffset: 0.2, additive: true } }];
+
+    const result = applyEffects(frame, effects);
+    const pts = getPoints(result);
+
+    // Layout: original[3] + mirrored[3] + bridge[1] = 7
+    expect(pts.length).toBe(7);
+
+    // The head of the mirrored copy (its first point) must be blanked...
+    expect(result.points[3 * 8 + 6]).toBe(1);
+    // ...and the trailing bridge must be blanked so the closing edge is suppressed.
+    expect(result.points[6 * 8 + 6]).toBe(1);
+
+    // Mirrored points occupy the middle of the buffer (reverse order: p2, p1, p0)
+    expect(pts[3].x).toBeCloseTo(-0.3); // mirror of x=0.7 -> 2*0.2 - 0.7
+    expect(pts[4].x).toBeCloseTo(-0.2); // mirror of x=0.6 -> 2*0.2 - 0.6
+    expect(pts[5].x).toBeCloseTo(-0.1); // mirror of x=0.5 -> 2*0.2 - 0.5
   });
 });
 
@@ -231,6 +264,39 @@ describe('applyChase', () => {
     expect(() => applyEffects(frame, effects, { progress: 0.5, time: 100, syncSettings: {} })).not.toThrow();
     const result = applyEffects(frame, effects, { progress: 0.5, time: 100, syncSettings: {} });
     expect(result.points.length / 8).toBe(2000);
+  });
+
+  it('should keep an all-off plateau (empty step) in channel mode when emptyStep is on', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
+    const effects = [{
+      id: 'chase',
+      instanceId: 'c-empty',
+      params: { mode: 'channel', emptyStep: true, decay: 0.8, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], progress: 0.5, time: 0, clipDuration: 1, effectStates: new Map() };
+    const result = applyEffects(frame, effects, context);
+    expect(result.points._channelDistributions).toBeDefined();
+    let anyBlanked = false;
+    for (let i = 0; i < result.points.length / 8; i++) {
+      if (result.points[i * 8 + 6] > 0.5) anyBlanked = true;
+    }
+    expect(anyBlanked).toBe(true);
+  });
+
+  it('should crossfade continuously (no channel ever blanked) when emptyStep is off', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
+    const effects = [{
+      id: 'chase',
+      instanceId: 'c-cont',
+      params: { mode: 'channel', emptyStep: false, decay: 0.8, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], progress: 0.5, time: 0, clipDuration: 1, effectStates: new Map() };
+    const result = applyEffects(frame, effects, context);
+    expect(result.points._channelDistributions).toBeDefined();
+    for (let i = 0; i < result.points.length / 8; i++) {
+      expect(result.points[i * 8 + 6]).toBe(0);
+      expect(result.points[i * 8 + 3]).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -481,3 +547,344 @@ describe('applyWarp (gravitational)', () => {
     expect(unlinked.y).toBeCloseTo(0.0836, 2);
   });
 });
+
+describe('applyBlanking', () => {
+  const createPointBuffer = (numPoints) => {
+    const buf = new Float32Array(numPoints * 8);
+    for (let i = 0; i < numPoints; i++) {
+      buf[i * 8 + 0] = i; // x
+      buf[i * 8 + 1] = 0; // y
+      buf[i * 8 + 6] = 0; // blanking = 0
+    }
+    return buf;
+  };
+
+  it('does nothing when blankingInterval is 0 or negative', () => {
+    const buf = createPointBuffer(100);
+    applyBlanking(buf, 100, { blankingInterval: 0, spacing: 5 });
+    for (let i = 0; i < 100; i++) {
+      expect(buf[i * 8 + 6]).toBe(0);
+    }
+  });
+
+  it('equally distributes blanking segments across points so the last segment has the same length', () => {
+    const numPoints = 100;
+    const buf = createPointBuffer(numPoints);
+    // 4 blanking segments spaced equally along the shape
+    applyBlanking(buf, numPoints, { blankingInterval: 4, spacing: 0 });
+
+    // Each segment has length 25. With spacing=0, blankWidth=1 point at end of each segment.
+    const blankedIndices = [];
+    for (let i = 0; i < numPoints; i++) {
+      if (buf[i * 8 + 6] === 1) {
+        blankedIndices.push(i);
+      }
+    }
+
+    // Exactly 4 blanking segments
+    expect(blankedIndices).toEqual([24, 49, 74, 99]);
+
+    // Segment lengths between blanks:
+    // Segment 0: 0..24 (25 points, 1 blanked)
+    // Segment 1: 25..49 (25 points, 1 blanked)
+    // Segment 2: 50..74 (25 points, 1 blanked)
+    // Segment 3: 75..99 (25 points, 1 blanked) -> Last segment length is identical to previous ones!
+  });
+
+  it('spacing changes the width between blanked segments equally across all segments', () => {
+    const numPoints = 100;
+    const buf = createPointBuffer(numPoints);
+    // 4 blanking segments, spacing=4 -> blank width of 5 points per segment
+    applyBlanking(buf, numPoints, { blankingInterval: 4, spacing: 4 });
+
+    const blankedIndices = [];
+    for (let i = 0; i < numPoints; i++) {
+      if (buf[i * 8 + 6] === 1) {
+        blankedIndices.push(i);
+      }
+    }
+
+    // Each of the 4 segments has 5 blanked points at the end
+    // Segment 0: 20..24
+    // Segment 1: 45..49
+    // Segment 2: 70..74
+    // Segment 3: 95..99
+    expect(blankedIndices.length).toBe(20);
+    expect(blankedIndices.slice(0, 5)).toEqual([20, 21, 22, 23, 24]);
+    expect(blankedIndices.slice(5, 10)).toEqual([45, 46, 47, 48, 49]);
+    expect(blankedIndices.slice(10, 15)).toEqual([70, 71, 72, 73, 74]);
+    expect(blankedIndices.slice(15, 20)).toEqual([95, 96, 97, 98, 99]);
+
+    // Check that every segment has 20 lit points and 5 blanked points (last segment matches first)
+    const litLengths = [
+      blankedIndices[0] - 0,
+      blankedIndices[5] - 25,
+      blankedIndices[10] - 50,
+      blankedIndices[15] - 75,
+    ];
+    expect(litLengths).toEqual([20, 20, 20, 20]);
+  });
+
+  it('handles non-divisible point counts evenly without cutting off the last segment', () => {
+    const numPoints = 50;
+    const buf = createPointBuffer(numPoints);
+    // 3 segments on 50 points: segments will be round(50/3)=17, round(100/3)-17=17, 50-34=16
+    applyBlanking(buf, numPoints, { blankingInterval: 3, spacing: 2 });
+
+    const blankedBySegment = [[], [], []];
+    // Segment ranges: 0..17, 17..33, 33..50
+    for (let i = 0; i < numPoints; i++) {
+      if (buf[i * 8 + 6] === 1) {
+        if (i < 17) blankedBySegment[0].push(i);
+        else if (i < 33) blankedBySegment[1].push(i);
+        else blankedBySegment[2].push(i);
+      }
+    }
+
+    // Every segment has 3 blanked points, including the last segment
+    expect(blankedBySegment[0].length).toBe(3);
+    expect(blankedBySegment[1].length).toBe(3);
+    expect(blankedBySegment[2].length).toBe(3);
+    // Last blanking segment ends exactly at the last point of the shape
+    expect(blankedBySegment[2][2]).toBe(49);
+  });
+
+  it('works correctly within applyEffects pipeline', () => {
+    const numPoints = 60;
+    const points = new Float32Array(numPoints * 8);
+    const frame = { points, isTypedArray: true };
+    const effects = [{
+      id: 'blanking',
+      params: { blankingInterval: 3, spacing: 1, enabled: true }
+    }];
+
+    const result = applyEffects(frame, effects);
+    let blankedCount = 0;
+    for (let i = 0; i < numPoints; i++) {
+      if (result.points[i * 8 + 6] === 1) blankedCount++;
+    }
+    // 3 segments * 2 blanked points = 6 blanked points
+    expect(blankedCount).toBe(6);
+  });
+});
+
+describe('applyColor', () => {
+  const createBuffer = (numPoints) => new Float32Array(numPoints * 8);
+
+  it('sets solid color correctly from hex and rgb values', () => {
+    const numPoints = 10;
+    const buf = createBuffer(numPoints);
+    applyColor(buf, numPoints, { mode: 'solid', color: '#ff8800' });
+
+    for (let i = 0; i < numPoints; i++) {
+      expect(buf[i * 8 + 3]).toBe(255);
+      expect(buf[i * 8 + 4]).toBe(136);
+      expect(buf[i * 8 + 5]).toBe(0);
+    }
+  });
+
+  it('interpolates rainbow colors across points without NaN or out-of-bounds values', () => {
+    const numPoints = 50;
+    const buf = createBuffer(numPoints);
+    applyColor(buf, numPoints, { mode: 'rainbow', rainbowSpread: 1.0, rainbowOffset: 0 }, 0);
+
+    for (let i = 0; i < numPoints; i++) {
+      const r = buf[i * 8 + 3];
+      const g = buf[i * 8 + 4];
+      const b = buf[i * 8 + 5];
+      expect(Number.isFinite(r)).toBe(true);
+      expect(Number.isFinite(g)).toBe(true);
+      expect(Number.isFinite(b)).toBe(true);
+      expect(r).toBeGreaterThanOrEqual(0);
+      expect(r).toBeLessThanOrEqual(255);
+      expect(g).toBeGreaterThanOrEqual(0);
+      expect(g).toBeLessThanOrEqual(255);
+      expect(b).toBeGreaterThanOrEqual(0);
+      expect(b).toBeLessThanOrEqual(255);
+    }
+  });
+
+  it('correctly uses preset palettes like fire without errors', () => {
+    const numPoints = 20;
+    const buf = createBuffer(numPoints);
+    applyColor(buf, numPoints, { mode: 'rainbow', rainbowPalette: 'fire' }, 0);
+
+    for (let i = 0; i < numPoints; i++) {
+      expect(Number.isFinite(buf[i * 8 + 3])).toBe(true);
+      expect(Number.isFinite(buf[i * 8 + 4])).toBe(true);
+      expect(Number.isFinite(buf[i * 8 + 5])).toBe(true);
+    }
+  });
+
+  it('handles negative offsets and reverse speeds without NaN or crash', () => {
+    const numPoints = 20;
+    const buf = createBuffer(numPoints);
+    applyColor(buf, numPoints, {
+      mode: 'palette',
+      paletteColors: ['#ff0000', '#00ff00', '#0000ff'],
+      paletteSpread: 1.0,
+      rainbowOffset: -90,
+      cycleSpeed: -2
+    }, 1000);
+
+    for (let i = 0; i < numPoints; i++) {
+      expect(Number.isFinite(buf[i * 8 + 3])).toBe(true);
+      expect(Number.isFinite(buf[i * 8 + 4])).toBe(true);
+      expect(Number.isFinite(buf[i * 8 + 5])).toBe(true);
+      expect(buf[i * 8 + 3]).toBeGreaterThanOrEqual(0);
+      expect(buf[i * 8 + 4]).toBeGreaterThanOrEqual(0);
+      expect(buf[i * 8 + 5]).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
+describe('applyRotate', () => {
+  const mockFrame = (points) => ({
+    points: new Float32Array(points.flatMap(p => [p.x, p.y, 0, 255, 255, 255, 0, 0])),
+    isTypedArray: true
+  });
+
+  const rotAngle = (frame) => {
+    const pts = frame.points;
+    return Math.atan2(pts[1], pts[0]);
+  };
+
+  const rotateEff = (speed) => [
+    { id: 'rotate', instanceId: 'r1', params: { angle: 0, speed, direction: 'CW' } }
+  ];
+
+  it('keeps rotation continuous when speed changes mid-playback', () => {
+    const effectStates = new Map();
+    const frame = mockFrame([{ x: 1, y: 0 }]);
+
+    // 2 seconds at speed 10 -> phase = 20 rad
+    applyEffects(frame, rotateEff(10), { time: 0, effectStates });
+    applyEffects(frame, rotateEff(10), { time: 2000, effectStates });
+    const before = rotAngle(applyEffects(frame, rotateEff(10), { time: 2000, effectStates }));
+
+    // Speed param changes at the same instant: rotation must NOT jump.
+    const after = rotAngle(applyEffects(frame, rotateEff(120), { time: 2000, effectStates }));
+    expect(after - before).toBeCloseTo(0, 5);
+
+    // And it keeps advancing at the new rate afterwards.
+    const later = rotAngle(applyEffects(frame, rotateEff(120), { time: 2100, effectStates }));
+    const delta = ((later - after) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    expect(delta).toBeCloseTo(12 % (2 * Math.PI), 1); // +0.1s * 120
+  });
+
+  it('falls back to absolute time when no effectStates is available', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }]);
+    const a = rotAngle(applyEffects(frame, rotateEff(10), { time: 0 }));
+    const b = rotAngle(applyEffects(frame, rotateEff(10), { time: 2000 }));
+    const delta = ((b - a) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    expect(delta).toBeCloseTo(20 % (2 * Math.PI), 1);
+  });
+});
+
+describe('applyWave', () => {
+  const mockFrame = (points) => ({
+    points: new Float32Array(points.flatMap(p => [p.x, p.y, 0, 255, 255, 255, 0, 0])),
+    isTypedArray: true
+  });
+
+  const waveEff = (speed) => [
+    { id: 'wave', instanceId: 'w1', params: { amplitude: 1, frequency: 1, speed, direction: 'y' } }
+  ];
+
+  it('keeps wave phase continuous when speed changes mid-playback', () => {
+    const effectStates = new Map();
+    const frame = mockFrame([{ x: 0, y: 0 }]);
+
+    // 2 seconds at speed 10 -> phase = 20 rad
+    applyEffects(frame, waveEff(10), { time: 0, effectStates });
+    applyEffects(frame, waveEff(10), { time: 2000, effectStates });
+    const before = applyEffects(frame, waveEff(10), { time: 2000, effectStates }).points[0];
+
+    // Speed param changes at the same instant: displacement must NOT jump.
+    const after = applyEffects(frame, waveEff(120), { time: 2000, effectStates }).points[0];
+    expect(after).toBeCloseTo(before, 5);
+
+    // And it keeps advancing at the new rate afterwards (phase 20 + 0.1s * 120 = 32 rad).
+    const later = applyEffects(frame, waveEff(120), { time: 2100, effectStates }).points[0];
+    expect(later).toBeCloseTo(Math.sin(32 % (2 * Math.PI)), 5);
+  });
+
+  it('falls back to absolute time when no effectStates is available', () => {
+    const frame = mockFrame([{ x: 0, y: 0 }]);
+    const t1 = applyEffects(frame, waveEff(10), { time: 0 }).points[0];
+    const t2 = applyEffects(frame, waveEff(10), { time: 2000 }).points[0];
+    expect(t1).toBeCloseTo(Math.sin(0), 5);
+    expect(t2).toBeCloseTo(Math.sin(20 % (2 * Math.PI)), 5);
+  });
+});
+
+describe('runaway point cap', () => {
+  const mockFrame = (points) => ({
+    points: new Float32Array(points.flatMap(p => [p.x, p.y, 0, 255, 255, 255, 0, 0])),
+    isTypedArray: true
+  });
+
+  it('caps a mirror xN + frame delay stack so no output ever exceeds MAX_EFFECT_POINTS', () => {
+    const frame = mockFrame(Array.from({ length: 4000 }, (_, i) => ({ x: (i % 2) - 0.5, y: 0 })));
+    const effects = [
+      { id: 'mirror', instanceId: 'm1', params: { mode: 'x+', axisOffset: 0.2, additive: true } },
+      { id: 'mirror', instanceId: 'm2', params: { mode: 'y+', axisOffset: 0.1, additive: true } },
+      { id: 'mirror', instanceId: 'm3', params: { mode: 'x+', axisOffset: -0.3, additive: true } },
+      { id: 'mirror', instanceId: 'm4', params: { mode: 'y+', axisOffset: -0.2, additive: true } },
+      { id: 'delay', instanceId: 'd1', params: { mode: 'frame', delayAmount: 1, steps: 20, decay: 0.8 } }
+    ];
+
+    // Un-capped: 4000 * 2^4 * 20 = 1.28M points -> formerly blew up past 100k
+    // and tripped an out-of-range error downstream. Must stay bounded and valid.
+    const effectStates = new Map();
+    for (let i = 0; i < 3; i++) {
+      const result = applyEffects(frame, effects, { effectStates, time: i * 100 });
+      expect(result.points.length / 8).toBeLessThanOrEqual(16000);
+      expect(result.points.length / 8).toBeGreaterThan(0);
+    }
+  });
+
+  it('bounds frame-mode delay output to the per-frame point budget while keeping the echo count', () => {
+    const frame = mockFrame(Array.from({ length: 2000 }, (_, i) => ({ x: (i % 2) - 0.5, y: 0 })));
+    const effectStates = new Map();
+    const effect = { id: 'delay', instanceId: 'fb1', params: { mode: 'frame', delayAmount: 1, steps: 20, decay: 0.8 } };
+
+    const over = applyEffects(frame, [effect], { effectStates, time: 0 });
+    expect(over.points.length / 8).toBeLessThanOrEqual(DEFAULT_FRAME_POINT_BUDGET);
+    expect(over.points.length / 8).toBeGreaterThan(0);
+
+    // Under-budget frames must pass through untouched (2000 pts, steps 1).
+    const under = applyEffects(mockFrame([{ x: 0, y: 0 }, { x: 0, y: 1 }]), 
+      [{ id: 'delay', instanceId: 'fb2', params: { mode: 'frame', delayAmount: 1, steps: 1, decay: 0.8 } }],
+      { effectStates: new Map(), time: 0 });
+    expect(under.points.length / 8).toBe(2);
+  });
+
+  it('honors an explicit context.framePointBudget override', () => {
+    const frame = mockFrame(Array.from({ length: 400 }, (_, i) => ({ x: (i % 2) - 0.5, y: 0 })));
+    const effect = { id: 'delay', instanceId: 'fb3', params: { mode: 'frame', delayAmount: 1, steps: 20, decay: 0.8 } };
+    const result = applyEffects(frame, [effect], { effectStates: new Map(), time: 0, framePointBudget: 500 });
+    expect(result.points.length / 8).toBeLessThanOrEqual(500);
+  });
+
+  it('reduces collinear (straight-line) frames without blowing the call stack', () => {
+    // A drawn-out straight line: every interior point sits on the start-end
+    // chord. The old recursive Douglas-Peucker recurred once per point here
+    // and died with "Maximum call stack size exceeded" on mirror/delay stacks.
+    const N = 30000;
+    const pts = new Float32Array(N * 8);
+    let off = 0;
+    for (let i = 0; i < N; i++) {
+      pts[off] = -1 + (2 * i) / (N - 1);
+      pts[off + 1] = 0.5;
+      pts[off + 3] = 255; pts[off + 4] = 255; pts[off + 5] = 255;
+      off += 8;
+    }
+    let reduced;
+    expect(() => { reduced = reduceFramePoints(pts, N, 1000); }).not.toThrow();
+    expect(reduced.length / 8).toBeLessThanOrEqual(1000);
+    expect(reduced.length).toBeGreaterThan(0);
+  });
+});
+
+

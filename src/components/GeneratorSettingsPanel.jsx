@@ -187,7 +187,6 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
     if (onUpdateUiState) {
         onUpdateUiState({
             collapsedPanels: {
-                ...collapsedPanels,
                 generator: val
             }
         });

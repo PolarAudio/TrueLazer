@@ -1,6 +1,27 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { parseIldaFile } from '../utils/ilda-parser';
 import { calculateSmoothHandles } from '../utils/geometry';
+import EnvelopeEditor from './EnvelopeEditor';
+import { createPointBudgetOptimizer, DEFAULT_POINT_BUDGET } from '../utils/exportOptimizer';
+import {
+  EFFECTS, EFFECT_GROUPS, DEFAULT_ENVELOPE,
+  getEffectDef, effectParamsDefaults, applyEffectToPoints, envelopeValue
+} from '../utils/shapeEffects';
+
+// React's synthetic onWheel attaches as a PASSIVE listener at the root, so
+// preventDefault() inside it throws "Unable to preventDefault inside passive
+// event listener invocation". This wrapper attaches a native, non-passive
+// wheel listener instead; display:contents keeps it out of the layout.
+const NonPassiveWheel = ({ onWheel, children }) => {
+    const ref = useRef(null);
+    useEffect(() => {
+        const el = ref.current;
+        if (!el || typeof onWheel !== 'function') return;
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
+    }, [onWheel]);
+    return <span ref={ref} style={{ display: 'contents' }}>{children}</span>;
+};
 
 const ShapeBuilder = ({ onBack }) => {
   // --- STATE ---
@@ -29,6 +50,14 @@ const ShapeBuilder = ({ onBack }) => {
   const [gridSize, setGridSize] = useState(25);
   const [continuousDrawing, setContinuousDrawing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportBudget, setExportBudget] = useState(DEFAULT_POINT_BUDGET);
+  const [previewMode, setPreviewMode] = useState('off'); // 'off' | 'line' | 'points' | 'center' | 'cone'
+  const [collapsedPanels, setCollapsedPanels] = useState({ layers: false, props: false });
+  const [shapeEffect, setShapeEffect] = useState(null); // { type, params, envelopes, sourceIndex }
+  const [bakeEffects, setBakeEffects] = useState(true);
+  const [envTarget, setEnvTarget] = useState(null);   // param id with its playback envelope editor open
+
+  const togglePanel = (panel) => setCollapsedPanels(prev => ({ ...prev, [panel]: !prev[panel] }));
   const [isLoading, setIsLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, target: null });
   const [renderTrigger, setRenderTrigger] = useState(0);
@@ -84,7 +113,13 @@ const ShapeBuilder = ({ onBack }) => {
   const playbackAccumulatorRef = useRef(0);
 
   const CANVAS_SIZE = 1000;
-  const shapes = frames[currentFrameIndex] || [];
+  // While an effect is active the editor/export work on a single source frame
+  // (virtual): the effect spans the whole loop by modulating that source set,
+  // leaving the stored frames untouched (fully non-destructive).
+  const shapeSourceIndex = (shapeEffect && shapeEffect.type)
+      ? Math.min(shapeEffect.sourceIndex ?? 0, Math.max(0, frameCount - 1))
+      : currentFrameIndex;
+  const shapes = frames[shapeSourceIndex] || [];
 
   // --- HELPERS ---
   const recordHistory = (newFrames) => {
@@ -93,6 +128,22 @@ const ShapeBuilder = ({ onBack }) => {
       if (newHistory.length > 30) newHistory.shift();
       setHistory(newHistory);
       setHistoryStep(newHistory.length - 1);
+  };
+
+  // Effects are non-destructive: nothing is written into the frames. The effect
+  // simply captures which frame's shapes act as the "source" that it modulates
+  // across the whole loop. Remove the effect -> frames are exactly as before.
+  const addShapeEffect = (type) => {
+      const preferred = frames[currentFrameIndex];
+      const srcIndex = (preferred && preferred.length > 0)
+          ? currentFrameIndex
+          : frames.findIndex(f => f && f.length > 0);
+      setShapeEffect({
+          type,
+          params: effectParamsDefaults(type),
+          envelopes: {},
+          sourceIndex: srcIndex >= 0 ? srcIndex : 0
+      });
   };
 
   const getBoundingBox = (shape, includeTransform = true) => {
@@ -812,6 +863,89 @@ const ShapeBuilder = ({ onBack }) => {
 
       const totalSteps = tweenEndFrame - tweenStartFrame;
 
+      // Helper: blend two colors to a hex string at fraction t
+      const colorAt = (colA, colB, t) => {
+          const c1 = hexToRgb(colA);
+          const c2 = hexToRgb(colB);
+          const r = Math.round(c1.r + (c2.r - c1.r) * t);
+          const g = Math.round(c1.g + (c2.g - c1.g) * t);
+          const bl = Math.round(c1.b + (c2.b - c1.b) * t);
+          return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl.toString(16).padStart(2,'0')}`;
+      };
+
+      // Recursive interpolation for matched shapes (incl. group children)
+      const interpShape = (a, b, t) => {
+          const interp = JSON.parse(JSON.stringify(a));
+
+          // Recursively interpolate group children (position + color + points)
+          if (a.type === 'group' && b.type === 'group') {
+              interp.shapes = (a.shapes || []).map((child, i) => {
+                  const other = b.shapes && b.shapes[i];
+                  if (!other) return JSON.parse(JSON.stringify(child));
+                  return interpShape(child, other, t);
+              });
+          }
+
+          // Interpolate Position
+          if (tweenPosition) {
+              if (a.start && b.start) {
+                  interp.start.x = a.start.x + (b.start.x - a.start.x) * t;
+                  interp.start.y = a.start.y + (b.start.y - a.start.y) * t;
+              }
+              if (a.end && b.end) {
+                  interp.end.x = a.end.x + (b.end.x - a.end.x) * t;
+                  interp.end.y = a.end.y + (b.end.y - a.end.y) * t;
+              }
+              if (a.width !== undefined && b.width !== undefined) {
+                  interp.width = a.width + (b.width - a.width) * t;
+              }
+              if (a.height !== undefined && b.height !== undefined) {
+                  interp.height = a.height + (b.height - a.height) * t;
+              }
+
+              // Interpolate Transforms
+              interp.scaleX = (a.scaleX ?? 1) + ((b.scaleX ?? 1) - (a.scaleX ?? 1)) * t;
+              interp.scaleY = (a.scaleY ?? 1) + ((b.scaleY ?? 1) - (a.scaleY ?? 1)) * t;
+              interp.rotationX = (a.rotationX ?? 0) + ((b.rotationX ?? 0) - (a.rotationX ?? 0)) * t;
+              interp.rotationY = (a.rotationY ?? 0) + ((b.rotationY ?? 0) - (a.rotationY ?? 0)) * t;
+              interp.rotationZ = (a.rotationZ ?? 0) + ((b.rotationZ ?? 0) - (a.rotationZ ?? 0)) * t;
+              if (a.rotation !== undefined && b.rotation !== undefined) {
+                  interp.rotation = a.rotation + (b.rotation - a.rotation) * t;
+              }
+          }
+
+          // Interpolate Color (top-level as well as recursed children)
+          if (tweenColor && a.color && b.color) {
+              interp.color = colorAt(a.color, b.color, t);
+          }
+
+          // Interpolate Points if applicable
+          if (a.points && b.points && a.points.length === b.points.length) {
+              interp.points = a.points.map((p1, pIdx) => {
+                  const p2 = b.points[pIdx];
+
+                  let resX = p1.x;
+                  let resY = p1.y;
+                  let resZ = (p1.z || 0);
+                  let resCol = p1.color || a.color;
+
+                  if (tweenPosition) {
+                      resX = p1.x + (p2.x - p1.x) * t;
+                      resY = p1.y + (p2.y - p1.y) * t;
+                      resZ = (p1.z || 0) + ((p2.z || 0) - (p1.z || 0)) * t;
+                  }
+
+                  if (tweenColor) {
+                      resCol = colorAt(p1.color || a.color, p2.color || b.color, t);
+                  }
+
+                  return { x: resX, y: resY, z: resZ, color: resCol };
+              });
+          }
+
+          return interp;
+      };
+
       for (let i = 1; i < totalSteps; i++) {
           const t = i / totalSteps;
           const frameIdx = tweenStartFrame + i;
@@ -820,83 +954,27 @@ const ShapeBuilder = ({ onBack }) => {
           // Try to match shapes by index
           startShapes.forEach((s1, sIdx) => {
               const s2 = endShapes[sIdx];
-              if (!s2 || s1.type !== s2.type) {
-                  // If no match or different type, just copy s1 or s2?
-                  // For now, let's just push s1 if it's the first half, else s2
-                  interpolatedShapes.push(t < 0.5 ? JSON.parse(JSON.stringify(s1)) : JSON.parse(JSON.stringify(s2)));
+              if (!s2) {
+                  interpolatedShapes.push(JSON.parse(JSON.stringify(s1)));
+                  return;
+              }
+              if (s1.type !== s2.type) {
+                  // Fallback: interpolate common numeric properties
+                  const interp = JSON.parse(JSON.stringify(s1));
+                  const keys = new Set([...Object.keys(s1), ...Object.keys(s2)]);
+                  keys.forEach(k => {
+                      const v1 = s1[k];
+                      const v2 = s2[k];
+                      if (typeof v1 === 'number' && typeof v2 === 'number') {
+                          interp[k] = v1 + (v2 - v1) * t;
+                      }
+                  });
+                  if (tweenColor && s1.color && s2.color) interp.color = colorAt(s1.color, s2.color, t);
+                  interpolatedShapes.push(interp);
                   return;
               }
 
-              const interp = JSON.parse(JSON.stringify(s1));
-
-              // Interpolate Position
-              if (tweenPosition) {
-                  if (s1.start && s2.start) {
-                      interp.start.x = s1.start.x + (s2.start.x - s1.start.x) * t;
-                      interp.start.y = s1.start.y + (s2.start.y - s1.start.y) * t;
-                  }
-                  if (s1.end && s2.end) {
-                      interp.end.x = s1.end.x + (s2.end.x - s1.end.x) * t;
-                      interp.end.y = s1.end.y + (s2.end.y - s1.end.y) * t;
-                  }
-                  if (s1.width !== undefined && s2.width !== undefined) {
-                      interp.width = s1.width + (s2.width - s1.width) * t;
-                  }
-                  if (s1.height !== undefined && s2.height !== undefined) {
-                      interp.height = s1.height + (s2.height - s1.height) * t;
-                  }
-
-                  // Interpolate Transforms
-                  interp.scaleX = (s1.scaleX ?? 1) + ((s2.scaleX ?? 1) - (s1.scaleX ?? 1)) * t;
-                  interp.scaleY = (s1.scaleY ?? 1) + ((s2.scaleY ?? 1) - (s1.scaleY ?? 1)) * t;
-                  interp.rotationX = (s1.rotationX ?? 0) + ((s2.rotationX ?? 0) - (s1.rotationX ?? 0)) * t;
-                  interp.rotationY = (s1.rotationY ?? 0) + ((s2.rotationY ?? 0) - (s1.rotationY ?? 0)) * t;
-                  interp.rotationZ = (s1.rotationZ ?? 0) + ((s2.rotationZ ?? 0) - (s1.rotationZ ?? 0)) * t;
-                  if (s1.rotation !== undefined && s2.rotation !== undefined) {
-                      interp.rotation = s1.rotation + (s2.rotation - s1.rotation) * t;
-                  }
-              }
-
-              // Interpolate Color
-              if (tweenColor) {
-                  const c1 = hexToRgb(s1.color);
-                  const c2 = hexToRgb(s2.color);
-                  const r = Math.round(c1.r + (c2.r - c1.r) * t);
-                  const g = Math.round(c1.g + (c2.g - c1.g) * t);
-                  const b = Math.round(c1.b + (c2.b - c1.b) * t);
-                  interp.color = `rgb(${r},${g},${b})`;
-              }
-
-              // Interpolate Points if applicable
-              if (s1.points && s2.points && s1.points.length === s2.points.length) {
-                  interp.points = s1.points.map((p1, pIdx) => {
-                      const p2 = s2.points[pIdx];
-                      
-                      let resX = p1.x;
-                      let resY = p1.y;
-                      let resZ = (p1.z || 0);
-                      let resCol = p1.color || s1.color;
-
-                      if (tweenPosition) {
-                          resX = p1.x + (p2.x - p1.x) * t;
-                          resY = p1.y + (p2.y - p1.y) * t;
-                          resZ = (p1.z || 0) + ((p2.z || 0) - (p1.z || 0)) * t;
-                      }
-
-                      if (tweenColor) {
-                          const pc1 = hexToRgb(p1.color || s1.color);
-                          const pc2 = hexToRgb(p2.color || s2.color);
-                          const pr = Math.round(pc1.r + (pc2.r - pc1.r) * t);
-                          const pg = Math.round(pc1.g + (pc2.g - pc1.g) * t);
-                          const pb = Math.round(pc1.b + (pc2.b - pc1.b) * t);
-                          resCol = `rgb(${pr},${pg},${pb})`;
-                      }
-
-                      return { x: resX, y: resY, z: resZ, color: resCol };
-                  });
-              }
-
-              interpolatedShapes.push(interp);
+              interpolatedShapes.push(interpShape(s1, s2, t));
           });
 
           newFrames[frameIdx] = interpolatedShapes;
@@ -1621,6 +1699,8 @@ const ShapeBuilder = ({ onBack }) => {
               setFrames(loadedFrames);
               recordHistory(loadedFrames);
               setFrameCount(loadedFrames.length); setCurrentFrameIndex(0);
+              if (clipData.effect && clipData.effect.type) setShapeEffect(clipData.effect);
+              if (typeof clipData.bakeEffects === 'boolean') setBakeEffects(clipData.bakeEffects);
               return;
           }
           const buffer = await window.electronAPI.readFileAsBinary(path); const { frames: parsedFrames } = parseIldaFile(buffer);
@@ -1872,8 +1952,17 @@ const ShapeBuilder = ({ onBack }) => {
               if (updated.outerColor) updated.outerColor = properties.color;
           }
 
+          // Group transform props belong ONLY to the group itself - they must NOT be
+          // propagated to children, otherwise each child rotates/scales around its own
+          // anchor instead of following the group's anchor. Only per-shape visual props
+          // (color, renderMode, etc.) should bubble down into group children.
           if (updated.type === 'group' && updated.shapes) {
-              updated.shapes = updated.shapes.map(s => applyPropsToShape(s, properties));
+              const transformKeys = ['rotationZ', 'rotationX', 'rotationY', 'rotation', 'scaleX', 'scaleY'];
+              const childProps = {};
+              for (const key of Object.keys(properties)) {
+                  if (!transformKeys.includes(key)) childProps[key] = properties[key];
+              }
+              updated.shapes = updated.shapes.map(s => applyPropsToShape(s, childProps));
           }
           
           return updated;
@@ -1941,6 +2030,35 @@ const ShapeBuilder = ({ onBack }) => {
       });
   };
 
+  // Pin/unpin the selected points as export-stable anchors. Anchored points are
+  // preserved verbatim by the export optimizer's decimation pass.
+  const toggleSelectedPointAnchor = () => {
+      if (selectedShapeIndexes.length !== 1 || selectedPointIndexes.length === 0) return;
+      setFrames(prev => {
+          const newFrames = [...prev];
+          const ns = [...newFrames[currentFrameIndex]];
+          const idx = selectedShapeIndexes[0];
+          if (!ns[idx]) return prev;
+          const s = { ...ns[idx] };
+          if (s.type !== 'pen' && s.type !== 'polygon' && s.type !== 'polyline') return prev;
+          const anchors = new Set(s.anchorIndexes || []);
+          let changed = false;
+          selectedPointIndexes.forEach(pData => {
+              const path = Array.isArray(pData) ? pData : [pData];
+              if (path.length !== 1) return;
+              const pIdx = path[0];
+              if (anchors.has(pIdx)) anchors.delete(pIdx); else anchors.add(pIdx);
+              changed = true;
+          });
+          if (!changed) return prev;
+          s.anchorIndexes = [...anchors].sort((a, b) => a - b);
+          ns[idx] = s;
+          newFrames[currentFrameIndex] = ns;
+          recordHistory(newFrames);
+          return newFrames;
+      });
+  };
+
   const saveClip = async () => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
       try {
@@ -1951,7 +2069,9 @@ const ShapeBuilder = ({ onBack }) => {
           const clipData = {
               format: 'truelazer-shapeclip',
               version: 1,
-              frames: JSON.parse(JSON.stringify(exportFrames))
+              frames: JSON.parse(JSON.stringify(exportFrames)),
+              effect: shapeEffect ? JSON.parse(JSON.stringify(shapeEffect)) : null,
+              bakeEffects
           };
           await window.electronAPI.saveClipFile(JSON.stringify(clipData), 'built_shape.clip');
       } catch (e) { console.error(e); } finally { setIsExporting(false); }
@@ -1961,24 +2081,146 @@ const ShapeBuilder = ({ onBack }) => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
       try {
           const exportFrames = frames.slice(timelineStartFrame);
-          const ildaFramesData = exportFrames.map(frameShapes => {
-              const pts = []; 
-              frameShapes.forEach((s, shapeIdx) => {
-                  const mode = s.renderMode || 'simple';
-                  const sampledPts = getSampledPoints(s);
-                  const process = (p) => ({ ...p, x: (p.x - 500) / 500, y: (1 - p.y / 500) });
-                  const processed = sampledPts.map(process);
+          // Non-destructive effect bake: while an effect is enabled, every
+          // exported frame is the SOURCE frame modulated at that frame's
+          // position, spanning exactly the total frame count.
+          const effectSource = (shapeEffect && shapeEffect.type && bakeEffects && shapeEffect.sourceIndex != null)
+              ? (frames[Math.min(shapeEffect.sourceIndex, frames.length - 1)] || [])
+              : null;
+
+          // Recursively process a shape (or group) into point arrays with blanking
+          const processShapeToPoints = (shape, effectPos) => {
+              if (shape.type === 'group') {
+                  const allPts = [];
+                  shape.shapes.forEach((child, idx) => {
+                      const childPts = processShapeToPoints(child, effectPos);
+                      if (childPts.length > 0) {
+                          // The group's own transform (rotation/scale about its
+                          // pivot) must be applied to each child's points, so the
+                          // export matches the editor preview.
+                          const transformed = applyTransformations(childPts, shape);
+                          // Add blanked move-to between sub-shapes (except first)
+                          if (idx > 0) allPts.push({ ...transformed[0], blanking: true });
+                          allPts.push(...transformed);
+                      }
+                  });
+                  return allPts;
+              }
+
+              const mode = shape.renderMode || 'simple';
+              const sampledPts = getSampledPoints(shape);
+
+              // Preserve any user-pinned anchor points.
+              const preserve = new Set();
+              const passThrough = shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline';
+              if (passThrough && Array.isArray(shape.anchorIndexes)) {
+                  shape.anchorIndexes.forEach(i => preserve.add(i));
+              }
+
+              const budgeter = createPointBudgetOptimizer({ budget: exportBudget });
+              const optimized = budgeter.processShape(sampledPts, { preserve, minPoints: shape.type === 'line' ? 2 : 4 });
+
+              // Bake a live-evaluated effect layer (same math as the preview).
+              let effPts = optimized.points;
+              if (shapeEffect && shapeEffect.type && bakeEffects) {
+                  effPts = applyEffectToPoints(effPts, shapeEffect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
+              }
+
+              const process = (p) => ({ ...p, x: (p.x - 500) / 500, y: (1 - p.y / 500) });
+              const processed = effPts.map(process);
+
+              if (processed.length < 2) return [];
+
+              const shapePts = [];
+              for (let i = 0; i < processed.length - 1; i++) {
+                  let segmentMode = mode;
+                  if (mode === 'dashed' && i % 2 === 1) segmentMode = 'blanked';
+                  if (effPts[i+1] && effPts[i+1]._blank) segmentMode = 'blanked';
+
+                  const segmentPoints = interpolatePoints(processed[i], processed[i+1], segmentMode);
                   
-                  if (processed.length < 2) return;
+                  if (i < processed.length - 2) {
+                      shapePts.push(...segmentPoints.slice(0, -1));
+                  } else {
+                      shapePts.push(...segmentPoints);
+                  }
+              }
+
+              // Close the shape if it's a closed type
+              const closed = shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle';
+              if (closed) {
+                  const first = processed[0];
+                  const last = processed[processed.length-1];
+                  const dist = Math.sqrt(Math.pow(first.x - last.x, 2) + Math.pow(first.y - last.y, 2));
+                  
+                  if (dist > 0.001) {
+                      let segmentMode = mode;
+                      if (mode === 'dashed' && (processed.length - 1) % 2 === 1) segmentMode = 'blanked';
+                      if (effPts[0] && effPts[0]._blank) segmentMode = 'blanked';
+
+                      const closingPoints = interpolatePoints(processed[processed.length-1], processed[0], segmentMode);
+                      if (closingPoints.length > 1) {
+                          shapePts.push(...closingPoints.slice(1));
+                      }
+                  }
+              }
+
+              // Add blanked move-to at the start of this shape
+              if (shapePts.length > 0) {
+                  return [{ ...shapePts[0], blanking: true }, ...shapePts];
+              }
+              return [];
+          };
+
+          const ildaFramesData = exportFrames.map((frameShapes, frameIdx) => {
+              const pts = [];
+              const effectPos = exportFrames.length > 1 ? frameIdx / (exportFrames.length - 1) : 0;
+              const frameShapeSet = effectSource ? effectSource : frameShapes;
+              // Shared budgeter across all shapes in this frame
+              const budgeter = createPointBudgetOptimizer({ budget: exportBudget });
+
+              const processShapeToPoints = (shape) => {
+                  if (shape.type === 'group') {
+                      const allPts = [];
+                      shape.shapes.forEach((child, idx) => {
+                          const childPts = processShapeToPoints(child);
+                          if (childPts.length > 0) {
+                              if (idx > 0) allPts.push({ ...allPts[allPts.length - 1], blanking: true });
+                              allPts.push(...childPts);
+                          }
+                      });
+                      return allPts;
+                  }
+
+                  const mode = shape.renderMode || 'simple';
+                  const sampledPts = getSampledPoints(shape);
+
+                  const preserve = new Set();
+                  const passThrough = shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline';
+                  if (passThrough && Array.isArray(shape.anchorIndexes)) {
+                      shape.anchorIndexes.forEach(i => preserve.add(i));
+                  }
+
+                  const optimized = budgeter.processShape(sampledPts, { preserve, minPoints: shape.type === 'line' ? 2 : 4 });
+
+                  let effPts = optimized.points;
+                  if (shapeEffect && shapeEffect.type && bakeEffects) {
+                      effPts = applyEffectToPoints(effPts, shapeEffect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
+                  }
+
+                  const process = (p) => ({ ...p, x: (p.x - 500) / 500, y: (1 - p.y / 500) });
+                  const processed = effPts.map(process);
+
+                  if (processed.length < 2) return [];
 
                   const shapePts = [];
                   for (let i = 0; i < processed.length - 1; i++) {
                       let segmentMode = mode;
                       if (mode === 'dashed' && i % 2 === 1) segmentMode = 'blanked';
+                      if (effPts[i+1] && effPts[i+1]._blank) segmentMode = 'blanked';
 
                       const segmentPoints = interpolatePoints(processed[i], processed[i+1], segmentMode);
                       
-                      // Add all points except the last one of the segment, unless it's the last segment
                       if (i < processed.length - 2) {
                           shapePts.push(...segmentPoints.slice(0, -1));
                       } else {
@@ -1986,8 +2228,8 @@ const ShapeBuilder = ({ onBack }) => {
                       }
                   }
 
-                  if (s.type === 'polygon' || s.type === 'rect' || s.type === 'circle' || s.type === 'star' || s.type === 'triangle') {
-                      // Close the shape if the last point is not already the same as the first
+                  const closed = shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle';
+                  if (closed) {
                       const first = processed[0];
                       const last = processed[processed.length-1];
                       const dist = Math.sqrt(Math.pow(first.x - last.x, 2) + Math.pow(first.y - last.y, 2));
@@ -1995,6 +2237,7 @@ const ShapeBuilder = ({ onBack }) => {
                       if (dist > 0.001) {
                           let segmentMode = mode;
                           if (mode === 'dashed' && (processed.length - 1) % 2 === 1) segmentMode = 'blanked';
+                          if (effPts[0] && effPts[0]._blank) segmentMode = 'blanked';
 
                           const closingPoints = interpolatePoints(processed[processed.length-1], processed[0], segmentMode);
                           if (closingPoints.length > 1) {
@@ -2003,13 +2246,17 @@ const ShapeBuilder = ({ onBack }) => {
                       }
                   }
 
-                  // Add shape points to the main list
                   if (shapePts.length > 0) {
-                      // Add a blanked move-to point at the start of each shape to jump to it
-                      pts.push({ ...shapePts[0], blanking: true });
-                      pts.push(...shapePts);
+                      return [{ ...shapePts[0], blanking: true }, ...shapePts];
                   }
-              }); 
+                  return [];
+              };
+              
+              frameShapeSet.forEach((s, shapeIdx) => {
+                  const shapePts = processShapeToPoints(s);
+                  pts.push(...shapePts);
+              });
+
               return { points: pts, frameName: 'SHAPE' };
           });
           const { framesToIlda } = await import('../utils/ilda-writer.js');
@@ -2503,7 +2750,21 @@ const ShapeBuilder = ({ onBack }) => {
     
     // Group handling
     if (shape.type === 'group') {
-        shape.shapes.forEach((child, i) => drawShape(ctx, child, false, isOnion, [...path, i]));
+        // Children must be rendered through the group's own transform (rotation/scale
+        // about the group pivot) so the on-screen editor matches the exported frames.
+        shape.shapes.forEach((child, i) => {
+            const childPts = applyTransformations(getSampledPoints(child), shape);
+            const childMode = child.renderMode || 'simple';
+            if (childMode === 'points' || childMode === 'dotted') {
+                childPts.forEach(p => {
+                    ctx.fillStyle = isOnion ? '#444' : (p.color || child.color);
+                    ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill();
+                });
+            } else {
+                const closed = child.type !== 'pen' && child.type !== 'polyline' && child.type !== 'line' && child.type !== 'bezier';
+                drawPoly(childPts, closed, childMode === 'dashed' ? 'dashed' : 'simple', [...path, i]);
+            }
+        });
         ctx.restore();
         
         // After drawing children, if the group itself is selected, draw ITS handles
@@ -2540,7 +2801,7 @@ const ShapeBuilder = ({ onBack }) => {
     ctx.lineWidth = (isSelected ? 2.5 : 1.5) / zoom;
     
     // Batch drawing optimization
-    const drawPoly = (pts, closed, mode = 'simple', shapePath = []) => {
+    function drawPoly(pts, closed, mode = 'simple', shapePath = []) {
         if (!pts || pts.length < 2) return;
         
         // --- PASS 1: HIGHLIGHTS ---
@@ -2651,7 +2912,7 @@ const ShapeBuilder = ({ onBack }) => {
                 ctx.fill();
             });
         }
-    };
+    }
 
     const ds = (p1, p2, mode = 'simple', shapePath = []) => {
         if (!p1 || !p2) return;
@@ -2787,6 +3048,126 @@ const ShapeBuilder = ({ onBack }) => {
     ctx.restore();
   };
 
+  // Preview rendering: a clean laser-style view of the shapes. Replaces the
+  // editing affordances (grid, handles, per-point drops) with a single
+  // continuous line, a dot cloud, or each shape's center marker.
+  const shapeIsClosed = (shape) => !(shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'line' || shape.type === 'bezier');
+
+  // 3D preview: volumetric fading cone from the virtual projector center
+  // (canvas center) towards each lit segment — same geometry and rendering
+  // values as the main-app show preview (WebGLRenderer drawLinesEffect):
+  // apex colored at full intensity, base edges scaled by edgeFade (0.3),
+  // blanked segments skipped, plus the closing segment for closed shapes.
+  const drawConePts = (ctx, pts, closed) => {
+    if (!pts || pts.length === 0) return;
+    const apexX = 500, apexY = 500;
+    const edgeFade = 0.3;
+    const n = pts.length;
+    const segs = [];
+    for (let i = 1; i < n; i++) {
+        const a = pts[i - 1], b = pts[i];
+        if (!a || !b || a._blank || b._blank) continue;
+        if (Math.abs(b.x - a.x) <= 0.001 && Math.abs(b.y - a.y) <= 0.001) continue;
+        segs.push([a, b]);
+    }
+    if (closed && n > 2) {
+        const a = pts[n - 1], b = pts[0];
+        if (a && b && !a._blank && !b._blank && Math.hypot(a.x - b.x, a.y - b.y) > 0.001) segs.push([a, b]);
+    }
+    if (segs.length === 0) return;
+    ctx.save();
+    const edgeColor = (hex) => {
+        const { r, g, b } = hexToRgb(hex || '#fff');
+        return `rgba(${Math.round(r * edgeFade)},${Math.round(g * edgeFade)},${Math.round(b * edgeFade)},1)`;
+    };
+    for (const [a, b] of segs) {
+        const color = b.color || a.color || '#fff';
+        const grad = ctx.createLinearGradient(apexX, apexY, (a.x + b.x) / 2, (a.y + b.y) / 2);
+        grad.addColorStop(0, color);
+        grad.addColorStop(1, edgeColor(color));
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(apexX, apexY);
+        ctx.lineTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.closePath();
+        ctx.fill();
+    }
+    ctx.restore();
+  };
+
+  const drawPreview = (ctx, shape, mode) => {
+    if (!shape || shape.hidden) return;
+    if (shape.type === 'group') { shape.shapes.forEach(s => drawPreview(ctx, s, mode)); return; }
+    const pts = getSampledPoints(shape);
+    ctx.save();
+    if (mode === 'center') {
+        const c = getShapeCenter(shape);
+        ctx.strokeStyle = shape.color || '#fff';
+        ctx.fillStyle = shape.color || '#fff';
+        ctx.lineWidth = 1.5 / zoom;
+        ctx.beginPath(); ctx.moveTo(c.x - 6/zoom, c.y); ctx.lineTo(c.x + 6/zoom, c.y); ctx.moveTo(c.x, c.y - 6/zoom); ctx.lineTo(c.x, c.y + 6/zoom); ctx.stroke();
+        ctx.beginPath(); ctx.arc(c.x, c.y, 2.5/zoom, 0, Math.PI*2); ctx.fill();
+    } else if (mode === 'cone') {
+        drawConePts(ctx, pts, shapeIsClosed(shape));
+    } else if (mode === 'points') {
+        pts.forEach(p => { ctx.fillStyle = p.color || shape.color; ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI*2); ctx.fill(); });
+    } else {
+        if (pts.length < 2) return;
+        ctx.lineWidth = 1.5 / zoom; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.strokeStyle = (pts[1] && pts[1].color) || shape.color || '#fff';
+        ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  // Effect preview renderer: draws the modulated points of a shape, honoring
+  // per-point "_blank" flags from chase/strobe/audio effects.
+  const drawEffectPts = (ctx, shape, pts) => {
+    if (pts.length === 0) return;
+    ctx.save();
+    ctx.lineWidth = 1.8 / zoom; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const isPointy = shape.renderMode === 'points' || shape.renderMode === 'dotted';
+    if (isPointy) {
+        pts.forEach(p => {
+            if (p._blank) return;
+            ctx.fillStyle = p.color || shape.color || '#fff';
+            ctx.beginPath(); ctx.arc(p.x, p.y, 2.5 / zoom, 0, Math.PI * 2); ctx.fill();
+        });
+    } else {
+        // A segment is drawn only when neither endpoint is blanked. For closed
+        // shapes the closing segment (last -> first) is included as well, so
+        // the modulated outline never loses its shape-closing edge.
+        const closed = !(shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'line' || shape.type === 'bezier');
+        const segs = [];
+        const n = pts.length;
+        for (let i = 0; i < n - 1; i++) {
+            if (pts[i] && pts[i+1] && !pts[i]._blank && !pts[i+1]._blank) segs.push([pts[i], pts[i+1]]);
+        }
+        if (closed && n > 2 && !pts[0]._blank && !pts[n-1]._blank) segs.push([pts[n-1], pts[0]]);
+
+        ctx.strokeStyle = (pts[0] && pts[0].color) || shape.color || '#fff';
+        ctx.beginPath();
+        let pathOpen = false;
+        const flush = () => { if (pathOpen) { ctx.stroke(); ctx.beginPath(); pathOpen = false; } };
+        for (let j = 0; j < segs.length; j++) {
+            const [a, b] = segs[j];
+            if (pathOpen && segs[j-1][1] === a) {
+                ctx.lineTo(b.x, b.y);
+            } else {
+                flush();
+                ctx.moveTo(a.x, a.y);
+                ctx.lineTo(b.x, b.y);
+                pathOpen = true;
+            }
+        }
+        flush();
+    }
+    ctx.restore();
+  };
+
   // --- RENDERING LOOP ---
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
@@ -2798,20 +3179,68 @@ const ShapeBuilder = ({ onBack }) => {
         ctx.save(); ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.translate(canvas.width / 2, canvas.height / 2); ctx.scale(zoom, zoom); ctx.translate(-CANVAS_SIZE / 2 + pan.x, -CANVAS_SIZE / 2 + pan.y);
         ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-        if (showGrid) {
-          ctx.beginPath(); ctx.strokeStyle = '#222'; ctx.lineWidth = 0.5 / zoom;
-          for (let x = 0; x <= CANVAS_SIZE; x += gridSize) { ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_SIZE); }
-          for (let y = 0; y <= CANVAS_SIZE; y += gridSize) { ctx.moveTo(0, y); ctx.lineTo(CANVAS_SIZE, y); }
-          ctx.stroke();
-          ctx.beginPath(); ctx.strokeStyle = '#444'; ctx.lineWidth = 1 / zoom; ctx.moveTo(CANVAS_SIZE/2, 0); ctx.lineTo(CANVAS_SIZE/2, CANVAS_SIZE); ctx.moveTo(0, CANVAS_SIZE/2); ctx.lineTo(CANVAS_SIZE, CANVAS_SIZE/2); ctx.stroke();
+        if (previewMode === 'off') {
+          if (showGrid) {
+            ctx.beginPath(); ctx.strokeStyle = '#222'; ctx.lineWidth = 0.5 / zoom;
+            for (let x = 0; x <= CANVAS_SIZE; x += gridSize) { ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_SIZE); }
+            for (let y = 0; y <= CANVAS_SIZE; y += gridSize) { ctx.moveTo(0, y); ctx.lineTo(CANVAS_SIZE, y); }
+            ctx.stroke();
+            ctx.beginPath(); ctx.strokeStyle = '#444'; ctx.lineWidth = 1 / zoom; ctx.moveTo(CANVAS_SIZE/2, 0); ctx.lineTo(CANVAS_SIZE/2, CANVAS_SIZE); ctx.moveTo(0, CANVAS_SIZE/2); ctx.lineTo(CANVAS_SIZE, CANVAS_SIZE/2); ctx.stroke();
+          }
+          if (onionSkin && currentFrameIndex > 0 && !isPlaying && frames[currentFrameIndex - 1]) { 
+              ctx.globalAlpha = 0.15; 
+              frames[currentFrameIndex - 1].forEach(s => drawShape(ctx, s, false, true)); 
+              ctx.globalAlpha = 1.0; 
+          }
         }
         if (backgroundImage) { ctx.globalAlpha = 0.3; ctx.drawImage(backgroundImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE); ctx.globalAlpha = 1.0; }
-        if (onionSkin && currentFrameIndex > 0 && !isPlaying && frames[currentFrameIndex - 1]) { 
-            ctx.globalAlpha = 0.15; 
-            frames[currentFrameIndex - 1].forEach(s => drawShape(ctx, s, false, true)); 
-            ctx.globalAlpha = 1.0; 
+        if (previewMode === 'off') {
+            if (!(shapeEffect && shapeEffect.type) && shapes.length > 0) shapes.forEach((s, i) => drawShape(ctx, s, selectedShapeIndexes.includes(i)));
+        } else {
+            if (shapes.length > 0) shapes.forEach(s => drawPreview(ctx, s, previewMode));
         }
-        if (shapes.length > 0) shapes.forEach((s, i) => drawShape(ctx, s, selectedShapeIndexes.includes(i)));
+        if (shapeEffect && shapeEffect.type) {
+            const effectPos = frameCount > 1 ? currentFrameIndex / (frameCount - 1) : 0;
+            // Compute effective envelope strength for idle detection:
+            // if per-parameter envelopes exist, use the maximum at this position;
+            // fall back to legacy single envelope if present; otherwise full (1).
+            const envs = shapeEffect.envelopes || {};
+            const assignedEnvs = Object.keys(envs).length
+                ? Object.values(envs)
+                : (shapeEffect.envelope ? [shapeEffect.envelope] : []);
+            const strengthAt = assignedEnvs.length
+                ? Math.max(...assignedEnvs.map(e => envelopeValue(e, effectPos)))
+                : 1;
+            // At ~0 envelope strength the effect is idle, so show the raw
+            // shapes as-is. Otherwise draw ONLY the modulated layer - no full
+            // shape underlay, so blanked gaps/chase jumps read as jumps.
+            if (strengthAt < 0.02 && shapes.length > 0) {
+                shapes.forEach((s, i) => previewMode === 'cone' ? drawPreview(ctx, s, 'cone') : drawShape(ctx, s, selectedShapeIndexes.includes(i)));
+            } else {
+                shapes.forEach(s => {
+                    if (!s || s.hidden) return;
+                    const rawPoints = getSampledPoints(s);
+                    const modulated = applyEffectToPoints(rawPoints, shapeEffect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
+                    if (previewMode === 'cone') drawConePts(ctx, modulated, shapeIsClosed(s));
+                    else drawEffectPts(ctx, s, modulated);
+                });
+                // Faint selection markers (bbox outline) instead of a full body
+                // redraw, so the current selection stays visible on top.
+                if (selectedShapeIndexes.length > 0) {
+                    ctx.globalAlpha = 0.6;
+                    shapes.forEach((s, i) => {
+                        if (!s || !selectedShapeIndexes.includes(i)) return;
+                        const bb = getBoundingBox(s);
+                        ctx.strokeStyle = '#0089ff';
+                        ctx.lineWidth = 1.5 / zoom;
+                        ctx.setLineDash([6 / zoom, 4 / zoom]);
+                        ctx.strokeRect(bb.x, bb.y, bb.w, bb.h);
+                        ctx.setLineDash([]);
+                    });
+                    ctx.globalAlpha = 1.0;
+                }
+            }
+        }
         if (isDrawing && activeShape) drawShape(ctx, activeShape, false);
         if (isSelectingBoxRef.current && selectionBoxRef.current) { 
             ctx.fillStyle = 'rgba(0, 137, 255, 0.3)';
@@ -2827,7 +3256,7 @@ const ShapeBuilder = ({ onBack }) => {
     
     rafId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(rafId);
-  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, selectedSegmentIndexes, onionSkin, isPlaying, zoom, pan, renderTrigger]);
+  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, selectedSegmentIndexes, onionSkin, isPlaying, zoom, pan, renderTrigger, previewMode, shapeEffect]);
 
   // --- PLAYBACK TIMER ---
   useEffect(() => {
@@ -3133,6 +3562,16 @@ const ShapeBuilder = ({ onBack }) => {
           <button onClick={() => { setZoom(0.6); setPan({x:0, y:0}); }} title="Recenter"><i className="bi bi-aspect-ratio"></i></button>
         </div>
         <div className="grid-controls" style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '0.8rem', marginLeft: '15px' }}>
+          <label>
+            Preview:
+            <select value={previewMode} onChange={e => setPreviewMode(e.target.value)} style={{ marginLeft: '4px', background: '#222', color: 'white', border: '1px solid #444', borderRadius: '3px' }}>
+              <option value="off">Off</option>
+              <option value="line">Line</option>
+              <option value="points">Points</option>
+              <option value="center">Center</option>
+              <option value="cone">3D</option>
+            </select>
+          </label>
           <label><input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} /> Grid</label>
           <label><input type="checkbox" checked={snapToGrid} onChange={e => setSnapToGrid(e.target.checked)} /> Snap</label>
           {(tool === 'line' || tool === 'bezier') && <label><input type="checkbox" checked={continuousDrawing} onChange={e => setContinuousDrawing(e.target.checked)} /> Continuous</label>}
@@ -3143,7 +3582,8 @@ const ShapeBuilder = ({ onBack }) => {
         <button onClick={onBack} style={{ marginLeft: 'auto' }}>Back to Show Control</button>
       </header>
 
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <aside style={{ width: '60px', background: '#1a1a1a', borderRight: '1px solid #333', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 0', gap: '10px' }}>
           <ToolButton active={tool === 'select'} onClick={() => { setTool('select'); setIsDrawing(false); setActiveShape(null); }} icon="bi-cursor" />
           
@@ -3252,53 +3692,6 @@ const ShapeBuilder = ({ onBack }) => {
                 </div>
             )}
           </div>
-          <div className="timeline-bar" style={{ height: '80px', background: '#1a1a1a', borderTop: '1px solid #333', display: 'flex', alignItems: 'center', padding: '0 20px', gap: '20px' }}>
-              <div className="playback-controls" style={{ display: 'flex', gap: '10px' }}>
-                  <button onClick={() => setIsPlaying(!isPlaying)} style={{ width: '40px', height: '40px', borderRadius: '50%', background: isPlaying ? 'var(--theme-color)' : '#333', color: isPlaying ? 'black' : 'white' }}><i className={`bi ${isPlaying ? 'bi-pause-fill' : 'bi-play-fill'}`}></i></button>
-                  <button onClick={() => setCurrentFrameIndex(prev => Math.max(0, prev - 1))}><i className="bi bi-chevron-left"></i></button>
-                  <button onClick={() => setCurrentFrameIndex(prev => Math.min(frameCount - 1, prev + 1))}><i className="bi bi-chevron-right"></i></button>
-                  <button onClick={duplicateFrame} title="Duplicate Frame"><i className="bi bi-layers-half"></i></button>
-              </div>
-              <div className="frame-slider-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#666' }}>
-                      <span>FRAME {currentFrameIndex + 1} / {frameCount}</span>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                          <input type="checkbox" checked={onionSkin} onChange={e => setOnionSkin(e.target.checked)} /> Onion Skin
-                      </label>
-                  </div>
-                  <TimelineRuler 
-                    currentFrame={currentFrameIndex} 
-                    frameCount={frameCount} 
-                    syncMode={syncMode} 
-                    bpm={bpm} 
-                    beats={beats} 
-                    duration={duration} 
-                    fps={fps} 
-                    snapToGrid={snapToGrid}
-                    onSeek={setCurrentFrameIndex} 
-                  />
-              </div>
-              <div className="timeline-settings" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <label style={{ fontSize: '0.8rem', color: '#888' }}>START:</label>
-                      <input type="number" min="1" max={frameCount} value={timelineStartFrame + 1} onChange={e => setTimelineStartFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} onWheel={handleTimelineStartWheel} style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <label style={{ fontSize: '0.8rem', color: '#888' }}>LENGTH:</label>
-                      <input 
-                        type="number" 
-                        min="1" 
-                        max="999" 
-                        value={tempFrameCount} 
-                        onChange={e => setTempFrameCount(e.target.value)} 
-                        onBlur={() => setFrameCount(Math.max(1, parseInt(tempFrameCount) || 1))}
-                        onKeyDown={e => { if (e.key === 'Enter') setFrameCount(Math.max(1, parseInt(tempFrameCount) || 1)); }}
-                        onWheel={e => handleNumberWheel(e, setFrameCount)} 
-                        style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} 
-                      />
-                  </div>
-              </div>
-          </div>
         </main>
 
         <aside style={{ width: '260px', background: '#1a1a1a', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -3307,11 +3700,12 @@ const ShapeBuilder = ({ onBack }) => {
               <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   LAYERS
                   <div style={{ display: 'flex', gap: '5px' }}>
+                      <button onClick={() => togglePanel('layers')} title={collapsedPanels.layers ? "Expand" : "Collapse"} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className={`bi ${collapsedPanels.layers ? 'bi-chevron-right' : 'bi-chevron-down'}`}></i></button>
                       <button onClick={groupShapes} title="Group" disabled={selectedShapeIndexes.length < 2} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-intersect"></i></button>
                       <button onClick={ungroupShapes} title="Ungroup" disabled={selectedShapeIndexes.length !== 1 || shapes[selectedShapeIndexes[0]]?.type !== 'group'} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-exclude"></i></button>
                   </div>
               </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {!collapsedPanels.layers && (<div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   {shapes.map((s, i) => ({ s, i })).reverse().map(({ s, i }) => (
                       <div key={i} 
                            style={{ 
@@ -3361,34 +3755,138 @@ const ShapeBuilder = ({ onBack }) => {
                           </button>
                       </div>
                   ))}
-              </div>
+              </div>)}
           </div>
 
           <div className="properties-scroll-container" style={{ flex: 1, overflowY: 'auto', padding: '15px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', borderBottom: '1px solid #333', paddingBottom: '5px' }}>PROPERTIES</h3>
-              
+              <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', borderBottom: '1px solid #333', paddingBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  PROPERTIES
+                  <button onClick={() => togglePanel('props')} title={collapsedPanels.props ? "Expand" : "Collapse"} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className={`bi ${collapsedPanels.props ? 'bi-chevron-right' : 'bi-chevron-down'}`}></i></button>
+              </h3>
+
+              <div className="shape-effect-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: shapeEffect ? '8px' : '0' }}>
+                      <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: 0 }}>SHAPE EFFECT</h4>
+                      {!shapeEffect && <button onClick={() => addShapeEffect('rotate')} title="Fills empty frames with the current shapes" style={{ padding: '2px 8px', fontSize: '0.7rem' }}>ADD EFFECT</button>}
+                  </div>
+                  {shapeEffect && (<>
+                      <div style={{ display: 'flex', gap: '5px', marginBottom: '6px' }}>
+                          <select value={shapeEffect.type} onChange={e => setShapeEffect(prev => ({ ...prev, type: e.target.value, params: effectParamsDefaults(e.target.value) }))}
+                              style={{ flex: 1, background: '#111', color: 'white', border: '1px solid #444', borderRadius: '3px', fontSize: '0.75rem', padding: '3px' }}>
+                              {EFFECT_GROUPS.map(g => (
+                                  <optgroup key={g} label={g}>
+                                      {EFFECTS.filter(e => e.group === g).map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+                                  </optgroup>
+                              ))}
+                          </select>
+                          <button onClick={() => setShapeEffect(null)} title="Remove effect" style={{ padding: '2px 7px', fontSize: '0.7rem' }}>✕</button>
+                      </div>
+
+                      {getEffectDef(shapeEffect.type).params.map(pd => {
+                          const val = shapeEffect.params?.[pd.id] ?? pd.def;
+                          const display = pd.options ? pd.options[val] : val;
+                          const isNumeric = !pd.options;
+                          const hasEnv = !!(shapeEffect.envelopes && shapeEffect.envelopes[pd.id]);
+                          const open = envTarget === pd.id;
+                          return (
+                              <div key={pd.id} style={{ marginBottom: '6px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      <label style={{ fontSize: '0.6rem', color: '#888', flex: 1, display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                                          {pd.label} <span style={{ color: '#aaa' }}>{display}</span>
+                                      </label>
+                                      {isNumeric && <button
+                                          onClick={() => setEnvTarget(open ? null : pd.id)}
+                                          title="Playback envelope"
+                                          style={{ background: 'none', border: 'none', padding: '2px 3px', color: hasEnv ? 'var(--theme-color)' : '#555', cursor: 'pointer', fontSize: '0.6rem' }}>
+                                          <i className={`bi ${hasEnv ? 'bi-gear-fill' : 'bi-gear'}`}></i>
+                                      </button>}
+                                  </div>
+                                  <input type="range" min={pd.min} max={pd.max} step={pd.step} value={val}
+                                      onChange={e => setShapeEffect(prev => ({ ...prev, params: { ...(prev.params || {}), [pd.id]: parseFloat(e.target.value) } }))}
+                                      style={{ width: '100%', accentColor: 'var(--theme-color)' }} />
+                                  {open && isNumeric && (
+                                      <div style={{ background: '#1c1c1c', borderRadius: '3px', border: '1px solid #333', padding: '6px', marginTop: '4px' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                              <span style={{ fontSize: '0.55rem', color: 'var(--theme-color)' }}>PLAYBACK ENVELOPE</span>
+                                              <button
+                                                  onClick={() => {
+                                                      const envelopes = { ...(shapeEffect.envelopes || {}) };
+                                                      delete envelopes[pd.id];
+                                                      setShapeEffect(prev => ({ ...prev, envelopes }));
+                                                      setEnvTarget(null);
+                                                  }}
+                                                  title="Remove envelope"
+                                                  style={{ background: 'none', border: 'none', color: '#b44', fontSize: '0.6rem', cursor: 'pointer' }}>
+                                                  ✕
+                                              </button>
+                                          </div>
+                                          <EnvelopeEditor
+                                              points={(shapeEffect.envelopes?.[pd.id]?.points && shapeEffect.envelopes[pd.id].points.length)
+                                                  ? shapeEffect.envelopes[pd.id].points
+                                                  : DEFAULT_ENVELOPE.points}
+                                              curve={shapeEffect.envelopes?.[pd.id]?.curve ?? DEFAULT_ENVELOPE.curve}
+                                              onChange={pts => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), points: pts } } }))}
+                                          />
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '6px 0 3px' }}>
+                                              <span style={{ fontSize: '0.6rem', color: '#aaa', width: '22px', flexShrink: 0 }}>AMT</span>
+                                              <input type="range" min="0" max="100" step="1" value={shapeEffect.envelopes?.[pd.id]?.amount ?? DEFAULT_ENVELOPE.amount}
+                                                  onChange={e => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), amount: parseFloat(e.target.value) } } }))}
+                                                  style={{ flex: 1, accentColor: 'var(--theme-color)' }} />
+                                              <span style={{ fontSize: '0.6rem', color: '#888', width: '26px', textAlign: 'right' }}>{(shapeEffect.envelopes?.[pd.id]?.amount ?? DEFAULT_ENVELOPE.amount).toFixed(0)}%</span>
+                                          </div>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '6px 0 3px' }}>
+                                              <span style={{ fontSize: '0.6rem', color: '#aaa', width: '22px', flexShrink: 0 }}>PHASE</span>
+                                              <input type="range" min="0" max="1" step="0.01" value={shapeEffect.envelopes?.[pd.id]?.phase ?? DEFAULT_ENVELOPE.phase}
+                                                  onChange={e => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), phase: parseFloat(e.target.value) } } }))}
+                                                  style={{ flex: 1, accentColor: 'var(--theme-color)' }} />
+                                              <span style={{ fontSize: '0.6rem', color: '#888', width: '26px', textAlign: 'right' }}>{(shapeEffect.envelopes?.[pd.id]?.phase ?? DEFAULT_ENVELOPE.phase).toFixed(2)}</span>
+                                          </div>
+                                          <select value={shapeEffect.envelopes?.[pd.id]?.curve ?? DEFAULT_ENVELOPE.curve}
+                                              onChange={e => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), curve: e.target.value } } }))}
+                                              style={{ width: '100%', background: '#111', color: 'white', border: '1px solid #444', borderRadius: '3px', fontSize: '0.7rem', padding: '2px' }}>
+                                              <option value="linear">Curve: Linear</option>
+                                              <option value="easeIn">Curve: Ease In</option>
+                                              <option value="easeOut">Curve: Ease Out</option>
+                                              <option value="easeInOut">Curve: Ease In-Out</option>
+                                          </select>
+                                      </div>
+                                  )}
+                              </div>
+                          );
+                      })}
+
+                      <label style={{ fontSize: '0.65rem', color: '#888', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', cursor: 'pointer' }}>
+                          <input type="checkbox" className="sb-checkbox" checked={bakeEffects} onChange={e => setBakeEffects(e.target.checked)} />
+                          Bake effects into exported .ild
+                      </label>
+                  </>)}
+              </div>
+
+              {!collapsedPanels.props && (<>
               <div className="animation-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
                   <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>TWEENING TOOL</h4>
                                               <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
                                                   <div style={{ flex: 1 }}>
                                                       <label style={{ fontSize: '0.6rem', color: '#888' }}>START FRAME</label>
+                                                      <NonPassiveWheel onWheel={handleTweenStartWheel}>
                                                       <input 
                                                         type="number" 
                                                         value={tweenStartFrame + 1} 
                                                         onChange={e => setTweenStartFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} 
-                                                        onWheel={handleTweenStartWheel}
                                                         style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
                                                       />
+                                                      </NonPassiveWheel>
                                                   </div>
                                                   <div style={{ flex: 1 }}>
                                                       <label style={{ fontSize: '0.6rem', color: '#888' }}>END FRAME</label>
+                                                      <NonPassiveWheel onWheel={handleTweenEndWheel}>
                                                       <input 
                                                         type="number" 
                                                         value={tweenEndFrame + 1} 
                                                         onChange={e => setTweenEndFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} 
-                                                        onWheel={handleTweenEndWheel}
                                                         style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
                                                       />
+                                                      </NonPassiveWheel>
                                                   </div>
                                               </div>
                                                             <div style={{ display: 'flex', gap: '10px', marginBottom: '8px', fontSize: '0.7rem', color: '#ccc' }}>
@@ -3398,72 +3896,8 @@ const ShapeBuilder = ({ onBack }) => {
                                                                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                                                                     <input type="checkbox" className="sb-checkbox" checked={tweenColor} onChange={e => setTweenColor(e.target.checked)} /> COLOR
                                                                 </label>
-                                                            </div>                                              <button onClick={tweenFrames} className="primary-btn" style={{ width: '100%', padding: '5px' }}>INTERPOLATE</button>
-                                          </div>                  
-                                      <div className="sync-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
-                                          <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>PLAYBACK SYNC</h4>
-                                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px', marginBottom: '10px' }}>
-                                              <ModeButton active={syncMode === 'fps'} onClick={() => handleSetSyncMode('fps')}>FPS</ModeButton>
-                                              <ModeButton active={syncMode === 'bpm'} onClick={() => handleSetSyncMode('bpm')}>BPM</ModeButton>
-                                              <ModeButton active={syncMode === 'time'} onClick={() => handleSetSyncMode('time')}>TIME</ModeButton>
-                                          </div>
-                                          
-                                          {syncMode === 'fps' && (
-                                              <div style={{ marginBottom: '8px' }}>
-                                                  <label style={{ fontSize: '0.7rem', color: '#888' }}>FPS: {fps}</label>
-                                                  <input type="range" min="1" max="60" value={fps} onChange={e => handleSetFps(parseInt(e.target.value))} />
-                                              </div>
-                                          )}
-                                          {syncMode === 'bpm' && (
-                                              <div style={{ marginBottom: '8px', display: 'flex', gap: '5px' }}>
-                                                  <div style={{ flex: 1 }}>
-                                                      <label style={{ fontSize: '0.7rem', color: '#888' }}>BPM: {bpm}</label>
-                                                      <input 
-                                                        type="number" 
-                                                        value={bpm} 
-                                                        onChange={e => handleSetBpm(parseInt(e.target.value) || 0)} 
-                                                        onWheel={handleBpmWheel}
-                                                        style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white' }} 
-                                                      />
-                                                  </div>
-                                                  <div style={{ flex: 1 }}>
-                                                      <label style={{ fontSize: '0.7rem', color: '#888' }}>BEATS: {beats}</label>
-                                                      <input 
-                                                        type="number" 
-                                                        value={beats} 
-                                                        onChange={e => handleSetBeats(parseInt(e.target.value) || 1)} 
-                                                        onWheel={handleBeatsWheel}
-                                                        style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white' }} 
-                                                      />
-                                                  </div>
-                                              </div>
-                                          )}
-                                          {syncMode === 'time' && (
-                                              <div style={{ marginBottom: '8px' }}>
-                                                  <label style={{ fontSize: '0.7rem', color: '#888' }}>DURATION (S): {duration}</label>
-                                                  <input 
-                                                    type="number" 
-                                                    step="0.1" 
-                                                    value={duration} 
-                                                    onChange={e => handleSetDuration(parseFloat(e.target.value) || 0)} 
-                                                    onWheel={handleDurationWheel}
-                                                    style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white' }} 
-                                                  />
-                                              </div>
-                                          )}
-                            
-                                          <div style={{ marginTop: '10px' }}>
-                                              <label style={{ fontSize: '0.7rem', color: '#888', display: 'flex', justifyContent: 'space-between' }}>
-                                                  SPEED: <span>{playbackSpeed.toFixed(1)}x</span>
-                                              </label>
-                                              <input type="range" min="0.1" max="4" step="0.1" value={playbackSpeed} onChange={e => handleSetPlaybackSpeed(parseFloat(e.target.value))} />
-                                              <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                                                  <button onClick={() => handleSetPlaybackSpeed(0.5)} style={{ flex: 1, fontSize: '0.6rem' }}>0.5x</button>
-                                                  <button onClick={() => handleSetPlaybackSpeed(1.0)} style={{ flex: 1, fontSize: '0.6rem' }}>1.0x</button>
-                                                  <button onClick={() => handleSetPlaybackSpeed(2.0)} style={{ flex: 1, fontSize: '0.6rem' }}>2.0x</button>
-                                              </div>
-                                          </div>
-                                      </div>
+</div>                                              <button onClick={tweenFrames} className="primary-btn" style={{ width: '100%', padding: '5px' }}>INTERPOLATE</button>
+                                           </div>                  
 
               {selectedShapeIndexes.length > 0 ? (
                   <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -3595,20 +4029,138 @@ const ShapeBuilder = ({ onBack }) => {
                             <button key={c} onClick={() => updatePointColor(c)} style={{ width: '100%', height: '20px', background: c, border: '1px solid #444', borderRadius: '2px', padding: 0 }} />
                         ))}
                       </div>
+                      {(() => {
+                          const anchorShape = shapes[selectedShapeIndexes[0]];
+                          if (!anchorShape || !['pen', 'polygon', 'polyline'].includes(anchorShape.type)) return null;
+                          const allAnchored = selectedPointIndexes.every(pData => {
+                              const path = Array.isArray(pData) ? pData : [pData];
+                              return path.length === 1 && (anchorShape.anchorIndexes || []).includes(path[0]);
+                          });
+                          return (
+                              <button onClick={toggleSelectedPointAnchor} style={{ width: '100%', marginTop: '8px', padding: '6px', background: allAnchored ? 'var(--theme-color)' : '#333', color: allAnchored ? 'black' : '#ccc', fontWeight: allAnchored ? 'bold' : 'normal', border: '1px solid #444', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem' }}>
+                                  {allAnchored ? 'UNMARK AS ANCHOR' : 'MARK AS ANCHOR (kept on export)'}
+                              </button>
+                          );
+                      })()}
                   </div>
               )}
+              </>)}
           </div>
-          
+
           <div className="save-container" style={{ padding: '15px', borderTop: '1px solid #333', background: '#1a1a1a' }}>
-              <button className="primary-btn" style={{ width: '100%', padding: '12px' }} onClick={saveClip} disabled={frames.every(f => f.length === 0) || isExporting}>
-                  {isExporting ? 'EXPORTING...' : 'SAVE AS CLIP'}
-              </button>
-              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>keeps vector shapes editable (.clip)</div>
-              <button className="primary-btn" style={{ width: '100%', padding: '8px', marginTop: '8px', background: 'transparent !important', border: '1px solid var(--theme-color) !important', color: 'var(--theme-color) !important' }} onClick={exportIlda} disabled={frames.every(f => f.length === 0) || isExporting}>
+              <button className="primary-btn" style={{ width: '100%', padding: '12px' }} onClick={exportIlda} disabled={frames.every(f => f.length === 0) || isExporting}>
                   {isExporting ? 'EXPORTING...' : 'Export ILDA (.ild)'}
               </button>
+              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>standard laser format — exports from {timelineStartFrame + 1}</div>
+              <button className="primary-btn" style={{ width: '100%', padding: '8px', marginTop: '8px', background: 'transparent !important', border: '1px solid var(--theme-color) !important', color: 'var(--theme-color) !important' }} onClick={saveClip} disabled={frames.every(f => f.length === 0) || isExporting}>
+                  {isExporting ? 'EXPORTING...' : 'Save as Clip (.clip)'}
+              </button>
+              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>keeps vector shapes editable</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', fontSize: '0.7rem', color: '#888' }}>
+                  <label htmlFor="exportBudget">Max pts/frame</label>
+                  <input id="exportBudget" type="number" min="100" max="5000" step="100" value={exportBudget} onChange={(e) => setExportBudget(Math.max(0, parseInt(e.target.value, 10) || 0))} style={{ width: '70px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.7rem' }} />
+                  <div style={{ marginLeft: 'auto', color: '#555' }}>(1200 = 20k pts @ 30fps)</div>
+              </div>
           </div>
         </aside>
+
+        </div>
+        <div className="timeline-bar" style={{ height: '110px', background: '#1a1a1a', borderTop: '1px solid #333', display: 'flex', alignItems: 'center', padding: '0 20px', gap: '20px' }}>
+            <div className="playback-controls" style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={() => setIsPlaying(!isPlaying)} style={{ width: '40px', height: '40px', borderRadius: '50%', background: isPlaying ? 'var(--theme-color)' : '#333', color: isPlaying ? 'black' : 'white' }}><i className={`bi ${isPlaying ? 'bi-pause-fill' : 'bi-play-fill'}`}></i></button>
+                <button onClick={() => setCurrentFrameIndex(prev => Math.max(0, prev - 1))}><i className="bi bi-chevron-left"></i></button>
+                <button onClick={() => setCurrentFrameIndex(prev => Math.min(frameCount - 1, prev + 1))}><i className="bi bi-chevron-right"></i></button>
+                <button onClick={duplicateFrame} title="Duplicate Frame"><i className="bi bi-layers-half"></i></button>
+            </div>
+            <div className="timeline-sync" style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '8px 12px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '0.6rem', color: '#666', letterSpacing: '1px' }}>SYNC</span>
+                    <div style={{ display: 'flex', gap: '3px' }}>
+                        <ModeButton active={syncMode === 'fps'} onClick={() => handleSetSyncMode('fps')}>FPS</ModeButton>
+                        <ModeButton active={syncMode === 'bpm'} onClick={() => handleSetSyncMode('bpm')}>BPM</ModeButton>
+                        <ModeButton active={syncMode === 'time'} onClick={() => handleSetSyncMode('time')}>TIME</ModeButton>
+                    </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', minWidth: '190px' }}>
+                    {syncMode === 'fps' && (
+                        <label style={{ fontSize: '0.7rem', color: '#888' }}>
+                            FPS: {fps}
+                            <input type="range" min="1" max="60" value={fps} onChange={e => handleSetFps(parseInt(e.target.value))} />
+                        </label>
+                    )}
+                    {syncMode === 'bpm' && (
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: '0.7rem', color: '#888' }}>BPM</label>
+                                <NonPassiveWheel onWheel={handleBpmWheel}>
+                                <input type="number" value={bpm} onChange={e => handleSetBpm(parseInt(e.target.value) || 0)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
+                                </NonPassiveWheel>
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: '0.7rem', color: '#888' }}>BEATS</label>
+                                <NonPassiveWheel onWheel={handleBeatsWheel}>
+                                <input type="number" value={beats} onChange={e => handleSetBeats(parseInt(e.target.value) || 1)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
+                                </NonPassiveWheel>
+                            </div>
+                        </div>
+                    )}
+                    {syncMode === 'time' && (
+                        <label style={{ fontSize: '0.7rem', color: '#888' }}>
+                            DURATION (S): {duration}
+                            <NonPassiveWheel onWheel={handleDurationWheel}>
+                            <input type="number" step="0.1" value={duration} onChange={e => handleSetDuration(parseFloat(e.target.value) || 0)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
+                            </NonPassiveWheel>
+                        </label>
+                    )}
+                    <label style={{ fontSize: '0.7rem', color: '#888' }}>
+                        SPEED: {playbackSpeed.toFixed(1)}x
+                        <input type="range" min="0.1" max="4" step="0.1" value={playbackSpeed} onChange={e => handleSetPlaybackSpeed(parseFloat(e.target.value))} />
+                    </label>
+                </div>
+            </div>
+            <div className="frame-slider-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#666' }}>
+                    <span>FRAME {currentFrameIndex + 1} / {frameCount}</span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={onionSkin} onChange={e => setOnionSkin(e.target.checked)} /> Onion Skin
+                    </label>
+                </div>
+                <TimelineRuler 
+                  currentFrame={currentFrameIndex} 
+                  frameCount={frameCount} 
+                  syncMode={syncMode} 
+                  bpm={bpm} 
+                  beats={beats} 
+                  duration={duration} 
+                  fps={fps} 
+                  snapToGrid={snapToGrid}
+                  onSeek={setCurrentFrameIndex} 
+                />
+            </div>
+            <div className="timeline-settings" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <label style={{ fontSize: '0.8rem', color: '#888' }}>START:</label>
+                    <NonPassiveWheel onWheel={handleTimelineStartWheel}>
+                    <input type="number" min="1" max={frameCount} value={timelineStartFrame + 1} onChange={e => setTimelineStartFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} />
+                    </NonPassiveWheel>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <label style={{ fontSize: '0.8rem', color: '#888' }}>LENGTH:</label>
+                    <NonPassiveWheel onWheel={e => handleNumberWheel(e, setFrameCount)}>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      max="999" 
+                      value={tempFrameCount} 
+                      onChange={e => setTempFrameCount(e.target.value)} 
+                      onBlur={() => setFrameCount(Math.max(1, parseInt(tempFrameCount) || 1))}
+                      onKeyDown={e => { if (e.key === 'Enter') setFrameCount(Math.max(1, parseInt(tempFrameCount) || 1)); }}
+                      style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} 
+                    />
+                      </NonPassiveWheel>
+                </div>
+            </div>
+        </div>
       </div>
       <style>{`
         button { padding: 4px 10px; background: #333; border: 1px solid #444; color: #ccc; border-radius: 3px; cursor: pointer; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; }

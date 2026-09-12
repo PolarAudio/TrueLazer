@@ -132,13 +132,17 @@ export const effectDefinitions = [
     defaultParams: {
       speedX: 0.1,
       speedY: 0.1,
+      sizeX: 1.0,
+      sizeY: 1.0,
       linkXY: true,
     },
     paramControls: [
       { id: 'speedX', label: 'Speed X', type: 'range', min: 0, max: 2.0, step: 0.01 },
       { id: 'speedY', label: 'Speed Y', type: 'range', min: 0, max: 2.0, step: 0.01 },
+      { id: 'sizeX', label: 'Size X', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
+      { id: 'sizeY', label: 'Size Y', type: 'range', min: 0.1, max: 2.0, step: 0.01 },
     ],
-    linkPairs: [['speedX', 'speedY']],
+    linkPairs: [['speedX', 'speedY'], ['sizeX', 'sizeY']],
   },
   {
     id: 'delay',
@@ -178,6 +182,7 @@ export const effectDefinitions = [
       decay: 0.8,
       speed: 1.0,
       overlap: 1,
+      emptyStep: true,
       direction: 'left_to_right',
       useCustomOrder: false,
       customOrder: [],
@@ -186,6 +191,7 @@ export const effectDefinitions = [
     paramControls: [
       { id: 'mode', label: 'Mode', type: 'select', options: ['segment', 'channel'] },
       { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat', 'bounce'] },
+      { id: 'emptyStep', label: 'Empty Step', type: 'checkbox', showIf: { mode: 'channel' } },
       { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1, showIf: { mode: 'segment' } },
       { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
       { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 5.0, step: 0.1 },
@@ -198,14 +204,14 @@ export const effectDefinitions = [
     id: 'blanking',
     name: 'Blanking',
     type: 'animation',
-    description: 'Controls the blanking of the laser output.',
+    description: 'Equally distributes blanking segments along the shape.',
     defaultParams: {
       blankingInterval: 0,
       spacing: 0,
     },
     paramControls: [
-      { id: 'blankingInterval', label: 'Blanking Interval', type: 'range', min: 0, max: 10, step: 1 },
-      { id: 'spacing', label: 'Spacing', type: 'range', min: 0, max: 20, step: 1 },
+      { id: 'blankingInterval', label: 'Blanking Interval', type: 'range', min: 0, max: 20, step: 1 },
+      { id: 'spacing', label: 'Spacing', type: 'range', min: 0, max: 50, step: 1 },
     ],
   },
   {

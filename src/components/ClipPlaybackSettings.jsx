@@ -18,7 +18,6 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
     if (onUpdateUiState) {
       onUpdateUiState({
         collapsedPanels: {
-          ...collapsedPanels,
           playback: val
         }
       });

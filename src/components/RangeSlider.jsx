@@ -5,6 +5,9 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
     const trackRef = useRef(null);
     const valueHandleRef = useRef(null);
     const valueFillRef = useRef(null);
+    const rangeFillRef = useRef(null);
+    const minHandleRef = useRef(null);
+    const maxHandleRef = useRef(null);
     const [dragging, setDragging] = useState(null); // 'min', 'max', 'value'
     const [hoveredHandle, setHoveredHandle] = useState(null);
     const draggingValueRef = useRef(value); // Keep track of latest drag value
@@ -19,12 +22,24 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
     // value is the main current value (static)
     const currentValue = value !== undefined ? value : safeMin;
 
+    // Live range ref: read during drags so the ghost tracks the mouse without
+    // re-renders; synced back to props whenever the range handles aren't being dragged.
+    const rangeValueRef = useRef([currentRangeMin, currentRangeMax]);
+    const liveRange = (rangeValueRef.current && rangeValueRef.current[0] !== undefined) ? rangeValueRef.current : [currentRangeMin, currentRangeMax];
+
     // Sync Ref with Prop when NOT dragging
     useEffect(() => {
         if (dragging !== 'value') {
             draggingValueRef.current = value;
         }
     }, [value, dragging]);
+
+    // Sync Range Ref with Prop when NOT dragging the range handles
+    useEffect(() => {
+        if (dragging !== 'min' && dragging !== 'max') {
+            rangeValueRef.current = [currentRangeMin, currentRangeMax];
+        }
+    }, [currentRangeMin, currentRangeMax, dragging]);
 
     const getPercentage = (val) => {
         const range = safeMax - safeMin;
@@ -38,15 +53,19 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
 
         const updateVisuals = () => {
             let displayValue = currentValue;
+            const currentRange = rangeValueRef.current;
+            const rangeMin = currentRange[0];
+            const rangeMax = currentRange[1];
 
             if (dragging === 'value') {
                  displayValue = draggingValueRef.current;
             } else if (animSettings && animSettings.syncMode && progressRef && progressRef.current) {
-                // Determine current progress
-                const currentProgress = (workerId && progressRef.current[workerId] !== undefined) 
-                    ? progressRef.current[workerId] 
-                    : 0;
-                
+                // A live progress value exists only while the owning clip is
+                // actually rendering (active/playing). timeline/bpm syncing
+                // depends on that stream; fps flips on wall-clock time alone.
+                const hasLiveProgress = workerId && progressRef.current[workerId] !== undefined;
+                const currentProgress = hasLiveProgress ? progressRef.current[workerId] : 0;
+
                 const context = {
                     progress: currentProgress,
                     time: performance.now(),
@@ -55,7 +74,12 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                     fftLevels: getFftLevels ? getFftLevels() : { low: 0, mid: 0, high: 0 }
                 };
 
-                displayValue = resolveParam(null, currentValue, animSettings, context, safeMin, safeMax);
+                if (animSettings.syncMode === 'fps' || hasLiveProgress) {
+                    displayValue = resolveParam(null, currentValue, { ...animSettings, range: [rangeMin, rangeMax] }, context, safeMin, safeMax);
+                }
+                // else: timeline/bpm demand live progress to animate — but the
+                // clip isn't rendering right now, so the base value is shown
+                // instead of freezing the handle at progress-0's range snap.
             }
 
             // Update DOM directly
@@ -66,6 +90,16 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
             if (valueFillRef.current) {
                 valueFillRef.current.style.width = `${pct}%`;
             }
+
+            // Range ghost visuals (only present when showRange)
+            const rangeMinPct = getPercentage(rangeMin);
+            const rangeMaxPct = getPercentage(rangeMax);
+            if (rangeFillRef.current) {
+                rangeFillRef.current.style.left = `${rangeMinPct}%`;
+                rangeFillRef.current.style.width = `${rangeMaxPct - rangeMinPct}%`;
+            }
+            if (minHandleRef.current) minHandleRef.current.style.left = `${rangeMinPct}%`;
+            if (maxHandleRef.current) maxHandleRef.current.style.left = `${rangeMaxPct}%`;
 
             animationFrameId = requestAnimationFrame(updateVisuals);
         };
@@ -87,6 +121,9 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
             const rawX = ev.clientX - rect.left;
             let percentage = Math.max(0, Math.min(100, (rawX / rect.width) * 100));
             let newVal = safeMin + (percentage / 100) * (safeMax - safeMin);
+            const currentRange = rangeValueRef.current;
+            const curRangeMin = currentRange[0];
+            const curRangeMax = currentRange[1];
             
             // Snap to step
             if (step) {
@@ -97,16 +134,18 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
 
             // Constraints
             if (handle === 'value') {
-                newVal = Math.max(currentRangeMin, Math.min(currentRangeMax, newVal));
+                newVal = Math.max(curRangeMin, Math.min(curRangeMax, newVal));
                 draggingValueRef.current = newVal;
                 // Visual update is now handled by the animation loop reading from draggingValueRef
                 onChange && onChange(newVal);
             } else if (handle === 'min') {
-                newVal = Math.max(safeMin, Math.min(currentRangeMax, newVal)); // Can't cross max
-                onRangeChange && onRangeChange([newVal, currentRangeMax]);
+                newVal = Math.max(safeMin, Math.min(curRangeMax, newVal)); // Can't cross max
+                currentRange[0] = newVal; // Ghost tracked by the animation loop (same array identity)
+                onRangeChange && onRangeChange([newVal, curRangeMax]);
             } else if (handle === 'max') {
-                newVal = Math.max(currentRangeMin, Math.min(safeMax, newVal)); // Can't cross min
-                onRangeChange && onRangeChange([currentRangeMin, newVal]);
+                newVal = Math.max(curRangeMin, Math.min(safeMax, newVal)); // Can't cross min
+                currentRange[1] = newVal; // Ghost tracked by the animation loop (same array identity)
+                onRangeChange && onRangeChange([curRangeMin, newVal]);
             }
         };
 
@@ -152,20 +191,21 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
             <div className="range-slider-track" ref={trackRef} style={{ width: '100%', height: '4px', background: '#444', borderRadius: '2px', position: 'relative' }}>
                 
                 {/* Tooltips */}
-                {(dragging === 'min' || hoveredHandle === 'min') && renderTooltip(currentRangeMin, getPercentage(currentRangeMin))}
-                {(dragging === 'max' || hoveredHandle === 'max') && renderTooltip(currentRangeMax, getPercentage(currentRangeMax))}
+                {(dragging === 'min' || hoveredHandle === 'min') && renderTooltip(liveRange[0], getPercentage(liveRange[0]))}
+                {(dragging === 'max' || hoveredHandle === 'max') && renderTooltip(liveRange[1], getPercentage(liveRange[1]))}
                 {(dragging === 'value' || hoveredHandle === 'value') && renderTooltip(dragging === 'value' ? draggingValueRef.current : currentValue, getPercentage(dragging === 'value' ? draggingValueRef.current : currentValue))}
 
                 {/* Range Fill (Visualizes the Animation Range) */}
                 {showRange && (
                     <div 
                         className="range-slider-fill" 
+                        ref={rangeFillRef}
                         style={{ 
                             position: 'absolute',
                             height: '100%',
                             background: 'var(--theme-color-transparent)',
-                            left: `${getPercentage(currentRangeMin)}%`, 
-                            width: `${getPercentage(currentRangeMax) - getPercentage(currentRangeMin)}%` 
+                            left: '0%',
+                            width: '0%'
                         }}
                     ></div>
                 )}
@@ -194,8 +234,9 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                 {showRange && (
                     <div 
                         className="range-slider-handle min-handle" 
+                        ref={minHandleRef}
                         style={{ 
-                            left: `${getPercentage(currentRangeMin)}%`
+                            left: '0%'
                         }}
                         onMouseDown={(e) => handleMouseDown(e, 'min')}
                         onMouseEnter={() => setHoveredHandle('min')}
@@ -208,8 +249,9 @@ const RangeSlider = ({ min, max, step, value, rangeValue, onChange, onRangeChang
                 {showRange && (
                     <div 
                         className="range-slider-handle max-handle" 
+                        ref={maxHandleRef}
                         style={{ 
-                            left: `${getPercentage(currentRangeMax)}%`
+                            left: '0%'
                         }}
                         onMouseDown={(e) => handleMouseDown(e, 'max')}
                         onMouseEnter={() => setHoveredHandle('max')}

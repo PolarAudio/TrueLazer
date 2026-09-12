@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import EffectEditor from './EffectEditor';
 import LayerEffectSpeedSettings from './LayerEffectSpeedSettings';
@@ -38,7 +38,6 @@ const LayerSettingsPanel = ({
         if (onUpdateUiState) {
             onUpdateUiState({
                 collapsedPanels: {
-                    ...collapsedPanels,
                     [panelId]: val
                 }
             });
@@ -56,6 +55,15 @@ const LayerSettingsPanel = ({
             return unsubscribe;
         }
     }, []);
+
+    const lastFxLenRef = useRef(null);
+    useEffect(() => {
+        const n = (layerEffects || []).length;
+        if (lastFxLenRef.current !== null && n > lastFxLenRef.current) {
+            console.debug('[fx-render] LayerPanel effects grew:', lastFxLenRef.current, '->', n);
+        }
+        lastFxLenRef.current = n;
+    }, [layerEffects]);
 
     if (selectedLayerIndex === null) return (
         <div className="settings-panel-base">

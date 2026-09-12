@@ -214,7 +214,13 @@ export function optimizePoints(points, settings = {}) {
         skipDwellAtIdx[lastVisibleIdx + 1] = 1;
     }
 
-    const isClosed = settings.isClosed || frameIsClosed;
+    // A trailing blanked point is an intentional beam cut (blanked/dotted beam
+    // styles, ILDA files that blank the loop seam). Forcing a "closed" wrap would
+    // re-light that blanked tail as a visible connector, which the renderer and
+    // StaticIldaThumbnail correctly keep dark. Only treat the frame as closed
+    // when the actual last source point is lit.
+    const tailIsBlanked = get(numPoints - 1).blanking;
+    const isClosed = !tailIsBlanked && (settings.isClosed || frameIsClosed);
     const processEndIdx = (isClosed && lastVisibleIdx !== -1) ? lastVisibleIdx + 1 : numPoints;
 
     // --- PHASE 1: Compute geometry and estimate budget ---

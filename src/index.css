@@ -361,10 +361,17 @@ body {
   padding-top: 4px;
 }
 
+.systemStats {
+  grid-template-columns: 1fr 1fr;
+}
+
+.performanceStats {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 .systemStats,
 .performanceStats {
   display: grid;
-  grid-template-columns: 1fr 1.5fr;
   justify-items: center;
   border-radius: 10px;
 }
@@ -509,11 +516,16 @@ body {
 
 .system-monitor-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.5fr 1fr;
 }
 
 .perfStats {
   margin: 0;
+}
+
+.perfStatsWarn {
+  color: #ff2b2b;
+  font-weight: bold;
 }
 
 .sysStats {

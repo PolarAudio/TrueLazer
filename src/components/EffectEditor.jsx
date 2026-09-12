@@ -276,13 +276,12 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
     const [activePaletteIndex, setActivePaletteIndex] = useState(0);
 
     // Track advanced HSV visibility in clip UI state
-    const showHsv = !!uiState?.showHsv?.[effect.instanceId];
+    const showHsv = !!uiState?.showHsv?.[effect.instanceId || effect.id];
     const setShowHsv = (val) => {
         if (onUpdateUiState) {
             onUpdateUiState({
                 showHsv: {
-                    ...(uiState?.showHsv || {}),
-                    [effect.instanceId]: val
+                    [effect.instanceId || effect.id]: val
                 }
             });
         }
@@ -461,14 +460,13 @@ const EffectEditor = ({ effect, assignedDacs = [], dacSettings = {}, onParamChan
   const showSegmentThresholdWarning = isDelay && effect.params.mode === 'segment' && currentPointCount > 0 && currentPointCount < 5;
 
   const collapsedEffects = uiState?.collapsedEffects || {};
-  const isCollapsed = !!collapsedEffects[effect.instanceId];
+  const isCollapsed = !!collapsedEffects[effect.instanceId || effect.id];
 
   const handleToggle = (val) => {
     if (onUpdateUiState) {
         onUpdateUiState({
             collapsedEffects: {
-                ...collapsedEffects,
-                [effect.instanceId]: val
+                [effect.instanceId || effect.id]: val
             }
         });
     }

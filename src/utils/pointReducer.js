@@ -66,34 +66,41 @@ function pointSegDistanceSq(flat, p, a, b) {
 
 // Douglas-Peucker over the inclusive range [start, end]. `keep` is a Uint8Array
 // marking which source indices are retained; we visit interior points and mark
-// those farthest from the chord, recursing, until `budgetRemaining` runs out.
+// those farthest from the chord, until `budgetRemaining` runs out.
 // Always keeps start and end (caller marks those).
+//
+// Implemented with an explicit work-stack instead of recursion: mirrors/delay
+// can produce long straight-line runs, and the recursive form recursed one frame
+// gut per point on collinear segments — a dense mirror x N + delay stack blew
+// the call stack (RangeError: Maximum call stack size exceeded, the "out of
+// range" crash). Perfectly-collinear runs are short-circuited entirely since
+// only the two endpoints can describe a straight line.
 function douglasPeuckerMark(flat, keep, start, end, budgetRemaining) {
-  const n = end - start + 1;
-  if (n <= 2 || budgetRemaining <= 0) return 0;
-  // Find the interior point farthest from the start-end chord.
-  let maxDistSq = -1, split = -1;
-  for (let i = start + 1; i < end; i++) {
-    const d = pointSegDistanceSq(flat, i, start, end);
-    if (d > maxDistSq) { maxDistSq = d; split = i; }
-  }
-  if (split === -1 || maxDistSq < 0) return 0;
-  // We want the final kept set ~= budgetRemaining total interior points across
-  // this subtree. Mark the farthest point, then split recursively.
+  const stack = [[start, end, budgetRemaining]];
   let used = 0;
-  // Reserve one for this split point; then distribute the rest to children.
-  const leftSpan = split - start;
-  const rightSpan = end - split;
-  const totalSpan = leftSpan + rightSpan;
-  const leftBudget = totalSpan === 0 ? 0 : Math.round((budgetRemaining - 1) * (leftSpan / totalSpan));
-  const rightBudget = (budgetRemaining - 1) - leftBudget;
-  if (leftBudget > 0 && leftSpan >= 2) {
-    used += douglasPeuckerMark(flat, keep, start, split, leftBudget);
-  }
-  keep[split] = 1;
-  used += 1;
-  if (rightBudget > 0 && rightSpan >= 2) {
-    used += douglasPeuckerMark(flat, keep, split, end, rightBudget);
+  while (stack.length > 0) {
+    const [s, e, budget] = stack.pop();
+    const n = e - s + 1;
+    if (n <= 2 || budget <= 0) continue;
+    // Find the interior point farthest from the start-end chord.
+    let maxDistSq = -1, split = -1;
+    for (let i = s + 1; i < e; i++) {
+      const d = pointSegDistanceSq(flat, i, s, e);
+      if (d > maxDistSq) { maxDistSq = d; split = i; }
+    }
+    if (split === -1 || maxDistSq < 0) continue;
+    if (maxDistSq === 0) continue; // Collinear — endpoints already describe the line.
+    // We want the final kept set ~= budgetRemaining total interior points across
+    // this subtree. Mark the farthest point, then split it off for both children.
+    const leftSpan = split - s;
+    const rightSpan = e - split;
+    const totalSpan = leftSpan + rightSpan;
+    const leftBudget = totalSpan === 0 ? 0 : Math.round((budget - 1) * (leftSpan / totalSpan));
+    const rightBudget = (budget - 1) - leftBudget;
+    if (rightBudget > 0 && rightSpan >= 2) stack.push([split, e, rightBudget]);
+    if (leftBudget > 0 && leftSpan >= 2) stack.push([s, split, leftBudget]);
+    keep[split] = 1;
+    used += 1;
   }
   return used;
 }
