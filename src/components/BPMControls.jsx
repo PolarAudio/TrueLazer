@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Mappable from './Mappable';
 
-const BPMControls = ({ bpm, onBpmChange }) => {
-  const [tapTimes, setTapTimes] = useState([]);
+const BPMControls = ({ bpm, onBpmChange, onTap }) => {
   const [localBpm, setLocalBpm] = useState(bpm);
 
   useEffect(() => {
@@ -10,19 +9,7 @@ const BPMControls = ({ bpm, onBpmChange }) => {
   }, [bpm]);
 
   const handleTap = () => {
-    const now = Date.now();
-    const newTapTimes = [...tapTimes, now].slice(-4);
-    setTapTimes(newTapTimes);
-
-    if (newTapTimes.length >= 2) {
-      const intervals = [];
-      for (let i = 1; i < newTapTimes.length; i++) {
-        intervals.push(newTapTimes[i] - newTapTimes[i - 1]);
-      }
-      const avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
-      const tappedBpm = Math.round(60000 / avgInterval);
-      onBpmChange(tappedBpm);
-    }
+    if (onTap) onTap();
   };
 
   const handleBpmInputChange = (e) => {
@@ -32,6 +19,21 @@ const BPMControls = ({ bpm, onBpmChange }) => {
       onBpmChange(val);
     }
   };
+
+  const bpmInputRef = useRef(null);
+  useEffect(() => {
+    const el = bpmInputRef.current;
+    if (!el) return;
+    const handler = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -1 : 1;
+      const newVal = Math.round(Math.max(1, Math.min(999, bpm + delta)));
+      setLocalBpm(newVal);
+      onBpmChange(newVal);
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [bpm, onBpmChange]);
 
   return (
     <div className="bpm-controls">
@@ -52,6 +54,7 @@ const BPMControls = ({ bpm, onBpmChange }) => {
               min="1"
               max="999"
               step="0.1"
+              ref={bpmInputRef}
             />
           </Mappable>
           <Mappable id="bpm_fine_up">

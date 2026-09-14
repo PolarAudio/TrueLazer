@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { PRESET_ORDER, DEFAULT_PRESET, getPreset } from '../utils/hardwarePresets';
+import { TARGET_MODES } from '../utils/speedTarget';
 
 // Canvas component for the safety zones and output area interaction
 const OutputCanvas = ({ 
   safetyZones, 
   outputArea, 
   testLineY, 
-  testLineEnabled, 
+  testLineX = 0.5,
+  testLineEnabled,
+  verticalTestLineEnabled = false,
   transformationEnabled,
   transformationMode,
   flipX,
@@ -15,7 +19,10 @@ const OutputCanvas = ({
   selectedZoneIndex, 
   onSelectZone,
   gridSize = 20,
-  snapToGrid = false
+  snapToGrid = false,
+  showZoneOutlines = false,
+  sentFramesRef,
+  channelId
 }) => {
   const canvasRef = useRef(null);
   const [dragging, setDragging] = useState(null); // { type, index, handle, startX, startY, originalRect }
@@ -49,6 +56,11 @@ const OutputCanvas = ({
     ctx.fillText('1,0', width - 25, 12);
     ctx.fillText('0,1', 5, height - 5);
     ctx.fillText('1,1', width - 25, height - 5);
+
+    // Label the physical center (DAC cartesian 0,0) so the corner "0,0" label
+    // isn't mistaken for it.
+    ctx.fillStyle = '#ddd';
+    ctx.fillText('physical 0,0', width / 2 - 42, height / 2 + 14);
   };
 
   const drawRect = (ctx, rect, color, isSelected = false, isOutputArea = false) => {
@@ -81,6 +93,71 @@ const OutputCanvas = ({
     }
   };
 
+  const drawSentFrame = (ctx, width, height) => {
+    if (!sentFramesRef || !sentFramesRef.current || !channelId) return;
+    const entry = sentFramesRef.current[channelId];
+    if (!entry || !entry.points) return;
+    const pts = entry.points;
+    const isT = pts instanceof Float32Array;
+    const n = isT ? Math.floor(pts.length / 8) : pts.length;
+    if (n === 0) return;
+
+    // Colors may be 0..255 or 0..1 depending on the frame source.
+    let maxC = 0;
+    const probe = Math.min(n, 100);
+    for (let i = 0; i < probe; i++) {
+      if (isT) {
+        maxC = Math.max(maxC, pts[i * 8 + 3], pts[i * 8 + 4], pts[i * 8 + 5]);
+      } else {
+        maxC = Math.max(maxC, pts[i].r, pts[i].g, pts[i].b);
+      }
+    }
+    const cScale = maxC > 1.5 ? 1 / 255 : 1;
+
+    const getPt = (i) => {
+      if (isT) {
+        return {
+          x: pts[i * 8], y: pts[i * 8 + 1],
+          r: pts[i * 8 + 3], g: pts[i * 8 + 4], b: pts[i * 8 + 5],
+          blank: pts[i * 8 + 6] > 0.5
+        };
+      }
+      const p = pts[i];
+      return { x: p.x, y: p.y, r: p.r, g: p.g, b: p.b, blank: !!p.blanking };
+    };
+
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.35;
+
+    // Beam path between consecutive lit points.
+    ctx.beginPath();
+    let penDown = false;
+    for (let i = 0; i < n; i++) {
+      const p = getPt(i);
+      const px = (p.x + 1) / 2 * width;
+      const py = (1 - p.y) / 2 * height;
+      if (p.blank) { penDown = false; continue; }
+      if (penDown) ctx.lineTo(px, py);
+      else ctx.moveTo(px, py);
+      penDown = true;
+    }
+    ctx.strokeStyle = 'rgba(0, 255, 128, 0.9)';
+    ctx.stroke();
+
+    // Lit points as small colored dots.
+    ctx.globalAlpha = 0.85;
+    for (let i = 0; i < n; i++) {
+      const p = getPt(i);
+      if (p.blank) continue;
+      const px = (p.x + 1) / 2 * width;
+      const py = (1 - p.y) / 2 * height;
+      ctx.fillStyle = `rgb(${Math.round(p.r * cScale * 255)}, ${Math.round(p.g * cScale * 255)}, ${Math.round(p.b * cScale * 255)})`;
+      ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    }
+    ctx.restore();
+  };
+
   const render = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -88,6 +165,7 @@ const OutputCanvas = ({
     const { width, height } = canvas;
 
     ctx.clearRect(0, 0, width, height);
+    drawSentFrame(ctx, width, height);
     drawGrid(ctx, width, height);
 
     // Draw Output Area FIRST so it is behind Safety Zones
@@ -108,91 +186,188 @@ const OutputCanvas = ({
         w: zone.w * width,
         h: zone.h * height
       }, 'rgba(255, 0, 0, 0.3)', index === selectedZoneIndex);
+
+      // Optional crisp dashed outline so the zone boundary stays visible over
+      // busy frame-trace content (and on top of the translucent fill).
+      if (showZoneOutlines) {
+        ctx.save();
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = index === selectedZoneIndex ? 2.5 : 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(zone.x * width, zone.y * height, zone.w * width, zone.h * height);
+        ctx.restore();
+      }
     });
 
     // Draw Test Line
     if (testLineEnabled) {
-      // 1. Coordinates are ABSOLUTE in the UI. 
-      // Hardware Flips are NOT applied to the preview to ensure 'Up is Up'.
       let finalLineY = testLineY;
-
-      // 2. Apply Transformation (Preview where it lands on the hardware area)
       let startX = 0;
       let endX = 1;
-      
+
       if (transformationEnabled && outputArea) {
           if (transformationMode === 'scale') {
               startX = outputArea.x;
               endX = outputArea.x + outputArea.w;
               finalLineY = outputArea.y + (finalLineY * outputArea.h);
           } else if (transformationMode === 'crop') {
-              // In crop mode, inputs outside the area are blanked.
               if (finalLineY < outputArea.y || finalLineY > outputArea.y + outputArea.h) {
-                  // Line is vertically outside crop area, don't draw
-                  return; 
+                  finalLineY = -1;
+              } else {
+                  startX = Math.max(0, outputArea.x);
+                  endX = Math.min(1, outputArea.x + outputArea.w);
               }
-              startX = Math.max(0, outputArea.x);
-              endX = Math.min(1, outputArea.x + outputArea.w);
           }
       }
 
-      // Convert to pixels
-      const yPx = finalLineY * height;
-      const startPx = startX * width;
-      const endPx = endX * width;
+      if (finalLineY >= 0) {
+          const yPx = finalLineY * height;
+          const startPx = startX * width;
+          const endPx = endX * width;
+          let segments = [[startPx, endPx]];
 
-      // 3. Apply Safety Zones (Subtraction)
-      let segments = [[startPx, endPx]];
-
-      if (safetyZones && safetyZones.length > 0) {
-          safetyZones.forEach(zone => {
-              const zY = zone.y * height;
-              const zH = zone.h * height;
-              const zX = zone.x * width;
-              const zW = zone.w * width;
-
-              // Check if zone overlaps with line Y
-              if (yPx >= zY && yPx <= zY + zH) {
-                  // Subtract horizontal range [zX, zX + zW]
-                  const newSegments = [];
-                  segments.forEach(seg => {
-                      const [s, e] = seg;
-                      const holeStart = zX;
-                      const holeEnd = zX + zW;
-
-                      if (holeEnd <= s || holeStart >= e) {
-                          // No overlap
-                          newSegments.push(seg);
-                      } else {
-                          // Overlap
-                          if (holeStart > s) {
-                              newSegments.push([s, holeStart]);
+          if (safetyZones && safetyZones.length > 0) {
+              safetyZones.forEach(zone => {
+                  const zY = zone.y * height;
+                  const zH = zone.h * height;
+                  const zX = zone.x * width;
+                  const zW = zone.w * width;
+                  if (yPx >= zY && yPx <= zY + zH) {
+                      const newSegments = [];
+                      segments.forEach(seg => {
+                          const [s, e] = seg;
+                          const holeStart = zX;
+                          const holeEnd = zX + zW;
+                          if (holeEnd <= s || holeStart >= e) {
+                              newSegments.push(seg);
+                          } else {
+                              if (holeStart > s) newSegments.push([s, holeStart]);
+                              if (holeEnd < e) newSegments.push([holeEnd, e]);
                           }
-                          if (holeEnd < e) {
-                              newSegments.push([holeEnd, e]);
-                          }
-                      }
-                  });
-                  segments = newSegments;
-              }
+                      });
+                      segments = newSegments;
+                  }
+              });
+          }
+
+          ctx.strokeStyle = '#00ff00';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          segments.forEach(seg => {
+              ctx.moveTo(seg[0], yPx);
+              ctx.lineTo(seg[1], yPx);
           });
+          ctx.stroke();
+
+          // Cyan marker at the line's settled center dwell (commanded x=0),
+          // matching the center dwell dot the sent test-line frame places there.
+          const centerPX = (transformationEnabled && outputArea && transformationMode === 'scale')
+              ? (outputArea.x + 0.5 * outputArea.w) * width
+              : width / 2;
+          ctx.fillStyle = '#00ffff';
+          ctx.beginPath();
+          ctx.arc(centerPX, yPx, 3, 0, Math.PI * 2);
+          ctx.fill();
+      }
+    }
+
+    // Draw Vertical Test Line
+    if (verticalTestLineEnabled) {
+      let finalLineX = testLineX;
+      let startY = 0;
+      let endY = 1;
+
+      if (transformationEnabled && outputArea) {
+          if (transformationMode === 'scale') {
+              startY = outputArea.y;
+              endY = outputArea.y + outputArea.h;
+              finalLineX = outputArea.x + (finalLineX * outputArea.w);
+          } else if (transformationMode === 'crop') {
+              if (finalLineX < outputArea.x || finalLineX > outputArea.x + outputArea.w) {
+                  finalLineX = -1;
+              } else {
+                  startY = Math.max(0, outputArea.y);
+                  endY = Math.min(1, outputArea.y + outputArea.h);
+              }
+          }
       }
 
-      // Draw segments
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      segments.forEach(seg => {
-          ctx.moveTo(seg[0], yPx);
-          ctx.lineTo(seg[1], yPx);
-      });
-      ctx.stroke();
+      if (finalLineX >= 0) {
+          const xPx = finalLineX * width;
+          const startPx = startY * height;
+          const endPx = endY * height;
+          let segments = [[startPx, endPx]];
+
+          if (safetyZones && safetyZones.length > 0) {
+              safetyZones.forEach(zone => {
+                  const zY = zone.y * height;
+                  const zH = zone.h * height;
+                  const zX = zone.x * width;
+                  const zW = zone.w * width;
+                  if (xPx >= zX && xPx <= zX + zW) {
+                      const newSegments = [];
+                      segments.forEach(seg => {
+                          const [s, e] = seg;
+                          const holeStart = zY;
+                          const holeEnd = zY + zH;
+                          if (holeEnd <= s || holeStart >= e) {
+                              newSegments.push(seg);
+                          } else {
+                              if (holeStart > s) newSegments.push([s, holeStart]);
+                              if (holeEnd < e) newSegments.push([holeEnd, e]);
+                          }
+                      });
+                      segments = newSegments;
+                  }
+              });
+          }
+
+          ctx.strokeStyle = '#00ff00';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          segments.forEach(seg => {
+              ctx.moveTo(xPx, seg[0]);
+              ctx.lineTo(xPx, seg[1]);
+          });
+          ctx.stroke();
+
+          // Cyan marker at the line's settled center dwell (commanded y=0),
+          // matching the center dwell dot the sent vertical test-line frame
+          // places there.
+          const centerPY = (transformationEnabled && outputArea && transformationMode === 'scale')
+              ? (outputArea.y + 0.5 * outputArea.h) * height
+              : height / 2;
+          ctx.fillStyle = '#00ffff';
+          ctx.beginPath();
+          ctx.arc(xPx, centerPY, 3, 0, Math.PI * 2);
+          ctx.fill();
+      }
     }
   };
 
   useEffect(() => {
     render();
-  }, [safetyZones, outputArea, testLineY, testLineEnabled, transformationEnabled, selectedZoneIndex, gridSize, flipX, flipY]);
+  }, [safetyZones, outputArea, testLineY, testLineX, testLineEnabled, verticalTestLineEnabled, transformationEnabled, transformationMode, selectedZoneIndex, gridSize, flipX, flipY, showZoneOutlines]);
+
+  // Live frame-preview background: poll the sent-frames ref (updated by the DAC
+  // loop without React re-renders) and redraw when the channel's frame changes.
+  const renderRef = useRef(null);
+  renderRef.current = render;
+  useEffect(() => {
+    let lastPoints = null;
+    let raf;
+    const tick = () => {
+      const entry = sentFramesRef && sentFramesRef.current && channelId ? sentFramesRef.current[channelId] : null;
+      const pts = entry ? entry.points : null;
+      if (pts !== lastPoints) {
+        lastPoints = pts;
+        if (renderRef.current) renderRef.current();
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [sentFramesRef, channelId]);
 
   // Interaction Helpers
   const getMousePos = (e) => {
@@ -347,11 +522,25 @@ const OutputCanvas = ({
   );
 };
 
-const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUpdateDacSettings }) => {
+const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUpdateDacSettings, sentFramesRef }) => {
   const [selectedOutputId, setSelectedOutputId] = useState(null);
   const [selectedZoneIndex, setSelectedZoneIndex] = useState(null);
   const [gridSize, setGridSize] = useState(20);
   const [snapToGrid, setSnapToGrid] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null);
+  const saveStatusTimerRef = useRef(null);
+
+  const handleSave = () => {
+      const payload = dacSettings;
+      if (window.electronAPI && window.electronAPI.saveDacOutputSettings) {
+          window.electronAPI.saveDacOutputSettings(payload);
+      }
+      setSaveStatus('Saved');
+      if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current);
+      saveStatusTimerRef.current = setTimeout(() => setSaveStatus(null), 2000);
+  };
+
+  useEffect(() => () => { if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current); }, []);
 
   // Flatten DACs to Outputs (Channels)
   const outputs = useMemo(() => {
@@ -361,9 +550,11 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       // Otherwise, treat it as a single-channel device (Channel 0).
       if (dac.channels && dac.channels.length > 0) {
         dac.channels.forEach(ch => {
+           const id = `${dac.ip}:${ch.serviceID}`;
+           const custom = dacSettings[id]?.name;
            list.push({
-             id: `${dac.ip}:${ch.serviceID}`,
-             displayName: `${dac.hostName || dac.unitID || 'DAC'} : ${ch.name || `CH ${ch.serviceID}`}`,
+             id,
+             displayName: custom || `${dac.hostName || dac.unitID || 'DAC'} : ${ch.name || `CH ${ch.serviceID}`}`,
              ip: dac.ip,
              channel: ch.serviceID,
              dacName: dac.hostName || dac.unitID
@@ -380,7 +571,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       }
     });
     return list;
-  }, [dacs]);
+  }, [dacs, dacSettings]);
 
   useEffect(() => {
     if (outputs.length > 0 && !selectedOutputId) {
@@ -393,13 +584,25 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   // Get current settings or default
   const currentSettings = dacSettings[selectedOutputId] || {
       safetyZones: [],
+      zoneOutlineEnabled: false,
       outputArea: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
       transformationEnabled: false,
       transformationMode: 'crop',
       testLineEnabled: false,
       testLineY: 0.5,
+      verticalTestLineEnabled: false,
+      testLineX: 0.5,
+      testLineLagComp: 0,
+      testLineLagCompStart: 0,
+      testLineLagCompEnd: 0,
+      testLineShiftX: 0,
+      testLineShiftY: 0,
       flipX: false,
-      flipY: false
+      flipY: false,
+      targetMode: TARGET_MODES.VAR_FPS_FIXED_PPS,
+      ppsPreset: DEFAULT_PRESET,
+      ppsOverride: 0,
+      targetFps: 0
   };
 
   const updateCurrentSettings = (updates) => {
@@ -436,7 +639,11 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       <div className="output-settings-modal-content">
         <div className="output-settings-header">
           <h2>Output Settings</h2>
-          <button className="close-btn" onClick={onClose}>Close</button>
+          <div className="output-settings-header-actions">
+            {saveStatus && <span className="output-settings-save-status">{saveStatus}</span>}
+            <button className="save-btn" onClick={handleSave}>Save Output Settings</button>
+            <button className="close-btn" onClick={onClose}>Close</button>
+          </div>
         </div>
         
         <div className="output-settings-body">
@@ -484,6 +691,15 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 
                 <span style={{width: 1, background: '#555', margin: '0 5px'}}></span>
                 
+                <button className={`tool-btn ${currentSettings.zoneOutlineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ zoneOutlineEnabled: !currentSettings.zoneOutlineEnabled })} title="Toggle Zone Outlines (canvas + laser)">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-square-dashed" viewBox="0 0 16 16">
+						<path d="M5.466 1.17q.262.001.533.03h.004a1 1 0 0 1 .031.253V2.5a.5.5 0 0 1-1 0v-1a.5.5 0 0 1 .432-.33ZM7.5 1q.251.005.5.022a.5.5 0 0 1 .028.672l-.031.468a.5.5 0 0 1-1-.055v-1A.5.5 0 0 1 7.5 1ZM10.5 1.15a.5.5 0 0 1 .297.368l.03.201a.5.5 0 0 1-.97.179l-.032-.201a.5.5 0 0 1 .464-.58q.105-.006.211.033ZM15 10.5a.5.5 0 0 1-.478.5l-.371.02a.5.5 0 0 1 .044-.999l.37-.02a.5.5 0 0 1 .435.499ZM15 7.6a.5.5 0 0 1-.48.5l-.36.018a.5.5 0 0 1 .044-1l.36-.02a.5.5 0 0 1 .436.501ZM15 4.65a.5.5 0 0 1-.478.5l-.374.02a.5.5 0 0 1 .044-.998l.374-.02a.5.5 0 0 1 .434.498ZM8.5 4.5a.5.5 0 0 1 .5.5V5a.5.5 0 0 1-.969.147A.5.5 0 0 1 8 5a.5.5 0 0 1 .5-.5ZM12.5 1.7a.5.5 0 0 1 .474.615l-.38 1.751a.5.5 0 0 1-.968-.246l.38-1.75a.5.5 0 0 1 .494-.37ZM14.828 4.6a.5.5 0 0 1 .162.56l-.723 1.7a.5.5 0 0 1-.922-.388l.724-1.7a.5.5 0 0 1 .68-.246.5.5 0 0 1 .08-.057ZM14.828 7.6a.5.5 0 0 1 .16.562l-.715 1.66a.5.5 0 1 1-.924-.382l.715-1.66a.5.5 0 0 1 .599-.288.5.5 0 0 1 .165.108ZM14.828 10.6a.5.5 0 0 1 .158.565l-.697 1.62a.5.5 0 1 1-.93-.372l.698-1.62a.5.5 0 0 1 .854.135.5.5 0 0 1 .083-.327ZM12.5 14.3a.5.5 0 0 1-.46.355l-1.852.097a.5.5 0 0 1 .058-.998l1.84-.096a.5.5 0 0 1 .414.642ZM7.76 14.61a.5.5 0 0 1 .1-.95l2.006-.105a.5.5 0 0 1 .056.999l-2.006.105a.5.5 0 0 1-.156.947ZM4.5 14.7a.5.5 0 0 1-.464.33l-1.724.09a.5.5 0 0 1-.018-1l1.724-.09a.5.5 0 0 1 .486.67ZM1.5 13.82a.5.5 0 0 1-.46-.577l.216-1.73a.5.5 0 0 1 .984.176l-.18 1.44a.5.5 0 0 1-.56.69ZM1.172 7.6a.5.5 0 0 1 .503.53l-.02.4a.5.5 0 0 1-1-.053l.02-.4a.5.5 0 0 1 .497-.477ZM5.5 1.17a.5.5 0 0 1 .465.337l.088.31a.5.5 0 0 1-.94.339l-.088-.31A.5.5 0 0 1 5.5 1.17ZM10.5 14.8a.5.5 0 0 1-.465.337l-.088.31a.5.5 0 0 1-.94-.339l.088-.31a.5.5 0 0 1 .94.002ZM1.17 4.65a.5.5 0 0 1 .5-.48l.37.03a.5.5 0 0 1-.044.998l-.37-.03a.5.5 0 0 1-.456-.518ZM3.9 1.5a.5.5 0 0 1-.252.63l-.5.24a.5.5 0 0 1-.447-.894l.498-.24a.5.5 0 0 1 .401.264Z"/>
+						<path d="M2 1h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Zm4-8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Zm4-8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/>
+					</svg>
+				</button>
+                
+                <span style={{width: 1, background: '#555', margin: '0 5px'}}></span>
+                
                 <button className={`tool-btn ${snapToGrid ? 'active' : ''}`} onClick={() => setSnapToGrid(!snapToGrid)} title="Snap to Grid">
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-magnet-fill" viewBox="0 0 16 16">
 						<path d="M15 12h-4v3h4zM5 12H1v3h4zM0 8a8 8 0 1 1 16 0v8h-6V8a2 2 0 1 0-4 0v8H0z"/>
@@ -499,7 +715,9 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 safetyZones={currentSettings.safetyZones}
                 outputArea={currentSettings.outputArea}
                 testLineY={currentSettings.testLineY}
+                testLineX={currentSettings.testLineX ?? 0.5}
                 testLineEnabled={currentSettings.testLineEnabled}
+                verticalTestLineEnabled={currentSettings.verticalTestLineEnabled ?? false}
                 transformationEnabled={currentSettings.transformationEnabled}
                 transformationMode={currentSettings.transformationMode}
                 flipX={currentSettings.flipX}
@@ -510,6 +728,9 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 onSelectZone={setSelectedZoneIndex}
                 gridSize={gridSize}
                 snapToGrid={snapToGrid}
+                showZoneOutlines={!!currentSettings.zoneOutlineEnabled}
+                sentFramesRef={sentFramesRef}
+                channelId={selectedOutputId}
             />
           </div>
 
@@ -517,6 +738,24 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
           <div className="output-settings-col">
              {selectedOutputId ? (
                  <>
+                    <div className="settings-group">
+                        <h4>Channel</h4>
+                        <div className="control-row" style={{marginBottom: 5}}>
+                            <label style={{flex: 1}}>Name</label>
+                            <input
+                                type="text"
+                                className="param-text-input"
+                                value={currentSettings.name || ''}
+                                placeholder={(() => { const o = outputs.find(x => x.id === selectedOutputId); return o ? o.displayName : ''; })()}
+                                onChange={(e) => updateCurrentSettings({ name: e.target.value })}
+                                style={{ flex: 2, minWidth: 0 }}
+                            />
+                        </div>
+                        <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '2px 0 0' }}>
+                            Custom name shown everywhere this channel appears (main list, channel list, dimmers, effect routing). Leave empty for the default.
+                        </p>
+                    </div>
+
                     <div className="settings-group">
                         <h4>Output Transformation</h4>
                         <div className="control-row" style={{marginBottom:10}}>
@@ -547,7 +786,67 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                     </div>
 
                     <div className="settings-group">
+                        <h4>Timing Target</h4>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Target Mode</label>
+                            <select
+                                className="param-select"
+                                value={currentSettings.targetMode || TARGET_MODES.VAR_FPS_FIXED_PPS}
+                                onChange={(e) => updateCurrentSettings({ targetMode: e.target.value })}
+                            >
+                                <option value={TARGET_MODES.VAR_FPS_FIXED_PPS}>Variable FPS → Fixed PPS</option>
+                                <option value={TARGET_MODES.VAR_PPS_FIXED_FPS}>Variable PPS → Fixed FPS</option>
+                            </select>
+                        </div>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Hardware Preset</label>
+                            <select
+                                className="param-select"
+                                value={currentSettings.ppsPreset || DEFAULT_PRESET}
+                                onChange={(e) => updateCurrentSettings({ ppsPreset: e.target.value })}
+                            >
+                                {PRESET_ORDER.map(p => (
+                                    <option key={p.id} value={p.id}>{p.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '6px 0' }}>
+                            Target PPS: {getPreset(currentSettings.ppsPreset || DEFAULT_PRESET).targetPps.toLocaleString()} pps
+                            ({(currentSettings.ppsPreset || DEFAULT_PRESET) === 'slow' ? '15-20k' : (currentSettings.ppsPreset || DEFAULT_PRESET) === 'fast' ? '35k+' : '25-35k'} band)
+                        </p>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>PPS Override</label>
+                            <input
+                                type="number"
+                                min="0" max="120000" step="1000"
+                                value={currentSettings.ppsOverride ?? 0}
+                                onChange={(e) => updateCurrentSettings({ ppsOverride: parseInt(e.target.value) || 0 })}
+                                style={{ width: '85px', fontSize: '11px' }}
+                            />
+                        </div>
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Target FPS</label>
+                            <input
+                                type="number"
+                                min="1" max="360" step="1"
+                                value={currentSettings.targetFps ?? 0}
+                                onChange={(e) => updateCurrentSettings({ targetFps: parseInt(e.target.value) || 0 })}
+                                style={{ width: '85px', fontSize: '11px' }}
+                            />
+                            <span style={{ fontSize: '9px', color: '#888' }}>0 = use UI rate</span>
+                        </div>
+                        <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '6px' }}>
+                            Per-channel PPS/FPS target. When unset (0/empty), the UI main-thread
+                            values are used for frame-buffer construction.
+                        </p>
+                    </div>
+
+                    <div className="settings-group">
                         <h4>Safety Zones</h4>
+                        <div className="control-row" style={{justifyContent: 'space-between', marginBottom: 5}}>
+                            <label style={{flex:1}}>Zone Outlines</label>
+                            <input type="checkbox" checked={!!currentSettings.zoneOutlineEnabled} onChange={(e) => updateCurrentSettings({ zoneOutlineEnabled: e.target.checked })} title="Show zone boundaries on canvas and on the laser" />
+                        </div>
                         <div className="control-row" style={{justifyContent: 'space-between', marginBottom: 5}}>
                             <button className="small-btn" onClick={handleAddZone}>Add New</button>
                             <button className="small-btn clear" onClick={handleClearZones}>Clear All</button>
@@ -573,7 +872,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                     <div className="settings-group">
                         <h4>Test Output</h4>
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>Enable Test Line</label>
+                            <label style={{flex:1}}>Horizontal Test Line</label>
                              <input type="checkbox" checked={currentSettings.testLineEnabled} onChange={(e) => updateCurrentSettings({ testLineEnabled: e.target.checked })} />
                         </div>
                         {currentSettings.testLineEnabled && (
@@ -588,6 +887,70 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                                 />
                             </div>
                         )}
+                        {currentSettings.testLineEnabled && (
+                            <div className="control-row">
+                                <label>Center Shift X</label>
+                                <input 
+                                    type="range" 
+                                    min="-0.1" max="0.1" step="0.001" 
+                                    value={currentSettings.testLineShiftX ?? 0} 
+                                    onChange={(e) => updateCurrentSettings({ testLineShiftX: parseFloat(e.target.value) })} 
+                                    className="param-slider"
+                                />
+                                <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineShiftX ?? 0}</span>
+                            </div>
+                        )}
+                        <div className="control-row" style={{marginBottom:10}}>
+                            <label style={{flex:1}}>Vertical Test Line</label>
+                             <input type="checkbox" checked={currentSettings.verticalTestLineEnabled ?? false} onChange={(e) => updateCurrentSettings({ verticalTestLineEnabled: e.target.checked })} />
+                        </div>
+                        {(currentSettings.verticalTestLineEnabled ?? false) && (
+                            <div className="control-row">
+                                <label>X Position</label>
+                                <input 
+                                    type="range" 
+                                    min="0" max="1" step="0.01" 
+                                    value={currentSettings.testLineX ?? 0.5} 
+                                    onChange={(e) => updateCurrentSettings({ testLineX: parseFloat(e.target.value) })} 
+                                    className="param-slider"
+                                />
+                            </div>
+                        )}
+                        {(currentSettings.verticalTestLineEnabled ?? false) && (
+                            <div className="control-row">
+                                <label>Center Shift Y</label>
+                                <input 
+                                    type="range" 
+                                    min="-0.1" max="0.1" step="0.001" 
+                                    value={currentSettings.testLineShiftY ?? 0} 
+                                    onChange={(e) => updateCurrentSettings({ testLineShiftY: parseFloat(e.target.value) })} 
+                                    className="param-slider"
+                                />
+                                <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineShiftY ?? 0}</span>
+                            </div>
+                        )}
+                        <div className="control-row" style={{marginBottom:10, marginTop:5}}>
+                            <label style={{flex:1}}>End Lag Comp</label>
+                            <input 
+                                type="range" 
+                                min="-0.1" max="0.1" step="0.001" 
+                                value={currentSettings.testLineLagCompEnd !== undefined ? currentSettings.testLineLagCompEnd : (currentSettings.testLineLagComp ?? 0)} 
+                                onChange={(e) => updateCurrentSettings({ testLineLagCompEnd: parseFloat(e.target.value) })} 
+                                className="param-slider"
+                            />
+                            <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineLagCompEnd !== undefined ? currentSettings.testLineLagCompEnd : (currentSettings.testLineLagComp ?? 0)}</span>
+                        </div>
+                        <div className="control-row" style={{marginBottom:5}}>
+                            <label style={{flex:1}}>Start Lag Comp</label>
+                            <input 
+                                type="range" 
+                                min="-0.1" max="0.1" step="0.001" 
+                                value={currentSettings.testLineLagCompStart ?? 0} 
+                                onChange={(e) => updateCurrentSettings({ testLineLagCompStart: parseFloat(e.target.value) })} 
+                                className="param-slider"
+                            />
+                            <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineLagCompStart ?? 0}</span>
+                        </div>
                     </div>
                  </>
              ) : (

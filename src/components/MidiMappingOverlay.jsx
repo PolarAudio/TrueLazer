@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
+import { MidiColorPicker } from './MidiColorPicker';
+import { THEME_COLORS } from '../utils/midiColors';
 
 const MidiMappingOverlay = () => {
   const { 
@@ -13,9 +15,16 @@ const MidiMappingOverlay = () => {
     removeAssignment,
     setMappings,
     midiInputs,
-    selectedMidiInputId
+    selectedMidiInputId,
+    theme
   } = useMidi();
-  const { isMapping: isArtnetMapping, mappings: artnetMappings, learningId: artnetLearningId } = useArtnet() || {};
+  const { 
+      isMapping: isArtnetMapping, 
+      mappings: artnetMappings, 
+      learningId: artnetLearningId,
+      universeFilter,
+      setUniverseFilter
+  } = useArtnet() || {};
   const { isMapping: isKeyboardMapping, mappings: keyboardMappings, learningId: keyboardLearningId } = useKeyboard() || {};
 
   const isMapping = isMidiMapping || isArtnetMapping || isKeyboardMapping;
@@ -81,10 +90,44 @@ const MidiMappingOverlay = () => {
     }
   }, [isMapping, updateOverlayPositions]);
 
+  const currentColors = THEME_COLORS[theme] || THEME_COLORS['orange'];
+
   if (!isMapping) return null;
 
   return ReactDOM.createPortal(
     <div className="midi-mapping-global-overlay-container">
+      {/* Universe Filter Bar (Art-Net Only) */}
+      {isArtnetMapping && (
+          <div style={{
+              position: 'fixed',
+              top: '10px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: '#1a1a1a',
+              border: '1px solid var(--theme-color)',
+              borderRadius: '5px',
+              padding: '5px 15px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              zIndex: 10002,
+              boxShadow: '0 0 20px rgba(0,0,0,0.8)'
+          }}>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--theme-color)' }}>DMX MAPPING FILTER</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <label style={{ fontSize: '10px', color: '#888' }}>Universe:</label>
+                  <input 
+                    type="number" 
+                    min="0" max="255" 
+                    value={universeFilter} 
+                    onChange={(e) => setUniverseFilter(parseInt(e.target.value) || 0)}
+                    style={{ width: '50px', background: '#000', color: '#fff', border: '1px solid #444', textAlign: 'center', fontSize: '11px' }}
+                  />
+              </div>
+              <span style={{ fontSize: '9px', color: '#666' }}>Showing only mappings for U{universeFilter}</span>
+          </div>
+      )}
+
       {overlays.map(overlay => {
         let mappingLabel = null;
         const isMidi = isMidiMapping;
@@ -103,7 +146,10 @@ const MidiMappingOverlay = () => {
             }
         } else if (isArtnet) {
             const artnetMapping = artnetMappings ? artnetMappings[overlay.id] : null;
-            mappingLabel = artnetMapping ? artnetMapping.label : null;
+            // Only show label if it matches the current universe filter
+            if (artnetMapping && artnetMapping.universe === universeFilter) {
+                mappingLabel = artnetMapping.label;
+            }
         } else if (isKeyboard) {
             const keyboardMapping = keyboardMappings ? keyboardMappings[overlay.id] : null;
             mappingLabel = keyboardMapping ? keyboardMapping.label : null;
@@ -221,68 +267,71 @@ const MidiMappingOverlay = () => {
                                         </select>
                                     </div>
 
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+                                    {/* Blink Mode Selector */}
+                                    <div className="setting-group" style={{ marginBottom: '8px' }}>
+                                        <label style={{ fontSize: '9px', color: '#888', display: 'block' }}>Blink Mode</label>
+                                        <select 
+                                            value={a.blinkMode || 0}
+                                            onChange={(e) => updateAssignment(a.key, a.controlId, 'blinkMode', parseInt(e.target.value))}
+                                            style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
+                                        >
+                                            <option value={0}>Static (Primary Color)</option>
+                                            <option value={1}>Oneshot 1/24 (Secondary Color)</option>
+                                            <option value={2}>Oneshot 1/16</option>
+                                            <option value={3}>Oneshot 1/8</option>
+                                            <option value={4}>Oneshot 1/4</option>
+                                            <option value={5}>Oneshot 1/2</option>
+                                            <option value={6}>Pulsing 1/24</option>
+                                            <option value={7}>Pulsing 1/16</option>
+                                            <option value={8}>Pulsing 1/8</option>
+                                            <option value={9}>Pulsing 1/4</option>
+                                            <option value={10}>Pulsing 1/2</option>
+                                            <option value={11}>Blinking 1/24</option>
+                                            <option value={12}>Blinking 1/16</option>
+                                            <option value={13}>Blinking 1/8</option>
+                                            <option value={14}>Blinking 1/4</option>
+                                            <option value={15}>Blinking 1/2</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="color-selectors" style={{ marginTop: '5px' }}>
                                         {(!a.feedbackMode || a.feedbackMode === 'toggle' || a.feedbackMode === 'dropdown') && (
                                             <>
-                                                <div className="vel-input">
-                                                    <label style={{ fontSize: '8px', color: '#666' }}>On Vel</label>
-                                                    <input 
-                                                        type="number" min="0" max="127" 
-                                                        value={a.feedbackConfig?.onVelocity ?? 127}
-                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, onVelocity: parseInt(e.target.value) })}
-                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
-                                                    />
-                                                </div>
-                                                <div className="vel-input">
-                                                    <label style={{ fontSize: '8px', color: '#666' }}>Off Vel</label>
-                                                    <input 
-                                                        type="number" min="0" max="127" 
-                                                        value={a.feedbackConfig?.offVelocity ?? 0}
-                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, offVelocity: parseInt(e.target.value) })}
-                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
-                                                    />
-                                                </div>
+                                                <MidiColorPicker 
+                                                    label="On Color"
+                                                    value={a.feedbackConfig?.onVelocity ?? currentColors.full}
+                                                    onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, onVelocity: v })}
+                                                />
+                                                <MidiColorPicker 
+                                                    label="Off Color"
+                                                    value={a.feedbackConfig?.offVelocity ?? currentColors.dim}
+                                                    onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, offVelocity: v })}
+                                                />
                                             </>
                                         )}
                                         {a.feedbackMode === 'clip' && (
-                                            <>
-                                                <div className="vel-input">
-                                                    <label style={{ fontSize: '8px', color: '#666' }}>Active</label>
-                                                    <input 
-                                                        type="number" min="0" max="127" 
-                                                        value={a.feedbackConfig?.activeVelocity ?? 127}
-                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, activeVelocity: parseInt(e.target.value) })}
-                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
-                                                    />
-                                                </div>
-                                                <div className="vel-input">
-                                                    <label style={{ fontSize: '8px', color: '#666' }}>Preview</label>
-                                                    <input 
-                                                        type="number" min="0" max="127" 
-                                                        value={a.feedbackConfig?.previewVelocity ?? 64}
-                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, previewVelocity: parseInt(e.target.value) })}
-                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
-                                                    />
-                                                </div>
-                                                <div className="vel-input">
-                                                    <label style={{ fontSize: '8px', color: '#666' }}>Inactive</label>
-                                                    <input 
-                                                        type="number" min="0" max="127" 
-                                                        value={a.feedbackConfig?.inactiveVelocity ?? 1}
-                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, inactiveVelocity: parseInt(e.target.value) })}
-                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
-                                                    />
-                                                </div>
-                                                <div className="vel-input">
-                                                    <label style={{ fontSize: '8px', color: '#666' }}>Empty</label>
-                                                    <input 
-                                                        type="number" min="0" max="127" 
-                                                        value={a.feedbackConfig?.emptyVelocity ?? 0}
-                                                        onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, emptyVelocity: parseInt(e.target.value) })}
-                                                        style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
-                                                    />
-                                                </div>
-                                            </>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+                                                <MidiColorPicker 
+                                                    label="Active"
+                                                    value={a.feedbackConfig?.activeVelocity ?? currentColors.full}
+                                                    onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, activeVelocity: v })}
+                                                />
+                                                <MidiColorPicker 
+                                                    label="Preview"
+                                                    value={a.feedbackConfig?.previewVelocity ?? 64}
+                                                    onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, previewVelocity: v })}
+                                                />
+                                                <MidiColorPicker 
+                                                    label="Inactive"
+                                                    value={a.feedbackConfig?.inactiveVelocity ?? currentColors.dim}
+                                                    onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, inactiveVelocity: v })}
+                                                />
+                                                <MidiColorPicker 
+                                                    label="Empty"
+                                                    value={a.feedbackConfig?.emptyVelocity ?? 0}
+                                                    onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, emptyVelocity: v })}
+                                                />
+                                            </div>
                                         )}
                                     </div>
                                 </div>

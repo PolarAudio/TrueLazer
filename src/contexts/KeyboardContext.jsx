@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 const KeyboardContext = createContext(null);
 
@@ -27,32 +27,31 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
     load();
   }, []);
 
-  const saveMappings = async () => {
+  const saveMappings = useCallback(async () => {
     if (window.electronAPI && window.electronAPI.saveKeyboardMappings) {
       await window.electronAPI.saveKeyboardMappings(mappings);
     }
-  };
+  }, [mappings]);
 
-  const exportMappings = async () => {
+  const exportMappings = useCallback(async () => {
     if (window.electronAPI && window.electronAPI.exportMappings) {
         await window.electronAPI.exportMappings(mappings, 'keyboard');
     }
-  };
+  }, [mappings]);
 
-  const importMappings = async () => {
+  const importMappings = useCallback(async () => {
     if (window.electronAPI && window.electronAPI.importMappings) {
         const result = await window.electronAPI.importMappings('keyboard');
         if (result.success && result.mappings) {
             setMappings(result.mappings);
         }
     }
-  };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (!enabled) return;
 
-      // Prevent shortcuts if typing in input
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
         return;
       }
@@ -68,7 +67,6 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
         return;
       }
 
-      // Normal trigger
       Object.entries(mappings).forEach(([controlId, mapping]) => {
         if (e.code === mapping.key) {
           e.preventDefault();
@@ -79,14 +77,43 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
       });
     };
 
+    const handleKeyUp = (e) => {
+      if (!enabled) return;
+
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+        return;
+      }
+
+      Object.entries(mappings).forEach(([controlId, mapping]) => {
+        if (e.code === mapping.key) {
+          e.preventDefault();
+          if (onCommandRef.current) {
+            onCommandRef.current(controlId, 0, 1, 'keyup');
+          }
+        }
+      });
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, [enabled, isMapping, learningId, mappings]);
 
-  const value = {
+  const startMapping = useCallback(() => setIsMapping(true), []);
+  const stopMapping = useCallback(() => { setIsMapping(false); setLearningId(null); }, []);
+  const removeMapping = useCallback((id) => setMappings(prev => {
+    const next = { ...prev };
+    delete next[id];
+    return next;
+  }), []);
+
+  const value = useMemo(() => ({
     isMapping,
-    startMapping: () => setIsMapping(true),
-    stopMapping: () => { setIsMapping(false); setLearningId(null); },
+    startMapping,
+    stopMapping,
     learningId,
     setLearningId,
     mappings,
@@ -94,12 +121,8 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
     saveMappings,
     exportMappings,
     importMappings,
-    removeMapping: (id) => setMappings(prev => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-    })
-  };
+    removeMapping
+  }), [isMapping, learningId, mappings, saveMappings, exportMappings, importMappings, startMapping, stopMapping, removeMapping, setMappings, setLearningId]);
 
   return (
     <KeyboardContext.Provider value={value}>

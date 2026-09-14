@@ -14,6 +14,7 @@ const ClipSettingsPanel = ({
   audioInfo,
   bpm,
   getFftLevels,
+  dacSettings = {},
   onAssignAudio,
   onRemoveAudio,
   onUpdateAudioVolume,
@@ -21,28 +22,55 @@ const ClipSettingsPanel = ({
   onSetParamSync,
   onToggleDacMirror,
   onRemoveDac,
+  onReorderDacs,
+  layerDacs = [],
   onRemoveEffect,
   onReorderEffects,
   onAddEffect,
   onParameterChange,
   onGeneratorParameterChange,
   onUpdateClipUiState,
+  uiState: uiStateProp,
   progressRef,
-  onAudioError
+  onAudioError,
+  onRegisterPreset,
+  liveFramesRef,
+  activePageId,
+  playbackSettingsOverride
 }) => {
   const [dacStatuses, setDacStatuses] = useState({});
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
   const { seekAudio } = useAudio();
   const lastReorderTimeRef = useRef(0);
 
-  const uiState = clip?.uiState || {};
+  // The channels an effect actually sees at runtime are the layer's assigned
+  // DACs followed by the clip's own (deduped by ip:channel). Mirror that so
+  // Delay/Chase custom order lists channels even when they are assigned to the
+  // layer rather than to the clip. (Hooks must run before the early return.)
+  const clipAssignedDacs = clip?.assignedDacs || [];
+  const effectiveAssignedDacs = React.useMemo(() => {
+    const combined = [...(layerDacs || []), ...clipAssignedDacs];
+    const seen = new Set();
+    const list = [];
+    combined.forEach(d => {
+        const ch = d.channel !== undefined ? d.channel : (d.channels && d.channels.length > 0 ? d.channels[0].serviceID : 0);
+        const key = `${d.ip}:${ch}`;
+        if (!seen.has(key)) { seen.add(key); list.push({ ...d, channel: ch }); }
+    });
+    return list;
+  }, [layerDacs, clipAssignedDacs]);
+
+  // Collapse/UI state comes from committed state (always fresh), NOT from the
+  // live clip object - the live ref may lag state while a clip-effect param edit
+  // is pending, and a stale collapse map would let toggling one panel reset
+  // other panels' collapsed state.
+  const uiState = uiStateProp || clip?.uiState || {};
   const collapsedPanels = uiState.collapsedPanels || {};
 
   const togglePanel = (panelId, isNowCollapsed) => {
     if (onUpdateClipUiState) {
         onUpdateClipUiState(selectedLayerIndex, selectedColIndex, {
             collapsedPanels: {
-                ...collapsedPanels,
                 [panelId]: isNowCollapsed
             }
         });
@@ -118,7 +146,6 @@ const ClipSettingsPanel = ({
   const {
     effects = [],
     assignedDacs = [],
-    playbackSettings = {},
     syncSettings = {},
     audioFile = null,
     audioVolume = 1.0,
@@ -127,6 +154,11 @@ const ClipSettingsPanel = ({
     currentParams = {},
     workerId = null
   } = clip || {};
+
+  // Playback settings come from committed state when provided (so the UI updates the
+  // instant a control is touched) instead of the live ref clip, which only syncs
+  // after commit and would show stale values on the first interaction.
+  const playbackSettings = (playbackSettingsOverride !== undefined ? playbackSettingsOverride : clip?.playbackSettings) || {};
 
   const hasEffects = effects.length > 0;
   const hasGenerator = type === 'generator' && !!generatorDefinition;
@@ -145,8 +177,10 @@ const ClipSettingsPanel = ({
       clipDuration = totalFrames / clipFps;
   }
 
-  // Derive Worker ID for progress tracking
-  const derivedWorkerId = workerId || (type === 'ilda' ? `ilda-${selectedLayerIndex}-${selectedColIndex}` : (type === 'generator' ? `generator-${selectedLayerIndex}-${selectedColIndex}` : null));
+  const pageIdx = clip?.pageId !== undefined ? clip.pageId : selectedLayerIndex !== null ? (clip?.pageId ?? 0) : 0; // Fallback to 0 if not available
+  const derivedWorkerId = workerId || (type === 'ilda' ? `ilda-${selectedLayerIndex}-${selectedColIndex}` : (type === 'generator' ? `generator-${pageIdx}-${selectedLayerIndex}-${selectedColIndex}` : null));
+
+  const currentPointCount = (liveFramesRef?.current && derivedWorkerId) ? (liveFramesRef.current[derivedWorkerId]?.points?.length / 8 || 0) : 0;
 
   const audioProgress = audioInfo && audioInfo.duration 
     ? (audioInfo.currentTime / audioInfo.duration) * 100 
@@ -211,8 +245,23 @@ const ClipSettingsPanel = ({
                 const status = dacStatuses[dac.ip];
                 return (
                 <li key={`${dac.unitID || dac.ip}-${dac.channel}-${index}`} className="assigned-dac-item">
+                  <div className="dac-order-controls">
+                    <span className="dac-order-index">{index + 1}</span>
+                    <button
+                        className="dac-order-btn"
+                        disabled={index === 0}
+                        onClick={() => onReorderDacs(selectedLayerIndex, selectedColIndex, index, index - 1)}
+                        title="Move Up"
+                    >▲</button>
+                    <button
+                        className="dac-order-btn"
+                        disabled={index === assignedDacs.length - 1}
+                        onClick={() => onReorderDacs(selectedLayerIndex, selectedColIndex, index, index + 1)}
+                        title="Move Down"
+                    >▼</button>
+                  </div>
                   <div className="dac-info-block">
-                      <span className="dac-name-tiny">{dac.hostName || dac.ip} - Ch {dac.channel}</span>
+                      <span className="dac-name-tiny">{dacSettings[`${dac.ip}:${dac.channel}`]?.name || `${dac.hostName || dac.ip} - Ch ${dac.channel}`}</span>
                       {status && (
                           <div className="dac-status-tiny" style={{fontSize: '9px', color: '#888'}}>
                               State: {status.playback_state === 2 ? 'PLAYING' : status.playback_state === 1 ? 'PREPARED' : 'IDLE'} | 
@@ -256,6 +305,7 @@ const ClipSettingsPanel = ({
           getFftLevels={getFftLevels}
           uiState={uiState}
           onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
+          onRegisterPreset={onRegisterPreset}
         />
       )}
 
@@ -274,7 +324,8 @@ const ClipSettingsPanel = ({
               >
                 <EffectEditor
                   effect={effect}
-                  assignedDacs={assignedDacs}
+                  assignedDacs={effectiveAssignedDacs}
+                  dacSettings={dacSettings}
                   syncSettings={syncSettings}
                   onSetParamSync={onSetParamSync}
                   context={{ layerIndex: selectedLayerIndex, colIndex: selectedColIndex, effectIndex, targetType: 'effect', workerId: derivedWorkerId }}
@@ -288,6 +339,8 @@ const ClipSettingsPanel = ({
                   getFftLevels={getFftLevels}
                   uiState={uiState}
                   onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
+                  onRegisterPreset={onRegisterPreset}
+                  currentPointCount={currentPointCount}
                   dragHandle={
                     <div 
                         draggable
@@ -314,4 +367,4 @@ const ClipSettingsPanel = ({
   );
 };
 
-export default ClipSettingsPanel;
+export default React.memo(ClipSettingsPanel);

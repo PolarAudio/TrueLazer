@@ -51,7 +51,8 @@ const SettingsPanel = ({
     saveMappings: saveArtnetMappings,
     exportMappings: exportArtnetMappings,
     importMappings: importArtnetMappings,
-    lastDmxEvent
+    lastDmxEvent,
+    autoPatchFixedFootprint
   } = useArtnet() || {};
 
   const {
@@ -150,24 +151,6 @@ const SettingsPanel = ({
       >
           <p className="info-text">Output routing and safety zones configuration.</p>
           <button className="small-btn" style={{width:'100%', marginTop:'5px'}} onClick={onOpenOutputSettings}>Open Output Settings</button>
-      </CollapsiblePanel>
-
-      <CollapsiblePanel 
-        title="Processing"
-        isCollapsed={!!collapsedStates['processing']}
-        onToggle={(val) => handleToggle('processing', val)}
-      >
-          <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <label className="param-label" style={{ fontSize: '11px' }}>Point Optimization</label>
-              <input 
-                type="checkbox" 
-                checked={renderSettings.optimizationEnabled} 
-                onChange={(e) => onSetRenderSetting('optimizationEnabled', e.target.checked)}
-              />
-          </div>
-          <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '5px' }}>
-              Optimizes geometry (interpolation/dwell) before applying effects. Fixes lines in Delay effect but increases point count.
-          </p>
       </CollapsiblePanel>
 
       {/* Shortcuts Settings Section */}
@@ -269,6 +252,7 @@ const SettingsPanel = ({
                       >
                           {isArtnetMapping ? 'Stop Mapping' : 'Start Mapping'}
                       </button>
+                      <button className="small-btn" onClick={autoPatchFixedFootprint} title="Auto-patch standard 110-channel layout">Auto-Patch</button>
                       <button className="small-btn" onClick={saveArtnetMappings}>Save Default</button>
                       <button className="small-btn" onClick={exportArtnetMappings}>Export</button>
                       <button className="small-btn" onClick={importArtnetMappings}>Import</button>
@@ -284,7 +268,7 @@ const SettingsPanel = ({
             </CollapsiblePanel>
           )}
 
-          {enabledShortcuts.osc && (
+{enabledShortcuts.osc && (
             <CollapsiblePanel 
                 title="OSC Shortcuts"
                 isCollapsed={!!collapsedStates['osc']}
@@ -297,8 +281,9 @@ const SettingsPanel = ({
           )}
         </div>
       )}
+
     </div>
   );
 };
 
-export default SettingsPanel;
+export default React.memo(SettingsPanel);

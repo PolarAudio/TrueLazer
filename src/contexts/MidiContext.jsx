@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote, listenToStateChange } from '../utils/midi';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { WebMidi } from 'webmidi';
+import { initializeMidi, getMidiInputs, listenToMidiInput, stopListeningToMidiInput, sendSysex, sendNote, listenToStateChange, pollMidiInputs } from '../utils/midi';
+import { THEME_COLORS } from '../utils/midiColors';
 
 const MidiContext = createContext(null);
 
@@ -36,7 +38,28 @@ const migrateMappings = (loadedMappings) => {
     return migrated;
 };
 
-export const MidiProvider = ({ children, onMidiCommand }) => {
+/**
+ * Generates an optimized lookup map for MIDI feedback.
+ * Maps controlId -> Array of { key, assignment }
+ * @param {Object} mappings 
+ * @returns {Map}
+ */
+export const generateFeedbackMap = (mappings) => {
+    const map = new Map();
+    Object.entries(mappings).forEach(([key, assignments]) => {
+        if (!Array.isArray(assignments)) return;
+        assignments.forEach(assignment => {
+            if (!assignment.controlId) return;
+            if (!map.has(assignment.controlId)) {
+                map.set(assignment.controlId, []);
+            }
+            map.get(assignment.controlId).push({ key, assignment });
+        });
+    });
+    return map;
+};
+
+export const MidiProvider = ({ children, onMidiCommand, theme = 'orange', enabledShortcuts = {} }) => {
   const [midiInitialized, setMidiInitialized] = useState(false);
   const [midiInputs, setMidiInputs] = useState([]);
   const [selectedMidiInputId, setSelectedMidiInputId] = useState('');
@@ -47,25 +70,74 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
   const [isShiftDown, setIsShiftDown] = useState(false);
   const isShiftDownRef = useRef(false);
 
-  // Keep latest reference of onMidiCommand to avoid stale closures in event listener
+  // Keep latest references to avoid stale closures and unnecessary re-binds
   const onMidiCommandRef = useRef(onMidiCommand);
   useEffect(() => {
     onMidiCommandRef.current = onMidiCommand;
   }, [onMidiCommand]);
 
+  const mappingsRef = useRef(mappings);
+  useEffect(() => {
+    mappingsRef.current = mappings;
+  }, [mappings]);
+
+  const isMappingRef = useRef(isMapping);
+  useEffect(() => {
+    isMappingRef.current = isMapping;
+  }, [isMapping]);
+
+  const learningIdRef = useRef(learningId);
+  useEffect(() => {
+    learningIdRef.current = learningId;
+  }, [learningId]);
+
   // Initialize MIDI and Load Mappings
   useEffect(() => {
+    // This effect must re-run whenever the MIDI shortcut is toggled. Previously it
+    // ran only once on mount (when MIDI is off by default), so enabling MIDI later
+    // never started WebMidi — the UI stayed on "Initializing MIDI...".
+    if (!enabledShortcuts.midi) {
+      console.log("MIDI: MIDI shortcuts disabled - resetting state");
+      setMidiInitialized(false);
+      setMidiInputs([]);
+      setSelectedMidiInputId('');
+      return;
+    }
+
+    let isMounted = true;
+    let cleanupStateChange = () => {};
+    let cleanupPoll = () => {};
     const init = async () => {
       try {
+        console.log("MIDI: Starting initialization...");
         await initializeMidi();
-        setMidiInitialized(true);
-        setMidiInputs(getMidiInputs());
         
-        // Listen for connection changes (hotplugging)
-        listenToStateChange(() => {
-            console.log("MIDI Device change detected, refreshing inputs...");
+        if (!isMounted) return;
+
+        setMidiInitialized(true);
+        const inputs = getMidiInputs();
+        console.log(`MIDI: Initialized with ${inputs.length} inputs.`);
+        setMidiInputs(inputs);
+        
+        const refreshInputs = () => {
+            if (!isMounted) return;
             setMidiInputs(getMidiInputs());
+        };
+
+        // Fast path: Web MIDI API statechange events
+        cleanupStateChange = listenToStateChange(() => {
+            if (!isMounted) return;
+            console.log("MIDI Device change detected, refreshing inputs...");
+            refreshInputs();
         });
+
+        // Reliable fallback: poll every 2 s — the statechange event can be
+        // unreliable in Electron (e.g. after window focus changes).
+        cleanupPoll = pollMidiInputs((current) => {
+            if (!isMounted) return;
+            console.log("MIDI: Poll detected device change");
+            setMidiInputs(current);
+        }, 2000);
 
         // Load saved mappings from store
         if (window.electronAPI && window.electronAPI.getMidiMappings) {
@@ -78,10 +150,18 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         }
       } catch (err) {
         console.error("MIDI Init Failed:", err);
+        if (isMounted) setMidiInitialized(false);
       }
     };
+
     init();
-  }, []);
+
+    return () => {
+        isMounted = false;
+        cleanupStateChange();
+        cleanupPoll();
+    };
+  }, [enabledShortcuts.midi]);
 
   // Reactive Auto-Selection for MIDI Inputs
   useEffect(() => {
@@ -111,20 +191,20 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       autoSelect();
   }, [midiInitialized, midiInputs, selectedMidiInputId]);
 
-  const saveMappings = async () => {
+  const saveMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.saveMidiMappings) {
           await window.electronAPI.saveMidiMappings(mappings);
           console.log("MIDI mappings saved to default.");
       }
-  };
+  }, [mappings]);
 
-  const exportMappings = async () => {
+  const exportMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.exportMappings) {
           await window.electronAPI.exportMappings(mappings, 'midi');
       }
-  };
+  }, [mappings]);
 
-  const importMappings = async () => {
+  const importMappings = useCallback(async () => {
       if (window.electronAPI && window.electronAPI.importMappings) {
           const result = await window.electronAPI.importMappings('midi');
           if (result.success && result.mappings) {
@@ -133,10 +213,10 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
               console.log("MIDI mappings imported and migrated.");
           }
       }
-  };
+  }, []);
 
   // APC40 Handshake / Initialization
-  const initializeApc40 = (inputId) => {
+  const initializeApc40 = useCallback((inputId) => {
     const input = midiInputs.find(i => i.id === inputId);
     if (input && input.name.toLowerCase().includes('apc40')) {
         console.log("Detected APC40, sending initialization SysEx...");
@@ -146,7 +226,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         const initData = [0x7F, 0x29, 0x60, 0x00, 0x04, 0x41, 0x01, 0x01, 0x01];
         sendSysex(inputId, initData);
     }
-  };
+  }, [midiInputs]);
 
   useEffect(() => {
     if (selectedMidiInputId && window.electronAPI && window.electronAPI.saveSelectedMidiInput) {
@@ -157,8 +237,12 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     }
   }, [selectedMidiInputId, midiInitialized, midiInputs]);
 
+  const feedbackMap = useMemo(() => generateFeedbackMap(mappings), [mappings]);
+
   const sendFeedback = useCallback((controlId, value, status = 'inactive', overrideChannel = null) => {
     if (!midiInitialized) return;
+
+    const colors = THEME_COLORS[theme] || THEME_COLORS['orange'];
 
     // Resolve numerical velocity based on status and feedback settings
     const resolveVelocity = (assignment, val, stat) => {
@@ -166,49 +250,46 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
         const cfg = assignment.feedbackConfig || {};
 
         if (mode === 'clip') {
-            if (stat === 'active') return cfg.activeVelocity ?? 127;
+            if (stat === 'active') return cfg.activeVelocity ?? colors.full;
             if (stat === 'previewing') return cfg.previewVelocity ?? 64;
-            if (stat === 'inactive') return cfg.inactiveVelocity ?? 1;
+            if (stat === 'inactive') return cfg.inactiveVelocity ?? colors.dim;
             if (stat === 'empty') return cfg.emptyVelocity ?? 0;
             return 0;
         } else if (mode === 'slider') {
             return Math.round(val * 127);
         } else if (mode === 'dropdown') {
-            // Dropdown might use specific velocities for different items, 
-            // but for now, simple on/off based on if item is selected
-            return val ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
+            return val ? (cfg.onVelocity ?? colors.full) : (cfg.offVelocity ?? 0);
         } else {
             // Default: Toggle
             const is_on = typeof val === 'boolean' ? val : val > 0;
-            return is_on ? (cfg.onVelocity ?? 127) : (cfg.offVelocity ?? 0);
+            return is_on ? (cfg.onVelocity ?? colors.full) : (cfg.offVelocity ?? colors.dim);
         }
     };
 
-    // We need to find ALL hardware keys that are mapped to this controlId
-    Object.entries(mappings).forEach(([key, assignments]) => {
-        if (!Array.isArray(assignments)) return;
-        assignments.forEach(assignment => {
-            if (assignment.controlId === controlId) {
-                const [midiType, channelStr, address] = key.split(':');
-                if (midiType === 'note') {
-                    const channel = overrideChannel !== null ? overrideChannel : parseInt(channelStr);
-                    const outputId = assignment.outputDeviceId || selectedMidiInputId;
-                    
-                    if (outputId && outputId !== 'any') {
-                        const velocity = resolveVelocity(assignment, value, status);
-                        sendNote(outputId, address, velocity, channel);
-                    }
-                }
-            }
-        });
-    });
-  }, [selectedMidiInputId, midiInitialized, mappings]);
+    // O(1) Lookup using the pre-computed Feedback Map
+    const assignments = feedbackMap.get(controlId);
+    if (!assignments) return;
 
-  // Listen to MIDI events
+    assignments.forEach(({ key, assignment }) => {
+        const [midiType, channelStr, address] = key.split(':');
+        if (midiType === 'note') {
+            // Use blinkMode + 1 as the channel (WebMidi is 1-indexed)
+            const targetChannel = overrideChannel !== null ? overrideChannel : (assignment.blinkMode !== undefined ? (assignment.blinkMode + 1) : parseInt(channelStr));
+            const outputId = assignment.outputDeviceId || selectedMidiInputId;
+            
+            if (outputId && outputId !== 'any') {
+                const velocity = resolveVelocity(assignment, value, status);
+                sendNote(outputId, address, velocity, targetChannel);
+            }
+        }
+    });
+  }, [selectedMidiInputId, midiInitialized, feedbackMap, theme]);
+
+  // Listen to MIDI events - Only re-bind when the ACTUAL device changes
   useEffect(() => {
     let cleanup = () => {};
     if (selectedMidiInputId) {
-      console.log(`(Re)binding MIDI listener for: ${selectedMidiInputId}`);
+      console.log(`MIDI: Binding listener for: ${selectedMidiInputId}`);
       cleanup = listenToMidiInput(selectedMidiInputId, (event) => {
         if (isMappingRef.current) {
             setLastMidiEvent(event);
@@ -217,12 +298,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
       });
     }
     return cleanup;
-  }, [selectedMidiInputId, isMapping, learningId, mappings, midiInputs]); // Added midiInputs to ensure re-binding on hotplug
-
-  const isMappingRef = useRef(isMapping);
-  useEffect(() => {
-      isMappingRef.current = isMapping;
-  }, [isMapping]);
+  }, [selectedMidiInputId, midiInputs]); // Removed volatile refs from dependencies
 
   const getMappingKey = (type, channel, address) => {
       const midiType = (type === 'noteon' || type === 'noteoff') ? 'note' : 'cc';
@@ -240,20 +316,38 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     }
 
     // 1. If in "Learn Mode" for a specific ID
-    if (isMapping && learningId) {
+    if (isMappingRef.current && learningIdRef.current) {
       if (event.type === 'noteoff') return;
 
       const addressLabel = event.note || event.controller;
       const requiresShift = isShiftDownRef.current;
       const key = getMappingKey(event.type, event.channel, addressLabel);
       
+      // Determine Context-Aware Defaults
+      let feedbackMode = 'toggle';
+      let feedbackConfig = {}; // Start empty to use theme fallbacks
+
+      const learningId = learningIdRef.current;
+
+      if (learningId.startsWith('clip_')) {
+          feedbackMode = 'clip';
+          feedbackConfig = { previewVelocity: 64, emptyVelocity: 0 };
+      } else if (learningId.includes('intensity') || learningId.includes('speed') || learningId.includes('dimmer') || learningId.includes('knob')) {
+          feedbackMode = 'slider';
+      } else if (learningId.includes('_item_')) {
+          feedbackMode = 'dropdown';
+      }
+
       const newAssignment = {
         controlId: learningId,
         requiresShift: requiresShift,
         targetType: 'position', // Default: 'position', 'selectedLayer', 'thisClip'
         inputDeviceId: selectedMidiInputId,
         outputDeviceId: selectedMidiInputId,
-        label: `${requiresShift ? '⇧' : ''}CH${event.channel}:${addressLabel}`
+        label: `${requiresShift ? '⇧' : ''}CH${event.channel}:${addressLabel}`,
+        feedbackMode,
+        feedbackConfig,
+        blinkMode: 0 // Static
       };
       
       setMappings(prev => {
@@ -271,7 +365,7 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
 
     // 2. Normal Operation: Iterate through all assignments for this hardware key
     const key = getMappingKey(event.type, event.channel, event.note || event.controller);
-    const assignments = mappings[key];
+    const assignments = mappingsRef.current[key];
 
     if (assignments && assignments.length > 0) {
         assignments.forEach(assignment => {
@@ -299,13 +393,13 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     }
   };
 
-  const startMapping = () => setIsMapping(true);
-  const stopMapping = () => {
+  const startMapping = useCallback(() => setIsMapping(true), []);
+  const stopMapping = useCallback(() => {
       setIsMapping(false);
       setLearningId(null);
-  }
+  }, []);
 
-  const removeMapping = (controlId) => {
+  const removeMapping = useCallback((controlId) => {
       setMappings(prev => {
           const next = { ...prev };
           Object.keys(next).forEach(key => {
@@ -314,9 +408,9 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
           });
           return next;
       });
-  };
+  }, []);
 
-  const removeAssignment = (key, controlId) => {
+  const removeAssignment = useCallback((key, controlId) => {
       setMappings(prev => {
           if (!prev[key]) return prev;
           const next = { ...prev };
@@ -324,9 +418,9 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
           if (next[key].length === 0) delete next[key];
           return next;
       });
-  };
+  }, []);
 
-  const value = {
+  const value = useMemo(() => ({
     midiInitialized,
     midiInputs,
     selectedMidiInputId,
@@ -347,7 +441,25 @@ export const MidiProvider = ({ children, onMidiCommand }) => {
     sendFeedback,
     lastMidiEvent,
     isShiftDown
-  };
+  }), [
+    midiInitialized,
+    midiInputs,
+    selectedMidiInputId,
+    isMapping,
+    learningId,
+    mappings,
+    lastMidiEvent,
+    isShiftDown,
+    sendFeedback,
+    saveMappings,
+    exportMappings,
+    importMappings,
+    initializeApc40,
+    startMapping,
+    stopMapping,
+    removeMapping,
+    removeAssignment
+  ]);
 
   return (
     <MidiContext.Provider value={value}>

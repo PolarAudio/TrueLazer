@@ -6,8 +6,9 @@ import DualRangeSlider from './DualRangeSlider';
 import CollapsiblePanel from './CollapsiblePanel';
 import AnimationControls from './AnimationControls';
 import ColorPicker from './ColorPicker';
+import { PresetSelector } from './PresetSelector';
 
-const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, paramKey }) => {
+const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, paramKey, link = null }) => {
 // ... existing EffectParameter ...
     const [hovered, setHovered] = useState(false);
 
@@ -63,7 +64,20 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
             }}
         >
              {/* Row 1: Label */}
-             <div className="param-row-label" style={{ width: '100%' }}>
+             <div className="param-row-label" style={{ display: 'flex', width: '100%', alignItems: 'center', gap: '4px' }}>
+                {link && (
+                    <button
+                        className={`link-xy-btn ${link.linked ? 'active' : ''}`}
+                        onClick={link.onToggle}
+                        title={link.linked ? 'Linked – Y follows X exactly (click to unlink)' : 'Unlinked – click to link Y to X'}
+                        style={{ background: 'none', border: 'none', padding: 0, display: 'flex', cursor: 'pointer', fontSize: '11px', color: link.linked ? 'var(--theme-color, #4c8bf5)' : '#666' }}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1 1 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4 4 0 0 1-.128-1.287z"/>
+                            <path d="M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.374 3.528a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243L6.586 4.672z"/>
+                        </svg>
+                    </button>
+                )}
                 <label className="param-label" draggable onDragStart={handleDragStart} style={{fontSize: '11px', color: '#aaa'}}>{control.label}</label>
              </div>
 
@@ -73,7 +87,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                 <button 
                     className={`anim-toggle-btn ${expanded ? 'active' : ''}`}
                     style={{ 
-                        visibility: (hovered || expanded || animSettings?.syncMode) ? 'visible' : 'hidden', 
+                        visibility: link?.linked ? 'hidden' : ((hovered || expanded || animSettings?.syncMode) ? 'visible' : 'hidden'), 
                         background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 0, fontSize: '14px'
                     }}
                     onClick={() => setExpanded(!expanded)}
@@ -129,7 +143,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                 </div>
 
                 {/* Col 3: Value Display */}
-                 {control.type === 'range' && (
+                 {control.type === 'range' && !control.isRange && (
                     <input
                         type="number"
                         value={typeof value === 'number' ? value.toFixed(2) : value}
@@ -142,7 +156,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
              </div>
 
              {/* Row 3: Animation Settings (Unfolded) */}
-             {expanded && (control.type === 'range') && (
+             {expanded && !link?.linked && (control.type === 'range') && (
                  <div className="param-anim-settings" style={{ marginTop: '5px', padding: '5px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
                     <AnimationControls 
                         animSettings={animSettings} 
@@ -154,50 +168,104 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
     );
 };
 
-const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], onChange }) => {
-    const [draggedItem, setDraggedItem] = useState(null);
-    const items = (customOrder && customOrder.length > 0) 
-        ? customOrder 
-        : assignedDacs.map((d, i) => ({ ip: d.ip, channel: d.channel, label: `Ch ${d.channel} (${d.hostName || d.ip})`, originalIndex: i }));
+const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], dacSettings = {}, onChange }) => {
+    const [draggedKey, setDraggedKey] = useState(null);
+    const keyOf = (d) => (d && d.ip !== undefined) ? `${d.ip}:${d.channel !== undefined ? d.channel : ''}` : null;
+    const resolveDacLabel = (d) => {
+        const k = keyOf(d);
+        const custom = k ? dacSettings[k]?.name : null;
+        if (custom) return custom;
+        return `Ch ${d.channel} (${d.hostName || d.ip})`;
+    };
+
+    // Always reflect the currently-assigned channels, keeping the saved custom
+    // order where possible and appending any newly assigned channels last.
+    const assignedItems = assignedDacs
+        .map((d, i) => ({ ip: d.ip, channel: d.channel, label: resolveDacLabel(d), originalIndex: i }));
+    const savedItems = (customOrder && customOrder.length > 0) ? customOrder : [];
+    const items = assignedItems.length > 0
+        ? [...assignedItems].sort((a, b) => {
+            const ia = savedItems.findIndex(item => keyOf(item) === keyOf(a));
+            const ib = savedItems.findIndex(item => keyOf(item) === keyOf(b));
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+        })
+        : savedItems.map(item => ({ ...item, label: item.label || resolveDacLabel(item) }));
+
+    const commitOrder = (list) => {
+        onChange(list.map(item => ({
+            ip: item.ip,
+            channel: item.channel,
+            label: item.label || resolveDacLabel(item),
+            originalIndex: item.originalIndex
+        })));
+    };
+
+    const moveItem = (from, to) => {
+        if (to < 0 || to >= items.length) return;
+        const list = [...items];
+        const [moved] = list.splice(from, 1);
+        list.splice(to, 0, moved);
+        commitOrder(list);
+    };
 
     const handleDragStart = (e, index) => {
-        setDraggedItem(items[index]);
+        e.dataTransfer.effectAllowed = 'move';
+        setDraggedKey(keyOf(items[index]));
     };
 
     const handleDragOver = (e, index) => {
         e.preventDefault();
-        const draggedOverItem = items[index];
-        if (draggedItem === draggedOverItem) return;
-        const newItems = items.filter(item => item !== draggedItem);
-        newItems.splice(index, 0, draggedItem);
-        onChange(newItems);
+        const targetKey = keyOf(items[index]);
+        if (draggedKey === null || draggedKey === targetKey) return;
+        const from = items.findIndex(it => keyOf(it) === draggedKey);
+        if (from === -1 || from === index) return;
+        const list = [...items];
+        const [moved] = list.splice(from, 1);
+        list.splice(index, 0, moved);
+        commitOrder(list);
     };
+
+    const handleDragEnd = () => setDraggedKey(null);
 
     return (
         <div className="custom-order-editor" style={{ marginBottom: '10px', padding: '5px', background: '#222', borderRadius: '4px' }}>
-            <label style={{fontSize: '10px', color: '#888'}}>Channel Order (Drag to Sort)</label>
+            <label style={{fontSize: '10px', color: '#888'}}>Channel Order (drag or use arrows)</label>
             <ul style={{ listStyle: 'none', padding: 0, margin: '5px 0' }}>
-                {items.map((item, index) => (
-                    <li 
-                        key={index}
+                {items.map((item, index) => {
+                    const itemKey = keyOf(item);
+                    return (
+                    <li
+                        key={itemKey || index}
                         draggable
                         onDragStart={(e) => handleDragStart(e, index)}
                         onDragOver={(e) => handleDragOver(e, index)}
+                        onDragEnd={handleDragEnd}
                         style={{
-                            background: '#333', 
-                            border: '1px solid #444', 
-                            padding: '4px', 
-                            marginBottom: '2px', 
-                            fontSize: '10px', 
+                            background: draggedKey === itemKey ? '#444' : '#333',
+                            border: '1px solid #555',
+                            padding: '4px',
+                            marginBottom: '2px',
+                            fontSize: '10px',
                             cursor: 'grab',
                             display: 'flex',
-                            alignItems: 'center'
+                            alignItems: 'center',
+                            gap: '5px'
                         }}
                     >
-                        <span style={{marginRight: '5px', color: '#666'}}>☰</span>
-                        {item.label || `Ch ${item.channel} ${item.ip ? `(${item.ip})` : ''}`}
+                        <span style={{ color: '#666' }}>☰</span>
+                        <span style={{ color: '#888', fontSize: '9px', minWidth: '14px' }}>{index + 1}</span>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {item.label || (itemKey ? dacSettings[itemKey]?.name : null) || `Ch ${item.channel} ${item.ip ? `(${item.ip})` : ''}`}
+                        </span>
+                        <span className="custom-order-controls" style={{ display: 'flex', gap: '2px' }}>
+                            <button className="dac-order-btn" disabled={index === 0} onClick={() => moveItem(index, index - 1)} title="Move up">▲</button>
+                            <button className="dac-order-btn" disabled={index === items.length - 1} onClick={() => moveItem(index, index + 1)} title="Move down">▼</button>
+                        </span>
                     </li>
-                ))}
+                    );
+                })}
             </ul>
         </div>
     );
@@ -208,13 +276,12 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
     const [activePaletteIndex, setActivePaletteIndex] = useState(0);
 
     // Track advanced HSV visibility in clip UI state
-    const showHsv = !!uiState?.showHsv?.[effect.instanceId];
+    const showHsv = !!uiState?.showHsv?.[effect.instanceId || effect.id];
     const setShowHsv = (val) => {
         if (onUpdateUiState) {
             onUpdateUiState({
                 showHsv: {
-                    ...(uiState?.showHsv || {}),
-                    [effect.instanceId]: val
+                    [effect.instanceId || effect.id]: val
                 }
             });
         }
@@ -379,7 +446,7 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
     );
 };
 
-const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle }) => {
+const EffectEditor = ({ effect, assignedDacs = [], dacSettings = {}, onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle, onRegisterPreset, currentPointCount }) => {
   if (!effect) return null;
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
   if (!effectDefinition) return null;
@@ -390,15 +457,16 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
   const isEnabled = effect.params.enabled !== false;
   const isChannelMode = effect.params.mode === 'channel';
 
+  const showSegmentThresholdWarning = isDelay && effect.params.mode === 'segment' && currentPointCount > 0 && currentPointCount < 5;
+
   const collapsedEffects = uiState?.collapsedEffects || {};
-  const isCollapsed = !!collapsedEffects[effect.instanceId];
+  const isCollapsed = !!collapsedEffects[effect.instanceId || effect.id];
 
   const handleToggle = (val) => {
     if (onUpdateUiState) {
         onUpdateUiState({
             collapsedEffects: {
-                ...collapsedEffects,
-                [effect.instanceId]: val
+                [effect.instanceId || effect.id]: val
             }
         });
     }
@@ -440,6 +508,17 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
             </div>
         }
     >
+        <PresetSelector 
+            type="effect" 
+            subType={effect.id} 
+            currentParams={effect.params}
+            onRegisterPreset={onRegisterPreset}
+            onApplyPreset={(params) => {
+                Object.entries(params).forEach(([key, val]) => {
+                    onParamChange(key, val);
+                });
+            }}
+        />
         {isColor ? (
             <ColorEffectEditor 
                 effect={effect}
@@ -463,14 +542,29 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                             <CustomOrderEditor 
                                 customOrder={effect.params.customOrder} 
                                 assignedDacs={assignedDacs}
+                                dacSettings={dacSettings}
                                 onChange={(newOrder) => onParamChange('customOrder', newOrder)}
                             />
+                        )}
+                        {showSegmentThresholdWarning && (
+                            <div className="effect-warning" style={{ color: '#ff4444', fontSize: '10px', marginBottom: '10px', padding: '5px', background: 'rgba(255,0,0,0.1)', borderRadius: '3px', border: '1px solid rgba(255,0,0,0.2)' }}>
+                                ⚠ Insufficient point count for segment delay (min 5 points).
+                            </div>
                         )}
                     </>
                 )}
 
+                {isChase && effect.params.useCustomOrder && (
+                    <CustomOrderEditor 
+                        customOrder={effect.params.customOrder} 
+                        assignedDacs={assignedDacs}
+                        dacSettings={dacSettings}
+                        onChange={(newOrder) => onParamChange('customOrder', newOrder)}
+                    />
+                )}
+
                 {effectDefinition.paramControls.map(control => {
-                if (isDelay && (['customOrder'].includes(control.id))) return null;
+                if ((isDelay || isChase) && (['customOrder'].includes(control.id))) return null;
                 if (control.showIf) {
                     const shouldShow = Object.entries(control.showIf).every(([key, value]) => {
                         if (Array.isArray(value)) {
@@ -485,13 +579,51 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                         ? syncSettings[paramKey] 
                         : { syncMode: syncSettings[paramKey] };
 
+                // X/Y link handling: pairs defined in the effect definition stay
+                // in lockstep by default (`linkXY` flag) with a chain toggle on
+                // the second axis.
+                const effectPairs = effectDefinition.linkPairs || [];
+                const secondOfPair = effectPairs.find(p => p[1] === control.id);
+                const firstOfPair = effectPairs.find(p => p[0] === control.id);
+                const linkXY = effect.params.linkXY !== false;
+
+                let displayValue = effect.params[control.id];
+                let displayOnChange = (val) => onParamChange(control.id, val);
+                let displayAnimSettings = currentAnimSettings;
+                let linkProps = null;
+
+                if (secondOfPair) {
+                    const partnerId = secondOfPair[0];
+                    linkProps = { linked: linkXY, onToggle: () => onParamChange('linkXY', !linkXY) };
+                    if (linkXY) {
+                        displayValue = effect.params[partnerId];
+                        displayOnChange = (val) => {
+                            onParamChange(partnerId, val);
+                            onParamChange(control.id, val);
+                        };
+                        if (!currentAnimSettings.syncMode) {
+                            const partnerKey = `${effect.instanceId || effect.id}.${partnerId}`;
+                            const partnerAnim = typeof syncSettings[partnerKey] === 'object'
+                                ? syncSettings[partnerKey]
+                                : (syncSettings[partnerKey] ? { syncMode: syncSettings[partnerKey] } : null);
+                            if (partnerAnim) displayAnimSettings = partnerAnim;
+                        }
+                    }
+                } else if (firstOfPair && linkXY) {
+                    const partnerId = firstOfPair[1];
+                    displayOnChange = (val) => {
+                        onParamChange(firstOfPair[0], val);
+                        onParamChange(partnerId, val);
+                    };
+                }
+
                 return (
                     <EffectParameter
                         key={control.id}
                         control={control}
-                        value={effect.params[control.id]}
-                        onChange={(val) => onParamChange(control.id, val)}
-                        animSettings={currentAnimSettings}
+                        value={displayValue}
+                        onChange={displayOnChange}
+                        animSettings={displayAnimSettings}
                         onAnimChange={(newSettings) => onSetParamSync(paramKey, newSettings)}
                         effectId={effect.id}
                         context={context}
@@ -503,6 +635,7 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
                         uiState={uiState}
                         onUpdateUiState={onUpdateUiState}
                         paramKey={paramKey}
+                        link={linkProps}
                     />
                 );
                 })}
@@ -512,4 +645,4 @@ const EffectEditor = ({ effect, assignedDacs = [], onParamChange, onRemove, sync
   );
 };
 
-export default EffectEditor;
+export default React.memo(EffectEditor);

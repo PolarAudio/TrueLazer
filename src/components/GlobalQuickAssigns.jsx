@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import Mappable from './Mappable';
 import RadialKnob from './RadialKnob';
 
-const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, onContextMenu, className: extraClassName, ...props }) => {
+const QuickButton = ({ value, onToggle, label, fullTitle, onDrop, isAssigned, onContextMenu, className: extraClassName, ...props }) => {
     const handleDragOver = (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'link';
@@ -30,27 +30,27 @@ const QuickButton = ({ value, onToggle, label, onDrop, isAssigned, onContextMenu
     return (
         <div className={`quick-assign-button ${value ? 'active' : ''} ${!isAssigned ? 'unassigned' : ''} ${extraClassName || ''}`.trim()}
              style={{
-				cursor: isAssigned ? 'pointer' : 'default', 
-				userSelect: 'none',
-				width: '90%',
-				opacity: isAssigned ? 1 : 0.5,
-				}}
+                userSelect: 'none',
+                width: '90%',
+             }}
              onDragOver={handleDragOver} 
              onDrop={handleDrop}
              onContextMenu={onContextMenu}
              {...props}
 			 onClick={isAssigned ? onToggle : (e) => e.preventDefault()}
         >
-            <div className="button-label" title={label || "Empty"}>{label || "Assign"}</div>
+            <div className="button-label" title={fullTitle || label || "Empty"}>{label || "Assign"}</div>
         </div>
     );
 };
 
 const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign }) => {
-    const handleContextMenu = (e, type, index) => {
+    const getControlLinks = (control) => Array.isArray(control.links) ? control.links : (control.link ? [control.link] : []);
+
+    const handleContextMenu = (e, type, index, assignments = []) => {
         e.preventDefault();
         if (window.electronAPI && window.electronAPI.showQuickAssignContextMenu) {
-            window.electronAPI.showQuickAssignContextMenu(type, index);
+            window.electronAPI.showQuickAssignContextMenu(type, index, assignments);
         }
     };
 
@@ -58,15 +58,18 @@ const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign })
         <div className="global-quick-assigns-panel">
             <div className="quick-assigns-row knobs-row">
                 {Array.from({ length: 8 }).map((_, i) => {
-                    const isAssigned = !!assigns.knobs[i].link;
+                    const knob = assigns.knobs[i];
+                    const links = getControlLinks(knob);
+                    const isAssigned = links.length > 0;
+                    const labels = links.map(l => l.label || l.paramName || l.paramId).filter(Boolean);
                     return (
                         <Mappable key={`knob-${i}`} id={`quick_knob_${i}`}>
                             <RadialKnob 
-                                value={assigns.knobs[i]?.value || 0}
-                                label={assigns.knobs[i]?.label}
+                                value={knob?.value || 0}
+                                label={knob?.label}
                                 isAssigned={isAssigned}
                                 onChange={(val) => isAssigned && onUpdateKnob(i, val)}
-                                onContextMenu={(e) => handleContextMenu(e, 'knob', i)}
+                                onContextMenu={(e) => handleContextMenu(e, 'knob', i, labels)}
                                 onDrop={(data) => {
                                     console.log(`[GlobalQuickAssigns] Knob ${i} Drop Data:`, data);
                                     onAssign('knob', i, data);
@@ -78,15 +81,19 @@ const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign })
             </div>
             <div className="quick-assigns-row buttons-row">
                 {Array.from({ length: 8 }).map((_, i) => {
-                    const isAssigned = !!assigns.buttons[i].link;
+                    const btn = assigns.buttons[i];
+                    const links = getControlLinks(btn);
+                    const isAssigned = links.length > 0;
+                    const labels = links.map(l => l.label || l.paramName || l.paramId).filter(Boolean);
                     return (
                         <Mappable key={`btn-${i}`} id={`quick_btn_${i}`}>
                             <QuickButton
-                                value={assigns.buttons[i]?.value || false}
-                                label={assigns.buttons[i]?.label}
+                                value={btn?.value || false}
+                                label={btn?.label}
+                                fullTitle={labels.join(' · ')}
                                 isAssigned={isAssigned}
                                 onToggle={() => onToggleButton(i)}
-                                onContextMenu={(e) => handleContextMenu(e, 'button', i)}
+                                onContextMenu={(e) => handleContextMenu(e, 'button', i, labels)}
                                 onDrop={(data) => {
                                     console.log(`[GlobalQuickAssigns] Button ${i} Drop Data:`, data);
                                     onAssign('button', i, data);

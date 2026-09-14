@@ -12,7 +12,7 @@ export const ThumbnailWorkerProvider = ({ children }) => {
   useEffect(() => {
     if (!thumbnailWorker) {
       // Use the same worker script but a separate instance
-      const worker = new Worker(new URL('../utils/ilda-parser.worker.js', import.meta.url));
+      const worker = new Worker(new URL('../utils/ilda-parser.worker.js', import.meta.url), { type: 'module' });
       setThumbnailWorker(worker);
     }
 

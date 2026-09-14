@@ -2,6 +2,17 @@ import { applyEffects, applyOutputProcessing } from './effects.js';
 import { effectDefinitions } from './effectDefinitions';
 import { optimizePoints } from './optimizer.js';
 
+// Stable ids for frame objects so a WeakMap-valued identity survives across
+// rAF ticks without mutating the shared frame data.
+const frameIdMap = new WeakMap();
+let nextFrameId = 1;
+const frameId = (obj) => {
+  if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return 0;
+  let id = frameIdMap.get(obj);
+  if (!id) { id = nextFrameId++; frameIdMap.set(obj, id); }
+  return id;
+};
+
 export class WebGLRenderer {
   constructor(canvas, type) {
     this.canvas = canvas;
@@ -20,12 +31,44 @@ export class WebGLRenderer {
     this.alphaBuffer = null;
     this.alphaBufferData = new Float32Array(131072); // Max points buffer for reuse
 
+    this._reusablePositions = new Float32Array(131072 * 2);
+    this._reusableColors = new Float32Array(131072 * 3);
+    this._reusableBeamPositions = new Float32Array(131072 * 4);
+    this._reusableBeamColors = new Float32Array(131072 * 6);
+
+    // Buffers for building full-frame renders (contiguous, both draw passes)
+    // plus the pooled snapshot that backs the replay cache — pre-allocated so
+    // no per-frame allocation happens even when the draw is never cached.
+    this._buildPositions = new Float32Array(131072 * 4 + 8);
+    this._buildColors = new Float32Array(131072 * 6 + 8);
+    this._cachePositions = new Float32Array(131072 * 4 + 8);
+    this._cacheColors = new Float32Array(131072 * 6 + 8);
+
+    // Cached full-frame draw (static geometry). Keyed by frame identity +
+    // intensity + draw modes; when the UI re-paints the same full frame each
+    // rAF (the default preview, previewScanRate=1), the CPU-side point->buffer
+    // conversion is skipped entirely and the prebuilt ops are replayed.
+    this._fullFrameCache = null;
+
     this.lastPointDrawTime = 0; // Tracks the last time points were drawn
+    this.contextLost = false;
 
     if (!this.gl) {
       console.error("WebGL not supported");
       return;
     }
+
+    this.canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.contextLost = true;
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    });
+
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      this.setup();
+    });
 
     this.setup();
   }
@@ -201,7 +244,7 @@ export class WebGLRenderer {
     const progress = progressOverride !== null ? progressOverride : (frameIndex / ildaFrames.length);
     const time = previewTime !== null ? previewTime : performance.now();
 
-    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
+    this.draw(frame, effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, intensity, 0, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled, 'forward', 'loop');
 
     this.frameIndexes[0]++;
     if (this.frameIndexes[0] >= ildaFrames.length) {
@@ -240,7 +283,7 @@ export class WebGLRenderer {
             // Skip rendering if intensity is effectively zero
             if (finalIntensity > 0.001) {
                 const progress = clip.progress !== undefined ? clip.progress : (this.frameIndexes[layerIndex] % clip.frames.length) / clip.frames.length;
-                const { syncSettings = {}, bpm = 120, clipDuration = 1, effectStates = null } = clip;
+                const { syncSettings = {}, bpm = 120, clipDuration = 1, effectStates = null, playbackDirection = 'forward', playbackStyle = 'loop' } = clip;
                 
                 // If dacSettings provided, we apply them.
                 // In exact copy mode, we might want to apply settings after merge, but here we apply per layer for simplicity if we don't want to refactor the draw loop.
@@ -272,7 +315,7 @@ export class WebGLRenderer {
                 }
 
                 // Pass layerIndex, progress and time to draw
-                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled);
+                this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled, playbackDirection, playbackStyle);
             }
         }
       }
@@ -317,9 +360,9 @@ export class WebGLRenderer {
     this.fadeAlpha = alpha;
   }
 
-  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true) {
+  draw(frame, effects, showBeamEffect, beamAlpha, previewScanRate, beamRenderMode, intensity = 1, layerIndex = 0, progress = 0, time = performance.now(), syncSettings = {}, bpm = 120, clipDuration = 1, fftLevels = { low: 0, mid: 0, high: 0 }, effectStates = null, optimizationEnabled = true, playbackDirection = 'forward', playbackStyle = 'loop') {
     const gl = this.gl;
-    if (!frame || !frame.points) return;
+    if (!frame || !frame.points || this.contextLost) return;
 
     // Apply sync overrides to effects for the preview
     // Note: applyEffects now handles parameter resolution internally if syncSettings is passed in context.
@@ -334,16 +377,13 @@ export class WebGLRenderer {
     // Let's rely on 'applyEffects' which we just updated to be robust.
     // So we pass original 'effects' and let 'applyEffects' do the work.
     
-    // Optimize BEFORE effects (Option 3 match)
+    // Previews should NOT be optimized as the optimizer is designed for DAC/Scanner stabilization
+    // This allows the user to see the "pure" generator geometry in the preview.
     let frameToProcess = frame;
-    if (optimizationEnabled) {
-        const optimizedPoints = optimizePoints(frame.points);
-        frameToProcess = { ...frame, points: optimizedPoints, isTypedArray: true };
-    }
 
     // Apply effects before drawing
     // We pass syncSettings and bpm in the context
-    const modifiedFrame = applyEffects(frameToProcess, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates });
+    const modifiedFrame = applyEffects(frameToProcess, effects, { progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, direction: playbackDirection, style: playbackStyle });
     const points = modifiedFrame.points;
     const isTyped = modifiedFrame.isTypedArray;
     const numPoints = isTyped ? (points.length / 8) : points.length;
@@ -353,6 +393,16 @@ export class WebGLRenderer {
     const pointsToDraw = Math.max(1, Math.floor(numPoints / previewScanRate));
     let startIndex = this.pointIndexes[layerIndex] || 0;
     if (startIndex >= numPoints) startIndex = 0;
+
+    // Full-frame draws (pointsToDraw === numPoints ⇒ startIndex settles to 0)
+    // are deterministic per frame, so consecutive rAF paints of the same frame
+    // can replay the prebuilt GPU ops instead of re-converting points -> buffers.
+    // Non-full draws intentionally roll a window across the points and must not
+    // be cached.
+    const canCacheFullFrame = pointsToDraw === numPoints;
+    const cacheKey = canCacheFullFrame
+      ? `${frameId(modifiedFrame)}|${startIndex}|${intensity}|${this.beamRenderMode}`
+      : null;
 
     // Helper to get point data
     const getPointData = (idx) => {
@@ -380,113 +430,301 @@ export class WebGLRenderer {
         }
     };
 
-    // --- Helper function to draw normal frame segments ---
+      // --- Helper function to draw normal frame segments ---
     const drawNormalFrame = () => {
       // Modes: 'points' (dots), 'lines' (strip), 'both' (strip + dots)
       const drawPoints = beamRenderMode === 'points' || beamRenderMode === 'both';
       const drawLines = beamRenderMode === 'lines' || beamRenderMode === 'both';
-      
+      const firstPoint = getPointData(0);
+      let lastProcessedPoint = firstPoint;
+      const isClosed = modifiedFrame?.isClosed;
+
+      // Replay path: identical full-frame draw — skip the CPU conversion loop.
+      if (cacheKey !== null && this._fullFrameCache && this._fullFrameCache.key === cacheKey) {
+          const cache = this._fullFrameCache;
+          for (let i = 0; i < cache.ops.length; i++) {
+              const op = cache.ops[i];
+              this._drawSegment(cache.positions.subarray(op.p0, op.p0 + op.n * 2), cache.colors.subarray(op.c0, op.c0 + op.n * 3), 1.0, op.n, op.usePoints);
+          }
+          return;
+      }
+
+      // Build path: when this full-frame draw can be cached, segments are
+      // appended *contiguously* into dedicated arrays (with absolute offsets) so
+      // they can be replayed later. Non-cached rolling-window draws reuse the
+      // fixed reusable buffers exactly as before (segments start at offset 0 and
+      // are uploaded immediately).
+      const useContig = cacheKey !== null;
+      const positions = useContig ? this._buildPositions : this._reusablePositions;
+      const colors = useContig ? this._buildColors : this._reusableColors;
+      const ops = useContig ? [] : null;
+      let cPos = 0;  // absolute append pointer (contig)
+      let cCol = 0;  // absolute color append pointer (contig)
+      let runP0 = -1; // start offsets of the currently open run (contig)
+      let runC0 = -1;
+      let inRun = false;
+
       if (drawLines) {
-          let currentSegmentPositions = [];
-          let currentSegmentColors = [];
-          let prevPoint = getPointData(0);
+          let posIdx = 0;
+          let colIdx = 0;
+          let prevPoint = firstPoint;
+
+          const flushSegment = () => {
+            if (useContig) {
+              if (inRun && cPos - runP0 >= 4) {
+                const n = (cPos - runP0) / 2;
+                ops.push({ p0: runP0, c0: runC0, n, usePoints: false });
+                this._drawSegment(positions.subarray(runP0, cPos), colors.subarray(runC0, cCol), 1.0, n, false);
+              }
+            } else if (posIdx >= 4) {
+              this._drawSegment(this._reusablePositions.subarray(0, posIdx), this._reusableColors.subarray(0, colIdx), 1.0, posIdx / 2, false);
+            }
+            posIdx = 0;
+            colIdx = 0;
+            runP0 = -1;
+            runC0 = -1;
+            inRun = false;
+          };
+
+          const addPoint = (p) => {
+            if (useContig) {
+              if (!inRun) { runP0 = cPos; runC0 = cCol; inRun = true; }
+              positions[cPos++] = p.x;
+              positions[cPos++] = p.y;
+              colors[cCol++] = p.r / 255 * intensity;
+              colors[cCol++] = p.g / 255 * intensity;
+              colors[cCol++] = p.b / 255 * intensity;
+            } else {
+              positions[posIdx++] = p.x;
+              positions[posIdx++] = p.y;
+              colors[colIdx++] = p.r / 255 * intensity;
+              colors[colIdx++] = p.g / 255 * intensity;
+              colors[colIdx++] = p.b / 255 * intensity;
+            }
+          };
 
           for (let i = 1; i < pointsToDraw; i++) {
             const point = getPointData(i);
             
-            // Detect wrap-around the frame buffer
             const currIdx = (startIndex + i) % numPoints;
             const prevIdx = (startIndex + i - 1) % numPoints;
             const isWrap = currIdx < prevIdx;
 
-            if (point.blanking || isWrap) {
-              if (currentSegmentPositions.length > 0) {
-                this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
-                currentSegmentPositions = [];
-                currentSegmentColors = [];
-              }
+            // For closed shapes, don't flush at wrap boundaries — the buffer
+            // wrap is a continuation of the loop, not a break.
+            const shouldFlush = point.blanking || prevPoint.blanking || (isWrap && !isClosed);
+            const runStarted = useContig ? inRun : posIdx === 0;
+            if (!shouldFlush) {
+              if (!runStarted) addPoint(prevPoint);
+              addPoint(point);
             } else {
-              // Beam to this point is ON. The segment starts at prevPoint.
-              if (currentSegmentPositions.length === 0) {
-                currentSegmentPositions.push(prevPoint.x, prevPoint.y);
-                currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
-              }
-              currentSegmentPositions.push(point.x, point.y);
-              currentSegmentColors.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+              flushSegment();
             }
             prevPoint = point;
+            lastProcessedPoint = point;
           }
-          if (currentSegmentPositions.length > 0) {
-            this._drawSegment(new Float32Array(currentSegmentPositions), new Float32Array(currentSegmentColors), 1.0, currentSegmentPositions.length / 2, false);
-          }
+          flushSegment();
       }
 
       if (drawPoints) {
-          const pts = [];
-          const cols = [];
+          let posIdx = 0;
+          let colIdx = 0;
+          const dotsP0 = cPos;
+          const dotsC0 = cCol;
           for (let i = 0; i < pointsToDraw; i++) {
             const point = getPointData(i);
             if (!point.blanking) {
-              pts.push(point.x, point.y);
-              cols.push(point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity);
+              if (useContig) {
+                positions[cPos++] = point.x;
+                positions[cPos++] = point.y;
+                colors[cCol++] = point.r / 255 * intensity;
+                colors[cCol++] = point.g / 255 * intensity;
+                colors[cCol++] = point.b / 255 * intensity;
+              } else {
+                positions[posIdx++] = point.x;
+                positions[posIdx++] = point.y;
+                colors[colIdx++] = point.r / 255 * intensity;
+                colors[colIdx++] = point.g / 255 * intensity;
+                colors[colIdx++] = point.b / 255 * intensity;
+              }
+            }
+            lastProcessedPoint = point;
+          }
+          if (useContig ? (cPos - dotsP0) > 0 : posIdx > 0) {
+            if (useContig) {
+              const n = (cPos - dotsP0) / 2;
+              ops.push({ p0: dotsP0, c0: dotsC0, n, usePoints: true });
+              this._drawSegment(positions.subarray(dotsP0, cPos), colors.subarray(dotsC0, cCol), 1.0, n, true);
+            } else {
+              this._drawSegment(this._reusablePositions.subarray(0, posIdx), this._reusableColors.subarray(0, colIdx), 1.0, posIdx / 2, true);
             }
           }
-          if (pts.length > 0) {
-            this._drawSegment(new Float32Array(pts), new Float32Array(cols), 1.0, pts.length / 2, true);
+      }
+
+      // Automatically close the loop if the frame is explicitly marked as closed
+      if (isClosed && drawLines && !lastProcessedPoint.blanking && !firstPoint.blanking) {
+          const dist = Math.sqrt(Math.pow(lastProcessedPoint.x - firstPoint.x, 2) + Math.pow(lastProcessedPoint.y - firstPoint.y, 2));
+          // When isClosed is true, the closing edge is always valid regardless of
+          // distance.  The upper bound (0.5) previously broke coarse geometry
+          // (3-5 pt circles) where chords exceed 0.5 units.
+          if (dist > 0.001) {
+              if (useContig) {
+                  const eP0 = cPos, eC0 = cCol;
+                  positions[cPos++] = lastProcessedPoint.x;
+                  positions[cPos++] = lastProcessedPoint.y;
+                  positions[cPos++] = firstPoint.x;
+                  positions[cPos++] = firstPoint.y;
+                  colors[cCol++] = lastProcessedPoint.r / 255 * intensity;
+                  colors[cCol++] = lastProcessedPoint.g / 255 * intensity;
+                  colors[cCol++] = lastProcessedPoint.b / 255 * intensity;
+                  colors[cCol++] = firstPoint.r / 255 * intensity;
+                  colors[cCol++] = firstPoint.g / 255 * intensity;
+                  colors[cCol++] = firstPoint.b / 255 * intensity;
+                  ops.push({ p0: eP0, c0: eC0, n: 2, usePoints: false });
+                  this._drawSegment(positions.subarray(eP0, cPos), colors.subarray(eC0, cCol), 1.0, 2, false);
+              } else {
+                  this._reusablePositions[0] = lastProcessedPoint.x;
+                  this._reusablePositions[1] = lastProcessedPoint.y;
+                  this._reusablePositions[2] = firstPoint.x;
+                  this._reusablePositions[3] = firstPoint.y;
+                  this._reusableColors[0] = lastProcessedPoint.r / 255 * intensity;
+                  this._reusableColors[1] = lastProcessedPoint.g / 255 * intensity;
+                  this._reusableColors[2] = lastProcessedPoint.b / 255 * intensity;
+                  this._reusableColors[3] = firstPoint.r / 255 * intensity;
+                  this._reusableColors[4] = firstPoint.g / 255 * intensity;
+                  this._reusableColors[5] = firstPoint.b / 255 * intensity;
+                  this._drawSegment(this._reusablePositions.subarray(0, 4), this._reusableColors.subarray(0, 6), 1.0, 2, false);
+              }
           }
+      }
+
+      if (useContig) {
+        // Snapshot the used build range into the pooled cache buffers (memcpy,
+        // no allocation) so the recorded ops replay against stable data.
+        this._cachePositions.set(positions.subarray(0, cPos));
+        this._cacheColors.set(colors.subarray(0, cCol));
+        this._fullFrameCache = {
+          key: cacheKey,
+          positions: this._cachePositions.subarray(0, cPos),
+          colors: this._cacheColors.subarray(0, cCol),
+          ops
+        };
       }
     };
 
     // --- Helper function for 'points' mode (center-to-point beams) ---
     const drawPointsEffect = () => {
-      const beamPositions = [];
-      const beamColors = [];
+      let posIdx = 0;
+      let colIdx = 0;
       for (let i = 0; i < pointsToDraw; i++) {
         const point = getPointData(i);
-        if (!point.blanking) {
-          beamPositions.push(0, 0, point.x, point.y);
-          const color = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
-          beamColors.push(...color, ...color);
+        if (point.blanking) continue;
+
+        const currIdx = (startIndex + i) % numPoints;
+        const prevIdx = (currIdx - 1 + numPoints) % numPoints;
+        const nextIdx = (currIdx + 1) % numPoints;
+        
+        let isDwell = false;
+        if (isTyped) {
+          const offP = prevIdx * 8;
+          const offN = nextIdx * 8;
+          isDwell = (Math.abs(point.x - points[offP]) < 0.001 && Math.abs(point.y - points[offP+1]) < 0.001) ||
+                    (Math.abs(point.x - points[offN]) < 0.001 && Math.abs(point.y - points[offN+1]) < 0.001);
+        } else {
+          const prevP = points[prevIdx];
+          const nextP = points[nextIdx];
+          isDwell = (Math.abs(point.x - prevP.x) < 0.001 && Math.abs(point.y - prevP.y) < 0.001) ||
+                    (Math.abs(point.x - nextP.x) < 0.001 && Math.abs(point.y - nextP.y) < 0.001);
+        }
+
+        if (isDwell || beamRenderMode === 'points') {
+          this._reusableBeamPositions[posIdx++] = 0;
+          this._reusableBeamPositions[posIdx++] = 0;
+          this._reusableBeamPositions[posIdx++] = point.x;
+          this._reusableBeamPositions[posIdx++] = point.y;
+          const r = point.r / 255 * intensity;
+          const g = point.g / 255 * intensity;
+          const b = point.b / 255 * intensity;
+          this._reusableBeamColors[colIdx++] = r;
+          this._reusableBeamColors[colIdx++] = g;
+          this._reusableBeamColors[colIdx++] = b;
+          this._reusableBeamColors[colIdx++] = r;
+          this._reusableBeamColors[colIdx++] = g;
+          this._reusableBeamColors[colIdx++] = b;
         }
       }
-      if (beamPositions.length > 0) {
-        this._drawLines(new Float32Array(beamPositions), new Float32Array(beamColors), beamAlpha, beamPositions.length / 2);
+      if (posIdx > 0) {
+        this._drawLines(this._reusableBeamPositions.subarray(0, posIdx), this._reusableBeamColors.subarray(0, colIdx), beamAlpha, posIdx / 2);
       }
     };
     
     // --- Helper function for 'lines' mode (volumetric cone) ---
     const drawLinesEffect = () => {
-      const trianglePositions = [];
-      const triangleColors = [];
+      let posIdx = 0;
+      let colIdx = 0;
       let prevPoint = getPointData(0);
 
       for (let i = 1; i < pointsToDraw; i++) {
         const point = getPointData(i);
         
-        // Detect wrap-around
         const isWrap = ((startIndex + i) % numPoints) < ((startIndex + i - 1) % numPoints);
-        if (isWrap) {
-            prevPoint = point;
-            continue;
-        }
+        const isMovement = Math.abs(point.x - prevPoint.x) > 0.001 || Math.abs(point.y - prevPoint.y) > 0.001;
 
-        if (!point.blanking) {
-          trianglePositions.push(0, 0, prevPoint.x, prevPoint.y, point.x, point.y);
+        if (!point.blanking && !prevPoint.blanking && !isWrap && isMovement) {
+          this._reusableBeamPositions[posIdx++] = 0;
+          this._reusableBeamPositions[posIdx++] = 0;
+          this._reusableBeamPositions[posIdx++] = prevPoint.x;
+          this._reusableBeamPositions[posIdx++] = prevPoint.y;
+          this._reusableBeamPositions[posIdx++] = point.x;
+          this._reusableBeamPositions[posIdx++] = point.y;
           
-          const color1 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
-          const color2 = [point.r / 255 * intensity, point.g / 255 * intensity, point.b / 255 * intensity];
-          
-          const centerColor = [color1[0], color1[1], color1[2]];
+          const r = point.r / 255 * intensity;
+          const g = point.g / 255 * intensity;
+          const b = point.b / 255 * intensity;
           const edgeFade = 0.3;
-          const fadedColor1 = [color1[0] * edgeFade, color1[1] * edgeFade, color1[2] * edgeFade];
-          const fadedColor2 = [color2[0] * edgeFade, color2[1] * edgeFade, color2[2] * edgeFade];
-
-          triangleColors.push(...centerColor, ...fadedColor1, ...fadedColor2);
+          this._reusableBeamColors[colIdx++] = r;
+          this._reusableBeamColors[colIdx++] = g;
+          this._reusableBeamColors[colIdx++] = b;
+          this._reusableBeamColors[colIdx++] = r * edgeFade;
+          this._reusableBeamColors[colIdx++] = g * edgeFade;
+          this._reusableBeamColors[colIdx++] = b * edgeFade;
+          this._reusableBeamColors[colIdx++] = r * edgeFade;
+          this._reusableBeamColors[colIdx++] = g * edgeFade;
+          this._reusableBeamColors[colIdx++] = b * edgeFade;
         }
         prevPoint = point;
       }
-      if (trianglePositions.length > 0) {
-        this._drawTriangles(new Float32Array(trianglePositions), new Float32Array(triangleColors), beamAlpha, trianglePositions.length / 2);
+      if (posIdx > 0) {
+        this._drawTriangles(this._reusableBeamPositions.subarray(0, posIdx), this._reusableBeamColors.subarray(0, colIdx), beamAlpha, posIdx / 2);
+      }
+
+      // Close the 3D loop for cones
+      const isClosed = modifiedFrame?.isClosed;
+      const firstPoint = getPointData(0);
+      if (isClosed && !prevPoint.blanking && !firstPoint.blanking) {
+          const dist = Math.sqrt(Math.pow(prevPoint.x - firstPoint.x, 2) + Math.pow(prevPoint.y - firstPoint.y, 2));
+          if (dist > 0.001) {
+              this._reusableBeamPositions[posIdx++] = 0;
+              this._reusableBeamPositions[posIdx++] = 0;
+              this._reusableBeamPositions[posIdx++] = prevPoint.x;
+              this._reusableBeamPositions[posIdx++] = prevPoint.y;
+              this._reusableBeamPositions[posIdx++] = firstPoint.x;
+              this._reusableBeamPositions[posIdx++] = firstPoint.y;
+              const r = prevPoint.r / 255 * intensity;
+              const g = prevPoint.g / 255 * intensity;
+              const b = prevPoint.b / 255 * intensity;
+              const edgeFade = 0.3;
+              this._reusableBeamColors[colIdx++] = r;
+              this._reusableBeamColors[colIdx++] = g;
+              this._reusableBeamColors[colIdx++] = b;
+              this._reusableBeamColors[colIdx++] = r * edgeFade;
+              this._reusableBeamColors[colIdx++] = g * edgeFade;
+              this._reusableBeamColors[colIdx++] = b * edgeFade;
+              this._reusableBeamColors[colIdx++] = r * edgeFade;
+              this._reusableBeamColors[colIdx++] = g * edgeFade;
+              this._reusableBeamColors[colIdx++] = b * edgeFade;
+              this._drawTriangles(this._reusableBeamPositions.subarray(0, posIdx), this._reusableBeamColors.subarray(0, colIdx), beamAlpha, 3);
+          }
       }
     };
 
@@ -509,27 +747,28 @@ export class WebGLRenderer {
 
   _drawSegment(positions, colors, alpha, numPoints, usePoints = false) {
     const gl = this.gl;
+    if (numPoints < 1) return;
+
+    // Clamp to the preallocated vertex-buffer capacity; drawing a frame larger
+    // than the GPU buffers (e.g. channel-mode chase output) would otherwise
+    // trigger WebGL INVALID_VALUE buffer upload errors.
+    numPoints = Math.min(numPoints, 131072);
 
     gl.useProgram(this.program);
 
     // Positions
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions.subarray(0, numPoints * 2));
     gl.enableVertexAttribArray(this.positionAttributeLocation);
     gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
     // Colors
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors.subarray(0, numPoints * 3));
     gl.enableVertexAttribArray(this.colorAttributeLocation);
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
-    // Alpha
-    if (this.alphaBufferData.length < numPoints) {
-        this.alphaBufferData = new Float32Array(numPoints * 2);
-    }
-    this.alphaBufferData.fill(alpha, 0, numPoints);
-    const alphas = this.alphaBufferData.subarray(0, numPoints);
+    const alphas = this._prepareAlphaBuffer(alpha, numPoints);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
@@ -539,29 +778,35 @@ export class WebGLRenderer {
     gl.drawArrays(usePoints ? gl.POINTS : gl.LINE_STRIP, 0, numPoints);
   }
 
+  _prepareAlphaBuffer(alpha, numPoints) {
+    if (this.alphaBufferData.length < numPoints) {
+        this.alphaBufferData = new Float32Array(numPoints * 2);
+    }
+    this.alphaBufferData.fill(alpha, 0, numPoints);
+    return this.alphaBufferData.subarray(0, numPoints);
+  }
+
   _drawLines(positions, colors, alpha, numPoints) {
     const gl = this.gl;
+    if (numPoints < 1) return;
+    numPoints = Math.min(numPoints, 131072);
 
     gl.useProgram(this.program);
 
     // Positions
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions.subarray(0, numPoints * 2));
     gl.enableVertexAttribArray(this.positionAttributeLocation);
     gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
     // Colors
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors.subarray(0, numPoints * 3));
     gl.enableVertexAttribArray(this.colorAttributeLocation);
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    if (this.alphaBufferData.length < numPoints) {
-        this.alphaBufferData = new Float32Array(numPoints * 2);
-    }
-    this.alphaBufferData.fill(alpha, 0, numPoints);
-    const alphas = this.alphaBufferData.subarray(0, numPoints);
+    const alphas = this._prepareAlphaBuffer(alpha, numPoints);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);
@@ -573,27 +818,25 @@ export class WebGLRenderer {
 
   _drawTriangles(positions, colors, alpha, numPoints) {
     const gl = this.gl;
+    if (numPoints < 1) return;
+    numPoints = Math.min(numPoints, 131072);
 
     gl.useProgram(this.program);
 
     // Positions
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions.subarray(0, numPoints * 2));
     gl.enableVertexAttribArray(this.positionAttributeLocation);
     gl.vertexAttribPointer(this.positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
     // Colors
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors.subarray(0, numPoints * 3));
     gl.enableVertexAttribArray(this.colorAttributeLocation);
     gl.vertexAttribPointer(this.colorAttributeLocation, 3, gl.FLOAT, false, 0, 0);
 
     // Alpha
-    if (this.alphaBufferData.length < numPoints) {
-        this.alphaBufferData = new Float32Array(numPoints * 2);
-    }
-    this.alphaBufferData.fill(alpha, 0, numPoints);
-    const alphas = this.alphaBufferData.subarray(0, numPoints);
+    const alphas = this._prepareAlphaBuffer(alpha, numPoints);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.alphaBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, alphas);

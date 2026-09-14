@@ -1,17 +1,56 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import IldaThumbnail from './IldaThumbnail';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
 
-const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects, activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu, thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo, onToggleBlackout, onToggleSolo, onLayerSelect }) => {
-  const [appliedEffects, setAppliedEffects] = useState(layerEffects || []);
+const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects,
+  activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu,
+  thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo,
+  onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker, blendMode, onBlendModeChange }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
-  // Update internal state when layerEffects prop changes
+  const handleClear = () => {
+      if (onDeactivateLayerClips) onDeactivateLayerClips(index);
+  };
+
+  const handleToggleBlackoutLocal = () => {
+      if (onToggleBlackout) onToggleBlackout(index);
+  };
+
+  const handleToggleSoloLocal = () => {
+      if (onToggleSolo) onToggleSolo(index);
+  };
+
+  const handleIntensityChangeLocal = (e) => {
+      if (onIntensityChange) onIntensityChange(index, parseFloat(e.target.value));
+  };
+
+  const intensitySliderRef = useRef(null);
   useEffect(() => {
-    setAppliedEffects(layerEffects || []);
+      const el = intensitySliderRef.current;
+      if (!el) return;
+      const handler = (e) => {
+          e.preventDefault();
+          const delta = e.deltaY > 0 ? -0.01 : 0.01;
+          handleIntensityChangeLocal({ target: { value: Math.round(Math.max(0, Math.min(1, intensity + delta)) * 100) / 100 } });
+      };
+      el.addEventListener('wheel', handler, { passive: false });
+      return () => el.removeEventListener('wheel', handler);
+  }, [intensity, index, onIntensityChange]);
+
+  const lastFxLenRef = useRef(null);
+  useEffect(() => {
+      const n = (layerEffects || []).length;
+      if (lastFxLenRef.current !== null && n > lastFxLenRef.current) {
+          console.debug('[fx-render] Badges grew:', lastFxLenRef.current, '->', n);
+      }
+      lastFxLenRef.current = n;
   }, [layerEffects]);
+
+  const handleLayerSelectLocal = () => {
+      if (onLayerSelect) onLayerSelect(index);
+  };
 
   const combinedEffects = useMemo(() => {
       return [...(activeClipData?.effects || []), ...(layerEffects || [])];
@@ -60,7 +99,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
         
         if (parsedData.type === 'transform' || parsedData.type === 'animation' || parsedData.type === 'color' || parsedData.type === 'effect') {
           if (onDropEffect) {
-            onDropEffect(parsedData.id || parsedData.name);
+            onDropEffect(index, parsedData.id || parsedData.name);
             return;
           }
         } else if (parsedData.isGroup || (parsedData.ip && (typeof parsedData.channel === 'number' || parsedData.allChannels))) {
@@ -79,7 +118,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
     if (droppedId.startsWith('effect_')) {
       const effectId = droppedId.replace('effect_', '');
       if (onDropEffect) {
-        onDropEffect(effectId);
+        onDropEffect(index, effectId);
       }
     }
   };
@@ -99,7 +138,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
         <Mappable id={`layer_${index}_clear`}>
             <span 
                 className="layer-control-button full-height" 
-                onClick={() => onDeactivateLayerClips(index)}
+                onClick={handleClear}
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'toggle', 'clear', 'layer', `L${index+1} Clear`)}
             >
@@ -112,7 +151,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
           <Mappable id={`layer_${index}_blackout`}>
             <span 
                 className="layer-control-button half-height" 
-                onClick={onToggleBlackout}
+                onClick={handleToggleBlackoutLocal}
                 style={{ backgroundColor: isBlackout ? 'red' : '' }}
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'toggle', 'blackout', 'layer', `L${index+1} Blackout`)}
@@ -126,7 +165,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
           <Mappable id={`layer_${index}_solo`}>
             <span 
                 className="layer-control-button half-height" 
-                onClick={onToggleSolo}
+                onClick={handleToggleSoloLocal}
                 style={{ backgroundColor: isSolo ? 'var(--theme-color)' : '', color: isSolo ? 'black' : '' }}
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'toggle', 'solo', 'layer', `L${index+1} Solo`)}
@@ -138,15 +177,18 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
             </span>
           </Mappable>
         </div>
-		<select className="layer-blend-dropdown">
-          <option>Normal</option>
-          <option>Add</option>
-          <option>Subtract</option>
+		<select className="layer-blend-dropdown"
+            value={blendMode || 'normal'}
+            title="Layer blend / z-order priority"
+            onChange={(e) => onBlendModeChange && onBlendModeChange(index, e.target.value)}>
+          <option value="normal">Normal</option>
+          <option value="add">Add</option>
+          <option value="subtract">Subtract</option>
         </select>
       </div>
 		<div className="layer-control-row">
           <Mappable id={`layer_${index}_intensity`}>
-			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={(e) => onIntensityChange(parseFloat(e.target.value))} />
+			<input type="range" min="0" max="1" step="0.01" value={intensity} className="slider_ver" id="layer-intensity-slider" onChange={handleIntensityChangeLocal} ref={intensitySliderRef} />
           </Mappable>
 		</div>
 		<div 
@@ -155,9 +197,9 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
             onMouseLeave={() => setIsHovered(false)}
             style={{ overflow: 'hidden' }}
         >
-			{activeClipData ? (
+			{activeClipData && (
                 shouldShowLive ? (
-                    <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} effects={combinedEffects} />
+                    <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} frames={activeClipData?.frames} effects={combinedEffects} ildaParserWorker={ildaParserWorker} workerId={activeClipData?.workerId} />
                 ) : (
                     activeClipData.thumbnailPath ? (
                         <img 
@@ -169,19 +211,19 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
                         <StaticIldaThumbnail frame={activeClipData.stillFrame} />
                     )
                 )
-			) : (
-			appliedEffects.length > 0 && (
-            <div className="applied-effects">
-              {appliedEffects.map((effect, idx) => (
-                <span key={effect.instanceId || idx} className="effect-tag">{(effect.name || effect.id || '???').substring(0, 3).toUpperCase()}</span>
-              ))}
+            )}
+            {(layerEffects || []).length > 0 && (
+                <div className="applied-effects">
+                    {(layerEffects || []).map((effect, idx) => (
+                        <span key={effect.instanceId || idx} className="effect-tag">{(effect.name || effect.id || '???').substring(0, 3).toUpperCase()}</span>
+                    ))}
+                </div>
+            )}
+              </div>
+              <span className="layer-name-label" onClick={handleLayerSelectLocal}>{layerName}</span>
             </div>
-          )
-        )}
-      </div>
-      <span className="layer-name-label" onClick={() => onLayerSelect && onLayerSelect(index)}>{layerName}</span>
-    </div>
-  );
-};
-
-export default LayerControls;
+          );
+        };
+        
+        export default React.memo(LayerControls);
+        

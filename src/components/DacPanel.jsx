@@ -53,8 +53,15 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                 }
               })
             );
+            // Deduplicate by IP: keep only one entry per DAC (getDacServices already returns all channels)
+            const seenIps = new Set();
+            const deduped = dacsWithServices.filter(d => {
+              if (seenIps.has(d.ip)) return false;
+              seenIps.add(d.ip);
+              return true;
+            });
             if (onDacsDiscovered) {
-              onDacsDiscovered(dacsWithServices);
+              onDacsDiscovered(deduped);
             }
           })
           .catch(err => {
@@ -143,9 +150,9 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
   return (
     <div className="dac-panel">
       <div className="settings-card-header"><h4>DACs</h4></div>
-      <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px'}}>
-        <div style={{flex:1, display:'flex'}}>
-            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{width:'100%', height:'100%', background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', marginBottom: 2}}>
+      <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px', alignItems: 'center'}}>
+        <div style={{flex:1, display:'flex', gap: '2px'}}>
+            <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{flex: 1, background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', fontSize: '11px', padding: '2px 5px', border: '1px solid #444'}}>
               {networkInterfaces.map(iface => (
                 <option key={iface.address} value={iface.address}>
                   {iface.name} ({iface.address})
@@ -153,6 +160,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
               ))}
             </select>
             <button 
+                className="refresh-interfaces-btn"
                 onClick={() => {
                      if (window.electronAPI) {
                         window.electronAPI.getNetworkInterfaces().then(interfaces => {
@@ -163,21 +171,38 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                         });
                      }
                 }}
-                style={{fontSize: '9px', padding: '2px', background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', borderRadius: '5px'}}
+                style={{fontSize: '9px', padding: '2px 5px', background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', borderRadius: '3px'}}
+                title="Refresh Interfaces"
             >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
 					<path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
 					<path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
 				</svg>
             </button>
         </div>
-        <label style={{display:'flex', alignItems:'center', fontSize: '10px'}}>
-          <input type="checkbox" checked={isScanning} onChange={(e) => setIsScanning(e.target.checked)} disabled={isScanning} style={{ height: '100%'}} />
-        </label>
+        <button 
+            className={`scan-dacs-btn ${isScanning ? 'active scanning' : ''}`}
+            onClick={() => setIsScanning(true)}
+            disabled={isScanning}
+            style={{
+                background: isScanning ? 'var(--theme-color)' : '#333',
+                color: isScanning ? '#000' : '#ccc',
+                border: '1px solid #555',
+                borderRadius: '3px',
+                padding: '2px 10px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                cursor: isScanning ? 'default' : 'pointer',
+                textTransform: 'uppercase',
+                minWidth: '60px'
+            }}
+        >
+            {isScanning ? 'SCANNING...' : 'SCAN'}
+        </button>
       </div>
       <div className="dac-list">
         {dacs.map((dac) => (
-          <div key={dac.unitID || dac.ip}
+          <div key={`${dac.unitID || dac.ip}-${dac.channel ?? 'main'}`}
             className={`dac-group`}
             draggable
             onDragStart={(e) => handleGroupDragStart(e, dac)}
@@ -203,7 +228,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                         onChange={(e) => { e.stopPropagation(); toggleDacSelection(dac, channel.serviceID); }}
                         onClick={(e) => e.stopPropagation()} 
                       />
-                      <span style={{ flex: 1 }}>Channel {channel.serviceID} ({channel.name})</span>
+                      <span style={{ flex: 1 }} title={`Channel ${channel.name || `CH ${channel.serviceID}`}`}>{dacSettings[`${dac.ip}:${channel.serviceID}`]?.name || `Channel ${channel.serviceID} (${channel.name})`}</span>
                     </div>
                   );
                 })
@@ -273,17 +298,38 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                     const settings = dacSettings[id] || {};
                     const dimmerVal = settings.dimmer !== undefined ? settings.dimmer : 1;
                     
+                    const handleDragStart = (e) => {
+                        e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
+                            type: 'range',
+                            paramName: 'dimmer',
+                            targetType: 'dac',
+                            dacId: id,
+                            label: `Ch${ch.serviceID} Dim`,
+                            min: 0,
+                            max: 1,
+                            step: 0.01
+                        }));
+                    };
+                    
                     return (
                         <Mappable key={`dimmer_${id}`} id={`dimmer_${id.replace(/\./g, '_')}`}>
-                            <RadialKnob
-                                label={`${dac.hostName || dac.ip} Ch${ch.serviceID}`}
-                                value={dimmerVal}
-                                onChange={(val) => {
-                                    if (onUpdateDacSettings) {
-                                        onUpdateDacSettings(id, { ...settings, dimmer: val });
-                                    }
-                                }}
-                            />
+                            <div className="dac-dimmer-item">
+                                <div
+                                    className="draggable-param-label dac-dimmer-drag-handle"
+                                    draggable
+                                    onDragStart={handleDragStart}
+                                    title="Drag to a Quick-Assign knob"
+                                >≡</div>
+                                <RadialKnob
+                                    label={settings.name || `${dac.hostName || dac.ip} Ch${ch.serviceID}`}
+                                    value={dimmerVal}
+                                    onChange={(val) => {
+                                        if (onUpdateDacSettings) {
+                                            onUpdateDacSettings(id, { ...settings, dimmer: val });
+                                        }
+                                    }}
+                                />
+                            </div>
                         </Mappable>
                     );
                 })}

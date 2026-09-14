@@ -3,6 +3,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 const DualRangeSlider = ({ min = 0, max = 1, step = 0.01, value = [0, 1], onChange, disabled = false }) => {
     const trackRef = useRef(null);
     const [dragging, setDragging] = useState(null); // 'low', 'high'
+    const [hoveredHandle, setHoveredHandle] = useState(null);
 
     const lowValue = value[0] !== undefined ? value[0] : min;
     const highValue = value[1] !== undefined ? value[1] : max;
@@ -12,6 +13,33 @@ const DualRangeSlider = ({ min = 0, max = 1, step = 0.01, value = [0, 1], onChan
         if (range === 0) return 0;
         return ((val - min) / range) * 100;
     }, [min, max]);
+
+    const renderTooltip = (val, leftPct) => {
+        return (
+            <div 
+                className="slider-tooltip"
+                style={{
+                    position: 'absolute',
+                    bottom: '100%',
+                    left: `${leftPct}%`,
+                    transform: 'translateX(-50%)',
+                    background: '#222',
+                    color: '#fff',
+                    padding: '2px 5px',
+                    borderRadius: '3px',
+                    fontSize: '10px',
+                    marginBottom: '8px',
+                    pointerEvents: 'none',
+                    whiteSpace: 'nowrap',
+                    border: '1px solid #555',
+                    zIndex: 100,
+                    boxShadow: '0 2px 5px rgba(0,0,0,0.5)'
+                }}
+            >
+                {val.toFixed(2)}
+            </div>
+        );
+    };
 
     const handleMouseDown = (e, handle) => {
         if (disabled) return;
@@ -53,6 +81,10 @@ const DualRangeSlider = ({ min = 0, max = 1, step = 0.01, value = [0, 1], onChan
         <div className="range-slider-container" style={{ position: 'relative', width: '100%', height: '20px', display: 'flex', alignItems: 'center' }}>
             <div className="range-slider-track" ref={trackRef} style={{ width: '100%', height: '4px', background: '#444', borderRadius: '2px', position: 'relative' }}>
                 
+                {/* Tooltips */}
+                {(dragging === 'low' || hoveredHandle === 'low') && renderTooltip(lowValue, getPercentage(lowValue))}
+                {(dragging === 'high' || hoveredHandle === 'high') && renderTooltip(highValue, getPercentage(highValue))}
+
                 {/* Active Range Fill */}
                 <div 
                     className="range-slider-fill" 
@@ -73,6 +105,8 @@ const DualRangeSlider = ({ min = 0, max = 1, step = 0.01, value = [0, 1], onChan
                         position: 'absolute', width: '10px', height: '10px', borderRadius: '50%', background: '#fff', top: '50%', transform: 'translate(-50%, -50%)', cursor: 'pointer', zIndex: 20
                     }}
                     onMouseDown={(e) => handleMouseDown(e, 'low')}
+                    onMouseEnter={() => setHoveredHandle('low')}
+                    onMouseLeave={() => setHoveredHandle(null)}
                     title={`Low: ${lowValue.toFixed(2)}`}
                 ></div>
 
@@ -84,6 +118,8 @@ const DualRangeSlider = ({ min = 0, max = 1, step = 0.01, value = [0, 1], onChan
                         position: 'absolute', width: '10px', height: '10px', borderRadius: '50%', background: '#fff', top: '50%', transform: 'translate(-50%, -50%)', cursor: 'pointer', zIndex: 20
                     }}
                     onMouseDown={(e) => handleMouseDown(e, 'high')}
+                    onMouseEnter={() => setHoveredHandle('high')}
+                    onMouseLeave={() => setHoveredHandle(null)}
                     title={`High: ${highValue.toFixed(2)}`}
                 ></div>
             </div>

@@ -1,6 +1,18 @@
 import opentype from 'opentype.js';
+import { samplePath, sampleCircle } from './vectorPath.js';
 
 const withDefaults = (params, defaults) => ({ ...defaults, ...params });
+
+// Maps bare {x,y} samples produced by the vector-path helpers into full
+// (r,g,b,lastPoint) point objects emitted by generators.
+function colorize(vertices, { r, g, b, lastPoint = false, blanking } = {}) {
+  return vertices.map((v, i) => ({
+    x: v.x, y: v.y,
+    r, g, b,
+    lastPoint: i === vertices.length - 1 ? lastPoint : false,
+    ...(blanking !== undefined ? { blanking } : {}),
+  }));
+}
 
 // Persistent font cache using a simple object or Map
 const parsedFontCache = new Map();
@@ -19,37 +31,87 @@ function applyRenderingStyle(points, params) {
     const styledPoints = [];
 
     if (renderingStyle === 'dotted') {
+        // Dashes keep the segment line: dwell each stroke point while staying lit.
+        // thickness+1 samples per point keeps the style slightly visible at the
+        // default thickness of 1 and grows toward 10 at max thickness.
+        const dwell = Math.min(10, Math.max(1, Math.round(thickness)) + 1);
         for (const p of points) {
-            // Repeat the same point multiple times to increase dwell time (thicken the beam)
-            for (let i = 0; i < thickness; i++) {
+            for (let i = 0; i < dwell; i++) {
                 styledPoints.push({ ...p });
             }
         }
     } else if (renderingStyle === 'blanked') {
-        // "Blank each 2nd line" with adjustable segment size
-        const size = Math.max(1, Math.floor(blankingSize));
-        for (let i = 0; i < points.length; i++) {
-            const p = points[i];
+        // `blankingSize` = number of blanked segments. The stroke is divided into
+        // 2 * blankingSize blocks (lit, blank, lit, blank, ...) of equal length.
+        // Closed generators append a duplicate closing point, so it is removed
+        // first or the equal division would be off by one (circle 50 points /
+        // 5 segments => 5 lit + 5 blanked, exactly).
+        //
+        // If the point count does not divide evenly into the block count the
+        // frame is padded up to the nearest divisible count (circle 45 points /
+        // 6 segments => 48 points = 6 lit blocks of 4 + 6 blanked blocks of 4)
+        // by stretching duplicate samples across the stroke.
+        const segments = Math.max(1, Math.floor(blankingSize));
+        const blocks = segments * 2;
+
+        let stroke = points;
+        const first = points[0];
+        const last = points[points.length - 1];
+        const hasClosingDup = first && last &&
+            Math.abs(last.x - first.x) < 1e-9 &&
+            Math.abs(last.y - first.y) < 1e-9;
+        if (hasClosingDup) stroke = points.slice(0, -1);
+        if (stroke.length === 0) return points;
+
+        const blockSize = Math.max(1, Math.ceil(stroke.length / blocks));
+        const targetCount = blockSize * blocks;
+
+        let frame = stroke;
+        if (targetCount !== stroke.length) {
+            // Stretch duplicates so every source point exists in the output and
+            // each block holds exactly `blockSize` samples.
+            frame = new Array(targetCount);
+            const ratio = stroke.length / targetCount;
+            for (let i = 0; i < targetCount; i++) {
+                frame[i] = stroke[Math.min(stroke.length - 1, Math.floor(i * ratio))];
+            }
+        }
+
+        for (let i = 0; i < frame.length; i++) {
+            const p = frame[i];
             if (p.blanking) {
+                // Respect intrinsic blanking (e.g. pen-up moves in text).
                 styledPoints.push({ ...p });
+                continue;
+            }
+            if (Math.floor(i / blockSize) % 2 === 0) {
+                styledPoints.push({ ...p, blanking: false });
             } else {
-                // Blocks of 'size' points on, 'size' points off
-                if (Math.floor(i / size) % 2 === 0) {
-                    styledPoints.push({ ...p });
-                } else {
-                    styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
-                }
+                styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
             }
         }
     } else if (renderingStyle === 'dots') {
-        // "Only show the points and no lines"
+        // "Only show the points and no lines". Each stroke point becomes its own
+        // dot: 1 blanked approach (beam off while the scanner flies in), 8 lit
+        // dwell samples so a physical projector settles into a true dot instead of
+        // a streak, and 1 blanked tail. ~10 points per dot matches the dwell found
+        // in dotted ILD shapes on disk. Both the approach and the tail are blanked
+        // because the optimizer colors gap interpolation from the destination
+        // point, so a blank tail directly followed by a lit point would redraw the
+        // connection line as a visible dash.
+        const DOT_APPROACH = 1;
+        const DOT_LIT = 8;
+        const DOT_TAIL = 1;
         for (const p of points) {
-            // 1. Move to point while blanked
-            styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
-            // 2. Show the point (Flash it)
-            styledPoints.push({ ...p, blanking: false });
-            // 3. Repeat to ensure visibility
-            styledPoints.push({ ...p, blanking: false });
+            for (let i = 0; i < DOT_APPROACH; i++) {
+                styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
+            }
+            for (let i = 0; i < DOT_LIT; i++) {
+                styledPoints.push({ ...p, blanking: false });
+            }
+            for (let i = 0; i < DOT_TAIL; i++) {
+                styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
+            }
         }
     }
 
@@ -190,17 +252,18 @@ export function generateCircle(params) {
       b: 255
     });
 
-    const points = [];
-    for (let i = 0; i <= numPoints; i++) {
-      const angle = (i / numPoints) * 2 * Math.PI;
-      points.push({
-        x: radius * Math.cos(angle) + x,
-        y: radius * Math.sin(angle) + y,
-        r, g, b
-      });
-    }
+    // Vector-path construction: sample the circle uniformly by arc length so
+    // the density follows the requested point budget (Area 4).
+    const samples = sampleCircle(x, y, radius, numPoints);
+    const points = colorize(samples, { r, g, b });
 
-    return { points: applyRenderingStyle(points, params) };
+    // Close the loop: add the first point at the end so the data is geometrically
+    // closed without relying on the optimizer.  This keeps padPoints from inserting
+    // trailing blanking and the renderer's closing fallback from needing an upper
+    // distance bound.
+    points.push({ ...points[0], lastPoint: false });
+
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateCircle:', error);
     throw error;
@@ -209,10 +272,10 @@ export function generateCircle(params) {
 
 export function generateSquare(params) {
   try {
-    const { width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
+    const { width, height, numPoints, x, y, r, g, b } = withDefaults(params, {
       width: 1,
       height: 1,
-      pointDensity: 12,
+      numPoints: 120,
       x: 0,
       y: 0,
       r: 255,
@@ -220,57 +283,34 @@ export function generateSquare(params) {
       b: 255
     });
 
+    // Vector-path construction: uniform arc-length sampling lets the point
+    // count follow the target budget regardless of aspect ratio (Area 4).
     const corners = [
       { x: -width / 2 + x, y: -height / 2 + y },
       { x: width / 2 + x, y: -height / 2 + y },
       { x: width / 2 + x, y: height / 2 + y },
       { x: -width / 2 + x, y: height / 2 + y },
-      { x: -width / 2 + x, y: -height / 2 + y },
     ];
 
-    const points = [];
-    for (let i = 0; i < corners.length - 1; i++) {
-      const start = corners[i];
-      const end = corners[i + 1];
-      for (let j = 0; j < pointDensity; j++) {
-        const t = j / pointDensity;
-        points.push({
-          x: start.x + (end.x - start.x) * t,
-          y: start.y + (end.y - start.y) * t,
-          r, g, b
-        });
-      }
-    }
-    points.push({ ...corners[corners.length - 1], r, g, b });
+    const samples = samplePath(corners, numPoints, { closed: true });
+    const points = colorize(samples, { r, g, b });
+    points.push({ ...samples[0], r, g, b, lastPoint: false });
 
-    return { points: applyRenderingStyle(points, params) };
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateSquare:', error);
     throw error;
   }
 }
 
-/**
- * Generates point data for a parametric triangle.
- * @param {Object} params Configuration parameters.
- * @param {number} [params.size] Symmetrical size (overrides width/height).
- * @param {number} [params.width] Base width.
- * @param {number} [params.height] Height.
- * @param {number} [params.pointDensity] Points per segment.
- * @param {number} [params.x] Center X offset.
- * @param {number} [params.y] Center Y offset.
- * @param {number} [params.r] Red component (0-255).
- * @param {number} [params.g] Green component (0-255).
- * @param {number} [params.b] Blue component (0-255).
- * @returns {Object} Object containing an array of points and rendering style.
- */
+/** @param {Object} params */
 export function generateTriangle(params) {
   try {
-    const { size, width, height, pointDensity, x, y, r, g, b } = withDefaults(params, {
+    const { size, width, height, numPoints, x, y, r, g, b } = withDefaults(params, {
       size: null,
       width: 1,
       height: 1,
-      pointDensity: 12,
+      numPoints: 90,
       x: 0,
       y: 0,
       r: 255,
@@ -281,29 +321,19 @@ export function generateTriangle(params) {
     const w = size !== null ? size : width;
     const h = size !== null ? (w * Math.sqrt(3) / 2) : height;
 
+    // Vector-path construction (Area 4). Vertices are anchored so the sharp
+    // corners are aimed at exactly, not straddled by arc-length samples.
     const corners = [
-      { x: -w / 2 + x, y: -h / 2 + y }, // Bottom-left
-      { x: w / 2 + x, y: -h / 2 + y },  // Bottom-right
-      { x: x, y: h / 2 + y },           // Top-center
-      { x: -w / 2 + x, y: -h / 2 + y }, // Back to start
+      { x: -w / 2 + x, y: -h / 2 + y },
+      { x: w / 2 + x, y: -h / 2 + y },
+      { x: x, y: h / 2 + y },
     ];
 
-    const points = [];
-    for (let i = 0; i < corners.length - 1; i++) {
-      const start = corners[i];
-      const end = corners[i + 1];
-      for (let j = 0; j < pointDensity; j++) {
-        const t = j / pointDensity;
-        points.push({
-          x: start.x + (end.x - start.x) * t,
-          y: start.y + (end.y - start.y) * t,
-          r, g, b
-        });
-      }
-    }
-    points.push({ ...corners[corners.length - 1], r, g, b });
+    const samples = samplePath(corners, numPoints, { closed: true, anchorVertices: true });
+    const points = colorize(samples, { r, g, b });
+    points.push({ ...samples[0], r, g, b, lastPoint: false });
 
-    return { points: applyRenderingStyle(points, params) };
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateTriangle:', error);
     throw error;
@@ -312,26 +342,24 @@ export function generateTriangle(params) {
 
 export function generateLine(params) {
   try {
-    const { x1, y1, x2, y2, pointDensity, r, g, b } = withDefaults(params, {
+    const { x1, y1, x2, y2, numPoints, r, g, b } = withDefaults(params, {
       x1: -0.5,
       y1: 0,
       x2: 0.5,
       y2: 0,
-      pointDensity: 50,
+      numPoints: 60,
       r: 255,
       g: 255,
       b: 255
     });
 
-    const points = [];
-    for (let i = 0; i <= pointDensity; i++) {
-      const t = i / pointDensity;
-      points.push({
-        x: x1 + (x2 - x1) * t,
-        y: y1 + (y2 - y1) * t,
-        r, g, b
-      });
-    }
+    // Vector-path construction (Area 4).
+    const samples = samplePath(
+      [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+      numPoints,
+      { closed: false }
+    );
+    const points = colorize(samples, { r, g, b, lastPoint: true });
 
     return { points: applyRenderingStyle(points, params) };
   } catch (error) {
@@ -342,11 +370,11 @@ export function generateLine(params) {
 
 export function generateStar(params) {
   try {
-    const { outerRadius, innerRadius, numSpikes, pointDensity, x, y, r, g, b } = withDefaults(params, {
+    const { outerRadius, innerRadius, numSpikes, numPoints, x, y, r, g, b } = withDefaults(params, {
       outerRadius: 0.5,
       innerRadius: 0.2,
       numSpikes: 5,
-      pointDensity: 5,
+      numPoints: 120,
       x: 0,
       y: 0,
       r: 255,
@@ -360,27 +388,16 @@ export function generateStar(params) {
       const angle = (i / (numSpikes * 2)) * 2 * Math.PI - Math.PI / 2;
       vertices.push({
         x: radius * Math.cos(angle) + x,
-        y: radius * Math.sin(angle) + y
+        y: radius * Math.sin(angle) + y,
       });
     }
-    vertices.push({ ...vertices[0] });
 
-    const points = [];
-    for (let i = 0; i < vertices.length - 1; i++) {
-      const start = vertices[i];
-      const end = vertices[i + 1];
-      for (let j = 0; j < pointDensity; j++) {
-        const t = j / pointDensity;
-        points.push({
-          x: start.x + (end.x - start.x) * t,
-          y: start.y + (end.y - start.y) * t,
-          r, g, b
-        });
-      }
-    }
-    points.push({ ...vertices[vertices.length - 1], r, g, b });
+    // Vector-path construction (Area 4).
+    const samples = samplePath(vertices, numPoints, { closed: true });
+    const points = colorize(samples, { r, g, b });
+    points.push({ ...samples[0], r, g, b, lastPoint: false });
 
-    return { points: applyRenderingStyle(points, params) };
+    return { points: applyRenderingStyle(points, params), isClosed: true };
   } catch (error) {
     console.error('Error in generateStar:', error);
     throw error;
@@ -593,7 +610,8 @@ export function generateSinewave(params) {
       points.push({
         x: curX + x,
         y: curY + y,
-        r, g, b
+        r, g, b,
+        lastPoint: i === numPoints
       });
     }
 
@@ -651,11 +669,13 @@ export function generateWaveform(params) {
                 const dataIdx = startIdx + Math.floor((i / numBins) * effectiveLen);
                 const val = (data[dataIdx] / 255) * height;
 
+                const isLastBin = i === numBins - 1;
+
                 // Vertical Bar: Bottom to Top
-                points.push({ x: curX, y: -height / 2 + y, r: 0, g: 0, b: 0, blanking: true }); // Jump to bottom
-                points.push({ x: curX, y: -height / 2 + y, r, g, b }); // Start bar
-                points.push({ x: curX, y: -height / 2 + val + y, r, g, b }); // End bar
-                points.push({ x: curX, y: -height / 2 + val + y, r: 0, g: 0, b: 0, blanking: true }); // Blank end
+                points.push({ x: curX, y: -height / 2 + y, r: 0, g: 0, b: 0, blanking: true, lastPoint: false }); // Jump to bottom
+                points.push({ x: curX, y: -height / 2 + y, r, g, b, lastPoint: false }); // Start bar
+                points.push({ x: curX, y: -height / 2 + val + y, r, g, b, lastPoint: false }); // End bar
+                points.push({ x: curX, y: -height / 2 + val + y, r: 0, g: 0, b: 0, blanking: true, lastPoint: isLastBin }); // Blank end
             }
         } else if (mode === 'waveform') {
             // Time Domain Waveform (Oscilloscope)
@@ -665,7 +685,7 @@ export function generateWaveform(params) {
                 const dataIdx = Math.floor((i / numBins) * dataLen);
                 // Time domain data is centered around 128
                 const val = ((data[dataIdx] - 128) / 128) * (height / 2);
-                points.push({ x: curX, y: val + y, r, g, b });
+                points.push({ x: curX, y: val + y, r, g, b, lastPoint: i === numBins - 1 });
             }
         } else if (mode === 'spectrum') {
             // Continuous Spectrum Line
@@ -674,7 +694,7 @@ export function generateWaveform(params) {
                 const curX = startX + t * width + x;
                 const dataIdx = startIdx + Math.floor((i / numBins) * effectiveLen);
                 const val = (data[dataIdx] / 255) * height;
-                points.push({ x: curX, y: -height / 2 + val + y, r, g, b });
+                points.push({ x: curX, y: -height / 2 + val + y, r, g, b, lastPoint: i === numBins - 1 });
             }
         }
 
@@ -725,7 +745,7 @@ export async function generateTimer(params, fontBuffer, context = {}) {
             displaySec = Math.max(0, startTime - elapsedSec);
         }
 
-        const h = Math.floor(displaySec / 3600);
+        const h = Math.floor(displaySec / 3600) % 24;
         const m = Math.floor((displaySec % 3600) / 60);
         const s = Math.floor(displaySec % 60);
         const ms = Math.floor((displaySec % 1) * 100);
@@ -734,11 +754,9 @@ export async function generateTimer(params, fontBuffer, context = {}) {
         if (format === 'HH:MM:SS') {
             timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         } else if (format === 'MM:SS') {
-            const totalMin = h * 60 + m;
-            timeStr = `${totalMin.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         } else if (format === 'SS.mm') {
-            const totalSec = h * 3600 + m * 60 + s;
-            timeStr = `${totalSec.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+            timeStr = `${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
         }
 
         const textParams = {

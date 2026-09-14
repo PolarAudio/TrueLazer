@@ -28,6 +28,7 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Separate effect for frame data — fires only when activeFrames identity changes
   useEffect(() => {
     if (!worker) return;
 
@@ -39,18 +40,32 @@ const WorldPreview = ({ activeFrames, showBeamEffect, beamAlpha, fadeAlpha, prev
       syncSettings,
       bpm,
       clipDuration,
-      progress, // Pass progress
-      effectStates // Pass effectStates
+      progress,
+      effectStates
     }));
 
     worker.postMessage({
-      action: 'update',
+      action: 'update-frames',
       payload: {
         id: canvasId.current,
-        data: { worldData: transformedWorldData, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels, optimizationEnabled }
+        data: { worldData: transformedWorldData }
       }
     });
-  }, [worker, activeFrames, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels, optimizationEnabled]);
+  }, [worker, activeFrames]);
+
+  // Separate effect for render settings — fires on slider/toggle changes without
+  // re-sending frame data (avoids expensive structured clone of large point arrays).
+  useEffect(() => {
+    if (!worker) return;
+
+    worker.postMessage({
+      action: 'update-settings',
+      payload: {
+        id: canvasId.current,
+        data: { showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels, optimizationEnabled }
+      }
+    });
+  }, [worker, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, layerIntensities, masterIntensity, dacSettings, previewTime, fftLevels, optimizationEnabled]);
 
   return (
     <div className="world-preview">

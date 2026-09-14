@@ -28,6 +28,7 @@ const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
         
         let lastX = null;
         let lastY = null;
+        let lastWasBlanked = true;
 
         for (let i = 0; i < numPoints; i++) {
             let x, y, r, g, b, blanking;
@@ -52,27 +53,25 @@ const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
             const screenX = (x + 1) * 0.5 * width;
             const screenY = (1 - (y + 1) * 0.5) * height;
 
-            if (!blanking) {
-                if (lastX !== null) {
-                    ctx.beginPath();
-                    ctx.moveTo(lastX, lastY);
-                    ctx.lineTo(screenX, screenY);
-                    
-                    const ir = Math.floor(Math.max(0, Math.min(255, r)));
-                    const ig = Math.floor(Math.max(0, Math.min(255, g)));
-                    const ib = Math.floor(Math.max(0, Math.min(255, b)));
-                    
-                    ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
-                    ctx.stroke();
-                }
-            } else {
-                lastX = null;
-                lastY = null;
-                continue;
+            // Only draw between two consecutive lit points (no blanked in between)
+            if (!blanking && !lastWasBlanked && lastX !== null) {
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(screenX, screenY);
+                
+                const ir = Math.floor(Math.max(0, Math.min(255, r)));
+                const ig = Math.floor(Math.max(0, Math.min(255, g)));
+                const ib = Math.floor(Math.max(0, Math.min(255, b)));
+                
+                ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
+                ctx.stroke();
             }
 
-            lastX = screenX;
-            lastY = screenY;
+            if (!blanking) {
+                lastX = screenX;
+                lastY = screenY;
+            }
+            lastWasBlanked = blanking;
         }
     }, [frame, width, height]);
 

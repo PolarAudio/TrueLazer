@@ -2,28 +2,26 @@
 // The actual OSC logic resides in the Electron main process (index.js)
 
 export const initializeOsc = async (options = {}) => {
-  if (window.electronAPI) {
+  if (window.electronAPI?.initializeOsc) {
     return window.electronAPI.initializeOsc(options);
   }
-  console.error("electronAPI not available. Cannot initialize OSC.");
+  console.warn("electronAPI not available. Cannot initialize OSC. Running in web mode?");
   return { success: false, error: "electronAPI not available" };
 };
 
 export const sendOscMessage = (address, args) => {
-  if (window.electronAPI) {
+  if (window.electronAPI?.sendOscMessage) {
     window.electronAPI.sendOscMessage(address, args);
-  } else {
-    console.error("electronAPI not available. Cannot send OSC message.");
   }
 };
 
 export const addOscMessageListener = (callback) => {
-  if (window.electronAPI) {
+  if (window.electronAPI?.onOscMessageReceived) {
     return window.electronAPI.onOscMessageReceived((oscMessage, timeTag, info) => {
       callback(oscMessage, timeTag, info);
     });
   }
-  console.error("electronAPI not available. Cannot add OSC message listener.");
+  console.warn("electronAPI not available. Cannot add OSC message listener.");
   return () => {};
 };
 
@@ -32,13 +30,10 @@ export const removeOscMessageListener = (callback) => {
     // listeners are managed by the cleanup function returned by addOscMessageListener.
     // To remove a specific listener, you would typically use the cleanup function
     // returned when adding the listener.
-    console.warn("Removing specific OSC message listeners requires managing cleanup functions returned by addOscMessageListener.");
 };
 
 export const closeOsc = () => {
-  if (window.electronAPI) {
+  if (window.electronAPI?.closeOsc) {
     window.electronAPI.closeOsc();
-  } else {
-    console.error("electronAPI not available. Cannot close OSC.");
   }
 };

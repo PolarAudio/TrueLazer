@@ -11,7 +11,7 @@ export const IldaParserWorkerProvider = ({ children }) => {
 
   useEffect(() => {
     if (!ildaParserWorker) {
-      const worker = new Worker(new URL('../utils/ilda-parser.worker.js', import.meta.url));
+      const worker = new Worker(new URL('../utils/ilda-parser.worker.js', import.meta.url), { type: 'module' });
       setIldaParserWorker(worker);
     }
 

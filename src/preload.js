@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld(
     showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),
     showClipContextMenu: (...args) => ipcRenderer.send('show-clip-context-menu', ...args),
       showColumnHeaderClipContextMenu: (colIndex) => ipcRenderer.send('show-column-header-clip-context-menu', colIndex),
-      showQuickAssignContextMenu: (type, index) => ipcRenderer.send('show-quick-assign-context-menu', type, index),
+      showQuickAssignContextMenu: (type, index, assignments = []) => ipcRenderer.send('show-quick-assign-context-menu', type, index, assignments),
       sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action),    onContextMenuActionFromMain: (callback) => {
       ipcRenderer.on('context-menu-action-from-main', (event, action) => callback(action));
       return () => ipcRenderer.removeListener('context-menu-action-from-main', callback);
@@ -53,6 +53,12 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('layer-full-context-command', listener);
       return () => ipcRenderer.removeListener('layer-full-context-command', listener);
     },
+    showPageContextMenu: (index) => ipcRenderer.send('show-page-context-menu', index),
+    onPageContextMenuCommand: (callback) => {
+      const listener = (event, command, pageIndex) => callback(command, pageIndex);
+      ipcRenderer.on('page-context-command', listener);
+      return () => ipcRenderer.removeListener('page-context-command', listener);
+    },
     onRenderSettingsCommand: (callback) => {
       const listener = (event, command) => callback(command);
       ipcRenderer.on('render-settings-command', listener);
@@ -63,6 +69,9 @@ contextBridge.exposeInMainWorld(
     checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
 	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),
+    getFileStats: (filePath) => ipcRenderer.invoke('get-file-stats', filePath),
+    getCachedThumbnail: (cacheKey) => ipcRenderer.invoke('get-cached-thumbnail', cacheKey),
+    clearThumbnailCache: () => ipcRenderer.invoke('clear-thumbnail-cache'),
 	    toggleShortcutsWindow: () => ipcRenderer.send('toggle-shortcuts-window'),
 	    toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
 	            // New IPC functions for thumbnail mode synchronization
@@ -83,10 +92,13 @@ contextBridge.exposeInMainWorld(
 	                          setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 	            	            setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
 	            setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
+	            saveDacOutputSettings: (settings) => ipcRenderer.invoke('set-dac-output-settings', settings),
                 getDacGroups: () => ipcRenderer.invoke('get-dac-groups'),
-                saveDacGroups: (groups) => ipcRenderer.invoke('save-dac-groups', groups),
-                getUserIldaPath: () => ipcRenderer.invoke('get-user-ilda-path'),
-                getUserMappingsPath: () => ipcRenderer.invoke('get-user-mappings-path'),
+                	            saveDacGroups: (groups) => ipcRenderer.invoke('save-dac-groups', groups),
+                                getPresets: (type, subType) => ipcRenderer.invoke('get-presets', type, subType),
+                                savePreset: (type, subType, preset) => ipcRenderer.invoke('save-preset', type, subType, preset),
+                                deletePreset: (type, subType, name) => ipcRenderer.invoke('delete-preset', type, subType, name),
+                                getUserIldaPath: () => ipcRenderer.invoke('get-user-ilda-path'),                getUserMappingsPath: () => ipcRenderer.invoke('get-user-mappings-path'),
                 getMidiMappings: () => ipcRenderer.invoke('get-midi-mappings'),
                 saveMidiMappings: (mappings) => ipcRenderer.invoke('save-midi-mappings', mappings),
                 getKeyboardMappings: () => ipcRenderer.invoke('get-keyboard-mappings'),
@@ -108,6 +120,7 @@ contextBridge.exposeInMainWorld(
                                             getDesktopAudioSourceId: () => ipcRenderer.invoke('get-desktop-audio-source-id'),
                                               saveThumbnail: (arrayBuffer, filename) => ipcRenderer.invoke('save-thumbnail', arrayBuffer, filename),
                                               saveIldaFile: (arrayBuffer, defaultName) => ipcRenderer.invoke('save-ilda-file', arrayBuffer, defaultName),
+                                              saveClipFile: (content, defaultName) => ipcRenderer.invoke('save-clip-file', content, defaultName),
                                               deleteThumbnail: (filePath) => ipcRenderer.invoke('delete-thumbnail', filePath),                                            // ArtNet
                                             initializeArtnet: () => ipcRenderer.invoke('initialize-artnet'),
                                             getArtnetUniverses: () => ipcRenderer.invoke('get-artnet-universes'),
@@ -115,14 +128,7 @@ contextBridge.exposeInMainWorld(
                                             closeArtnet: () => ipcRenderer.send('close-artnet'),
                                             listenArtnetUniverse: (universe) => ipcRenderer.send('artnet-listen-universe', universe),
                                             onArtnetDataReceived: (callback) => {
-                                                const listener = (event, { universe, data }) => {
-                                                    // data is array of 512.
-                                                    data.forEach((val, idx) => {
-                                                        if (val > 0) { // Simple filter for non-zero to detect signal
-                                                            callback({ universe, channel: idx, value: val });
-                                                        }
-                                                    });
-                                                };
+                                                const listener = (event, payload) => callback(payload);
                                                 ipcRenderer.on('artnet-data-received', listener);
                                                 return () => ipcRenderer.removeListener('artnet-data-received', listener);
                                             },

@@ -36,7 +36,7 @@ self.onmessage = (e) => {
         const { id, data } = payload;
         const state = renderers.get(id);
         if (state) {
-            // Fix: Preserve effectStates across updates to prevent history reset
+            // Legacy full-replace update (used by IldaPlayer.jsx)
             if (state.data && state.data.effectStates && data.effectStates) {
                 data.effectStates = state.data.effectStates;
             } else if (state.data && state.data.worldData && state.data.worldData.length > 0) {
@@ -48,9 +48,30 @@ self.onmessage = (e) => {
                      }
                  }
             }
-
             state.data = data;
-            // The continuous loop will pick up the new data.
+        }
+    } else if (action === 'update-frames') {
+        // Frame-data-only update: replace worldData without touching render settings
+        const { id, data } = payload;
+        const state = renderers.get(id);
+        if (state) {
+            if (state.data && state.data.worldData && state.data.worldData.length > 0) {
+                const firstOldItem = state.data.worldData[0];
+                if (firstOldItem && firstOldItem.effectStates && data.worldData) {
+                    const persistentMap = firstOldItem.effectStates;
+                    for (const item of data.worldData) {
+                        item.effectStates = persistentMap;
+                    }
+                }
+            }
+            state.data = { ...state.data, worldData: data.worldData };
+        }
+    } else if (action === 'update-settings') {
+        // Settings-only update: merge render settings without cloning frame data
+        const { id, data } = payload;
+        const state = renderers.get(id);
+        if (state) {
+            state.data = { ...state.data, ...data };
         }
     } else if (action === 'clear') {
         const { id } = payload;

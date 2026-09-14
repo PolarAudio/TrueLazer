@@ -4,8 +4,9 @@ import CollapsiblePanel from './CollapsiblePanel';
 import RangeSlider from './RangeSlider';
 import DualRangeSlider from './DualRangeSlider';
 import AnimationControls from './AnimationControls';
+import { PresetSelector } from './PresetSelector';
 
-const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration, uiState, onUpdateUiState }) => {
+const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState }) => {
     const [hovered, setHovered] = useState(false);
 
     const paramKey = `${generatorId}.${control.id}`;
@@ -99,6 +100,8 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                                 progressRef={progressRef}
                                 workerId={workerId}
                                 clipDuration={clipDuration}
+                                bpm={bpm}
+                                getFftLevels={getFftLevels}
                             />
                         )
                     ) : control.type === 'number' ? (
@@ -138,7 +141,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                 </div>
 
                 {/* Value Display */}
-                {control.type === 'range' && (
+                {control.type === 'range' && !control.isRange && (
                     <input
                         type="number"
                         value={typeof value === 'number' ? value.toFixed(2) : value}
@@ -163,7 +166,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
     );
 };
 
-const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex, progressRef, workerId, clipDuration, uiState, onUpdateUiState }) => {
+const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, onRegisterPreset }) => {
   const [systemFonts, setSystemFonts] = useState([]);
   const [projectFonts, setProjectFonts] = useState([]);
   const [loadingSystemFonts, setLoadingSystemFonts] = useState(false);
@@ -184,7 +187,6 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
     if (onUpdateUiState) {
         onUpdateUiState({
             collapsedPanels: {
-                ...collapsedPanels,
                 generator: val
             }
         });
@@ -241,6 +243,17 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
         isCollapsed={!!collapsedPanels['generator']}
         onToggle={handleToggle}
     >
+        <PresetSelector 
+            type="generator" 
+            subType={selectedGeneratorId} 
+            currentParams={selectedGeneratorParams}
+            onRegisterPreset={onRegisterPreset}
+            onApplyPreset={(params) => {
+                Object.entries(params).forEach(([key, val]) => {
+                    onParameterChange(key, val);
+                });
+            }}
+        />
         {generatorDefinition.paramControls
           .filter(control => {
               if (control.condition && !control.condition(selectedGeneratorParams)) return false;
@@ -314,6 +327,8 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
                 workerId={workerId}
                 generatorId={selectedGeneratorId}
                 clipDuration={clipDuration}
+                bpm={bpm}
+                getFftLevels={getFftLevels}
                 uiState={uiState}
                 onUpdateUiState={onUpdateUiState}
             />
