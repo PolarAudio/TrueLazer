@@ -71,7 +71,12 @@ self.onmessage = async (event) => {
           colIndex,
           frames,
           generatorDefinition: generator, // Send back the original definition
-          currentParams: currentParams, // Send back the params used for generation
+          // Never echo the raw audio buffer back — it is only used inside the worker,
+          // and cloning it per regeneration adds constant GC pressure on the UI thread.
+          currentParams: (() => {
+            const { audioData: _audioData, ...paramsToReturn } = currentParams;
+            return paramsToReturn;
+          })(),
           isLive: event.data.isLive, // Pass through the live flag
           isAutoUpdate: event.data.isAutoUpdate, // Pass through auto update flag
           seq: event.data.seq // Pass back sequence number

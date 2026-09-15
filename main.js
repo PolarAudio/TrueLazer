@@ -8,6 +8,7 @@ import psTree from 'ps-tree';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
 import getSystemFonts from 'get-system-fonts';
+import { execFile } from 'child_process';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
@@ -56,6 +57,38 @@ app.commandLine.appendSwitch('disable-http-cache');
 app.commandLine.appendSwitch('disable-autofill');
 
 const isDev = process.env.NODE_ENV === 'development';
+
+// Persistent main-process log. Packaged Electron apps have no visible console,
+// so on a silent crash everything is lost. Mirror console output to
+// %APPDATA%/TrueLazer/logs/main.log to make future crashes diagnosable.
+const startFileLog = () => {
+  const logDir = path.join(app.getPath('userData'), 'logs');
+  fs.promises.mkdir(logDir, { recursive: true })
+    .then(() => {
+      const logPath = path.join(logDir, 'main.log');
+      const stamp = () => new Date().toISOString();
+      ['error', 'warn', 'log', 'info', 'debug'].forEach(level => {
+        const original = console[level];
+        console[level] = (...args) => {
+          original(...args);
+          try {
+            const line = args.map(a => {
+              if (a instanceof Error) return a.stack || a.message;
+              try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
+            }).join(' ');
+            fs.appendFile(logPath, `[${stamp()}] [${level.toUpperCase()}] ${line}\n`, () => {});
+          } catch { /* logging must never crash the app */ }
+        };
+      });
+    });
+};
+
+// Defensive safety net: async errors from third-party/legacy modules (e.g.
+// pidusage/ps-tree spawning a removed wmic.exe) would otherwise kill the whole
+// app. Log them instead of crashing.
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+});
 
 let mainWindow; // Global variable to store the main window instance
 let currentThumbnailRenderMode = 'still'; // Global variable to store the current thumbnail render mode
@@ -506,9 +539,40 @@ ipcMain.handle('get-default-project-path', async () => {
   return await getDefaultProjectPath();
 });
 
+// Latest ILD directory listing per directory, so the renderer never waits on a
+// fs.readdir round-trip again for the same folder (tab re-opens, re-mounts).
+// TTL keeps it fresh if the user drops files into the folder while running.
+const ildFileListCache = new Map(); // directoryPath -> { ts, files }
+const ILD_LIST_TTL_MS = 10000;
+let ildDefaultPath = null;
+
+async function listIldFiles(directoryPath) {
+  const cached = ildFileListCache.get(directoryPath);
+  if (cached && Date.now() - cached.ts < ILD_LIST_TTL_MS) {
+    return cached.files;
+  }
+  let files = [];
+  try {
+    const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
+    const entries = await fs.promises.readdir(fullPath);
+    files = entries.filter(f => f.toLowerCase().endsWith('.ild')).map(f => path.join(directoryPath, f));
+  } catch (error) {
+    files = [];
+  }
+  ildFileListCache.set(directoryPath, { ts: Date.now(), files });
+  return files;
+}
+
 ipcMain.handle('get-user-ilda-path', async () => {
-  const documentsPath = app.getPath('documents');
-  return path.join(documentsPath, 'TrueLazer', 'ILDA-FILES');
+  if (!ildDefaultPath) ildDefaultPath = path.join(app.getPath('documents'), 'TrueLazer', 'ILDA-FILES');
+  return ildDefaultPath;
+});
+
+// Single round-trip for the default directory's path + listing (LCP fast path).
+ipcMain.handle('get-default-ild-files', async () => {
+  if (!ildDefaultPath) ildDefaultPath = path.join(app.getPath('documents'), 'TrueLazer', 'ILDA-FILES');
+  const files = await listIldFiles(ildDefaultPath);
+  return { path: ildDefaultPath, files };
 });
 
 ipcMain.handle('get-user-mappings-path', async () => {
@@ -835,7 +899,9 @@ function createWindow() {
     frame: true,
   });
 
-  win.webContents.openDevTools();
+  if (isDev) {
+    win.webContents.openDevTools();
+  }
 
   if (isDev) {
     win.loadURL('http://localhost:5173');
@@ -1175,9 +1241,7 @@ function createWindow() {
 
   ipcMain.handle('read-ild-files', async (event, directoryPath) => {
     try {
-      const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
-      const files = await fs.promises.readdir(fullPath);
-      return files.filter(file => file.toLowerCase().endsWith('.ild')).map(file => path.join(directoryPath, file));
+      return await listIldFiles(directoryPath);
     } catch (error) {
       console.error('Failed to read directory:', error);
       return [];
@@ -1450,32 +1514,91 @@ function createWindow() {
   });
 
   // Background System Stats Loop
-  const sendSystemStats = async () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
+  // pidusage and ps-tree both spawn `wmic.exe` on Windows. On machines where
+  // WMIC has been removed (compact/newer Windows builds) those spawns emit an
+  // asynchronous ENOENT error: ps-tree attaches no 'error' listener, and
+  // pidusage's availability probe throws from a callback its try/catch cannot
+  // catch — either can surface as an "Uncaught Exception: Error Spawn
+  // wmic.exe ENOENT" right after startup. Probe once and pick a wmic-free path.
+  let wmicAvailable = process.platform !== 'win32' ? true : null; // null = probe pending
+  const checkWmic = async () => {
+    if (wmicAvailable === null) {
+      wmicAvailable = await new Promise(resolve => {
+        execFile('where', ['wmic.exe'], { windowsHide: true }, err => resolve(!err));
+      });
+      if (!wmicAvailable) console.warn('WMIC not found; using fallback for system stats.');
+    }
+    return wmicAvailable;
+  };
+
+  const collectSystemStats = (pids, wmicOk) => {
+    const collect = (stats) => {
+      if (!stats) return;
+      let totalCpu = 0;
+      let totalMemKB = 0;
+      const numCores = os.cpus().length || 1;
+      Object.values(stats).forEach(s => {
+        totalCpu += s.cpu;
+        totalMemKB += s.memory;
+      });
+      const normalizedCpu = totalCpu / numCores;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('system-stats', {
+          cpu: normalizedCpu.toFixed(1),
+          ram: (totalMemKB / (1024 * 1024)).toFixed(0)
+        });
+      }
+    };
+    const onError = (e) => console.warn('Error collecting system stats:', e && e.message ? e.message : e);
+
+    if (wmicOk) {
+      pidusage(pids, (err, stats) => {
+        if (err || !stats) return onError(err);
+        collect(stats);
+      });
+    } else {
+      // wmic is missing: use pidusage's bundled gwmi (PowerShell) backend,
+      // which never spawns wmic.
       try {
+        const gwmi = require('pidusage/lib/gwmi');
+        gwmi(pids, { maxage: 60000 }, (err, stats) => err ? onError(err) : collect(stats));
+      } catch (e) {
+        onError(e);
+      }
+    }
+  };
+
+  let mainCpuLast = null;
+  let mainCpuLastTime = 0;
+  const sendSystemStats = async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      const wmicOk = await checkWmic();
+      if (wmicOk) {
         psTree(process.pid, (err, children) => {
           const pids = [process.pid, ...(err ? [] : children.map(p => parseInt(p.PID)).filter(pid => !isNaN(pid)))];
-          pidusage(pids, (err, stats) => {
-            if (err || !stats) return;
-            let totalCpu = 0;
-            let totalMemKB = 0;
-            const numCores = os.cpus().length || 1;
-            Object.values(stats).forEach(s => {
-              totalCpu += s.cpu;
-              totalMemKB += s.memory;
-            });
-            const normalizedCpu = totalCpu / numCores;
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('system-stats', {
-                cpu: normalizedCpu.toFixed(1),
-                ram: (totalMemKB / (1024 * 1024)).toFixed(0)
-              });
-            }
-          });
+          collectSystemStats(pids, true);
         });
-      } catch (e) {
-        console.error("Error in system stats:", e);
+      } else {
+        // Cannot enumerate the process tree without wmic; measure the main
+        // process directly (no external spawn, guaranteed to work).
+        const now = Date.now();
+        const usage = process.cpuUsage();
+        let cpu = 0;
+        if (mainCpuLast) {
+          const dtMs = Math.max(1, now - mainCpuLastTime);
+          const usedMs = (usage.user - mainCpuLast.user + usage.system - mainCpuLast.system) / 1000;
+          cpu = Math.min(100, (usedMs / dtMs) * 100);
+        }
+        mainCpuLast = usage;
+        mainCpuLastTime = now;
+        const ramMB = (process.memoryUsage().rss / (1024 * 1024)).toFixed(0);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('system-stats', { cpu: cpu.toFixed(1), ram: ramMB });
+        }
       }
+    } catch (e) {
+      console.error("Error in system stats:", e);
     }
   };
   setInterval(sendSystemStats, 4000);
@@ -1512,6 +1635,8 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  startFileLog();
+  console.log(`[Init] App started (v${app.getVersion()}) on ${os.platform()}-${os.arch()}`);
   // Web MIDI in Electron is gated behind a main-process permission grant. Without
   // these handlers, navigator.requestMIDIAccess() (awaited by webmidi's
   // WebMidi.enable()) never resolves and the renderer stays on "Initializing

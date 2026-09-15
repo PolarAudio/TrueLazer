@@ -235,6 +235,9 @@ export class WebGLRenderer {
     this.drawFadeQuad();
 
     if (!ildaFrames || ildaFrames.length === 0) {
+      // Nothing to render — fully clear so a deactivated/deleted clip doesn't leave
+      // its last frame ghosting on the preview.
+      this.clearCanvas();
       return;
     }
 
@@ -258,6 +261,13 @@ export class WebGLRenderer {
     
     // Instead of full clear, draw a semi-transparent black quad for fade effect
     this.drawFadeQuad();
+
+    // No active clips left — fully clear so the world preview doesn't stay stuck on
+    // the last deactivated clip's frame.
+    if (!worldData || worldData.length === 0) {
+      this.clearCanvas();
+      return;
+    }
 
     const time = previewTime !== null ? previewTime : performance.now();
 

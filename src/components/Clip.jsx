@@ -21,7 +21,17 @@ const Clip = ({
   onDropDac, // New prop for handling DAC drops
   thumbnailRenderMode,
   liveFrame,
+  liveProgress,
   stillFrame,
+  liveWorkerId,
+  liveFramesRef,
+  progressRef,
+  thumbBpm,
+  thumbClipDuration,
+  fftLevels,
+  cycleFrames,
+  cycleInterval,
+  cycleEnabled,
   onClipHover,
   onThumbnailError
 }) => {
@@ -223,7 +233,7 @@ const Clip = ({
               {/* Render Mode Logic */}
               {shouldShowLive && hasActualContent && hasLiveFrame ? (
                 /* Live/Hover Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
-                <IldaThumbnail frame={liveFrame || stillFrame} frames={clipContent?.frames} effects={clipContent?.effects} ildaParserWorker={ildaParserWorker} workerId={clipContent?.workerId} />
+                <IldaThumbnail frame={liveFrame || stillFrame} frames={clipContent?.frames} effects={clipContent?.effects} progress={clipContent?.type === 'generator' ? liveProgress : 0} syncSettings={clipContent?.syncSettings || {}} clipDuration={thumbClipDuration} bpm={thumbBpm || 120} fftLevels={fftLevels} ildaParserWorker={ildaParserWorker} workerId={liveWorkerId} liveFramesRef={liveFramesRef} progressRef={progressRef} cycleFrames={cycleFrames} cycleInterval={cycleInterval} cycleEnabled={cycleEnabled} liveEnabled={thumbnailRenderMode === 'active'} />
               ) : (
                 /* Still Frame Mode */
                 /* If we have a generated thumbnail path, use it for efficiency */

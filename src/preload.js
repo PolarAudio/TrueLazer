@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld(
     },
     openFileExplorer: () => ipcRenderer.invoke('open-file-explorer'),
     readIldFiles: (directoryPath) => ipcRenderer.invoke('read-ild-files', directoryPath),
+    getDefaultIldFiles: () => ipcRenderer.invoke('get-default-ild-files'),
     checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
     readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
 	    readFileAsBinary: (filePath) => ipcRenderer.invoke('read-file-as-binary', filePath),

@@ -2,6 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import { useThumbnailWorker } from '../contexts/ThumbnailWorkerContext';
 
+// Module-level listing cache: switching bottom tabs unmounts the FileBrowser, and
+// every remount used to re-do the default-path + readdir IPC chain. Caching here
+// makes a re-open paint the file list instantly (no async wait → faster LCP).
+// Short TTL keeps it fresh if the user drops files into the folder while running.
+let cachedDefaultListing = null; // { path, files, ts }
+const DEFAULT_LISTING_TTL_MS = 10000;
+
 const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onPathChange }) => {
   const [ildFiles, setIldFiles] = useState([]);
   const [thumbnails, setThumbnails] = useState({});
@@ -165,15 +172,33 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
 
   useEffect(() => {
     const loadDefaultDir = async () => {
-      if (path) {
-        const files = await window.electronAPI.readIldFiles(path);
+      const applyFiles = (files, dirLabel) => {
         setIldFiles(files);
+        setSelectedDirectory(dirLabel || '');
         requestedThumbnailsRef.current.clear();
         processingQueueRef.current = [];
         isProcessingRef.current = false;
         setThumbnails({});
         setLoadingThumbnails(new Set());
         fileStatsCacheRef.current = {};
+      };
+
+      if (path) {
+        // Directory already known: single IPC round-trip (cached in main).
+        const files = await window.electronAPI.readIldFiles(path);
+        applyFiles(files, path);
+        return;
+      }
+
+      // Default directory: one IPC call returns path + listing together.
+      if (window.electronAPI && window.electronAPI.getDefaultIldFiles) {
+        if (cachedDefaultListing && Date.now() - cachedDefaultListing.ts < DEFAULT_LISTING_TTL_MS) {
+          applyFiles(cachedDefaultListing.files, cachedDefaultListing.path);
+          return;
+        }
+        const listing = await window.electronAPI.getDefaultIldFiles();
+        cachedDefaultListing = { ...listing, ts: Date.now() };
+        applyFiles(listing.files, listing.path);
         return;
       }
 
@@ -182,13 +207,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
         if (defaultDir) {
           setSelectedDirectory(defaultDir);
           const files = await window.electronAPI.readIldFiles(defaultDir);
-          setIldFiles(files);
-          requestedThumbnailsRef.current.clear();
-          processingQueueRef.current = [];
-          isProcessingRef.current = false;
-          setThumbnails({});
-          setLoadingThumbnails(new Set());
-          fileStatsCacheRef.current = {};
+          applyFiles(files, defaultDir);
         }
       }
     };
