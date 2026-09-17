@@ -1,6 +1,7 @@
 const idn = require('./idn-communication.cjs');
 const etherdream = require('./etherdream-communication.cjs');
 const showbridge = require('./showbridge-communication.cjs');
+const { countPoints, computePointBudget, decimatePoints, clamp } = require('./dac-budget.cjs');
 
 let globalStatusCallback = null;
 
@@ -76,6 +77,34 @@ function sendFrame(ip, channel, points, fps, type, options) {
         targetFps,
         targetMode,
     };
+
+    // Enforce the per-frame point budget (pointBudget = targetPps / targetFps,
+    // the speedTarget engine relation). Frames the renderer optimizer produced
+    // beyond the budget are evenly decimated so the DAC never overruns its
+    // 1/fps frame window — the cause of the "constant-PPS fill runs out of
+    // points" lag on complex clips. Showbridge gets an extra hard cap to its
+    // bench-verified single-chunk size (PTS_FULL) so frames never spill into
+    // the 2-chunk boundary arc. The budget is enforced on a CLONE (decimate
+    // returns a new array when it cuts), so the renderer's source buffer is
+    // never mutated.
+    const showbridgeCap = type === 'Showbridge' ? showbridge.PTS_FULL : 0;
+    const pointBudget = computePointBudget({ targetPps, targetFps, cap: showbridgeCap });
+    const contentCount = countPoints(points);
+    const decimated = decimatePoints(points, pointBudget);
+    if (decimated !== points) {
+        console.warn(`[DacComm] Decimating ${ip} frame from ${contentCount} to ${pointBudget} points (pps=${targetPps}, fps=${targetFps})`);
+        points = decimated;
+    }
+
+    // Mode-aware PPS: in Variable PPS -> Fixed FPS the pps must rise/fall so
+    // the frame's play time stays exactly 1/targetFps; in Variable FPS -> Fixed
+    // PPS it stays at the hardware preset target while the effective frame rate
+    // varies with content. This is the value both backends consume.
+    const sendPps = (targetMode === 'varPpsFixedFps')
+        ? clamp(Math.round(countPoints(points) * targetFps), 1000, 120000)
+        : targetPps;
+    sendOptions.pps = sendPps;
+    sendOptions.targetPps = sendPps;
 
     // Apply the user's X/Y hardware-correction invert ONLY at the physical DAC
     // boundary. The frontend preview uses the un-flipped points, so the output

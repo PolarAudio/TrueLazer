@@ -103,7 +103,9 @@ const GeneratorParams = ({ cue }) => {
 
 const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
     const { state, actions } = useTimeline();
+    const selectedIds = state.settings.selectedCueIds || [];
     const cue = state.cues[state.settings.selectedCueId];
+    const multi = selectedIds.length > 1;
 
     const handleReloadIlda = useCallback(async () => {
         if (!cue || !window.electronAPI?.showOpenDialog) return;
@@ -119,12 +121,38 @@ const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
 
     const channel = cue ? state.channels[cue.channelId] : null;
 
+    let summary = null;
+    if (multi) {
+        const cues = selectedIds.map((id) => state.cues[id]).filter(Boolean);
+        const channels = [...new Set(cues.map((c) => state.channels[c.channelId]?.name).filter(Boolean))];
+        const start = Math.min(...cues.map((c) => c.startTime));
+        const end = Math.max(...cues.map((c) => c.startTime + c.duration));
+        summary = (
+            <div className="timeline-multi-summary">
+                <div className="timeline-cue-type generator">✦ {cues.length} Clips Selected</div>
+                {channels.length > 0 && <div className="timeline-inspector-hint">Channels: {channels.join(', ')}</div>}
+                <div className="timeline-inspector-hint">
+                    {formatTimecode(start, state.settings.fps)} → {formatTimecode(end, state.settings.fps)}
+                </div>
+                <div className="timeline-inspector-hint">
+                    Drag any selected clip to move the group; drag its edges to trim the group.
+                </div>
+                <button
+                    className="timeline-btn danger"
+                    onClick={() => { for (const id of selectedIds) actions.removeCue(id); }}
+                >
+                    Delete {cues.length} Clips
+                </button>
+            </div>
+        );
+    }
+
     return (
         <div className="timeline-inspector">
             <h3>Inspector</h3>
             {previewFrame && <TimelinePreview previewFrame={previewFrame} playheadSec={playheadSec} />}
 
-            {!cue ? (
+            {multi ? summary : !cue ? (
                 <p className="timeline-inspector-hint">Select a cue block to edit its properties.</p>
             ) : (
                 <>

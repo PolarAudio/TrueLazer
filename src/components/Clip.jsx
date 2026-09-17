@@ -241,7 +241,18 @@ const Clip = ({
                   <img
                     src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
                     alt="thumbnail"
-                    onError={() => { setThumbnailError(true); onThumbnailError && onThumbnailError(layerIndex, colIndex); }}
+                    onError={() => {
+                        // Older projects or cleared cache: the cached thumbnail file no
+                        // longer exists on disk. Log it clearly, then ask the parent to
+                        // regenerate it from the clip's frames.
+                        console.warn(`Clip.jsx: Thumbnail not found for ${pageId}-${layerIndex}-${colIndex}: ${clipContent?.thumbnailPath} - triggering new generation`);
+                        try {
+                            setThumbnailError(true);
+                            if (onThumbnailError) onThumbnailError(layerIndex, colIndex);
+                        } catch (e) {
+                            console.error('Clip.jsx: Thumbnail onError handler failed:', e);
+                        }
+                    }}
                     style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
                   />
                 ) : (

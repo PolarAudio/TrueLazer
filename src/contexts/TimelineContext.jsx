@@ -32,6 +32,10 @@ export const DEFAULT_TIMELINE_SETTINGS = Object.freeze({
     loop: null, // { start, end } | null
     loopEnabled: false,
     selectedCueId: null,
+    // Multi-clip selection; `selectedCueId` is kept as the anchor (last
+    // toggled) for the inspector/preview. Both are patched together by
+    // SELECT so they never disagree.
+    selectedCueIds: [],
     selectedChannelId: null,
     masterIntensity: 1,
     blackout: false,
@@ -124,8 +128,6 @@ function newChannel(id, patch = {}) {
     return {
         id,
         name: patch.name || 'New Channel',
-        dac: dacs[0] || null,
-        dacs,
         cues: [],
         automationLanes: [],
         intensity: 1,
@@ -218,12 +220,22 @@ export function normalizeHydratedState(raw) {
         });
     }
 
+    const rawSettings = raw.settings || {};
+    const settings = { ...DEFAULT_TIMELINE_SETTINGS, ...rawSettings };
+    // Legacy persistence: only a single selectedCueId exists. Adopt it as the
+    // sole member of the new selection array (otherwise the default empty
+    // array would silently shadow a real selection).
+    if (!Array.isArray(rawSettings.selectedCueIds)) {
+        settings.selectedCueIds = rawSettings.selectedCueId != null ? [rawSettings.selectedCueId] : [];
+    }
+    if (!Array.isArray(settings.selectedCueIds)) settings.selectedCueIds = [];
+
     return {
         channels,
         cues,
         lanes,
         channelOrder,
-        settings: { ...DEFAULT_TIMELINE_SETTINGS, ...(raw.settings || {}) },
+        settings,
     };
 }
 
@@ -440,6 +452,7 @@ export function reducer(state, action) {
                 settings: {
                     ...state.settings,
                     selectedCueId: id,
+                    selectedCueIds: [id],
                     selectedChannelId: channelId,
                 },
             };
@@ -510,26 +523,57 @@ export function reducer(state, action) {
             const nextChannels = channel
                 ? { ...channels, [channel.id]: { ...channel, cues: removeOrder(channel.cues, id) } }
                 : channels;
+            // Drop the removed cue from the selection; the anchor becomes the
+            // last remaining sibling (or null when the selection emptied).
+            const cur = Array.isArray(state.settings.selectedCueIds) ? state.settings.selectedCueIds : [];
+            const next = cur.filter((x) => x !== id);
+            const selectedCueId = next.length > 0
+                ? (state.settings.selectedCueId === id ? next[next.length - 1] : state.settings.selectedCueId)
+                : null;
             return {
                 ...state,
                 cues,
                 channels: nextChannels,
                 settings: {
                     ...state.settings,
-                    selectedCueId: state.settings.selectedCueId === id ? null : state.settings.selectedCueId,
+                    selectedCueIds: next,
+                    selectedCueId,
                 },
             };
         }
 
         case 'SELECT': {
-            const { cueId, channelId } = action.payload;
-            const settings = {
-                ...state.settings,
-                selectedCueId: cueId ?? null,
-                selectedChannelId: channelId ?? state.settings.selectedChannelId ?? null,
-            };
-            if (cueId && state.cues[cueId]) {
+            const { cueId, channelId, additive } = action.payload;
+            const settings = { ...state.settings };
+            const cur = Array.isArray(settings.selectedCueIds)
+                ? settings.selectedCueIds
+                : (settings.selectedCueId != null ? [settings.selectedCueId] : []);
+
+            if (additive) {
+                // Toggle membership (Shift/Ctrl + click); a null cue clears the
+                // whole selection (clicking an empty lane / the canvas).
+                if (!cueId) {
+                    settings.selectedCueIds = [];
+                    settings.selectedCueId = null;
+                    settings.selectedChannelId = channelId ?? settings.selectedChannelId ?? null;
+                } else if (cur.includes(cueId)) {
+                    const next = cur.filter((x) => x !== cueId);
+                    settings.selectedCueIds = next;
+                    settings.selectedCueId = next.length ? next[next.length - 1] : null;
+                    settings.selectedChannelId = state.cues[cueId]?.channelId ?? settings.selectedChannelId ?? null;
+                } else {
+                    settings.selectedCueIds = [...cur, cueId];
+                    settings.selectedCueId = cueId;
+                    settings.selectedChannelId = state.cues[cueId]?.channelId ?? settings.selectedChannelId ?? null;
+                }
+            } else if (cueId && state.cues[cueId]) {
+                settings.selectedCueIds = [cueId];
+                settings.selectedCueId = cueId;
                 settings.selectedChannelId = state.cues[cueId].channelId;
+            } else {
+                settings.selectedCueIds = [];
+                settings.selectedCueId = null;
+                settings.selectedChannelId = channelId ?? settings.selectedChannelId ?? null;
             }
             return { ...state, settings };
         }
@@ -666,6 +710,7 @@ export const TimelineProvider = ({ children }) => {
     const [state, baseDispatch] = useReducer(reducer, null, () => createInitialTimelineState());
     const [hydrated, setHydrated] = useState(false);
     const hydrateTimer = useRef(null);
+    const hasStoredData = useRef(false);
     const [histTick, setHistTick] = useState(0);
     const stateRef = useRef(state);
     stateRef.current = state;
@@ -764,6 +809,7 @@ export const TimelineProvider = ({ children }) => {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (raw) {
+                hasStoredData.current = true;
                 dispatch({ type: 'HYDRATE', payload: JSON.parse(raw) });
             }
         } catch (e) {
@@ -788,7 +834,7 @@ export const TimelineProvider = ({ children }) => {
         };
     }, [state, hydrated]);
 
-    const discoverAndSeedChannels = useCallback(async () => {
+    const discoverChannels = useCallback(async () => {
         if (!window.electronAPI) return [];
         try {
             const network = await window.electronAPI.getNetworkInterfaces?.();
@@ -814,25 +860,30 @@ export const TimelineProvider = ({ children }) => {
                     }
                 })
             );
-            const channels = withServices.flat();
-            if (channels.length > 0) {
-                dispatch({ type: 'SEED_CHANNELS', payload: channels });
-            }
-            return channels;
+            return withServices.flat();
         } catch (e) {
             console.warn('Timeline: DAC discovery failed', e);
             return [];
         }
     }, []);
 
+    const discoverAndSeedChannels = useCallback(async () => {
+        const channels = await discoverChannels();
+        if (channels.length > 0) {
+            dispatch({ type: 'SEED_CHANNELS', payload: channels });
+        }
+        return channels;
+    }, [discoverChannels]);
+
     // Auto-seed on first open when there is nothing saved yet
     useEffect(() => {
         if (!hydrated) return;
+        if (hasStoredData.current) return;
         if (Object.keys(state.channels).length === 0) {
             discoverAndSeedChannels();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [hydrated]);
+    }, [hydrated, discoverAndSeedChannels]);
 
     const loadTimelineAudio = useCallback(
         async (filePath) => {
@@ -884,7 +935,7 @@ export const TimelineProvider = ({ children }) => {
             moveCue: (id, channelId, startTime) => dispatch({ type: 'MOVE_CUE', payload: { id, channelId, startTime } }),
             resizeCue: (id, startTime, duration) => dispatch({ type: 'RESIZE_CUE', payload: { id, startTime, duration } }),
             removeCue: (id) => dispatch({ type: 'REMOVE_CUE', payload: { id } }),
-            select: (cueId, channelId) => dispatch({ type: 'SELECT', payload: { cueId, channelId } }),
+            select: (cueId, channelId, additive) => dispatch({ type: 'SELECT', payload: { cueId, channelId, additive } }),
             addLane: (channelId, lane) => dispatch({ type: 'ADD_LANE', payload: { channelId, lane } }),
             updateLane: (laneId, patch) => dispatch({ type: 'UPDATE_LANE', payload: { laneId, patch } }),
             addKeyframe: (laneId, keyframe) => dispatch({ type: 'ADD_KEYFRAME', payload: { laneId, keyframe } }),
@@ -913,10 +964,11 @@ export const TimelineProvider = ({ children }) => {
             canUndo: historyRef.current.past.length > 0,
             canRedo: historyRef.current.future.length > 0,
             histTick,
+            discoverChannels,
             discoverAndSeedChannels,
             loadTimelineAudio,
         }),
-        [state, actions, histTick, discoverAndSeedChannels, loadTimelineAudio]
+        [state, actions, histTick, discoverChannels, discoverAndSeedChannels, loadTimelineAudio]
     );
 
     return <TimelineContext.Provider value={value}>{children}</TimelineContext.Provider>;

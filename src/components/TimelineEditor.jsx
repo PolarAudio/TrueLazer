@@ -29,6 +29,7 @@ const TimelineEditor = ({ onBack }) => {
     useTimelineShortcuts({ scrollRef: gridRef, state, actions, pb });
 
     const s = state.settings;
+    const selectedCueIds = s.selectedCueIds || [];
     const pxPerSecond = s.zoom;
     // Floor the block row so the full header (name, M/S/X/Y, DAC chips) always
     // renders — even when old saved settings carry a too-small value.
@@ -131,22 +132,22 @@ const TimelineEditor = ({ onBack }) => {
         [pxPerSecond, s, addGeneratorCueAt]
     );
 
-    // Delete key removes the selected cue.
+    // Delete key removes all selected cues.
     useEffect(() => {
         const onKey = (e) => {
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
-            if ((e.key === 'Delete' || e.key === 'Backspace') && s.selectedCueId) {
+            if ((e.key === 'Delete' || e.key === 'Backspace') && selectedCueIds.length > 0) {
                 e.preventDefault();
-                actions.removeCue(s.selectedCueId);
+                for (const id of selectedCueIds) actions.removeCue(id);
             }
-            if (e.key === 'Enter' && !s.selectedCueId) {
+            if (e.key === 'Enter' && selectedCueIds.length === 0) {
                 e.preventDefault();
                 addGeneratorAtPlayhead();
             }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [s.selectedCueId, actions, addGeneratorAtPlayhead]);
+    }, [selectedCueIds, actions, addGeneratorAtPlayhead]);
 
     const beatOverlays = useMemo(() => {
         const span = gridW / pxPerSecond;
@@ -256,7 +257,7 @@ const TimelineEditor = ({ onBack }) => {
                                                 <TimelineBlock
                                                     key={cue.id}
                                                     cue={cue}
-                                                    selected={s.selectedCueId === cue.id}
+                                                    selected={selectedCueIds.includes(cue.id)}
                                                     pxPerSecond={pxPerSecond}
                                                     snapMode={s.snapMode}
                                                     bpm={s.bpm}

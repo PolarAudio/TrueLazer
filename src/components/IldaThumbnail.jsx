@@ -73,10 +73,17 @@ const IldaThumbnail = ({ frame, frames: framesProp, effects, progress = 0, width
     const renderer = rendererRef.current;
     if (!renderer || !mountedRef.current) return;
 
-    renderer.render({
-      ildaFrames: framesToRender, previewScanRate: 1, intensity: 1,
-      effects: [], syncSettings: {}
-    });
+    try {
+      renderer.render({
+        ildaFrames: framesToRender, previewScanRate: 1, intensity: 1,
+        effects: [], syncSettings: {}
+      });
+    } catch (err) {
+      // A single bad frame must not kill the thumbnail's playback loop — it
+      // would otherwise freeze the preview permanently (next rAF/timeout is
+      // scheduled only after render() returns).
+      console.error('[IldaThumbnail] render error:', err);
+    }
   }, []);
 
   // Render a single frame through the thumbnail's effect pipeline (clone before
@@ -84,29 +91,33 @@ const IldaThumbnail = ({ frame, frames: framesProp, effects, progress = 0, width
   const renderOne = useCallback((frameToRender, liveProgressOverride) => {
     const renderer = rendererRef.current;
     if (!renderer || !mountedRef.current || !frameToRender) return;
-    const ctx = liveCtxRef.current;
-    const hasEffects = ctx.effects && ctx.effects.length > 0;
+    try {
+      const ctx = liveCtxRef.current;
+      const hasEffects = ctx.effects && ctx.effects.length > 0;
 
-    if (!hasEffects) {
-      renderFrames([frameToRender]);
-      return;
+      if (!hasEffects) {
+        renderFrames([frameToRender]);
+        return;
+      }
+
+      const pts = frameToRender.points;
+      const isTyped = frameToRender.isTypedArray || pts instanceof Float32Array;
+      const newPoints = isTyped ? new Float32Array(pts) : (pts ? pts.map(p => ({ ...p })) : []);
+      const fxContext = {
+        time: performance.now(),
+        progress: liveProgressOverride !== undefined ? liveProgressOverride : ctx.progress,
+        effectStates: effectStatesRef.current,
+        syncSettings: ctx.syncSettings,
+        bpm: ctx.bpm,
+        fftLevels: ctx.fftLevels
+      };
+      if (ctx.clipDuration !== undefined) fxContext.clipDuration = ctx.clipDuration;
+
+      const target = applyEffects({ ...frameToRender, points: newPoints, isTypedArray: isTyped }, ctx.effects, fxContext);
+      renderFrames([target]);
+    } catch (err) {
+      console.error('[IldaThumbnail] effect/render error:', err);
     }
-
-    const pts = frameToRender.points;
-    const isTyped = frameToRender.isTypedArray || pts instanceof Float32Array;
-    const newPoints = isTyped ? new Float32Array(pts) : (pts ? pts.map(p => ({ ...p })) : []);
-    const fxContext = {
-      time: performance.now(),
-      progress: liveProgressOverride !== undefined ? liveProgressOverride : ctx.progress,
-      effectStates: effectStatesRef.current,
-      syncSettings: ctx.syncSettings,
-      bpm: ctx.bpm,
-      fftLevels: ctx.fftLevels
-    };
-    if (ctx.clipDuration !== undefined) fxContext.clipDuration = ctx.clipDuration;
-
-    const target = applyEffects({ ...frameToRender, points: newPoints, isTypedArray: isTyped }, ctx.effects, fxContext);
-    renderFrames([target]);
   }, [renderFrames]);
 
   // Initial render: show the current live frame (or the supplied frame) immediately,
@@ -150,12 +161,19 @@ const IldaThumbnail = ({ frame, frames: framesProp, effects, progress = 0, width
         fftLevels: ctx.fftLevels
       };
       if (ctx.clipDuration !== undefined) fxContext.clipDuration = ctx.clipDuration;
-      processed = rawFrames.map(f => {
-        const fpts = f.points;
-        const isTyped = f.isTypedArray || fpts instanceof Float32Array;
-        const newPoints = isTyped ? new Float32Array(fpts) : fpts.map(p => ({ ...p }));
-        return applyEffects({ ...f, points: newPoints, isTypedArray: isTyped }, ctx.effects, fxContext);
-      });
+      try {
+        processed = rawFrames.map(f => {
+          const fpts = f.points;
+          const isTyped = f.isTypedArray || fpts instanceof Float32Array;
+          const newPoints = isTyped ? new Float32Array(fpts) : fpts.map(p => ({ ...p }));
+          return applyEffects({ ...f, points: newPoints, isTypedArray: isTyped }, ctx.effects, fxContext);
+        });
+      } catch (err) {
+        // One frame failing effect application must not blank the whole
+        // thumbnail — fall back to the raw frames so the clip stays visible.
+        console.error('[IldaThumbnail] effect error on init:', err);
+        processed = rawFrames;
+      }
     }
     localFramesRef.current = processed;
 

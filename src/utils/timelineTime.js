@@ -142,6 +142,49 @@ export function beatGridLines(startTime, duration, { bpm = 120, timeSignature = 
     return lines;
 }
 
+/**
+ * Next grid line strictly AFTER `time` on an `interval` grid (seconds),
+ * or `time` unchanged when the grid is off. E.g. beat-grid navigation.
+ */
+export function nextGridTime(time, interval) {
+    if (!(interval > 0)) return time;
+    const n = Math.floor(time / interval + 1e-9) + 1;
+    return n * interval;
+}
+
+/** Previous grid line strictly BEFORE `time` on an `interval` grid, never negative. */
+export function prevGridTime(time, interval) {
+    if (!(interval > 0)) return 0;
+    const n = Math.ceil(time / interval - 1e-9) - 1;
+    return Math.max(0, n * interval);
+}
+
+/** Sorted, unique clip start/end boundary times across every cue in `state`. */
+export function clipBoundaries(state) {
+    const set = new Set();
+    for (const id of Object.keys(state?.cues || {})) {
+        const c = state.cues[id];
+        if (!c) continue;
+        const start = c.startTime || 0;
+        set.add(start);
+        set.add(start + (c.duration || 0));
+    }
+    return [...set].sort((a, b) => a - b);
+}
+
+/** Next boundary strictly after `time`, or null when none. */
+export function nextBoundary(boundaries, time) {
+    for (const b of boundaries) if (b > time + 1e-9) return b;
+    return null;
+}
+
+/** Previous boundary strictly before `time`, or null when none. */
+export function prevBoundary(boundaries, time) {
+    let result = null;
+    for (const b of boundaries) if (b < time - 1e-9) result = b;
+    return result;
+}
+
 /** pxPerSecond for a timeline whose total `duration` fills `width` (fit-to-window). */
 export function zoomForDuration(duration, width) {
     return width > 0 && duration > 0 ? width / duration : 50;

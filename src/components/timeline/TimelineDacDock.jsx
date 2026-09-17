@@ -6,7 +6,7 @@ import { useTimeline } from '../../contexts/TimelineContext';
  * to route that track to the DAC channel.
  */
 const TimelineDacDock = () => {
-    const { actions, discoverAndSeedChannels } = useTimeline();
+    const { discoverChannels } = useTimeline();
     const [dacs, setDacs] = useState([]);
     const [scanning, setScanning] = useState(false);
     const [error, setError] = useState('');
@@ -15,7 +15,7 @@ const TimelineDacDock = () => {
         setScanning(true);
         setError('');
         try {
-            const found = await discoverAndSeedChannels();
+            const found = await discoverChannels();
             setDacs(found || []);
             if (!found || found.length === 0) setError('No DACs found. Is the DAC connected on this network?');
         } catch (e) {
@@ -23,7 +23,7 @@ const TimelineDacDock = () => {
         } finally {
             setScanning(false);
         }
-    }, [discoverAndSeedChannels]);
+    }, [discoverChannels]);
 
     useEffect(() => { scan(); }, [scan]);
 

@@ -3,6 +3,7 @@ import {
     beatDuration, snapInterval, snapToGrid, snapDuration,
     timeToPx, pxToTime, formatTimecode, formatClock, formatDuration,
     getTickStep, rulerTicks, beatGridLines, zoomForDuration, clampZoom,
+    nextGridTime, prevGridTime, clipBoundaries, nextBoundary, prevBoundary,
 } from './timelineTime';
 
 describe('snapping', () => {
@@ -112,5 +113,52 @@ describe('zoom helpers', () => {
         expect(clampZoom(3)).toBe(5);
         expect(clampZoom(5000)).toBe(2000);
         expect(clampZoom(120)).toBe(120);
+    });
+});
+
+describe('grid navigation', () => {
+    it('nextGridTime returns the next strict grid line', () => {
+        expect(nextGridTime(0.25, 0.5)).toBe(0.5);
+        expect(nextGridTime(0.5, 0.5)).toBe(1.0);
+        expect(nextGridTime(0.0, 0.5)).toBe(0.5);
+        expect(nextGridTime(3.3, 1)).toBe(4.0);
+    });
+
+    it('prevGridTime returns the previous strict grid line, clamped at 0', () => {
+        expect(prevGridTime(0.75, 0.5)).toBe(0.5);
+        expect(prevGridTime(0.5, 0.5)).toBe(0.0);
+        expect(prevGridTime(0.4, 0.5)).toBe(0.0);
+        expect(prevGridTime(3.3, 1)).toBe(3.0);
+        expect(prevGridTime(0.0, 0.5)).toBe(0.0);
+    });
+
+    it('treats a zero/invalid grid as no-op', () => {
+        expect(nextGridTime(1.7, 0)).toBe(1.7);
+        expect(prevGridTime(1.7, -1)).toBe(0);
+    });
+
+    it('collects unique sorted clip boundaries (start and end)', () => {
+        const state = {
+            cues: {
+                a: { startTime: 0, duration: 5 },
+                b: { startTime: 2, duration: 3 },
+                c: { startTime: 4, duration: 3 },
+            },
+        };
+        expect(clipBoundaries(state)).toEqual([0, 2, 4, 5, 7]);
+    });
+
+    it('nextBoundary finds the first boundary after time', () => {
+        const bs = [0, 2, 3, 5, 7, 8];
+        expect(nextBoundary(bs, 2)).toBe(3);
+        expect(nextBoundary(bs, 8.01)).toBeNull();
+        expect(nextBoundary([], 1)).toBeNull();
+    });
+
+    it('prevBoundary finds the last boundary before time', () => {
+        const bs = [0, 2, 3, 5, 7, 8];
+        expect(prevBoundary(bs, 3)).toBe(2);
+        expect(prevBoundary(bs, 0)).toBeNull();
+        expect(prevBoundary([], 5)).toBeNull();
     });
 });

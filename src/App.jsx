@@ -1933,7 +1933,8 @@ const SidePanelContainer = React.memo(({
     useEffect(() => {
         let rafId;
         const loop = (timestamp) => {
-            if (timestamp - lastPreviewTimeRef.current > previewInterval) {
+            try {
+                if (timestamp - lastPreviewTimeRef.current > previewInterval) {
                 // Always count the frame: UI-FPS is the permanent loop health, not the
                 // preview render rate.
                 previewFrameCountRef.current++;
@@ -1965,6 +1966,10 @@ const SidePanelContainer = React.memo(({
                 } else {
                     lastPreviewSigRef.current = [];
                 }
+                }
+            } catch (err) {
+                // UI-FPS tracker must never die: keep the rAF health chain alive.
+                console.error('[previewTickLoop] error (kept alive):', err);
             }
             rafId = requestAnimationFrame(loop);
         };
@@ -2822,6 +2827,8 @@ function App() {
 
                 if (layerIndex === undefined || colIndex === undefined) return;
 
+                const existingClip = clipContentsRef.current?.[pageId]?.[layerIndex]?.[colIndex] || {};
+
                 const newClipContent = {
                     type: 'ilda',
                     workerId,
@@ -2830,7 +2837,12 @@ function App() {
                     fileName,
                     filePath,
                     parsing: true, // Set parsing status to true
-                    playbackSettings: {
+                    // Preserve the user's saved playback config across re-parses
+                    // (BPM/timeline sync speed, beats, duration, FPS). A re-parse
+                    // runs on every project load, so hardcoding FPS defaults here
+                    // silently reverted BPM-synced clips — same caveat applies to
+                    // the relocated filePath echoed below.
+                    playbackSettings: existingClip.playbackSettings || {
                         mode: 'fps',
                         duration: totalFrames / 60,
                         beats: 8,
@@ -2998,7 +3010,16 @@ function App() {
             }
 
             const now = performance.now();
-            if (now - lastFrameTime > dacFrameInterval) {
+            if (now - lastFrameTime >= dacFrameInterval) {
+                // Fixed-step cadence: advance the frame clock to the CURRENT slot
+                // instead of `lastFrameTime = now`. Under a main-thread stall the
+                // accumulated delay is collapsed into whole missed slots (dropped
+                // frames), never partial drift — so the stream re-fires on the exact
+                // 30fps grid instead of bursting after a stall, which the main
+                // process's rigid 30fps sampler previously rode as a per-channel
+                // "repeat, then catch back up".
+                const missedFrames = Math.max(1, Math.floor((now - lastFrameTime) / dacFrameInterval));
+                lastFrameTime += missedFrames * dacFrameInterval;
                 if (window.electronAPI && isWorldOutputActiveRef.current && !isTimelinePageActiveRef.current) {
                     const dacGroups = new Map(); // key: "ip:channel", value: { ip, channel, frames: [] }
 
@@ -3507,10 +3528,12 @@ function App() {
                         window.electronAPI.send('dac-frame-update', framesToSend);
                     }
                 }
-                lastFrameTime = now;
+                // lastFrameTime was already aligned to the current frame slot at the
+                // top of the tick; do NOT reset it to `now` here, or the grid drifts.
             }
-            const elapsedThisTick = performance.now() - now;
-            dacProcessTimeoutId = setTimeout(animate, Math.max(0, dacFrameInterval - elapsedThisTick));
+            // Fire exactly on the next 30fps grid slot (lastFrameTime is on-slot).
+            const nextFireAt = lastFrameTime + dacFrameInterval;
+            dacProcessTimeoutId = setTimeout(animate, Math.max(0, nextFireAt - performance.now()));
         };
 
         function isTypedArray(obj) {
@@ -3519,6 +3542,7 @@ function App() {
 
         // Frame fetcher loop for updating liveFrames
         const frameFetcherLoop = (timestamp) => {
+            try {
             const currentFrameInterval = 1000 / playbackFpsRef.current;
             const currentBpm = bpmRef.current || 120;
 
@@ -3852,7 +3876,11 @@ function App() {
                 }
             }
 
-animationFrameId = requestAnimationFrame(frameFetcherLoop);
+            } catch (err) {
+                console.error('[frameFetcherLoop] preview-loop error (kept alive):', err);
+            }
+
+            animationFrameId = requestAnimationFrame(frameFetcherLoop);
         };
 
         // Generator preview regeneration scheduler — lives in the EFFECT scope (created
@@ -3873,7 +3901,12 @@ animationFrameId = requestAnimationFrame(frameFetcherLoop);
         let genThumbnailRaf = 0; // legacy cleanup compatibility (scheduler uses timers only)
         const lastPreviewRegen = new Map(); // generator workerId -> last regeneration time
         const genThumbnailLoop = () => {
-            const pageIdx = stateRef.current.activePageId;
+            // Declared OUTSIDE the try block: it is read after the catch closes
+            // (when scheduling the next tick), so a let inside try would be out of
+            // scope and throw "soonest is not defined" whenever this loop completes.
+            let soonest = 500;
+            try {
+                const pageIdx = stateRef.current.activePageId;
             const clipSource = liveClipContentsRef.current || clipContentsRef.current;
             const pageClips = clipSource?.[pageIdx] || [];
             const mode = stateRef.current.thumbnailRenderMode;
@@ -3885,7 +3918,6 @@ animationFrameId = requestAnimationFrame(frameFetcherLoop);
 
             const now = performance.now();
             const due = [];
-            let soonest = 500;
 
             for (let li = 0; li < pageClips.length; li++) {
                 const row = pageClips[li] || [];
@@ -3929,6 +3961,10 @@ animationFrameId = requestAnimationFrame(frameFetcherLoop);
                 if (clip && clip.currentParams) {
                     processClipRef.current(clip, li, ci, genWorkerId, true, now);
                 }
+            }
+
+            } catch (err) {
+                console.error('[genThumbnailLoop] thumbnail-loop error (kept alive):', err);
             }
 
             genThumbnailTimer = setTimeout(genThumbnailLoop, Math.max(10, Math.min(soonest, 500)));
@@ -5359,7 +5395,8 @@ animationFrameId = requestAnimationFrame(frameFetcherLoop);
         if (backgroundRafRef.current) return; // Already running
 
         const loop = () => {
-            if (!isPlayingRef.current) {
+            try {
+                if (!isPlayingRef.current) {
                 // Global playback stopped/paused - clear all background clips
                 backgroundRunningClipsRef.current.clear();
                 backgroundRafRef.current = null;
@@ -5395,6 +5432,12 @@ animationFrameId = requestAnimationFrame(frameFetcherLoop);
             clipsToRemove.forEach(clip => {
                 backgroundRunningClipsRef.current.delete(clip);
             });
+
+            } catch (err) {
+                // Swallow and continue: a single bad background clip must never
+                // freeze the released-flash preview render chain.
+                console.error('[backgroundFlashLoop] error (kept alive):', err);
+            }
 
             // Continue loop if there are still clips
             if (backgroundRunningClipsRef.current.size > 0) {
@@ -6505,6 +6548,12 @@ animationFrameId = requestAnimationFrame(frameFetcherLoop);
                         ildaParserWorker.postMessage({
                             type: 'file-content-response',
                             requestId: fileEntry.requestId,
+                            // The worker echoes `filePath` from its request context in the
+                            // parse-ilda success message. Passing the relocated path here
+                            // lets it update that context, so the clip is NOT reverted to
+                            // the old missing path when SET_CLIP_CONTENT runs (which
+                            // previously made the RelocateModal reappear every load).
+                            filePath: newPath,
                             arrayBuffer: newArrayBuffer,
                         }, [newArrayBuffer]);
                     }
@@ -6577,38 +6626,57 @@ animationFrameId = requestAnimationFrame(frameFetcherLoop);
 
     const handleThumbnailError = useCallback((layerIndex, colIndex) => {
         const pageIdx = stateRef.current.activePageId;
-        console.log(`Thumbnail load error for ${pageIdx}-${layerIndex}-${colIndex}, requesting regeneration...`);
-        // Use live ref to get latest clip data if possible
-        const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
+        try {
+            // Use live ref to get latest clip data if possible
+            const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
+            const thumbPath = clip?.thumbnailPath || 'unknown';
+            console.warn(`Thumbnail not found for clip ${pageIdx}-${layerIndex}-${colIndex} (${thumbPath}), requesting regeneration...`);
 
-        if (clip) {
-            if (clip.type === 'ilda' && clip.workerId && ildaParserWorker) {
-                const frameIndex = thumbnailFrameIndexes[pageIdx][layerIndex][colIndex] || 0;
-                ildaParserWorker.postMessage({
-                    type: 'get-frame',
-                    workerId: clip.workerId,
-                    frameIndex: frameIndex,
-                    isStillFrame: true,
-                    layerIndex,
-                    colIndex,
-                    pageId: pageIdx
-                });
-            } else if (clip.type === 'generator') {
-                const frameForThumbnail = clip.stillFrame || (clip.frames && clip.frames[0]);
-                if (frameForThumbnail && frameForThumbnail.points) {
-                    generateThumbnail(frameForThumbnail, clip.effects, layerIndex, colIndex, optimizationEnabled, pageIdx).then(path => {
-                        if (path) {
-                            dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { thumbnailPath: path, thumbnailVersion: Date.now() }, pageId: pageIdx } });
-                        }
+            if (clip) {
+                if (clip.type === 'ilda' && clip.workerId && ildaParserWorker) {
+                    const frameIndex = (thumbnailFrameIndexes[pageIdx]?.[layerIndex]?.[colIndex]) || 0;
+                    ildaParserWorker.postMessage({
+                        type: 'get-frame',
+                        workerId: clip.workerId,
+                        frameIndex: frameIndex,
+                        isStillFrame: true,
+                        layerIndex,
+                        colIndex,
+                        pageId: pageIdx
                     });
-                } else if (clip.generatorDefinition) {
-                    // No still frame available (e.g. right after a project load before
-                    // regeneration finished) - rebuild the clip so a thumbnail can exist.
-                    console.log(`Regenerating generator clip ${pageIdx}-${layerIndex}-${colIndex} to restore its thumbnail`);
-                    const seq = ++generatorRequestSeqRef.current;
-                    regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams, seq, false, false, null, null, pageIdx);
+                } else if (clip.type === 'ilda' && clip.filePath && ildaParserWorker) {
+                    // Older projects load with a stale thumbnailPath but no workerId yet
+                    // (LOAD_PROJECT invalidates workerIds and re-parse is scheduled).
+                    // Re-queue the parse so the workerBecameValid effect can regenerate
+                    // the thumbnail from actual frame data.
+                    console.warn(`Thumbnail regeneration: clip ${pageIdx}-${layerIndex}-${colIndex} has no workerId, re-parsing ${clip.filePath} to recreate the thumbnail`);
+                    ildaParserWorker.postMessage({
+                        type: 'load-and-parse-ilda',
+                        fileName: clip.fileName,
+                        filePath: clip.filePath,
+                        layerIndex,
+                        colIndex,
+                        pageId: pageIdx
+                    });
+                } else if (clip.type === 'generator') {
+                    const frameForThumbnail = clip.stillFrame || (clip.frames && clip.frames[0]);
+                    if (frameForThumbnail && frameForThumbnail.points) {
+                        generateThumbnail(frameForThumbnail, clip.effects, layerIndex, colIndex, optimizationEnabled, pageIdx).then(path => {
+                            if (path) {
+                                dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { thumbnailPath: path, thumbnailVersion: Date.now() }, pageId: pageIdx } });
+                            }
+                        }).catch(err => console.error(`Thumbnail regeneration failed for generator ${pageIdx}-${layerIndex}-${colIndex}:`, err));
+                    } else if (clip.generatorDefinition) {
+                        // No still frame available (e.g. right after a project load before
+                        // regeneration finished) - rebuild the clip so a thumbnail can exist.
+                        console.log(`Regenerating generator clip ${pageIdx}-${layerIndex}-${colIndex} to restore its thumbnail`);
+                        const seq = ++generatorRequestSeqRef.current;
+                        regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams, seq, false, false, null, null, pageIdx);
+                    }
                 }
             }
+        } catch (error) {
+            console.error(`Thumbnail regeneration failed for ${pageIdx}-${layerIndex}-${colIndex}:`, error);
         }
     }, [clipContentsRef, thumbnailFrameIndexes, ildaParserWorker, optimizationEnabled, regenerateGeneratorClip]);
 

@@ -131,7 +131,7 @@ function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk,
     }
 }
 
-function buildFrameChunks(chType, pps, points) {
+function buildFrameChunks(chType, pps, points, mode, fps) {
     const isTyped = points instanceof Float32Array;
     let totalPoints = isTyped ? Math.floor(points.length / 8) : (points ? points.length : 0);
     if (totalPoints === 0) return [];
@@ -288,7 +288,19 @@ function buildFrameChunks(chType, pps, points) {
     const frameBuf = Buffer.alloc(dataChunks * payloadLen);
     frameBuf.writeInt16LE(totalPoints, 0);  // count (read by DMA as 16-bit LE)
     frameBuf.writeUInt8(0, 2);              // status (firmware overwrites with 0xfa when complete)
-    frameBuf.writeUInt8(pps, 3);            // PPS (DMA timing)
+
+    // Mode-aware PPS byte. The DMA loops the FULL wire frame (after fill/clip),
+    // so in Variable PPS -> Fixed FPS the byte must reflect the wire point count
+    // (not the source count) or the frame plays longer than 1/fps and the next
+    // update overwrites it mid-play — the classic constant-PPS lag. In Variable
+    // FPS -> Fixed PPS it stays at the configured Kpps value while the effective
+    // frame rate follows the content.
+    let ppsByte = pps;
+    if (mode === 'varPpsFixedFps') {
+        const effFps = (fps && fps > 0) ? fps : 30;
+        ppsByte = Math.max(1, Math.min(255, Math.round((totalPoints * effFps) / 1000)));
+    }
+    frameBuf.writeUInt8(ppsByte, 3);        // PPS (DMA timing)
     writePoints(frameBuf, 0, isTyped, points, totalPoints, totalPoints, HEADER_SIZE);
 
     for (let ci = 0; ci < TOTAL_CHUNKS; ci++) {
@@ -483,8 +495,15 @@ function sendFrame(ip, channel, points, fps, type, options) {
     }
     st.pendingTimers = [];
 
-    // Build all chunks for this frame
-    const chunks = buildFrameChunks(chType, pps, points);
+    // Build all chunks for this frame. The PPS byte is mode-aware: in Variable
+    // PPS -> Fixed FPS it is derived from the wire point count so the frame
+    // still completes in 1/fps, in Variable FPS -> Fixed PPS it stays at the
+    // configured Kpps while the effective frame rate varies with content.
+    const mode = (options && options.targetMode) ? options.targetMode : 'varFpsFixedPps';
+    const effFps = (options && options.targetFps && options.targetFps > 0)
+        ? options.targetFps
+        : (fps && fps > 0 ? fps : 30);
+    const chunks = buildFrameChunks(chType, pps, points, mode, effFps);
     if (chunks.length === 0) return;
 
     // Seq is per-frame — same value on all 5 chunks
@@ -649,4 +668,5 @@ module.exports = {
     stopSending,
     closeAll,
     setStatusCallback,
+    PTS_FULL,
 };

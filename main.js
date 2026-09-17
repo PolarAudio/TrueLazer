@@ -834,6 +834,8 @@ function buildApplicationMenu(mode) {
       label: 'View',
       submenu: [
         { label: 'Predefined Layouts', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'view-layouts'); } },
+        { type: 'separator' },
+        { label: 'Toggle Developer Tools', accelerator: 'CommandOrControl+Shift+I', click: () => { if (mainWindow) mainWindow.webContents.toggleDevTools(); } },
         {
           label: 'Color Theme',
           submenu: [

@@ -11,6 +11,12 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
   cycleFrames, cycleInterval, cycleEnabled }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
+
+  // If the thumbnail path/version changes (e.g. regenerated), clear the error latch
+  useEffect(() => {
+    if (thumbError) setThumbError(false);
+  }, [activeClipData?.thumbnailPath, activeClipData?.thumbnailVersion]);
 
   const handleClear = () => {
       if (onDeactivateLayerClips) onDeactivateLayerClips(index);
@@ -207,10 +213,14 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
                 shouldShowLive ? (
                     <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} frames={activeClipData?.frames} effects={combinedEffects} progress={activeClipData?.type === 'generator' ? liveProgress : 0} syncSettings={combinedSyncSettings} clipDuration={thumbClipDuration} bpm={thumbBpm || 120} fftLevels={fftLevels} ildaParserWorker={ildaParserWorker} workerId={activeClipData?.workerId} liveFramesRef={liveFramesRef} progressRef={progressRef} cycleFrames={cycleFrames} cycleInterval={cycleInterval} cycleEnabled={cycleEnabled} liveEnabled={thumbnailRenderMode === 'active'} />
                 ) : (
-                    activeClipData.thumbnailPath ? (
+                    activeClipData.thumbnailPath && !thumbError ? (
                         <img 
                             src={`file://${activeClipData.thumbnailPath}?t=${activeClipData.thumbnailVersion || Date.now()}`}
                             alt="layer-thumbnail"
+                            onError={() => {
+                                console.warn(`LayerControls: Thumbnail not found: ${activeClipData.thumbnailPath}`);
+                                setThumbError(true);
+                            }}
                             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                         />
                     ) : (

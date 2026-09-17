@@ -480,6 +480,17 @@ self.onmessage = async function(e) {
       }
       pendingFileRequests.delete(requestId);
 
+      // Relocate support: the renderer passes the newly-located path alongside the
+      // content so the parse-ilda echo forwards the CURRENT path instead of the
+      // original (missing) one. Otherwise SET_CLIP_CONTENT in the renderer reverts
+      // the clip to the broken path and the RelocateModal reappears every load.
+      if (e.data.filePath) {
+        requestContext.filePath = e.data.filePath;
+      }
+      if (e.data.fileName) {
+        requestContext.fileName = e.data.fileName;
+      }
+
       if (e.data.error) {
         console.error(`Worker: Error receiving file content: ${e.data.error}`);
         self.postMessage({ type: 'error', message: e.data.error, originalType: 'parse-ilda', ...requestContext });

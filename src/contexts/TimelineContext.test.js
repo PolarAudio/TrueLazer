@@ -30,6 +30,17 @@ describe('initial + hydration', () => {
         expect(s.cues.c1.startTime).toBe(2);
         expect(s.settings.bpm).toBe(130);
         expect(s.settings.zoom).toBe(50); // default preserved
+        expect(s.settings.selectedCueIds).toEqual([]);
+    });
+
+    it('migrates a legacy single selectedCueId into the selection array', () => {
+        const s = normalizeHydratedState({
+            settings: { selectedCueId: 'c1' },
+            channels: { a: { id: 'a', name: 'A', cues: ['c1'] } },
+            cues: { c1: { id: 'c1', startTime: 2, duration: 4 } },
+        });
+        expect(s.settings.selectedCueIds).toEqual(['c1']);
+        expect(s.settings.selectedCueId).toBe('c1');
     });
 
     it('strips stale workerId from ILDA cues on hydration (runtime cache handle)', () => {
@@ -61,6 +72,7 @@ describe('cue lifecycle', () => {
         expect(s.cues.cueA.channelId).toBe('ch1');
         expect(s.channels.ch1.cues).toContain('cueA');
         expect(s.settings.selectedCueId).toBe('cueA');
+        expect(s.settings.selectedCueIds).toEqual(['cueA']);
         expect(s.settings.selectedChannelId).toBe('ch1');
     });
 
@@ -88,6 +100,70 @@ describe('cue lifecycle', () => {
         expect(s.cues.cueA).toBeUndefined();
         expect(s.channels.ch1.cues).toEqual([]);
         expect(s.settings.selectedCueId).toBeNull();
+        expect(s.settings.selectedCueIds).toEqual([]);
+    });
+
+    it('SELECT additive toggles membership and keeps the anchor', () => {
+        let s = seeded();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'a', startTime: 0 } } });
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch2', cue: { id: 'b', startTime: 4 } } });
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c', startTime: 8 } } });
+        expect(s.settings.selectedCueIds).toEqual(['c']);
+
+        s = run(s, { type: 'SELECT', payload: { cueId: 'a', channelId: 'ch1', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['c', 'a']);
+        expect(s.settings.selectedCueId).toBe('a');
+
+        s = run(s, { type: 'SELECT', payload: { cueId: 'b', channelId: 'ch2', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['c', 'a', 'b']);
+        expect(s.settings.selectedCueId).toBe('b');
+
+        // Toggling off the anchor falls back to the last remaining sibling.
+        s = run(s, { type: 'SELECT', payload: { cueId: 'b', channelId: 'ch2', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['c', 'a']);
+        expect(s.settings.selectedCueId).toBe('a');
+    });
+
+    it('SELECT without additive replaces the whole selection; null clears it', () => {
+        let s = seeded();
+        for (const id of ['a', 'b', 'c']) {
+            s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id, startTime: 0 } } });
+        }
+        // ADD_CUE leaves the last cue ('c') alone; fold the others in.
+        s = run(s, { type: 'SELECT', payload: { cueId: 'a', channelId: 'ch1', additive: true } });
+        s = run(s, { type: 'SELECT', payload: { cueId: 'b', channelId: 'ch1', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['c', 'a', 'b']);
+
+        s = run(s, { type: 'SELECT', payload: { cueId: 'b', channelId: 'ch1' } });
+        expect(s.settings.selectedCueIds).toEqual(['b']);
+        expect(s.settings.selectedCueId).toBe('b');
+
+        s = run(s, { type: 'SELECT', payload: { cueId: null, channelId: 'ch1' } });
+        expect(s.settings.selectedCueIds).toEqual([]);
+        expect(s.settings.selectedCueId).toBeNull();
+    });
+
+    it('SELECT additive on a null cue clears the selection', () => {
+        let s = seeded();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'a' } } });
+        s = run(s, { type: 'SELECT', payload: { cueId: 'a', channelId: 'ch1', additive: true } });
+        s = run(s, { type: 'SELECT', payload: { cueId: null, channelId: 'ch2', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual([]);
+        expect(s.settings.selectedCueId).toBeNull();
+    });
+
+    it('REMOVE_CUE prunes a dropped member of a multi-selection', () => {
+        let s = seeded();
+        for (const id of ['a', 'b']) {
+            s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id } } });
+        }
+        // ADD_CUE leaves 'b' selected; fold 'a' in via an additive select.
+        s = run(s, { type: 'SELECT', payload: { cueId: 'a', channelId: 'ch1', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['b', 'a']);
+        expect(s.settings.selectedCueId).toBe('a');
+        s = run(s, { type: 'REMOVE_CUE', payload: { id: 'a' } });
+        expect(s.settings.selectedCueIds).toEqual(['b']);
+        expect(s.settings.selectedCueId).toBe('b');
     });
 
     it('REMOVE_CHANNEL cascades to its cues and lanes', () => {
