@@ -1416,6 +1416,86 @@ function createWindow() {
     } catch (error) { return { success: true }; }
   });
 
+  // Timeline project files (Ctrl+S / Ctrl+O in the Timeline window)
+  let currentTimelineProjectPath = null;
+  ipcMain.handle('save-timeline-project', async (event, projectData, defaultName = 'timeline-project.json') => {
+    const defaultPath = currentTimelineProjectPath || path.join(app.getPath('documents'), 'TrueLazer', defaultName);
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Timeline Project',
+      defaultPath,
+      filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }]
+    });
+    if (canceled || !filePath) return { success: false, canceled: true };
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
+      currentTimelineProjectPath = filePath;
+      return { success: true, filePath };
+    } catch (error) { return { success: false, error: error.message }; }
+  });
+
+  ipcMain.handle('open-timeline-project', async (event) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Open Timeline Project',
+      defaultPath: path.join(app.getPath('documents'), 'TrueLazer'),
+      filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+    if (canceled || !filePaths.length) return null;
+    try {
+      const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
+      currentTimelineProjectPath = filePaths[0];
+      return data;
+    } catch (error) {
+      return null;
+    }
+  });
+
+  // Art-Net TimeCode (ArtTimeCode opcode 0x9700) listener. dmxnet already owns
+  // UDP 6454 for DMX; a lone Art-Net TimeCode source is uncommon on that same
+  // port, so this is best-effort: if the bind fails we log and continue.
+  let artnetTcSocket = null;
+  const startArtnetTimecodeListener = () => {
+    if (artnetTcSocket) return;
+    try {
+      const dgram = require('dgram');
+      artnetTcSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      artnetTcSocket.on('message', (msg) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (msg.length < 19) return;
+        if (msg.toString('latin1', 0, 7) !== 'Art-Net') return;
+        const opcode = msg.readUInt16LE(8);
+        if (opcode !== 0x9700) return; // ArtTimeCode
+        const frames = msg[14];
+        const seconds = msg[15];
+        const minutes = msg[16];
+        const hours = msg[17];
+        const type = msg[18];
+        mainWindow.webContents.send('artnet-timecode', { hours, minutes, seconds, frames, type });
+      });
+      artnetTcSocket.bind(6454, () => {
+        console.log('ArtNet TimeCode: listening on UDP 6454 (best-effort)');
+      });
+      artnetTcSocket.on('error', (err) => {
+        console.warn('ArtNet TimeCode listener error:', err.message);
+        artnetTcSocket = null;
+      });
+    } catch (e) {
+      console.warn('ArtNet TimeCode listener unavailable:', e.message);
+      artnetTcSocket = null;
+    }
+  };
+
+  ipcMain.handle('start-artnet-timecode-listener', () => {
+    startArtnetTimecodeListener();
+    return { success: true };
+  });
+  ipcMain.on('stop-artnet-timecode-listener', () => {
+    if (artnetTcSocket) {
+      try { artnetTcSocket.close(); } catch (_) {}
+      artnetTcSocket = null;
+    }
+  });
+
   // NDI IPC Handlers
   let ndiCaptureSettings = { width: 480, height: 480 };
   let ndiPerformanceData = { totalTime: 0, count: 0, lastReport: Date.now() };

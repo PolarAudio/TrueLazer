@@ -64,6 +64,30 @@ export const initializeMidi = async (retries = 3) => {
 };
 
 /**
+ * Raw MIDI byte tap for timecode sync (MTC quarter/full frames, MIDI Clock,
+ * Song Position Pointer, start/stop/continue). WebMidi's `midimessage` event
+ * carries the full byte stream including SysEx and System Real-Time messages
+ * that the higher-level note/CC listeners never surface.
+ * @param {string} inputId - The ID of the MIDI device.
+ * @param {Function} callback - Receives `Array<number>` raw message bytes.
+ * @return {Function} A cleanup function to remove the listener.
+ */
+export const listenToRawMidiBytes = (inputId, callback) => {
+  if (WebMidi.enabled) {
+    const input = WebMidi.getInputById(inputId);
+    if (input) {
+      const listener = (e) => {
+        const data = e.data || e.rawData;
+        if (data) callback(Array.from(data));
+      };
+      input.addListener('midimessage', listener);
+      return () => input.removeListener('midimessage', listener);
+    }
+  }
+  return () => {};
+};
+
+/**
  * Gets all available MIDI input devices.
  * @return {Array<{id: string, name: string}>} List of inputs.
  */

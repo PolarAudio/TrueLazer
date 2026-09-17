@@ -137,6 +137,15 @@ contextBridge.exposeInMainWorld(
                                             saveArtnetMappings: (mappings) => ipcRenderer.invoke('save-artnet-mappings', mappings),
                                             exportMappings: (mappings, type) => ipcRenderer.invoke('export-mappings', mappings, type),
                                             importMappings: (type) => ipcRenderer.invoke('import-mappings', type),
+                                            saveTimelineProject: (data, defaultName) => ipcRenderer.invoke('save-timeline-project', data, defaultName),
+                                            openTimelineProject: () => ipcRenderer.invoke('open-timeline-project'),
+                                            startArtnetTimecodeListener: () => ipcRenderer.invoke('start-artnet-timecode-listener'),
+                                            stopArtnetTimecodeListener: () => ipcRenderer.send('stop-artnet-timecode-listener'),
+                                            onArtnetTimecode: (callback) => {
+                                                const listener = (event, payload) => callback(payload);
+                                                ipcRenderer.on('artnet-timecode', listener);
+                                                return () => ipcRenderer.removeListener('artnet-timecode', listener);
+                                            },
                                             // OSC
                                             initializeOsc: (config) => ipcRenderer.invoke('initialize-osc', config),
                                             sendOscMessage: (address, args) => ipcRenderer.send('send-osc-message', address, args),

@@ -43,6 +43,20 @@ function sendFrame(ip, channel, points, fps, type, options) {
         return;
     }
 
+    // Only canonical point containers are supported: Float32Array (8 floats per
+    // point), Buffer/Uint8Array, or a plain array. Anything else (e.g. a frame
+    // metadata wrapper object) would make downstream length math yield NaN and
+    // crash with Buffer.alloc(NaN) — drop it loudly instead.
+    const isTypedPoints = points instanceof Float32Array || Buffer.isBuffer(points) || points instanceof Uint8Array;
+    if (!isTypedPoints && !Array.isArray(points)) {
+        console.error(`[DacComm] Ignoring non-point payload for ${ip}:`, Object.prototype.toString.call(points), points?.constructor?.name || typeof points);
+        return;
+    }
+    if (isTypedPoints && !Number.isFinite(points.length)) {
+        console.error(`[DacComm] Ignoring points with non-finite length for ${ip}`);
+        return;
+    }
+
     // Resolve the effective PPS/FPS target for this output. Per-channel
     // settings carried in `options` (pps, targetPps, targetFps, ppsPreset,
     // targetMode) win; otherwise fall back to the provided fps / preset default.

@@ -2460,6 +2460,12 @@ function App() {
     }, [optimizationSettings]);
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
     useEffect(() => { isWorldOutputActiveRef.current = isWorldOutputActive; }, [isWorldOutputActive]);
+
+    // While the Timeline window is open the grid's render loop must not feed a
+    // second, competing dac-frame-update stream to the same DAC channels.
+    const isTimelinePageActiveRef = useRef(currentPage === 'timeline');
+    useEffect(() => { isTimelinePageActiveRef.current = currentPage === 'timeline'; }, [currentPage]);
+
     useEffect(() => { selectedDacRef.current = selectedDac; }, [selectedDac]);
     useEffect(() => { bpmRef.current = state.bpm; }, [state.bpm]);
     useEffect(() => { selectedLayerIndexRef.current = selectedLayerIndex; }, [selectedLayerIndex]);
@@ -2993,7 +2999,7 @@ function App() {
 
             const now = performance.now();
             if (now - lastFrameTime > dacFrameInterval) {
-                if (window.electronAPI && isWorldOutputActiveRef.current) {
+                if (window.electronAPI && isWorldOutputActiveRef.current && !isTimelinePageActiveRef.current) {
                     const dacGroups = new Map(); // key: "ip:channel", value: { ip, channel, frames: [] }
 
                     // 1. Process Clip Content
