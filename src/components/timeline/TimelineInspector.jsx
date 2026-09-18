@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useTimeline } from '../../contexts/TimelineContext';
 import { formatTimecode } from '../../utils/timelineTime';
 import { generatorDefinitions } from '../../utils/generatorDefinitions';
+import { effectDefinitions } from '../../utils/effectDefinitions';
 import TimelinePreview from './TimelinePreview';
 
 const NumberField = ({ label, value, onCommit, step = 0.01, min = 0 }) => {
@@ -47,15 +48,26 @@ const GeneratorParams = ({ cue }) => {
     const setParam = (id, value) =>
         actions.updateCue(cue.id, { generatorParams: { ...params, [id]: value } });
 
+    const dragGenParam = (e, ctrl) => {
+        e.dataTransfer.setData(
+            'application/x-tl-genparam',
+            JSON.stringify({ genId: cue.generatorId, paramId: ctrl.id }),
+        );
+        e.dataTransfer.effectAllowed = 'link';
+    };
+
     return (
         <div className="timeline-generator-params">
+            <div className="timeline-inspector-hint">
+                Drag <span className="timeline-gen-drag">✥</span> onto an automation lane to animate that param.
+            </div>
             {def.paramControls.map((ctrl) => {
                 const visible = ctrl.condition ? ctrl.condition(params) : true;
                 if (!visible) return null;
                 const val = params[ctrl.id] ?? def.defaultParams[ctrl.id];
                 if (ctrl.type === 'range') {
                     return (
-                        <label key={ctrl.id} className="timeline-field-range">
+                        <label key={ctrl.id} className="timeline-field-range timeline-field-range-draggable">
                             <span>{ctrl.label} <b>{typeof val === 'number' ? val.toFixed(2) : val}</b></span>
                             <input
                                 type="range"
@@ -63,6 +75,12 @@ const GeneratorParams = ({ cue }) => {
                                 value={val}
                                 onChange={(e) => setParam(ctrl.id, parseFloat(e.target.value))}
                             />
+                            <span
+                                className="timeline-gen-drag"
+                                draggable
+                                title="Drag onto a channel automation lane to animate this param over time"
+                                onDragStart={(e) => dragGenParam(e, ctrl)}
+                            >✥</span>
                         </label>
                     );
                 }
@@ -222,6 +240,29 @@ const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
             <button className="timeline-btn danger" onClick={() => { actions.removeCue(cue.id); }}>Delete Cue</button>
                 </>
             )}
+
+            <div className="timeline-inspector-section timeline-effect-library">
+                <div className="timeline-inspector-subhead">Automation Effects</div>
+                <div className="timeline-inspector-hint">
+                    Drag an effect onto an automation lane, then pick the parameter to link.
+                </div>
+                <div className="timeline-effect-list">
+                    {effectDefinitions.map((def) => (
+                        <div
+                            key={def.id}
+                            className="timeline-effect-item"
+                            draggable
+                            title={def.description || def.name}
+                            onDragStart={(e) => {
+                                e.dataTransfer.setData('application/x-tl-effect', def.id);
+                                e.dataTransfer.effectAllowed = 'link';
+                            }}
+                        >
+                            {def.name}
+                        </div>
+                    ))}
+                </div>
+            </div>
         </div>
     );
 };

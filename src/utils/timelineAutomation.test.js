@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
     evaluateKeyframes, evaluateLane, transformFrame, applyLanesToPoints,
     resolveEasing, getLaneTarget, laneSvgPath,
+    getLaneParam, getLaneEffectDef, laneDefaultValue, evaluateLaneForEffect,
+    buildChannelEffects,
+    getLaneGenParam, getLaneGenDef, evaluateGenLane, buildGeneratorOverrides,
 } from './timelineAutomation';
 
 describe('resolveEasing', () => {
@@ -67,6 +70,43 @@ describe('evaluateKeyframes', () => {
     it('is symmetric and monotonic for a symmetric ease', () => {
         const keys2 = [{ time: 0, value: 0, easing: 'easeInOut' }, { time: 2, value: 10 }];
         expect(evaluateKeyframes(keys2, 1.0)).toBeCloseTo(5, 2);
+    });
+
+    it('tension 0 keeps the segment perfectly linear', () => {
+        const k = [{ time: 0, value: 0, tension: 0 }, { time: 2, value: 10 }];
+        expect(evaluateKeyframes(k, 0.5)).toBeCloseTo(2.5, 6);
+        expect(evaluateKeyframes(k, 1)).toBeCloseTo(5, 6);
+        expect(evaluateKeyframes(k, 1.5)).toBeCloseTo(7.5, 6);
+    });
+
+    it('positive tension bows the curve up (slow start, fast end)', () => {
+        const up = [{ time: 0, value: 0, tension: 1 }, { time: 1, value: 1 }];
+        const mid = evaluateKeyframes(up, 0.5);
+        expect(mid).toBeGreaterThan(0.5); // above the straight line
+        expect(mid).toBeLessThan(1);
+    });
+
+    it('negative tension bows the curve down (fast start, slow end)', () => {
+        const down = [{ time: 0, value: 0, tension: -1 }, { time: 1, value: 1 }];
+        const mid = evaluateKeyframes(down, 0.5);
+        expect(mid).toBeLessThan(0.5); // below the straight line
+        expect(mid).toBeGreaterThan(0);
+    });
+
+    it('tension overrides a preset easing on the same keyframe', () => {
+        const k = [{ time: 0, value: 0, easing: 'easeInOut', tension: 1 }, { time: 1, value: 1 }];
+        const eased = evaluateKeyframes([{ time: 0, value: 0, easing: 'easeInOut' }, { time: 1, value: 1 }], 0.5);
+        const tensioned = evaluateKeyframes(k, 0.5);
+        // easeInOut midpoint sits near 0.5; tension 1 sits well above it.
+        expect(tensioned).toBeGreaterThan(eased + 0.05);
+    });
+
+    it('hold keeps the outgoing value until the next keyframe, then steps', () => {
+        const k = [{ time: 0, value: 1, easing: 'hold' }, { time: 2, value: 5 }];
+        expect(evaluateKeyframes(k, 0.1)).toBe(1);
+        expect(evaluateKeyframes(k, 1.9)).toBe(1);
+        expect(evaluateKeyframes(k, 2)).toBe(5);
+        expect(evaluateKeyframes(k, 5)).toBe(5);
     });
 });
 
@@ -175,5 +215,108 @@ describe('laneSvgPath', () => {
         const p = laneSvgPath({ targetProperty: 'GEOMETRY_SCALE', keyframes: [{ time: 0, value: 1 }, { time: 10, value: 2 }] }, 10);
         expect(p).toContain('C ');
         expect(p).toContain('M ');
+    });
+});
+
+describe('effect-linked lanes', () => {
+    it('getLaneParam resolves only continuous range controls', () => {
+        expect(getLaneParam({ effectId: 'rotate', paramId: 'angle' }).type).toBe('range');
+        expect(getLaneParam({ effectId: 'rotate', paramId: 'angle' }).min).toBe(0);
+        expect(getLaneParam({ effectId: 'rotate', paramId: 'direction' })).toBeNull(); // select
+        expect(getLaneParam({ effectId: 'rotate' })).toBeNull(); // no param
+        expect(getLaneParam({})).toBeNull(); // unassigned
+        expect(getLaneParam({ effectId: 'nope', paramId: 'x' })).toBeNull(); // unknown effect
+    });
+
+    it('getLaneEffectDef returns the main-app effect declaration', () => {
+        expect(getLaneEffectDef({ effectId: 'translate' }).name).toBe('Translate');
+        expect(getLaneEffectDef({})).toBeNull();
+    });
+
+    it('laneDefaultValue prefers the effect defaultParams over mid-range', () => {
+        expect(laneDefaultValue({ effectId: 'scale', paramId: 'scaleX' })).toBe(1);
+        expect(laneDefaultValue({ effectId: 'rotate', paramId: 'angle' })).toBe(0);
+        expect(laneDefaultValue({ effectId: 'warp', paramId: 'amount' })).toBe(0.5);
+        // Legacy lanes keep the built-in target default.
+        expect(laneDefaultValue({ targetProperty: 'GEOMETRY_SCALE' })).toBe(1);
+    });
+
+    it('evaluateLaneForEffect falls back to the param default on empty curves', () => {
+        expect(evaluateLaneForEffect({ effectId: 'scale', paramId: 'scaleX', keyframes: [] }, 3)).toBe(1);
+        expect(evaluateLaneForEffect({ effectId: 'rotate', paramId: 'angle', keyframes: [{ time: 0, value: 90 }, { time: 10, value: 0 }] }, 10)).toBe(0);
+    });
+
+    it('evaluateLane routes effect-linked lanes to their param default', () => {
+        expect(evaluateLane({ effectId: 'translate', paramId: 'translateX', keyframes: [] }, 4)).toBe(0);
+        expect(evaluateLane({}, 3)).toBe(1); // legacy fallback untouched
+    });
+
+    it('buildChannelEffects ignores unassigned / non-range lanes and merges by effect', () => {
+        const lanes = [
+            { id: 'l1' }, // empty
+            { id: 'l2', effectId: 'rotate', paramId: 'direction' }, // select param -> ignored
+            { id: 'l3', effectId: 'scale', paramId: 'scaleX', keyframes: [{ time: 0, value: 1 }, { time: 10, value: 2 }] },
+            { id: 'l4', effectId: 'scale', paramId: 'scaleY', keyframes: [{ time: 0, value: 1 }] },
+            { id: 'l5', effectId: 'rotate', paramId: 'angle', keyframes: [] },
+        ];
+        const effects = buildChannelEffects(lanes, 10, 'ch1');
+        expect(effects).toHaveLength(2);
+        const scale = effects.find((e) => e.id === 'scale');
+        expect(scale.instanceId).toBe('auto.ch1.scale');
+        expect(scale.params.scaleX).toBeCloseTo(2);
+        expect(scale.params.scaleY).toBeCloseTo(1);
+        expect(scale.params.centerX).toBeUndefined();
+        const rotate = effects.find((e) => e.id === 'rotate');
+        expect(rotate.params.angle).toBeCloseTo(0); // empty curve -> defaultParams angle
+        expect(rotate.params.direction).toBe('CW'); // non-automated params keep defaults
+    });
+
+    it('buildChannelEffects instance ids never collide across channels', () => {
+        const a = buildChannelEffects([{ id: 'x', effectId: 'wave', paramId: 'amplitude' }], 0, 'chA');
+        const b = buildChannelEffects([{ id: 'x', effectId: 'wave', paramId: 'amplitude' }], 0, 'chB');
+        expect(a[0].instanceId).not.toBe(b[0].instanceId);
+    });
+
+    it('buildChannelEffects returns [] when nothing is automatable', () => {
+        expect(buildChannelEffects([], 0, 'ch1')).toEqual([]);
+        expect(buildChannelEffects([{ id: 'l', effectId: 'mirror', paramId: 'mode' }], 0, 'ch1')).toEqual([]);
+    });
+});
+
+describe('generator parameter automation', () => {
+    it('getLaneGenParam resolves range controls and rejects non-range types', () => {
+        expect(getLaneGenParam({ genId: 'circle', genParamId: 'radius' }).min).toBeCloseTo(0.01);
+        expect(getLaneGenParam({ genId: 'circle', genParamId: 'renderingStyle' })).toBeNull();
+        expect(getLaneGenParam({ genId: 'nope', genParamId: 'radius' })).toBeNull();
+        expect(getLaneGenParam({ genId: 'circle' })).toBeNull();
+        expect(getLaneGenDef({ genId: 'square' }).id).toBe('square');
+        expect(getLaneGenDef({ genId: 'missing' })).toBeNull();
+    });
+
+    it('evaluateGenLane holds the base value on an empty curve', () => {
+        expect(evaluateGenLane({ keyframes: [] }, 5, 0.42)).toBe(0.42);
+        expect(evaluateGenLane({ keyframes: [{ time: 0, value: 0.1 }, { time: 1, value: 0.9 }] }, 0.5, 0.42)).toBeCloseTo(0.5);
+    });
+
+    it('buildGeneratorOverrides applies only matching range-param lanes', () => {
+        const lanes = [
+            { id: 'a', genId: 'circle', genParamId: 'radius', keyframes: [{ time: 0, value: 0.3 }] },
+            { id: 'b', genId: 'circle', genParamId: 'x', keyframes: [] },           // empty -> base param
+            { id: 'c', genId: 'square', genParamId: 'width', keyframes: [{ time: 0, value: 1.5 }] }, // other gen
+            { id: 'd', genId: 'circle', genParamId: 'renderingStyle' },             // select, not animatable
+            { id: 'e', effectId: 'rotate', paramId: 'angle' },                      // effect lane, ignored
+        ];
+        const over = buildGeneratorOverrides(lanes, 0, 'circle', { radius: 0.1, x: 0.8 });
+        expect(over).not.toBeNull();
+        expect(over.radius).toBeCloseTo(0.3);
+        expect(over.x).toBeCloseTo(0.8); // empty curve keeps the clip's own slider value
+        expect(Object.keys(over).sort()).toEqual(['radius', 'x']);
+    });
+
+    it('buildGeneratorOverrides returns null when no lane drives the generator', () => {
+        expect(buildGeneratorOverrides([
+            { id: 'a', genId: 'square', genParamId: 'width', keyframes: [] },
+        ], 0, 'circle', { radius: 0.5 })).toBeNull();
+        expect(buildGeneratorOverrides([], 0, 'circle')).toBeNull();
     });
 });

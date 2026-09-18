@@ -261,12 +261,13 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
         const onWheel = (e) => {
             const settings = stateRef.current.settings;
 
-            // Vertical zoom: resize block + automation row heights.
+            // Vertical zoom: resize block + automation row heights. Inverted so scroll
+            // up (negative deltaY) zooms IN — the natural expectation.
             if (e.altKey) {
                 e.preventDefault();
                 actionsRef.current.setSettings({
-                    blockRowH: clamp((settings.blockRowH || BLOCK_ROW_H) + e.deltaY * 0.06, 84, 200),
-                    autoRowH: clamp((settings.autoRowH || AUTO_ROW_H) + e.deltaY * 0.06, 30, 220),
+                    blockRowH: clamp((settings.blockRowH || BLOCK_ROW_H) - e.deltaY * 0.06, 84, 200),
+                    autoRowH: clamp((settings.autoRowH || AUTO_ROW_H) - e.deltaY * 0.06, 30, 220),
                 });
                 return;
             }

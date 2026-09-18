@@ -1420,11 +1420,23 @@ function createWindow() {
 
   // Timeline project files (Ctrl+S / Ctrl+O in the Timeline window)
   let currentTimelineProjectPath = null;
-  ipcMain.handle('save-timeline-project', async (event, projectData, defaultName = 'timeline-project.json') => {
-    const defaultPath = currentTimelineProjectPath || path.join(app.getPath('documents'), 'TrueLazer', defaultName);
+  ipcMain.handle('save-timeline-project', async (event, projectData, defaultName = null, forceDialog = false) => {
+    // A saved/open project remembers its file: Ctrl+S then overwrites it
+    // silently like any normal editor. A brand-new project (opened from the
+    // timeline's local storage, never saved-as) falls through to the Save As
+    // dialog automatically — never a null-path crash.
+    if (!forceDialog && currentTimelineProjectPath) {
+      try {
+        await fs.promises.writeFile(currentTimelineProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+        return { success: true, filePath: currentTimelineProjectPath };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+    const name = (typeof defaultName === 'string' && defaultName.trim().length > 0)
+      ? defaultName
+      : 'timeline-project.json';
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Save Timeline Project',
-      defaultPath,
+      defaultPath: path.join(app.getPath('documents'), 'TrueLazer', name),
       filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }]
     });
     if (canceled || !filePath) return { success: false, canceled: true };

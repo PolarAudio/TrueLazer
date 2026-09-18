@@ -298,6 +298,56 @@ describe('lanes', () => {
         expect(s.channels.ch1.automationLanes).toEqual([]);
         expect(s.lanes.lane1).toBeUndefined();
     });
+
+    it('ADD_LANE creates an empty effect lane by default (nothing assigned)', () => {
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'lane1' } } });
+        expect(s.lanes.lane1.effectId).toBeNull();
+        expect(s.lanes.lane1.paramId).toBeNull();
+        expect(s.lanes.lane1.genId).toBeNull();
+        expect(s.lanes.lane1.genParamId).toBeNull();
+        expect(s.lanes.lane1.targetProperty).toBeNull();
+        expect(s.channels.ch1.automationLanes).toEqual(['lane1']);
+    });
+
+    it('ADD_LANE accepts an effect/param link (parameter linking)', () => {
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'lane1', effectId: 'translate', paramId: 'translateX' } } });
+        expect(s.lanes.lane1.effectId).toBe('translate');
+        expect(s.lanes.lane1.paramId).toBe('translateX');
+    });
+
+    it('ADD_LANE accepts a generator-param link (generator parameter automation)', () => {
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'lane1', genId: 'circle', genParamId: 'radius' } } });
+        expect(s.lanes.lane1.genId).toBe('circle');
+        expect(s.lanes.lane1.genParamId).toBe('radius');
+        expect(s.lanes.lane1.effectId).toBeNull();
+    });
+
+    it('ADD_LANE accepts multiple automation lanes per channel (no cap)', () => {
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l1', genId: 'circle', genParamId: 'radius' } } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l2', effectId: 'rotate', paramId: 'angle' } } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l3', targetProperty: 'GEOMETRY_SCALE' } } });
+        expect(s.channels.ch1.automationLanes).toEqual(['l1', 'l2', 'l3']);
+    });
+
+    it('UPDATE_LANE can assign / relink the target effect and parameter', () => {
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'lane1' } } });
+        s = run(s, { type: 'UPDATE_LANE', payload: { laneId: 'lane1', patch: { effectId: 'warp', paramId: 'radius' } } });
+        expect(s.lanes.lane1.effectId).toBe('warp');
+        expect(s.lanes.lane1.paramId).toBe('radius');
+        s = run(s, { type: 'UPDATE_LANE', payload: { laneId: 'lane1', patch: { effectId: null, paramId: null } } });
+        expect(s.lanes.lane1.effectId).toBeNull();
+        expect(s.lanes.lane1.paramId).toBeNull();
+    });
 });
 
 describe('selectors + audio', () => {
@@ -339,3 +389,64 @@ function seeded() {
         { type: 'ADD_CHANNEL', payload: { id: 'ch2', name: 'R' } }
     );
 }
+
+describe('keyframe selection', () => {
+    function withLane() {
+        let s = seeded();
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l1' } } });
+        return s;
+    }
+
+    it('selects a keyframe and clears with an empty/primary click', () => {
+        let s = withLane();
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', keyframe: { id: 'k1', time: 0, value: 1 } } });
+        expect(s.settings.selectedKeyframe).toBeNull();
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        expect(s.settings.selectedKeyframe).toEqual({ laneId: 'l1', keyframeId: 'k1' });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: null, keyframeId: null } });
+        expect(s.settings.selectedKeyframe).toBeNull();
+    });
+
+    it('additive select toggles the same keyframe off', () => {
+        let s = withLane();
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1', additive: true } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1', additive: true } });
+        expect(s.settings.selectedKeyframe).toBeNull();
+    });
+
+    it('REMOVE_KEYFRAME clears the selection when it matches', () => {
+        let s = withLane();
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', keyframe: { id: 'k1', time: 0, value: 1 } } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'REMOVE_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        expect(s.lanes.l1.keyframes).toEqual([]);
+        expect(s.settings.selectedKeyframe).toBeNull();
+    });
+
+    it('REMOVE_KEYFRAME keeps an unrelated selection', () => {
+        let s = withLane();
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', keyframe: { id: 'k1', time: 0, value: 1 } } });
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', keyframe: { id: 'k2', time: 1, value: 2 } } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'REMOVE_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k2' } });
+        expect(s.settings.selectedKeyframe).toEqual({ laneId: 'l1', keyframeId: 'k1' });
+    });
+
+    it('REMOVE_KEYFRAMES bulk-deletes and clears a member selection', () => {
+        let s = withLane();
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', keyframe: { id: 'k1', time: 0, value: 1 } } });
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', keyframe: { id: 'k2', time: 1, value: 2 } } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'REMOVE_KEYFRAMES', payload: { laneId: 'l1', keyframeIds: ['k1', 'k2'] } });
+        expect(s.lanes.l1.keyframes).toEqual([]);
+        expect(s.settings.selectedKeyframe).toBeNull();
+    });
+
+    it('REMOVE_LANE clears a keyframe selection on that lane', () => {
+        let s = withLane();
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'REMOVE_LANE', payload: { laneId: 'l1' } });
+        expect(s.lanes.l1).toBeUndefined();
+        expect(s.settings.selectedKeyframe).toBeNull();
+    });
+});

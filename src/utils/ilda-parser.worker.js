@@ -206,6 +206,7 @@ function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
   let firstFormatCode = null;
   let currentOffset = 0;
   let activePalette = null;
+  let truncated = false; // Set when a frame header claims more data than the buffer holds
 
   while (currentOffset + 32 <= arrayBuffer.byteLength) {
     const frameStartOffset = currentOffset;
@@ -281,6 +282,7 @@ function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
 
     if (frameStartOffset + frameTotalSize > arrayBuffer.byteLength) {
       console.warn(`Parser: Incomplete frame data for ${pointCount} points at offset ${frameStartOffset}. Expected ${frameTotalSize} bytes, but only ${arrayBuffer.byteLength - frameStartOffset} bytes remaining. Breaking.`);
+      truncated = true;
       break;
     }
 
@@ -313,7 +315,7 @@ function parseIldaFile(arrayBuffer, stopAtFirstFrame = false) {
     }
   }
   console.log(`[ilda-parser.worker.js] parseIldaFile - Finished parsing. Found ${framesMetadata.length} frames.`);
-  return { frames: framesMetadata, error: framesMetadata.length === 0 ? 'No valid frames found' : null, firstFormatCode, ildaFileBuffer: arrayBuffer };
+  return { frames: framesMetadata, error: framesMetadata.length === 0 ? 'No valid frames found' : null, firstFormatCode, ildaFileBuffer: arrayBuffer, truncated };
 }
 
 
@@ -462,13 +464,12 @@ self.onmessage = async function(e) {
     } else if (type === 'load-and-parse-ilda') {
       // Worker requests file content from main process (via renderer)
       const newRequestId = Math.random().toString(36).substring(2, 15);
-      pendingFileRequests.set(newRequestId, { fileName, filePath, layerIndex, colIndex, browserFile: e.data.browserFile, stopAtFirstFrame });
+      const maxBytes = stopAtFirstFrame ? 262144 : null; // First-frame budget; dense frames (ShapeBuilder-exports) can exceed 64KB. Truncated reads are handled by the file-content-response retry below.
+      pendingFileRequests.set(newRequestId, { fileName, filePath, layerIndex, colIndex, browserFile: e.data.browserFile, stopAtFirstFrame, budgetBytes: maxBytes });
       // Inform renderer that parsing has started for this clip
       if (layerIndex !== undefined && colIndex !== undefined) {
           self.postMessage({ type: 'parsing-status', status: true, layerIndex, colIndex });
       }
-      // Optimization: If we only want the first frame, request only the first 64KB
-      const maxBytes = stopAtFirstFrame ? 65536 : null;
       self.postMessage({ type: 'request-file-content', filePath, requestId: newRequestId, maxBytes });
     } else if (type === 'file-content-response') {
   // ... existing file-content-response ...
@@ -503,7 +504,25 @@ self.onmessage = async function(e) {
       try {
         console.log(`[ilda-parser.worker.js] Calling parseIldaFile for: ${requestContext.fileName} (from file-content-response)`);
         const parsedData = parseIldaFile(arrayBuffer, requestContext.stopAtFirstFrame); // This now returns framesMetadata and ildaFileBuffer
-        
+
+        // First-frame-only reads (thumbnails) use a byte budget. Very dense frames
+        // (e.g. ShapeBuilder exports) can be larger than that budget, which made the
+        // parser bail at "Incomplete frame data" and silently report 0 frames. When
+        // that happens, re-request the FULL file once and re-parse so the thumbnail
+        // still works.
+        if (parsedData.truncated && requestContext.stopAtFirstFrame && requestContext.budgetBytes && !requestContext.fullRetry) {
+          console.warn(`[ilda-parser.worker.js] First-frame budget (${requestContext.budgetBytes} bytes) too small for ${requestContext.fileName}, re-requesting full file to parse the first frame.`);
+          requestContext.fullRetry = true;
+          pendingFileRequests.set(requestId, requestContext);
+          self.postMessage({ type: 'request-file-content', filePath: requestContext.filePath, requestId, maxBytes: null });
+          return;
+        }
+
+        // Clean up internal request fields so they are not echoed back to the renderer.
+        delete requestContext.budgetBytes;
+        delete requestContext.fullRetry;
+        delete requestContext.requestId;
+
         if (parsedData.error) {
             self.postMessage({ type: 'error', message: parsedData.error, originalType: 'parse-ilda', ...requestContext });
             if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {

@@ -4674,6 +4674,18 @@ function App() {
                 } catch (error) {
                     console.warn(`File missing or read error: ${filePath}`, error.message);
 
+                    // Tell the worker the read failed so its pending request is
+                    // cleaned up and the parse attempt fails fast instead of
+                    // hanging forever (a dangling request silently leaves the
+                    // timeline clip dead until the view is reopened).
+                    try {
+                        ildaParserWorker.postMessage({
+                            type: 'file-content-response',
+                            requestId,
+                            error: `File read failed: ${error.message}`,
+                        });
+                    } catch (err) { /* ignore */ }
+
                     // Instead of immediate prompt, add to missing files list
                     const fileName = filePath.split(/[/\\]/).pop();
                     setMissingFiles(prev => {

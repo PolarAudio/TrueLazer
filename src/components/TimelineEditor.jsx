@@ -35,6 +35,7 @@ const TimelineEditor = ({ onBack }) => {
     // renders — even when old saved settings carry a too-small value.
     const blockRowH = Math.max(84, s.blockRowH || BLOCK_ROW_H);
     const autoRowH = Math.max(30, s.autoRowH || AUTO_ROW_H);
+    const ADD_LANE_ROW_H = 20;
     const duration = useMemo(() => getTimelineDuration(state), [state]);
 
     // Keep the scroll area width in sync (resizes from window / inspector toggle).
@@ -116,7 +117,10 @@ const TimelineEditor = ({ onBack }) => {
                 filePath: data.filePath,
                 fileName: data.fileName || data.filePath.split(/[\\/]/).pop(),
                 startTime: t,
-                duration: 10,
+                // duration: 0 = auto. It is resolved to totalFrames / fps (30fps
+                // timeline playback) once the ILDA file is parsed; the user can
+                // then lengthen the clip freely.
+                duration: 0,
             });
         },
         [pxPerSecond, s, actions]
@@ -132,13 +136,22 @@ const TimelineEditor = ({ onBack }) => {
         [pxPerSecond, s, addGeneratorCueAt]
     );
 
-    // Delete key removes all selected cues.
+    // Delete/Backspace removes the selected automation keyframe first (click a
+// point, press Delete), then falls back to removing all selected cues.
     useEffect(() => {
         const onKey = (e) => {
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
-            if ((e.key === 'Delete' || e.key === 'Backspace') && selectedCueIds.length > 0) {
-                e.preventDefault();
-                for (const id of selectedCueIds) actions.removeCue(id);
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                const selKf = s.selectedKeyframe;
+                if (selKf && selKf.laneId && selKf.keyframeId && state.lanes?.[selKf.laneId]) {
+                    e.preventDefault();
+                    actions.removeKeyframe(selKf.laneId, selKf.keyframeId);
+                    return;
+                }
+                if (selectedCueIds.length > 0) {
+                    e.preventDefault();
+                    for (const id of selectedCueIds) actions.removeCue(id);
+                }
             }
             if (e.key === 'Enter' && selectedCueIds.length === 0) {
                 e.preventDefault();
@@ -147,7 +160,7 @@ const TimelineEditor = ({ onBack }) => {
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [selectedCueIds, actions, addGeneratorAtPlayhead]);
+    }, [selectedCueIds, s.selectedKeyframe, actions, addGeneratorAtPlayhead, state.lanes]);
 
     const beatOverlays = useMemo(() => {
         const span = gridW / pxPerSecond;
@@ -234,7 +247,7 @@ const TimelineEditor = ({ onBack }) => {
                             const lanes = (channel.automationLanes || [])
                                 .map((lid) => state.lanes[lid])
                                 .filter(Boolean);
-                            const rowH = blockRowH + (channel.expanded ? lanes.length * autoRowH : 0);
+                            const rowH = blockRowH + (channel.expanded ? lanes.length * autoRowH + ADD_LANE_ROW_H : 0);
                             return (
                                 <section key={chId} className="timeline-channel" style={{ height: rowH }}>
                                     <div className="timeline-row">
@@ -264,12 +277,6 @@ const TimelineEditor = ({ onBack }) => {
                                                     fps={s.fps}
                                                 />
                                             ))}
-                                            {channel.expanded && lanes.length === 0 && (
-                                                <button className="timeline-add-lane-hint"
-                                                    onClick={() => actions.addLane(chId, { targetProperty: 'GEOMETRY_SCALE' })}>
-                                                    + Add automation lane
-                                                </button>
-                                            )}
                                         </div>
                                     </div>
 
@@ -285,6 +292,19 @@ const TimelineEditor = ({ onBack }) => {
                                             rowH={autoRowH}
                                         />
                                     ))}
+
+                                    {channel.expanded && (
+                                        <div className="timeline-row" style={{ height: ADD_LANE_ROW_H }}>
+                                            <div className="timeline-header-cell timeline-add-lane-cell">
+                                                <button className="timeline-lane-add"
+                                                    title="Add another automation lane (multiple per channel/zone)"
+                                                    onClick={() => actions.addLane(chId, {})}>
+                                                    + Automation lane
+                                                </button>
+                                            </div>
+                                            <div className="timeline-add-lane-body" style={{ width: gridW, height: ADD_LANE_ROW_H }} />
+                                        </div>
+                                    )}
                                 </section>
                             );
                         })}
@@ -301,7 +321,8 @@ const TimelineEditor = ({ onBack }) => {
                                     height={RULER_H + state.channelOrder.reduce((acc, chId) => {
                                         const ch = state.channels[chId];
                                         const nLanes = ch && ch.expanded ? (ch.automationLanes || []).length : 0;
-                                        return acc + blockRowH + nLanes * autoRowH;
+                                        const addRow = ch && ch.expanded ? ADD_LANE_ROW_H : 0;
+                                        return acc + blockRowH + nLanes * autoRowH + addRow;
                                     }, 0) + 24}
                                     width={gridW}
                                     color="rgba(255,255,255,0.35)"

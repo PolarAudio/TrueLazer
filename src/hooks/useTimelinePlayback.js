@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTimeline, getTimelineDuration, getChannelOutputs, isChannelAudible } from '../contexts/TimelineContext';
 import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
 import { useAudio } from '../contexts/AudioContext.jsx';
-import { applyLanesToPoints } from '../utils/timelineAutomation';
+import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides } from '../utils/timelineAutomation';
+import { applyEffects } from '../utils/effects';
 import { selectActiveCue, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
 import { useTimelineSync } from './useTimelineSync';
 
@@ -37,6 +38,19 @@ function scaleRgb(points, factor) {
     return out;
 }
 
+// How many frames ahead of the playhead the ILDA prefetch keeps warm. The
+// pull-through cache would otherwise stutter for the first seconds of the very
+// first play after a fresh restart (every touched index needs an async
+// get-frame round-trip before it is smooth).
+const ILDA_PREFETCH_FRAMES = 12;
+
+// If an ILDA parse stays unresolved for this long, assume it is stuck and
+// re-request the file (see the parse watchdog below).
+const PARSE_WATCHDOG_MS = 8000;
+// Maximum times a file is re-queued before giving up (missing-file handling is
+// left to the RelocateModal).
+const MAX_PARSE_RETRIES = 3;
+
 // Channel-level axis invert: negate X and/or Y around 0 (native coordinates).
 export function flipPoints(points, flipX, flipY) {
     if (!flipX && !flipY) return points;
@@ -69,6 +83,9 @@ export function useTimelinePlayback() {
     const accRef = useRef(0);
     const laserOnRef = useRef(false);
     const isPlayingRef = useRef(false);
+    // Per-channel automation effect state (delay/chase history + continuous
+    // phase accumulators across ticks). Keyed by `auto.<channelId>.<effectId>`.
+    const effectStatesRef = useRef(new Map());
     const syncRef = useRef(sync);
     syncRef.current = sync;
 
@@ -135,9 +152,11 @@ export function useTimelinePlayback() {
         }
     }, [selectedDeviceId, audioPath]);
 
-    const ildaLiveRef = useRef(new Map()); // workerId -> { idx, frame }
-    const ildaRequestedRef = useRef(new Map()); // workerId -> index already requested
+    const ildaLiveRef = useRef(new Map()); // `${workerId}@${idx}` -> { idx, frame }
+    const ildaRequestedRef = useRef(new Map()); // `${workerId}@${idx}` -> index already requested
     const parsingSentRef = useRef(new Set()); // filePath -> load-and-parse posted
+    const parsingSentAtRef = useRef(new Map()); // filePath -> timestamp of last parse request
+    const parsingAttemptsRef = useRef(new Map()); // filePath -> retry count
     // filePath -> workerId parsed earlier THIS session. Persisted workerIds from
     // a previous session are stale (the worker's store is runtime-only), so a
     // reload must re-parse once and then every cue pointing at the file reuses
@@ -166,21 +185,56 @@ export function useTimelinePlayback() {
             if (!d) return;
             if (d.type === 'parse-ilda' && d.success) {
                 fileWorkerIdRef.current.set(d.filePath, d.workerId);
+                // A successful parse clears the pending/retry bookkeeping.
+                parsingSentRef.current.delete(d.filePath);
+                parsingSentAtRef.current.delete(d.filePath);
+                parsingAttemptsRef.current.delete(d.filePath);
                 // Adopt the fresh session handle for EVERY cue on this file
                 // (originals, pasted duplicates, and reopened projects).
                 for (const c of Object.values(stateRef.current.cues)) {
                     if (c.type === 'ILDA' && c.filePath === d.filePath && c.workerId !== d.workerId) {
+                        const totalFrames = d.totalFrames || c.totalFrames || 0;
                         actions.updateCue(c.id, {
                             workerId: d.workerId,
-                            totalFrames: d.totalFrames || c.totalFrames || 0,
+                            totalFrames,
+                            // Freshly imported clips carry duration 0 ("auto"):
+                            // size them to the frame count at the timeline's
+                            // frame rate so a 30-frame file gets 1s, not 10s.
+                            // A user-edited length (>0) is never overwritten.
+                            duration: c.duration === 0 && totalFrames > 0
+                                ? Math.max(0.1, totalFrames / (stateRef.current.settings.fps || 30))
+                                : c.duration,
                         });
                     }
                 }
                 return;
             }
+            if (d.type === 'error' && d.filePath) {
+                // A file that failed to load (missing/locked) must be retried,
+                // otherwise parsingSentRef blocks it forever and the cue
+                // silently stops working until the timeline view is reopened.
+                console.warn(`[TimelinePlayback] ILDA parse failed for ${d.filePath}: ${d.message || d.error}`);
+                parsingSentRef.current.delete(d.filePath);
+                parsingSentAtRef.current.delete(d.filePath);
+                if (!parsingAttemptsRef.current.has(d.filePath)) {
+                    // Give the file a few retry slots on subsequent cue changes.
+                    parsingAttemptsRef.current.set(d.filePath, 0);
+                }
+                return;
+            }
             if (d.type === 'get-frame' && d.success && d.workerId != null) {
                 if (d.frame != null) {
-                    ildaLiveRef.current.set(d.workerId, { idx: d.frameIndex, frame: d.frame });
+                    // Keyed by workerId + frame index so clips that share ONE
+                    // source document (the parse handler adopts a single live
+                    // workerId for every cue on the same file) each keep their
+                    // own playback position. Before, two same-source clips at
+                    // different start offsets overwrote the same cache slot and
+                    // both lasers followed whichever clip requested last.
+                    if (ildaLiveRef.current.size > 1024) {
+                            ildaLiveRef.current.clear(); // bounded: re-requests hit the worker cache
+                            ildaRequestedRef.current.clear();
+                        }
+                    ildaLiveRef.current.set(`${d.workerId}@${d.frameIndex}`, { idx: d.frameIndex, frame: d.frame });
                 }
             }
         };
@@ -208,7 +262,15 @@ export function useTimelinePlayback() {
                 continue;
             }
             if (!parsingSentRef.current.has(cue.filePath)) {
+                // A failed file already consumed its retry budget: do not keep
+                // hammering it from here every few seconds; the RelocateModal
+                // (missing files) handles the actual remediation.
+                if (parsingAttemptsRef.current.get(cue.filePath) >= MAX_PARSE_RETRIES) continue;
+                if (parsingAttemptsRef.current.has(cue.filePath)) {
+                    parsingAttemptsRef.current.set(cue.filePath, parsingAttemptsRef.current.get(cue.filePath) + 1);
+                }
                 parsingSentRef.current.add(cue.filePath);
+                parsingSentAtRef.current.set(cue.filePath, Date.now());
                 ildaParserWorker.postMessage({
                     type: 'load-and-parse-ilda',
                     fileName: cue.fileName || cue.filePath.split(/[\\/]/).pop(),
@@ -220,8 +282,91 @@ export function useTimelinePlayback() {
         }
     }, [state.cues, ildaParserWorker]);
 
+    // --- ILDA parse watchdog -------------------------------------------------
+    // Some load failures never surface a worker error (e.g. a request that the
+    // renderer could not answer). Without this, such a clip silently stays dead
+    // until the timeline view is reopened. Re-request files whose parse has been
+    // pending too long, up to a bounded number of attempts.
+    useEffect(() => {
+        if (!ildaParserWorker) return;
+        const id = setInterval(() => {
+            const now = Date.now();
+            for (const cue of Object.values(stateRef.current.cues)) {
+                if (cue.type !== 'ILDA' || !cue.filePath) continue;
+                if (fileWorkerIdRef.current.has(cue.filePath)) continue;
+                const sentAt = parsingSentAtRef.current.get(cue.filePath);
+                if (sentAt === undefined || now - sentAt < PARSE_WATCHDOG_MS) continue;
+                const attempts = parsingAttemptsRef.current.get(cue.filePath) || 0;
+                if (attempts >= MAX_PARSE_RETRIES) {
+                    parsingSentRef.current.delete(cue.filePath);
+                    parsingSentAtRef.current.delete(cue.filePath);
+                    continue;
+                }
+                parsingAttemptsRef.current.set(cue.filePath, attempts + 1);
+                parsingSentRef.current.delete(cue.filePath);
+                parsingSentAtRef.current.set(cue.filePath, now);
+                ildaParserWorker.postMessage({
+                    type: 'load-and-parse-ilda',
+                    fileName: cue.fileName || cue.filePath.split(/[\\/]/).pop(),
+                    filePath: cue.filePath,
+                    browserFile: true,
+                    stopAtFirstFrame: false,
+                });
+            }
+        }, PARSE_WATCHDOG_MS);
+        return () => clearInterval(id);
+    }, [ildaParserWorker]);
+
+    // --- ILDA cache warmer --------------------------------------------------
+    // Runs continuously (idle AND playing). Keeps the live frame cache filled
+    // slightly ahead of the playhead so the first play after a fresh restart —
+    // or a new scrub position — doesn't stutter while get-frame responses are
+    // still in flight. Mirrors the active-cue pick + frame-index math used by
+    // compileChannelFrame/buildCueFrame so it preheats exactly what playback
+    // will ask for.
+    useEffect(() => {
+        if (!ildaParserWorker) return;
+        let raf;
+        const loop = () => {
+            raf = requestAnimationFrame(loop);
+            const store = stateRef.current;
+            const fps = store.settings.fps || 30;
+            const t = playheadRef.current;
+            for (const chId of store.channelOrder || []) {
+                const ch = store.channels[chId];
+                if (!ch) continue;
+                const active = (ch.cues || [])
+                    .map((id) => store.cues[id])
+                    .filter(Boolean);
+                const pick = selectActiveCue(active, t);
+                if (!pick || pick.type !== 'ILDA') continue;
+                const wId = pick.workerId;
+                if (!wId || !pick.totalFrames) continue;
+                const totalFrames = Math.max(1, pick.totalFrames);
+                const interval = pick.totalFrames ? pick.duration / totalFrames : 1 / fps;
+                const rel = t - pick.startTime;
+                let idx = Math.floor(rel / Math.max(1e-4, interval));
+                if (pick.isLooping) {
+                    idx = ((idx % totalFrames) + totalFrames) % totalFrames;
+                } else {
+                    idx = Math.max(0, Math.min(idx, totalFrames - 1));
+                }
+                for (let k = 0; k < ILDA_PREFETCH_FRAMES; k++) {
+                    const i = (idx + k) % totalFrames;
+                    const key = `${wId}@${i}`;
+                    if (ildaLiveRef.current.has(key) || ildaRequestedRef.current.get(key) === i) continue;
+                    if (ildaRequestedRef.current.size > 4096) ildaRequestedRef.current.clear();
+                    ildaRequestedRef.current.set(key, i);
+                    ildaParserWorker.postMessage({ type: 'get-frame', workerId: wId, frameIndex: i, pageId: -1 });
+                }
+            }
+        };
+        raf = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(raf);
+    }, [ildaParserWorker]);
+
     // --- Cue frame builder --------------------------------------------------
-    const buildCueFrame = useCallback((cue, t) => {
+    const buildCueFrame = useCallback((cue, t, genOverrides = null) => {
         if (cue.type === 'ILDA') {
             const wId = cue.workerId;
             if (!wId) return null;
@@ -235,7 +380,8 @@ export function useTimelinePlayback() {
             } else {
                 idx = Math.max(0, Math.min(idx, totalFrames - 1));
             }
-            const live = ildaLiveRef.current.get(wId);
+            const liveKey = `${wId}@${idx}`;
+            const live = ildaLiveRef.current.get(liveKey);
             // The worker's get-frame response wraps points in a metadata object
             // { points: Float32Array, isTypedArray, segments }. Unwrap so we hand
             // the compile/send path a canonical 8-float-per-point Float32Array —
@@ -243,13 +389,23 @@ export function useTimelinePlayback() {
             // buildFrameChunks compute totalPoints = wrapper.length = undefined,
             // yielding NaN buffer sizes and a main-process RangeError crash.
             if (live && live.idx === idx) return live.frame && live.frame.points ? live.frame.points : live.frame;
-            if (ildaParserWorker && ildaRequestedRef.current.get(wId) !== idx) {
-                ildaRequestedRef.current.set(wId, idx);
+            if (ildaParserWorker && ildaRequestedRef.current.get(liveKey) !== idx) {
+                ildaRequestedRef.current.set(liveKey, idx);
                 ildaParserWorker.postMessage({ type: 'get-frame', workerId: wId, frameIndex: idx, pageId: -1 });
             }
             return live ? (live.frame && live.frame.points ? live.frame.points : live.frame) : null; // last known frame while loading
         }
         // GENERATOR
+        if (genOverrides && Object.keys(genOverrides).length > 0) {
+            // Automation curves override the clip's own slider values per frame,
+            // so the generator definition re-runs with the animated params and
+            // the result stays in sync with everything else on the channel.
+            const merged = {
+                ...cue,
+                generatorParams: { ...(cue.generatorParams || {}), ...genOverrides },
+            };
+            return buildGeneratorFrame(merged);
+        }
         return buildGeneratorFrame(cue);
     }, [ildaParserWorker]);
 
@@ -257,24 +413,53 @@ export function useTimelinePlayback() {
     // Shared by the DAC fan-out and the editor preview so both always resolve
     // the exact same pixels (cue select + automation lanes + intensity +
     // master blackout), independent of the transport / laser state.
-    const compileChannelFrame = useCallback((chId, t) => {
+    //
+    // opts.allowUnrouted: preview embeds. Let a track compile even when it has
+    // no DAC output assigned yet, so the Inspector canvas shows the cue instead
+    // of "no active cue". The DAC push path never passes this flag, so output
+    // is still gated on routing there.
+    const compileChannelFrame = useCallback((chId, t, opts) => {
         const store = stateRef.current;
         const ch = store.channels[chId];
         if (!ch || !isChannelAudible(store, ch)) return null;
-        if (getChannelOutputs(ch).length === 0) return null;
+        const allowUnrouted = !!(opts && opts.allowUnrouted);
+        if (!allowUnrouted && getChannelOutputs(ch).length === 0) return null;
+
+        const chLanes = (ch.automationLanes || [])
+            .map((id) => store.lanes[id])
+            .filter(Boolean);
 
         const active = (ch.cues || [])
             .map((id) => store.cues[id])
             .filter(Boolean);
         const pick = selectActiveCue(active, t);
         let frame = null;
-        if (pick) frame = buildCueFrame(pick, t);
+        if (pick) {
+            // Generator clips are animated by per-channel gen lanes: curves
+            // override the clip's range params (circle radius, square size,
+            // offset, ...) at this time — woven into buildCueFrame so preview
+            // and DAC output both use it.
+            const genOverrides =
+                pick.type === 'GENERATOR'
+                    ? buildGeneratorOverrides(chLanes, t, pick.generatorId, pick.generatorParams)
+                    : null;
+            frame = buildCueFrame(pick, t, genOverrides);
+        }
         if (!frame) return null;
 
-        const chLanes = (ch.automationLanes || [])
-            .map((id) => store.lanes[id])
-            .filter(Boolean);
-        if (chLanes.length > 0) frame = applyLanesToPoints(frame, chLanes, t);
+        // Legacy scalar lanes (saved with a bare targetProperty) keep the old
+        // fixed transform path. Modern effect-linked lanes are collected into a
+        // per-channel effect stack and applied through the main app's engine.
+        const legacyLanes = chLanes.filter((l) => !(l && (l.effectId || (l.genId && l.genParamId))));
+        if (legacyLanes.length > 0) frame = applyLanesToPoints(frame, legacyLanes, t);
+        const effects = buildChannelEffects(chLanes, t, ch.id);
+        if (effects.length > 0) {
+            const res = applyEffects({ points: frame, isTypedArray: true }, effects, {
+                time: t * 1000,
+                effectStates: effectStatesRef.current,
+            });
+            if (res && res.points) frame = res.points;
+        }
         if (ch.intensity !== 1) frame = scaleRgb(frame, ch.intensity);
 
         const s = store.settings;
@@ -554,8 +739,14 @@ export function useTimelinePlayback() {
     }, [getDacIps]);
 
     // Live preview: compile just the given channel at `t` (no DAC send). The
-    // editor's preview canvas calls this every animation frame.
-    const previewFrame = useCallback((channelId, t) => compileChannelFrame(channelId, t), [compileChannelFrame]);
+    // editor's preview canvas calls this every animation frame. allowUnrouted
+    // means a track with no DAC assigned (or the laser toggle off) still gets a
+    // compiled frame — preview reflects the cue, not the routing/hardware state.
+    // Note: audibility (mute/solo) is still honored so a muted track previews dark.
+    const previewFrame = useCallback(
+        (channelId, t) => compileChannelFrame(channelId, t, { allowUnrouted: true }),
+        [compileChannelFrame],
+    );
 
     return { isPlaying, playheadSec, laserOn, setLaserOn, play, pause, stop, seek, sync, previewFrame, anchor: anchorRef.current };
 }

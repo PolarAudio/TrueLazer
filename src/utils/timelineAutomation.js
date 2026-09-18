@@ -1,3 +1,6 @@
+import { effectDefinitions } from './effectDefinitions';
+import { generatorDefinitions } from './generatorDefinitions';
+
 /**
  * Timeline automation: Bezier keyframe evaluation + scalar transforms applied
  * to the app's canonical 8-float frame layout:
@@ -7,6 +10,14 @@
  * the evaluated lane value into a copy of a compiled frame without mutating the
  * pristine cached source frame (non-destructive like the spec's
  * globalProcessingBuffer).
+ *
+ * Modern lanes link to ONE parameter of ONE main-app effect
+ * (effectDefinitions): `lane.effectId` + `lane.paramId` choose what the lane's
+ * keyframes drive, and the channel compile stage feeds the merged effect list
+ * through `applyEffects` (utils/effects). Legacy lanes that were saved with a
+ * bare `targetProperty` (the old fixed Scale/Rotation/Translate/Brightness/Color
+ * scalars) still evaluate through `applyLanesToPoints` so old projects keep
+ * working unchanged — no destructive migration.
  */
 export const POINT_STRIDE = 8;
 
@@ -24,6 +35,126 @@ export const LANE_TARGETS = [
 
 export function getLaneTarget(id) {
     return LANE_TARGETS.find((t) => t.id === id) || LANE_TARGETS[0];
+}
+
+/**
+ * Resolve the effect definition a lane is linked to (or null when the lane is
+ * empty / unassigned / references an unknown effect id).
+ */
+export function getLaneEffectDef(lane) {
+    if (!lane?.effectId) return null;
+    return effectDefinitions.find((d) => d.id === lane.effectId) || null;
+}
+
+/**
+ * Resolve the parameter control a lane drives within its effect. Returns the
+ * paramControl object, or null when the lane is unassigned, the param doesn't
+ * exist, or the param is not continuous 'range' type (selects/checkboxes/color
+ * pickers cannot be driven by a keyframe curve).
+ */
+export function getLaneParam(lane) {
+    const def = getLaneEffectDef(lane);
+    if (!def || !lane.paramId) return null;
+    const ctrl = (def.paramControls || []).find((c) => c.id === lane.paramId);
+    return ctrl && ctrl.type === 'range' ? ctrl : null;
+}
+
+/** The keyframe curve's default value for a lane (what an empty curve holds). */
+export function laneDefaultValue(lane) {
+    const genCtrl = getLaneGenParam(lane);
+    if (genCtrl) {
+        if (typeof genCtrl.def === 'number' && isFinite(genCtrl.def)) return genCtrl.def;
+        if (typeof genCtrl.min === 'number' && typeof genCtrl.max === 'number') return (genCtrl.min + genCtrl.max) / 2;
+        return 0;
+    }
+    const ctrl = getLaneParam(lane);
+    if (ctrl) {
+        if (typeof ctrl.def === 'number' && isFinite(ctrl.def)) return ctrl.def;
+        const def = getLaneEffectDef(lane);
+        const d = def?.defaultParams && def.defaultParams[lane.paramId];
+        if (typeof d === 'number' && isFinite(d)) return d;
+        if (typeof ctrl.min === 'number' && typeof ctrl.max === 'number') return (ctrl.min + ctrl.max) / 2;
+        return 1;
+    }
+    const target = getLaneTarget(lane?.targetProperty);
+    return target.defaultValue;
+}
+
+/** Evaluate an effect-linked lane's value at `time` (falls back to the param default). */
+export function evaluateLaneForEffect(lane, time) {
+    return evaluateKeyframes(lane?.keyframes, time, laneDefaultValue(lane));
+}
+
+/**
+ * Build the ordered effects array for a channel from its lanes at `time`.
+ * Lanes that share an effect id are merged into one effect instance whose
+ * params carry every automated value; non-automated params keep the effect's
+ * registered defaults. instanceId is per-channel-plus-effect so stateful
+ * effects (delay/chase history, continuous phase) never leak across channels.
+ */
+export function buildChannelEffects(lanes = [], time, channelId = '') {
+    const byEffect = new Map();
+    for (const lane of lanes || []) {
+        const ctrl = getLaneParam(lane);
+        if (!ctrl) continue;
+        let eff = byEffect.get(lane.effectId);
+        if (!eff) {
+            const def = getLaneEffectDef(lane);
+            eff = {
+                id: lane.effectId,
+                instanceId: `auto.${channelId || ''}.${lane.effectId}`,
+                params: { ...(def?.defaultParams || {}) },
+            };
+            byEffect.set(lane.effectId, eff);
+        }
+        eff.params[lane.paramId] = evaluateLaneForEffect(lane, time);
+    }
+    return [...byEffect.values()];
+}
+
+// ---------------------------------------------------------------------------
+// Generator-parameter lanes: drive a GENERATOR cue's params (circle radius,
+// square width, sine frequency, ...) from a channel automation curve. Additive
+// to the effect lanes — a channel can own both kinds of automation lane.
+// ---------------------------------------------------------------------------
+
+/** Resolve the paramControl a generator lane drives, or null if not animatable. */
+export function getLaneGenParam(lane) {
+    if (!lane?.genId || !lane?.genParamId) return null;
+    const def = generatorDefinitions.find((d) => d.id === lane.genId);
+    if (!def) return null;
+    const ctrl = (def.paramControls || []).find((c) => c.id === lane.genParamId);
+    return ctrl && ctrl.type === 'range' ? ctrl : null;
+}
+
+/** The generator definition a lane is linked to (or null). */
+export function getLaneGenDef(lane) {
+    if (!lane?.genId) return null;
+    return generatorDefinitions.find((d) => d.id === lane.genId) || null;
+}
+
+/** Evaluate a generator lane at `time`; an empty curve holds `baseValue`. */
+export function evaluateGenLane(lane, time, baseValue) {
+    return evaluateKeyframes(lane?.keyframes, time, baseValue);
+}
+
+/**
+ * Build the generator-param overrides for a cue at `time`. Only lanes whose
+ * generator matches the active cue's generator id apply; the base value of an
+ * empty curve is the clip's own slider value, so an untouched curve changes
+ * nothing. Returns null when no lane drives this generator.
+ */
+export function buildGeneratorOverrides(lanes = [], time, genId, baseParams = {}) {
+    let out = null;
+    for (const lane of lanes || []) {
+        if (!getLaneGenParam(lane)) continue;
+        if (lane.genId !== genId) continue;
+        if (!out) out = {};
+        const hasBase = baseParams != null && Object.prototype.hasOwnProperty.call(baseParams, lane.genParamId);
+        const base = hasBase ? baseParams[lane.genParamId] : laneDefaultValue(lane);
+        out[lane.genParamId] = evaluateGenLane(lane, time, base);
+    }
+    return out;
 }
 
 // Named easing curves as normalized cubic-bezier control pairs (x1,y1,x2,y2).
@@ -113,10 +244,39 @@ function solveBezierValue(time, a, segment, b) {
     return cubicPoint(t, p0, p1, p2, p3, 'y');
 }
 
-/** Build absolute-space control points for the segment A -> B. */
+/** Clamp a value to [lo, hi]. */
+export function clampNumber(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+/**
+ * Build absolute-space control points for the segment A -> B.
+ *
+ * Priority: tension (FL-studio drag handle) overrides any preset `easing`,
+ * which overrides the raw handleIn/handleOut pairs.
+ */
 function segmentControlPoints(a, b) {
     const dt = b.time - a.time;
     const dv = b.value - a.value;
+
+    // Tension: a single drag handle on the segment's midline bows the curve
+    // symmetrically around the straight chord. t=0 is linear; t>0 bows UP
+    // (whole curve above the chord), t<0 bows DOWN. With yOut/yIn mirroring
+    // around 1/3, the control points stay inside the chord triangle so the
+    // curve is monotonic and truly bows (a mirrored-identical pair cancels out
+    // and would leave a straight line).
+    if (typeof a?.tension === 'number' && isFinite(a.tension)) {
+        const t = clampNumber(a.tension, -1, 1);
+        const yOut = (1 / 3) + t * (1 / 3); // 0..2/3: elevation of the outgoing control point
+        const yIn = (1 / 3) - t * (1 / 3);  // 0..2/3: opposite pull on the incoming side
+        return {
+            x1: a.time + (1 / 3) * dt,
+            y1: a.value + yOut * dv,
+            x2: b.time - (1 / 3) * dt,
+            y2: b.value - yIn * dv,
+        };
+    }
+
     const easing = resolveEasing(a?.easing);
     if (easing) {
         return {
@@ -153,6 +313,10 @@ export function evaluateKeyframes(keyframes, time, defaultValue = 1) {
         const a = sorted[i];
         const b = sorted[i + 1];
         if (time >= a.time && time <= b.time) {
+            // Hold: keep A's value across the whole span, then jump at B.
+            if (a?.easing === 'hold') {
+                return time < b.time ? a.value : b.value;
+            }
             const segment = segmentControlPoints(a, b);
             const sameValue = Math.abs(b.value - a.value) < 1e-9;
             if (sameValue && Math.abs(b.time - a.time) < 1e-9) return b.value;
@@ -162,8 +326,9 @@ export function evaluateKeyframes(keyframes, time, defaultValue = 1) {
     return last.value;
 }
 
-/** Evaluate a whole lane at `time`. */
+/** Evaluate a whole lane at `time`. Effect-linked lanes use the param default; legacy bare-target lanes use the built-in target's default. */
 export function evaluateLane(lane, time) {
+    if (lane?.effectId && lane?.paramId) return evaluateLaneForEffect(lane, time);
     const target = getLaneTarget(lane?.targetProperty);
     return evaluateKeyframes(lane?.keyframes, time, target.defaultValue);
 }
@@ -249,14 +414,14 @@ export function applyLanesToPoints(points, lanes, time) {
 
 /** Build an SVG path string for a lane's curve across `duration`. */
 export function laneSvgPath(lane, duration, { width = 1000, height = 100, padding = 8 } = {}) {
-    const target = getLaneTarget(lane?.targetProperty);
     const keyframes = (lane?.keyframes || []).slice().sort((x, y) => x.time - y.time);
     if (keyframes.length === 0) return null;
+    const defaultValue = laneDefaultValue(lane);
     const t0 = keyframes[0].time;
     const t1 = keyframes.length > 1 ? keyframes[keyframes.length - 1].time : duration;
     const span = Math.max(1e-6, t1 - t0);
-    const min = Math.min(...keyframes.map((k) => k.value), target.defaultValue);
-    const max = Math.max(...keyframes.map((k) => k.value), target.defaultValue);
+    const min = Math.min(...keyframes.map((k) => k.value), defaultValue);
+    const max = Math.max(...keyframes.map((k) => k.value), defaultValue);
     const vSpan = Math.max(1e-6, max - min);
     const x = (t) => ((t - t0) / span) * width;
     const y = (v) => (1 - (v - min) / vSpan) * height;
@@ -265,6 +430,13 @@ export function laneSvgPath(lane, duration, { width = 1000, height = 100, paddin
     for (let i = 0; i < keyframes.length - 1; i++) {
         const a = keyframes[i];
         const b = keyframes[i + 1];
+        if (a?.easing === 'hold') {
+            // Step curve: hold A's value across the span, then a vertical jump.
+            segments.push(
+                `M ${x(a.time).toFixed(2)} ${y(a.value).toFixed(2)} L ${x(b.time).toFixed(2)} ${y(a.value).toFixed(2)}`
+            );
+            continue;
+        }
         const seg = segmentControlPoints(a, b);
         const cx1 = ((seg.x1 - t0) / span) * width;
         const cy1 = y(seg.y1);

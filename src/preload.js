@@ -137,7 +137,7 @@ contextBridge.exposeInMainWorld(
                                             saveArtnetMappings: (mappings) => ipcRenderer.invoke('save-artnet-mappings', mappings),
                                             exportMappings: (mappings, type) => ipcRenderer.invoke('export-mappings', mappings, type),
                                             importMappings: (type) => ipcRenderer.invoke('import-mappings', type),
-                                            saveTimelineProject: (data, defaultName) => ipcRenderer.invoke('save-timeline-project', data, defaultName),
+                                            saveTimelineProject: (data, defaultName, forceDialog) => ipcRenderer.invoke('save-timeline-project', data, defaultName, forceDialog),
                                             openTimelineProject: () => ipcRenderer.invoke('open-timeline-project'),
                                             startArtnetTimecodeListener: () => ipcRenderer.invoke('start-artnet-timecode-listener'),
                                             stopArtnetTimecodeListener: () => ipcRenderer.send('stop-artnet-timecode-listener'),

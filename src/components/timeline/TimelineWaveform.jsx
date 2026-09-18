@@ -1,9 +1,17 @@
 import React, { useEffect, useRef } from 'react';
 import { timeToPx } from '../../utils/timelineTime';
 
+// Hard cap on the canvas backing-store width (device px). Browsers refuse
+// 2D surfaces wider than ~32767px (or they clamp them), which silently blanks
+// the waveform on very long timelines at deep zoom. We stay well below that
+// and let CSS stretch the rare overflow instead of the wave disappearing.
+const MAX_DEV_PX = 24000;
+
 /**
- * Full-width audio waveform backdrop drawn on a <canvas>. Re-draws whenever
- * peaks / layout change; cheap because it only paints the visible strip.
+ * Full-width audio waveform backdrop drawn on a <canvas>. Peak resolution
+ * scales with the timeline (extractAudioPeaks stores a dense bucket set), so
+ * the waveform keeps its detail when zoomed in instead of collapsing into a
+ * coarse fixed-column texture.
  */
 const TimelineWaveform = ({ peaks, duration, pxPerSecond, height, width, color = 'rgba(255,255,255,0.6)' }) => {
     const canvasRef = useRef(null);
@@ -14,12 +22,16 @@ const TimelineWaveform = ({ peaks, duration, pxPerSecond, height, width, color =
         const dpr = window.devicePixelRatio || 1;
         const w = Math.max(1, width);
         const h = Math.max(1, height);
-        canvas.width = Math.round(w * dpr);
+        const devW = Math.min(Math.round(w * dpr), MAX_DEV_PX);
+        canvas.width = devW;
         canvas.height = Math.round(h * dpr);
         canvas.style.width = `${w}px`;
         canvas.style.height = `${h}px`;
         const ctx = canvas.getContext('2d');
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (!ctx) return;
+        // Device px per CSS px on the x axis (== dpr until MAX_DEV_PX caps it).
+        const kx = devW / w;
+        ctx.setTransform(kx, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
         const mid = h / 2;
         const amp = h * 0.42;
@@ -32,7 +44,10 @@ const TimelineWaveform = ({ peaks, duration, pxPerSecond, height, width, color =
 
         const peakDur = duration > 0 ? duration : 1;
         ctx.fillStyle = color;
-        const bars = Math.min(peaks.length, Math.max(1, Math.floor(w / 2)));
+        // One 2px column per available device pixel, up to the bucket count.
+        const cols = Math.max(1, Math.floor(devW / 2));
+        const bars = Math.min(peaks.length, cols);
+        const bwPx = (w / bars) * 0.7;
         for (let i = 0; i < bars; i++) {
             const t = (i / bars) * peakDur;
             const px = timeToPx(t, pxPerSecond);
@@ -40,8 +55,7 @@ const TimelineWaveform = ({ peaks, duration, pxPerSecond, height, width, color =
             const bar = peaks[idx] || { min: -0.1, max: 0.1 };
             const top = Math.max(0, mid - Math.max(0, bar.max) * amp);
             const bottom = Math.min(h, mid + Math.max(0, -bar.min) * amp);
-            const bw = Math.max(1, (w / bars) * 0.7);
-            ctx.fillRect(px, top, bw, Math.max(1, bottom - top));
+            ctx.fillRect(px, top, Math.max(1, bwPx), Math.max(1, bottom - top));
         }
     }, [peaks, duration, pxPerSecond, height, width, color]);
 

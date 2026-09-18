@@ -36,6 +36,9 @@ export const DEFAULT_TIMELINE_SETTINGS = Object.freeze({
     // toggled) for the inspector/preview. Both are patched together by
     // SELECT so they never disagree.
     selectedCueIds: [],
+    // Selected automation keyframe: { laneId, keyframeId } | null. Mirrors cue
+    // selection so the Delete key and right-click menu know what to remove.
+    selectedKeyframe: null,
     selectedChannelId: null,
     masterIntensity: 1,
     blackout: false,
@@ -172,7 +175,19 @@ function newLane(id, patch = {}) {
     return {
         id,
         channelId: patch.channelId || null,
-        targetProperty: patch.targetProperty || 'GEOMETRY_SCALE',
+        // Effect-linked automation: an empty lane has no effect/param assigned
+        // until the user drops one from the Inspector or picks it in the header.
+        effectId: patch.effectId || null,
+        paramId: patch.paramId || null,
+        // Generator-parameter automation: drives one range param of the linked
+        // generator definition. A lane may be a gen lane OR an effect lane, never
+        // both — switching on drop/selection clears the other side.
+        genId: patch.genId || null,
+        genParamId: patch.genParamId || null,
+        // Legacy scalar lanes (old fixed Scale/Rotation/Translate/Brightness/
+        // Color targets) keep evaluating through applyLanesToPoints unchanged,
+        // so pre-existing projects are never broken by the effect model.
+        targetProperty: patch.targetProperty || null,
         keyframes: patch.keyframes || [],
         ...patch,
     };
@@ -229,6 +244,11 @@ export function normalizeHydratedState(raw) {
         settings.selectedCueIds = rawSettings.selectedCueId != null ? [rawSettings.selectedCueId] : [];
     }
     if (!Array.isArray(settings.selectedCueIds)) settings.selectedCueIds = [];
+
+    // Keyframe selection is transient UI state; never trust a persisted shape.
+    if (!settings.selectedKeyframe || typeof settings.selectedKeyframe !== 'object') {
+        settings.selectedKeyframe = null;
+    }
 
     return {
         channels,
@@ -624,11 +644,44 @@ export function reducer(state, action) {
             return { ...state, lanes: { ...state.lanes, [lane.id]: { ...lane, keyframes } } };
         }
 
+        case 'SELECT_KEYFRAME': {
+            const { laneId, keyframeId, additive } = action.payload || {};
+            const cur = state.settings.selectedKeyframe;
+            if (!laneId || !keyframeId) {
+                // Clicking empty automation space / the canvas clears selection.
+                return { ...state, settings: { ...state.settings, selectedKeyframe: null } };
+            }
+            if (additive && cur && cur.laneId === laneId && cur.keyframeId === keyframeId) {
+                // Shift/Ctrl+click on the selected keyframe toggles it OFF.
+                return { ...state, settings: { ...state.settings, selectedKeyframe: null } };
+            }
+            return {
+                ...state,
+                settings: { ...state.settings, selectedKeyframe: { laneId, keyframeId } },
+            };
+        }
+
         case 'REMOVE_KEYFRAME': {
             const lane = state.lanes[action.payload.laneId];
             if (!lane) return state;
             const keyframes = (lane.keyframes || []).filter((k) => k.id !== action.payload.keyframeId);
-            return { ...state, lanes: { ...state.lanes, [lane.id]: { ...lane, keyframes } } };
+            const sel = state.settings.selectedKeyframe;
+            const settings = sel && sel.laneId === action.payload.laneId && sel.keyframeId === action.payload.keyframeId
+                ? { ...state.settings, selectedKeyframe: null }
+                : state.settings;
+            return { ...state, lanes: { ...state.lanes, [lane.id]: { ...lane, keyframes } }, settings };
+        }
+
+        case 'REMOVE_KEYFRAMES': {
+            const lane = state.lanes[action.payload.laneId];
+            if (!lane) return state;
+            const ids = new Set(action.payload.keyframeIds || []);
+            const keyframes = (lane.keyframes || []).filter((k) => !ids.has(k.id));
+            const sel = state.settings.selectedKeyframe;
+            const settings = sel && ids.has(sel.keyframeId)
+                ? { ...state.settings, selectedKeyframe: null }
+                : state.settings;
+            return { ...state, lanes: { ...state.lanes, [lane.id]: { ...lane, keyframes } }, settings };
         }
 
         case 'REMOVE_LANE': {
@@ -646,7 +699,11 @@ export function reducer(state, action) {
                       },
                   }
                 : state.channels;
-            return { ...state, lanes, channels };
+            const sel = state.settings.selectedKeyframe;
+            const settings = sel && sel.laneId === lane.id
+                ? { ...state.settings, selectedKeyframe: null }
+                : state.settings;
+            return { ...state, lanes, channels, settings };
         }
 
         case 'SET_SETTINGS': {
@@ -685,7 +742,7 @@ export function reducer(state, action) {
 }
 
 /** Extract min/max peak bars from a decoded AudioBuffer. */
-export function extractAudioPeaks(buffer, barCount = 2000) {
+export function extractAudioPeaks(buffer, barCount = 16000) {
     if (!buffer) return { peaks: [], duration: 0 };
     const channel = buffer.getChannelData(0);
     const duration = buffer.duration;
@@ -776,7 +833,7 @@ export const TimelineProvider = ({ children }) => {
         baseDispatch({ type: 'SET_STATE', payload: next });
     }, []);
 
-    const saveProject = useCallback(async (filename = null) => {
+    const saveProject = useCallback(async (filename = null, forceDialog = false) => {
         if (!window.electronAPI?.saveTimelineProject) return { success: false };
         return window.electronAPI.saveTimelineProject({
             channels: stateRef.current.channels,
@@ -784,11 +841,13 @@ export const TimelineProvider = ({ children }) => {
             lanes: stateRef.current.lanes,
             channelOrder: stateRef.current.channelOrder,
             settings: stateRef.current.settings,
-        }, filename);
+        }, filename, forceDialog);
     }, []);
 
-    // Save-as with a name; Ctrl+S uses the current file if one is set, else prompts.
-    const saveProjectAs = useCallback(() => saveProject(null), [saveProject]);
+    // Save-as always prompts for a path. Ctrl+S (saveProject) instead uses the
+    // current file when one is known, and automatically drops into Save As the
+    // first time a never-saved project is saved — no more null-path crash.
+    const saveProjectAs = useCallback(() => saveProject(null, true), [saveProject]);
 
     const requestNewProject = useCallback(() => {
         dispatch({ type: 'RESET' });
@@ -941,6 +1000,8 @@ export const TimelineProvider = ({ children }) => {
             addKeyframe: (laneId, keyframe) => dispatch({ type: 'ADD_KEYFRAME', payload: { laneId, keyframe } }),
             updateKeyframe: (laneId, keyframeId, patch) => dispatch({ type: 'UPDATE_KEYFRAME', payload: { laneId, keyframeId, patch } }),
             removeKeyframe: (laneId, keyframeId) => dispatch({ type: 'REMOVE_KEYFRAME', payload: { laneId, keyframeId } }),
+            removeKeyframes: (laneId, keyframeIds) => dispatch({ type: 'REMOVE_KEYFRAMES', payload: { laneId, keyframeIds } }),
+            selectKeyframe: (laneId, keyframeId, additive) => dispatch({ type: 'SELECT_KEYFRAME', payload: { laneId, keyframeId, additive } }),
             removeLane: (laneId) => dispatch({ type: 'REMOVE_LANE', payload: { laneId } }),
             setSettings: (patch) => dispatch({ type: 'SET_SETTINGS', payload: patch }),
             setAudio: (payload) => dispatch({ type: 'SET_AUDIO', payload }),

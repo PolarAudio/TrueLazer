@@ -35,7 +35,8 @@ const TrackHeader = ({ channel, height }) => {
                 filePath: data.filePath,
                 fileName: data.fileName || data.filePath.split(/[\\/]/).pop(),
                 startTime: 0,
-                duration: 10,
+                // duration: 0 = auto (resolved to totalFrames / fps when parsed).
+                duration: 0,
             });
         } else if (data.ip != null && data.channel != null) {
             const output = {
