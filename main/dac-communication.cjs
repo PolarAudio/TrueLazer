@@ -23,8 +23,22 @@ async function discoverDacs(timeout = 2000, networkInterfaceIp) {
     idnDacs.forEach(d => d.type = 'idn');
     edDacs.forEach(d => d.type = 'EtherDream');
     sbDacs.forEach(d => d.type = 'Showbridge');
-    
-    return [...idnDacs, ...edDacs, ...sbDacs];
+
+    // Collapse every result to ONE entry per device IP. The Showbridge backend
+    // answers the discovery broadcast once PER CHANNEL (a 6-channel unit yields
+    // 6 entries with the same IP), and getDacServices() then lists all of that
+    // device's channels — so every extra entry is a duplicate of the same
+    // device. Without this, the renderer's per-DAC service expansion multiplies
+    // (6 physical channels -> 36 descriptors) and repeated scans can seed the
+    // same outputs over and over.
+    const seenIps = new Set();
+    const merged = [...idnDacs, ...edDacs, ...sbDacs].filter(d => {
+        if (!d || !d.ip || seenIps.has(d.ip)) return false;
+        seenIps.add(d.ip);
+        return true;
+    });
+
+    return merged;
 }
 
 function getDacServices(ip, localIp, timeout = 1000, type) {

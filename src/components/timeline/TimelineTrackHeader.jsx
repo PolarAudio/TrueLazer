@@ -1,19 +1,26 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useTimeline, isChannelAudible, getChannelOutputs } from '../../contexts/TimelineContext';
+import { useTimeline, isChannelAudible, getChannelOutputs, getChannelDisplayName } from '../../contexts/TimelineContext';
 
 const TrackHeader = ({ channel, height }) => {
-    const { state, actions } = useTimeline();
+    const { state, actions, dacOutputSettings, refreshDacOutputSettings } = useTimeline();
+    const displayName = getChannelDisplayName(channel, dacOutputSettings);
     const [editing, setEditing] = useState(false);
-    const [nameDraft, setNameDraft] = useState(channel.name);
+    const [nameDraft, setNameDraft] = useState(displayName);
     const inputRef = useRef(null);
+
+    // Re-read the DAC output names (edited in the main app) each time the
+    // timeline opens, since the editor mounts fresh per page switch.
+    useEffect(() => {
+        refreshDacOutputSettings();
+    }, [refreshDacOutputSettings]);
 
     useEffect(() => {
         if (editing) {
-            setNameDraft(channel.name);
+            setNameDraft(displayName);
             inputRef.current && inputRef.current.focus();
             inputRef.current && inputRef.current.select();
         }
-    }, [editing, channel.name]);
+    }, [editing, displayName]);
 
     const audible = isChannelAudible(state, channel);
     const outputs = getChannelOutputs(channel);
@@ -82,14 +89,14 @@ const TrackHeader = ({ channel, height }) => {
                         onKeyDown={(e) => {
                             if (e.key === 'Enter') e.currentTarget.blur();
                             if (e.key === 'Escape') {
-                                setNameDraft(channel.name);
+                                setNameDraft(displayName);
                                 setEditing(false);
                             }
                         }}
                     />
                 ) : (
                     <span className="timeline-track-name" onDoubleClick={() => setEditing(true)}>
-                        {channel.name}
+                        {displayName}
                     </span>
                 )}
                 <button className="timeline-icon-btn" title={channel.expanded ? 'Collapse automation' : 'Expand automation'}
@@ -125,7 +132,9 @@ const TrackHeader = ({ channel, height }) => {
                 {outputs.length > 0 ? (
                     outputs.map((o) => (
                         <span key={`${o.ip}:${o.channel}`} className="timeline-dac-chip">
-                            <span className="timeline-dac-chip-label">{o.label || o.ip}[{o.channel}]</span>
+                            <span className="timeline-dac-chip-label">
+                                {dacOutputSettings[`${o.ip}:${o.channel}`]?.name || o.label || o.ip}[{o.channel}]
+                            </span>
                             <button
                                 className={`timeline-dac-axis ${o.flipX ? 'active' : ''}`}
                                 title={o.flipX ? 'Invert X is ON (click to reset)' : 'Invert X axis for this DAC'}

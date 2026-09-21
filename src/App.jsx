@@ -28,6 +28,7 @@ import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
 import ShapeBuilder from './components/ShapeBuilder';
 import TimelineEditor from './components/TimelineEditor';
+import { timelineBridge } from './contexts/TimelineContext';
 import AboutWindow from './components/aboutWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
@@ -6629,6 +6630,66 @@ function App() {
                         }
                     }
                 }
+
+                // 3. Timeline project: rewrite ILDA cue + audio paths in the old directory
+                const bridge = timelineBridge;
+                const tlState = bridge?.stateRef?.current;
+                const tlActions = bridge?.actionsRef?.current;
+                if (tlState && tlActions) {
+                    const channelOrder = tlState.channelOrder || [];
+                    for (const chId of channelOrder) {
+                        const channel = tlState.channels[chId];
+                        for (const cueId of (channel?.cues || [])) {
+                            const cue = tlState.cues[cueId];
+                            if (!cue || cue.type !== 'ILDA' || !cue.filePath) continue;
+
+                            // The timeline is a SEPARATE store from the main grid, so
+                            // the main-grid `processedOldPaths` set must NOT suppress
+                            // rewrites here — a file referenced by BOTH the grid and
+                            // the timeline used to keep its broken path (skipped by
+                            // the old guard), making the RelocateModal reappear for it
+                            // on every reload.
+
+                            // The specifically located file itself: bind regardless of name
+                            if (cue.filePath === fileEntry.filePath) {
+                                const newFileName = getFile(newPath);
+                                tlActions.updateCue(cueId, { filePath: newPath, fileName: newFileName });
+                                setMissingFiles(prev => prev.filter(f => f.filePath !== cue.filePath));
+                                continue;
+                            }
+
+                            // Other same-directory timeline ILDA cues
+                            if (getDir(cue.filePath) === oldDirectory) {
+                                const fileName = getFile(cue.filePath);
+                                const potentialPath = `${newDirectory}${sep}${fileName}`;
+                                if (cue.filePath !== potentialPath) {
+                                    const exists = await window.electronAPI.checkFileExists(potentialPath);
+                                    if (exists) {
+                                        console.log(`[Relocate] Auto-resolving timeline ILDA: ${fileName}`);
+                                        tlActions.updateCue(cueId, { filePath: potentialPath, fileName });
+                                        setMissingFiles(prev => prev.filter(f => f.filePath !== cue.filePath));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Timeline audio file in the same directory
+                    const tlAudio = tlState.audio;
+                    if (tlAudio?.path && getDir(tlAudio.path) === oldDirectory) {
+                        const fileName = getFile(tlAudio.path);
+                        const potentialPath = `${newDirectory}${sep}${fileName}`;
+                        if (tlAudio.path !== potentialPath) {
+                            const exists = await window.electronAPI.checkFileExists(potentialPath);
+                            if (exists) {
+                                console.log(`[Relocate] Auto-resolving timeline audio: ${fileName}`);
+                                tlActions.setAudio({ ...tlAudio, path: potentialPath });
+                                processedOldPaths.add(tlAudio.path);
+                                setMissingFiles(prev => prev.filter(f => f.filePath !== tlAudio.path));
+                            }
+                        }
+                    }
+                }
             }
         } catch (error) {
             console.error("Relocation failed:", error);
@@ -7310,9 +7371,15 @@ function App() {
                             </ErrorBoundary>
                         </div>
                     ) : currentPage === 'shapeBuilder' ? (
-                        <ShapeBuilder onBack={() => setCurrentPage('main')} />
+                        <>
+                            <ShapeBuilder onBack={() => setCurrentPage('main')} />
+                            <RelocateModal missingFiles={missingFiles} onRelocate={handleRelocate} onClose={() => setMissingFiles([])} />
+                        </>
                     ) : (
-                        <TimelineEditor onBack={() => setCurrentPage('main')} />
+                        <>
+                            <TimelineEditor onBack={() => setCurrentPage('main')} />
+                            <RelocateModal missingFiles={missingFiles} onRelocate={handleRelocate} onClose={() => setMissingFiles([])} />
+                        </>
                     )}
                 </KeyboardProvider>
             </ArtnetProvider>

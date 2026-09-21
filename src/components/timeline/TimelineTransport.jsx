@@ -164,6 +164,21 @@ const TimelineTransport = ({
                     />
                     <span>Loop</span>
                 </label>
+                <label className="timeline-checkbox" title="Clip editing: Stretch lets you drag clips over each other; Trim clamps resize edges at the neighbouring clip so clips can never overlap">
+                    <input
+                        type="checkbox"
+                        checked={s.clipEditTrim}
+                        onChange={(e) => actions.setSettings({ clipEditTrim: e.target.checked })}
+                    />
+                    <span>Trim</span>
+                </label>
+                <button
+                    className="timeline-btn"
+                    onClick={() => actions.trimOverlaps((s.selectedCueIds || []).length ? s.selectedCueIds : undefined)}
+                    title="Cut clips so none overlaps its neighbour. Trims the selected clips — or ALL clips when nothing is selected. Overlapping clips shadow each other: only one plays at any moment."
+                >
+                    ✂ Cut Overlaps
+                </button>
                 {s.loopEnabled && (
                     <span className="timeline-loop-pos">
                         <input type="number" min={0} step={0.1} value={s.loop?.start ?? 0}

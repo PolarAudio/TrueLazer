@@ -11,13 +11,16 @@ import { generatorDefinitions } from './generatorDefinitions';
  * pristine cached source frame (non-destructive like the spec's
  * globalProcessingBuffer).
  *
- * Modern lanes link to ONE parameter of ONE main-app effect
- * (effectDefinitions): `lane.effectId` + `lane.paramId` choose what the lane's
- * keyframes drive, and the channel compile stage feeds the merged effect list
- * through `applyEffects` (utils/effects). Legacy lanes that were saved with a
- * bare `targetProperty` (the old fixed Scale/Rotation/Translate/Brightness/Color
- * scalars) still evaluate through `applyLanesToPoints` so old projects keep
- * working unchanged — no destructive migration.
+ * Modern lanes are modelled as FL-style automation CLIPS. Each clip targets its
+ * OWN effect parameter (`clip.effectId` + `clip.paramId`), generator parameter
+ * (`clip.genId` + `clip.genParamId`) or legacy bare target (`targetProperty`),
+ * and carries per-clip static settings in `clip.values`. Lanes that predate the
+ * clip model (or were saved before per-clip targets) are synthesized into one
+ * spanning clip at evaluation time so every engine path sees a uniform shape.
+ * The channel compile stage feeds the merged effect list through `applyEffects`
+ * (utils/effects). Legacy scalar lanes (saved with a bare `targetProperty`)
+ * still evaluate through `applyLanesToPoints` so old projects keep working
+ * unchanged — no destructive migration.
  */
 export const POINT_STRIDE = 8;
 
@@ -80,36 +83,132 @@ export function laneDefaultValue(lane) {
     return target.defaultValue;
 }
 
+/** The automation clip whose range covers `time` (end-exclusive), or null. */
+export function activeAutoClip(lane, time) {
+    const clips = lane?.clips;
+    if (!clips || clips.length === 0) return null;
+    for (const c of clips) {
+        if (time >= c.startTime - 1e-6 && time < c.startTime + c.duration) return c;
+    }
+    return null;
+}
+
+/**
+ * The automation "entity" driving a lane at `time`. Returns the covering clip
+ * when the lane has clips, otherwise synthesizes one spanning legacy clip from
+ * the lane's own `keyframes` + target fields (pre-clip projects). Either way
+ * the returned object carries effectId/paramId/genId/genParamId/targetProperty
+ * so every getter/evaluator below can treat clips and lanes uniformly.
+ */
+export function automationClipAt(lane, time) {
+    if (!lane) return null;
+    const clips = Array.isArray(lane.clips) && lane.clips.length > 0;
+    if (clips) return activeAutoClip(lane, time);
+    const hasTarget = !!(lane.effectId || lane.genId || lane.targetProperty);
+    const hasKeys = Array.isArray(lane.keyframes) && lane.keyframes.length > 0;
+    if (!hasTarget && !hasKeys) return null;
+    return {
+        id: null,
+        startTime: 0,
+        duration: Infinity,
+        keyframes: Array.isArray(lane.keyframes) ? lane.keyframes : [],
+        effectId: lane.effectId || null,
+        paramId: lane.paramId || null,
+        genId: lane.genId || null,
+        genParamId: lane.genParamId || null,
+        targetProperty: lane.targetProperty || null,
+        values: lane.values || {},
+    };
+}
+
+/** Evaluate an automation clip/entity's curve at a GLOBAL `time` (clip keyframes are clip-relative). */
+export function evaluateClipAt(clip, time, dflt) {
+    if (!clip) return dflt;
+    const start = clip.startTime ?? 0;
+    const duration = clip.duration ?? Infinity;
+    if (time < start || time >= start + duration) return dflt;
+    return evaluateKeyframes(clip.keyframes, time - start, dflt);
+}
+
+/**
+ * Evaluate a lane at `time`. The covering automation clip's curve drives the
+ * value (clip-relative keyframes); a legacy lane without clips is evaluated
+ * through its synthesized full-timeline clip. Outside every clip the default
+ * `dflt` applies.
+ */
+export function evaluateAutomation(lane, time, dflt) {
+    return evaluateClipAt(automationClipAt(lane, time), time, dflt);
+}
+
 /** Evaluate an effect-linked lane's value at `time` (falls back to the param default). */
 export function evaluateLaneForEffect(lane, time) {
-    return evaluateKeyframes(lane?.keyframes, time, laneDefaultValue(lane));
+    return evaluateAutomation(lane, time, laneDefaultValue(lane));
 }
 
 /**
  * Build the ordered effects array for a channel from its lanes at `time`.
- * Lanes that share an effect id are merged into one effect instance whose
- * params carry every automated value; non-automated params keep the effect's
- * registered defaults. instanceId is per-channel-plus-effect so stateful
- * effects (delay/chase history, continuous phase) never leak across channels.
+ * Each lane contributes its ACTIVE automation clip, which carries its own
+ * `effectId`/`paramId` and per-clip static `values`. Clips that share an effect
+ * id are merged into one effect instance whose params carry every automated
+ * value plus each clip's own static settings; non-automated params keep the
+ * effect's registered defaults (overlaid by the clip's `values`). instanceId is
+ * per-channel-plus-effect so stateful effects (delay/chase history, continuous
+ * phase) never leak across channels.
  */
 export function buildChannelEffects(lanes = [], time, channelId = '') {
     const byEffect = new Map();
     for (const lane of lanes || []) {
-        const ctrl = getLaneParam(lane);
+        const clip = automationClipAt(lane, time);
+        if (!clip || !clip.effectId) continue;
+        const ctrl = getLaneParam(clip);
         if (!ctrl) continue;
-        let eff = byEffect.get(lane.effectId);
+        let eff = byEffect.get(clip.effectId);
         if (!eff) {
-            const def = getLaneEffectDef(lane);
+            const def = getLaneEffectDef(clip);
             eff = {
-                id: lane.effectId,
-                instanceId: `auto.${channelId || ''}.${lane.effectId}`,
-                params: { ...(def?.defaultParams || {}) },
+                id: clip.effectId,
+                instanceId: `auto.${channelId || ''}.${clip.effectId}`,
+                params: { ...(def?.defaultParams || {}), ...(clip.values || {}) },
             };
-            byEffect.set(lane.effectId, eff);
+            byEffect.set(clip.effectId, eff);
         }
-        eff.params[lane.paramId] = evaluateLaneForEffect(lane, time);
+        eff.params[clip.paramId] = evaluateClipAt(clip, time, laneDefaultValue(clip));
     }
     return [...byEffect.values()];
+}
+
+/**
+ * Layer a clip's per-clip toggle overrides onto a channel effects array. Curves
+ * only drive continuous 'range' params; every other control (select, checkbox,
+ * color, text) is static per channel — this lets individual clips override
+ * those (e.g. a Delay direction per clip) without touching the shared defaults.
+ * Unknown effects/params and range params are ignored; when nothing applies the
+ * array is returned as-is.
+ */
+export function applyCueEffectOverrides(effects = [], overrides = {}) {
+    if (!effects || effects.length === 0 || !overrides || Object.keys(overrides).length === 0) {
+        return effects;
+    }
+    let changed = false;
+    const out = effects.map((eff) => {
+        const set = overrides[eff.id];
+        if (!set) return eff;
+        const def = effectDefinitions.find((d) => d.id === eff.id);
+        let effOut = null;
+        for (const paramId of Object.keys(set)) {
+            const ctrl = (def?.paramControls || []).find((c) => c.id === paramId);
+            if (!ctrl || ctrl.type === 'range') continue;
+            if (eff.params[paramId] !== set[paramId]) {
+                if (!effOut) {
+                    effOut = { ...eff, params: { ...(eff.params || {}) } };
+                    changed = true;
+                }
+                effOut.params[paramId] = set[paramId];
+            }
+        }
+        return effOut || eff;
+    });
+    return changed ? out : effects;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,24 +234,27 @@ export function getLaneGenDef(lane) {
 
 /** Evaluate a generator lane at `time`; an empty curve holds `baseValue`. */
 export function evaluateGenLane(lane, time, baseValue) {
-    return evaluateKeyframes(lane?.keyframes, time, baseValue);
+    return evaluateAutomation(lane, time, baseValue);
 }
 
 /**
- * Build the generator-param overrides for a cue at `time`. Only lanes whose
- * generator matches the active cue's generator id apply; the base value of an
- * empty curve is the clip's own slider value, so an untouched curve changes
- * nothing. Returns null when no lane drives this generator.
+ * Build the generator-param overrides for a cue at `time`. Only the ACTIVE
+ * automation clip's generator link applies (clip.genId/genParamId); the base
+ * value of an empty curve is the cue's own slider value, and the clip's static
+ * `values` overlay the cue before the curve drives its param. Returns null when
+ * no clip drives this generator.
  */
 export function buildGeneratorOverrides(lanes = [], time, genId, baseParams = {}) {
     let out = null;
     for (const lane of lanes || []) {
-        if (!getLaneGenParam(lane)) continue;
-        if (lane.genId !== genId) continue;
-        if (!out) out = {};
-        const hasBase = baseParams != null && Object.prototype.hasOwnProperty.call(baseParams, lane.genParamId);
-        const base = hasBase ? baseParams[lane.genParamId] : laneDefaultValue(lane);
-        out[lane.genParamId] = evaluateGenLane(lane, time, base);
+        const clip = automationClipAt(lane, time);
+        if (!clip || !getLaneGenParam(clip)) continue;
+        if (clip.genId !== genId) continue;
+        if (!out) out = { ...(baseParams || {}) };
+        for (const k of Object.keys(clip.values || {})) out[k] = clip.values[k];
+        const hasBase = baseParams != null && Object.prototype.hasOwnProperty.call(baseParams, clip.genParamId);
+        const base = hasBase ? baseParams[clip.genParamId] : laneDefaultValue(clip);
+        out[clip.genParamId] = evaluateClipAt(clip, time, base);
     }
     return out;
 }
@@ -330,7 +432,7 @@ export function evaluateKeyframes(keyframes, time, defaultValue = 1) {
 export function evaluateLane(lane, time) {
     if (lane?.effectId && lane?.paramId) return evaluateLaneForEffect(lane, time);
     const target = getLaneTarget(lane?.targetProperty);
-    return evaluateKeyframes(lane?.keyframes, time, target.defaultValue);
+    return evaluateAutomation(lane, time, target.defaultValue);
 }
 
 /**

@@ -472,14 +472,12 @@ self.onmessage = async function(e) {
       }
       self.postMessage({ type: 'request-file-content', filePath, requestId: newRequestId, maxBytes });
     } else if (type === 'file-content-response') {
-  // ... existing file-content-response ...
       // Main process (renderer) sends file content back to worker
       const requestContext = pendingFileRequests.get(requestId);
       if (!requestContext) {
         console.error(`Worker: No context found for requestId: ${requestId}`);
         return;
       }
-      pendingFileRequests.delete(requestId);
 
       // Relocate support: the renderer passes the newly-located path alongside the
       // content so the parse-ilda echo forwards the CURRENT path instead of the
@@ -493,6 +491,11 @@ self.onmessage = async function(e) {
       }
 
       if (e.data.error) {
+        // Keep the pending context: the renderer answers with an error when the
+        // file is missing, but the RelocateModal later fulfils this SAME
+        // requestId with the relocated content. Deleting the context here meant a
+        // late file-content-response hit "No context found for requestId" and the
+        // clip never re-parsed (staying dead / reverting to the broken path).
         console.error(`Worker: Error receiving file content: ${e.data.error}`);
         self.postMessage({ type: 'error', message: e.data.error, originalType: 'parse-ilda', ...requestContext });
         if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {
@@ -524,6 +527,9 @@ self.onmessage = async function(e) {
         delete requestContext.requestId;
 
         if (parsedData.error) {
+            // The content read fine but ILDA parsing genuinely failed — nothing
+            // for the RelocateModal to fix, so drop the context.
+            pendingFileRequests.delete(requestId);
             self.postMessage({ type: 'error', message: parsedData.error, originalType: 'parse-ilda', ...requestContext });
             if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {
                 self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex });
@@ -531,6 +537,11 @@ self.onmessage = async function(e) {
             return;
         }
 
+        // The request was genuinely consumed (content arrived AND parsed). A
+        // failed read kept the context so relocation could fulfil it later;
+        // once parsed, drop it. The truncation-retry path above re-registers it
+        // BEFORE re-requesting, so this delete only ever runs on the final hop.
+        pendingFileRequests.delete(requestId);
         const newWorkerId = `ilda-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
         ildaDataStore.set(newWorkerId, {ildaFileBuffer: parsedData.ildaFileBuffer, framesMetadata: parsedData.frames }); // Store full buffer and metadata
         self.postMessage({ 
@@ -545,6 +556,7 @@ self.onmessage = async function(e) {
             self.postMessage({ type: 'parsing-status', status: false, layerIndex: requestContext.layerIndex, colIndex: requestContext.colIndex }); // Parsing finished
         }
       } catch (error) {
+        pendingFileRequests.delete(requestId);
         console.error('[ilda-parser.worker.js] Error parsing file from content response:', error);
         self.postMessage({ type: 'error', message: error.message, originalType: 'parse-ilda', ...requestContext });
         if (requestContext.layerIndex !== undefined && requestContext.colIndex !== undefined) {

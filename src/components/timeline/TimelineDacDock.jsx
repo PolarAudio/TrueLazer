@@ -16,8 +16,17 @@ const TimelineDacDock = () => {
         setError('');
         try {
             const found = await discoverChannels();
-            setDacs(found || []);
-            if (!found || found.length === 0) setError('No DACs found. Is the DAC connected on this network?');
+            // dedupe defensively (one chip per unique ip:channel)
+            const unique = [];
+            const seen = new Set();
+            for (const d of found || []) {
+                const key = `${d.ip}:${d.channel}`;
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                unique.push(d);
+            }
+            setDacs(unique);
+            if (unique.length === 0) setError('No DACs found. Is the DAC connected on this network?');
         } catch (e) {
             setError(`Discovery failed: ${e.message}`);
         } finally {

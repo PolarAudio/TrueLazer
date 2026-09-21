@@ -18,8 +18,8 @@ import {
  *   Arrow            move the playhead (frame head) — Left/Right ±1 frame
  *   Shift+Arrow      jump to the previous/next beat-grid line
  *   Ctrl/Cmd+Arrow   jump to the previous/next clip start/end boundary
- *   Ctrl+C/X/V       copy / cut / paste the selected cue (paste at playhead,
- *                    onto the currently selected track if any)
+ *   Ctrl+C/X/V       copy / cut / paste the selected cue or automation clip
+ *                    (paste at playhead, onto the currently selected track if any)
  *   Ctrl+S           save timeline project (save-as first time)
  *   Ctrl+N           new timeline project
  *   Ctrl+Z           undo   |   Ctrl+Shift+Z  redo
@@ -187,10 +187,61 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
             };
 
             if (key === 'c') {
+                // Copy the selected automation clip first (it is the most
+                // recent focus), otherwise copy the selected cues.
+                const selClip = stateRef.current.settings.selectedAutoClip;
+                if (selClip && stateRef.current.lanes[selClip.laneId]) {
+                    const lane = stateRef.current.lanes[selClip.laneId];
+                    const clip = (lane.clips || []).find((c) => c.id === selClip.clipId);
+                    if (clip) {
+                        e.preventDefault();
+                        clipboardRef.current = {
+                            type: 'autoClip',
+                            laneId: selClip.laneId,
+                            clip: {
+                                startTime: clip.startTime,
+                                duration: clip.duration,
+                                keyframes: (clip.keyframes || []).map((k) => ({ ...k })),
+                                effectId: clip.effectId || null,
+                                paramId: clip.paramId || null,
+                                genId: clip.genId || null,
+                                genParamId: clip.genParamId || null,
+                                targetProperty: clip.targetProperty || null,
+                                values: clip.values ? { ...clip.values } : {},
+                            },
+                        };
+                        return;
+                    }
+                }
                 copySelection();
                 return;
             }
             if (key === 'x') {
+                const selClip = stateRef.current.settings.selectedAutoClip;
+                if (selClip && stateRef.current.lanes[selClip.laneId]) {
+                    const lane = stateRef.current.lanes[selClip.laneId];
+                    const clip = (lane.clips || []).find((c) => c.id === selClip.clipId);
+                    if (clip) {
+                        e.preventDefault();
+                        clipboardRef.current = {
+                            type: 'autoClip',
+                            laneId: selClip.laneId,
+                            clip: {
+                                startTime: clip.startTime,
+                                duration: clip.duration,
+                                keyframes: (clip.keyframes || []).map((k) => ({ ...k })),
+                                effectId: clip.effectId || null,
+                                paramId: clip.paramId || null,
+                                genId: clip.genId || null,
+                                genParamId: clip.genParamId || null,
+                                targetProperty: clip.targetProperty || null,
+                                values: clip.values ? { ...clip.values } : {},
+                            },
+                        };
+                        actionsRef.current.removeAutoClip(selClip.laneId, selClip.clipId);
+                        return;
+                    }
+                }
                 const cues = copySelection();
                 if (!cues) return;
                 // Cut: remember the cues (with their original channels) first.
@@ -199,6 +250,25 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
             }
             if (key === 'v') {
                 const clip = clipboardRef.current;
+                if (clip && clip.type === 'autoClip') {
+                    const lane = stateRef.current.lanes[clip.laneId];
+                    if (!lane) return;
+                    e.preventDefault();
+                    const playhead = Math.max(0, pbRef.current.playheadSec);
+                    const delta = playhead - (clip.clip.startTime || 0);
+                    actionsRef.current.addAutoClip(clip.laneId, {
+                        startTime: Math.max(0, (clip.clip.startTime || 0) + delta),
+                        duration: clip.clip.duration,
+                        keyframes: (clip.clip.keyframes || []).map((k) => ({ ...k })),
+                        effectId: clip.clip.effectId || null,
+                        paramId: clip.clip.paramId || null,
+                        genId: clip.clip.genId || null,
+                        genParamId: clip.clip.genParamId || null,
+                        targetProperty: clip.clip.targetProperty || null,
+                        values: clip.clip.values ? { ...clip.clip.values } : {},
+                    });
+                    return;
+                }
                 if (!clip || !Array.isArray(clip.cues) || clip.cues.length === 0) return;
                 e.preventDefault();
                 const s = stateRef.current;
@@ -211,23 +281,33 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                     s.settings.selectedChannelId,
                     clip.cues[0]
                 );
+                const pasted = [];
                 for (const clipCue of clip.cues) {
                     const toChannel = (singleChannel && targetChannel)
                         ? targetChannel
                         : (s.channels[clipCue.channelId] ? clipCue.channelId : targetChannel);
                     if (!toChannel || !s.channels[toChannel]) continue;
+                    const id = `cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
                     actionsRef.current.addCue(toChannel, {
+                        id,
                         type: clipCue.type,
                         name: clipCue.name,
                         filePath: clipCue.filePath || null,
                         fileName: clipCue.fileName || null,
                         generatorId: clipCue.generatorId || null,
                         generatorParams: clipCue.generatorParams || {},
+                        effectOverrides: clipCue.effectOverrides || {},
                         isLooping: clipCue.isLooping,
                         duration: clipCue.duration,
                         totalFrames: clipCue.totalFrames,
                         startTime: Math.max(0, clipCue.startTime + delta),
                     });
+                    pasted.push(id);
+                }
+                // Keep the freshly pasted clips selected so a quick move/trim
+                // (or another paste) acts on what was just created.
+                if (pasted.length > 0) {
+                    actionsRef.current.selectCues(pasted, targetChannel);
                 }
                 return;
             }

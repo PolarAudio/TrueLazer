@@ -2979,6 +2979,17 @@ input[type="checkbox"].tl-checkbox:after {
   background: rgba(255, 255, 255, 0.025);
   border-bottom: 1px solid #2f333c;
   z-index: 2;
+  user-select: none;
+}
+
+/* Drag-select marquee */
+.timeline-marquee {
+  position: absolute;
+  border: 1px solid var(--theme-color, #4a90ff);
+  background: rgba(74, 144, 255, 0.12);
+  z-index: 6;
+  pointer-events: none;
+  border-radius: 2px;
 }
 
 .timeline-block {
@@ -3015,6 +3026,23 @@ input[type="checkbox"].tl-checkbox:after {
 
 .timeline-block.selected {
   box-shadow: 0 0 0 2px var(--theme-color);
+}
+
+/* Overlapping clips shadow one another — only one plays at a time. */
+.timeline-block.overlap {
+  border-color: #ff6b6b;
+  outline: 1px dashed #ff6b6b;
+  outline-offset: 2px;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 107, 107, 0.16) 0 8px,
+    transparent 8px 16px
+  );
+}
+
+.timeline-overlap-hint {
+  color: #ffb4b4;
+  font-weight: 600;
 }
 
 .timeline-block.looping::after {
@@ -3097,14 +3125,118 @@ input[type="checkbox"].tl-checkbox:after {
 
 /* Automation lanes */
 .timeline-automation-header {
-  display: grid;
-  grid-template-columns: 90% auto;
-  grid-template-rows: 50% 50%;
-  gap: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   padding: 5px 6px;
   box-sizing: border-box;
   border-bottom: 1px solid #2f333c;
   background: #0000003b;
+  cursor: pointer;
+}
+
+.timeline-automation-header.selected {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 3px 0 0 var(--theme-color);
+}
+
+.timeline-auto-header-buttons {
+  display: flex;
+  gap: 3px;
+  justify-content: space-between;
+}
+
+.timeline-auto-clip-panel .timeline-field-range .timeline-inspector-hint,
+.timeline-auto-clip-panel .timeline-inspector-hint {
+  margin-top: 3px;
+}
+
+.timeline-auto-clip-panel input:disabled {
+  cursor: not-allowed;
+}
+
+/* Inspector: automation track info (automatable vs static toggle settings) */
+.timeline-lane-info-name {
+  font-weight: 600;
+  color: var(--theme-color);
+  font-size: 13px;
+}
+
+.timeline-lane-info-auto {
+  font-size: 12px;
+  color: #c9d0da;
+  margin-top: 4px;
+}
+
+.timeline-lane-info-range {
+  color: #7a8190;
+  font-size: 10.5px;
+  margin-left: 4px;
+}
+
+.timeline-lane-info-static {
+  margin-top: 8px;
+  border-top: 1px solid #2c313b;
+  padding-top: 6px;
+}
+
+.timeline-lane-info-param {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 2px 0;
+  color: #c9d0da;
+}
+
+.timeline-lane-info-badge {
+  background: #2c313b;
+  border-radius: 3px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  color: #7e8794;
+  flex: none;
+}
+
+.timeline-lane-info-badge.type-select { color: #f0b45a; }
+.timeline-lane-info-badge.type-checkbox { color: #70c7a6; }
+.timeline-lane-info-badge.type-color { color: #9a9aff; }
+
+.timeline-lane-info-plabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-lane-info-val {
+  margin-left: auto;
+  color: #7e8794;
+  font-size: 10.5px;
+  flex: none;
+}
+
+.timeline-lane-info-allauto {
+  color: #70c7a6;
+}
+
+.timeline-cue-effect-toggles {
+  border-top: 1px solid #2c313b;
+  margin-top: 8px;
+  padding-top: 6px;
+}
+
+.timeline-cue-effect-row {
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline-cue-effect-row-head {
+  font-size: 11px;
+  color: #c9d0da;
 }
 
 .timeline-lane-target {
@@ -3122,7 +3254,6 @@ input[type="checkbox"].tl-checkbox:after {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  grid-row-start: 2;
 }
 
 .timeline-lane-effect,
@@ -3137,9 +3268,19 @@ input[type="checkbox"].tl-checkbox:after {
   font-size: 10.5px;
 }
 
-.timeline-lane-effect { grid-column: 1; grid-row: 1; }
-.timeline-lane-param { grid-column: 1; grid-row: 2; }
-.timeline-lane-param:disabled { opacity: 0.45; }
+.timeline-lane-effect {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.timeline-lane-param {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.timeline-lane-param:disabled {
+  opacity: 0.45;
+}
 
 .timeline-lane-genparam {
   background: #101216;
@@ -3176,6 +3317,88 @@ input[type="checkbox"].tl-checkbox:after {
   z-index: 3;
 }
 
+/* FL-Studio-style automation clips: short movable curve segments on a lane. */
+.timeline-auto-clip {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border: 1px solid #3a4252;
+  border-radius: 3px;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.025) 0 6px,
+      transparent 6px 12px
+    ),
+    rgba(30, 35, 46, 0.55);
+  cursor: copy;
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.timeline-auto-clip.legacy {
+  border-style: dashed;
+  border-color: #2c313b;
+  background: transparent;
+}
+
+.timeline-auto-clip.selected {
+  border-color: var(--theme-color);
+  box-shadow: 0 0 0 1px var(--theme-color), 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.timeline-auto-clip-grip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 9px;
+  border-radius: 2px 2px 0 0;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: grab;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.timeline-auto-clip-grip:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.timeline-auto-clip-grip:active {
+  cursor: grabbing;
+}
+
+.timeline-auto-clip-label {
+  display: block;
+  font-size: 8.5px;
+  line-height: 9px;
+  padding: 0 4px;
+  color: #7e8794;
+  user-select: none;
+  pointer-events: none;
+}
+
+.timeline-auto-clip-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+  z-index: 3;
+}
+
+.timeline-auto-clip-resize.left {
+  left: -1px;
+}
+
+.timeline-auto-clip-resize.right {
+  right: -1px;
+}
+
+.timeline-auto-clip-resize:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
 .timeline-auto-mid {
   position: absolute;
   left: 0;
@@ -3207,6 +3430,7 @@ input[type="checkbox"].tl-checkbox:after {
   cursor: grab;
   box-sizing: border-box;
   pointer-events: auto;
+  z-index: 4;
 }
 
 .timeline-auto-keyframe:active {

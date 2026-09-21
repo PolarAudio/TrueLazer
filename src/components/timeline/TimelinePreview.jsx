@@ -1,6 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useTimeline, getChannelOutputs } from '../../contexts/TimelineContext';
+import { useTimeline, getChannelOutputs, getChannelDisplayName } from '../../contexts/TimelineContext';
 import { flipPoints } from '../../hooks/useTimelinePlayback';
+import { applyOutputProcessing } from '../../utils/effects';
+
+function scaleRgb(points, factor) {
+    if (!points || factor === 1) return points;
+    const out = new Float32Array(points);
+    const n = points.length / 8;
+    for (let i = 0; i < n; i++) {
+        const off = i * 8;
+        out[off + 3] = points[off + 3] * factor;
+        out[off + 4] = points[off + 4] * factor;
+        out[off + 5] = points[off + 5] * factor;
+    }
+    return out;
+}
 
 /**
  * Selected-track playback preview. Renders the exact compiled 8-float points
@@ -13,7 +27,7 @@ import { flipPoints } from '../../hooks/useTimelinePlayback';
  * needs the playhead time.
  */
 const TimelinePreview = ({ previewFrame, playheadSec }) => {
-    const { state } = useTimeline();
+    const { state, dacOutputSettings } = useTimeline();
     const canvasRef = useRef(null);
     const wrapRef = useRef(null);
     const frameRef = useRef(null);
@@ -28,6 +42,12 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
     const channel = selectedId ? state.channels[selectedId] : null;
     const outputs = channel ? getChannelOutputs(channel) : [];
     flipRef.current = outputs.length === 1 ? outputs[0] : null;
+    // Mirror the per-output DAC settings that the fan-out applies on playback
+    // (dimmer, output-area scale/crop, safety-zone blanking) so the editor canvas
+    // stays WYSIWYG with what the DAC actually receives.
+    const singleSettings = outputs.length === 1 && dacOutputSettings
+        ? dacOutputSettings[`${outputs[0].ip}:${outputs[0].channel}`] || null
+        : null;
 
     // Keep the backing store DPR-aware and matched to the wrapper size.
     useEffect(() => {
@@ -119,11 +139,24 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
                 const key = `${channel.id}:${playheadSec.toFixed(3)}`;
                 if (key !== lastKeyRef.current) {
                     lastKeyRef.current = key;
-                    const frame = previewFrame(channel.id, playheadSec);
+                    let frame = previewFrame(channel.id, playheadSec);
                     const single = flipRef.current;
-                    frameRef.current = frame && single && (single.flipX || single.flipY)
-                        ? flipPoints(frame, !!single.flipX, !!single.flipY)
-                        : frame;
+                    if (frame && single && (single.flipX || single.flipY)) {
+                        frame = flipPoints(frame, !!single.flipX, !!single.flipY);
+                    }
+                    if (frame && singleSettings) {
+                        if (singleSettings.dimmer !== undefined && singleSettings.dimmer < 1) {
+                            frame = scaleRgb(frame, Math.max(0, singleSettings.dimmer));
+                        }
+                        if (singleSettings.transformationEnabled || (singleSettings.safetyZones && singleSettings.safetyZones.length > 0)) {
+                            frame = applyOutputProcessing(
+                                { points: frame, isTypedArray: !Array.isArray(frame) },
+                                singleSettings,
+                                false
+                            ).points;
+                        }
+                    }
+                    frameRef.current = frame;
                 }
             } else {
                 frameRef.current = null;
@@ -141,8 +174,8 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
                 <span className="timeline-preview-title">Preview</span>
                 {channel ? (
                     <>
-                        <span className="timeline-preview-track" title={channel.name}>
-                            {channel.name}
+                        <span className="timeline-preview-track" title={getChannelDisplayName(channel, dacOutputSettings)}>
+                            {getChannelDisplayName(channel, dacOutputSettings)}
                         </span>
                         <span className={`timeline-preview-outputs ${outputs.length > 1 ? 'zone' : ''}`}>
                             {outputs.length > 1 ? `${outputs.length} outputs` : outputs.length === 1 ? 'routed' : 'no DAC'}

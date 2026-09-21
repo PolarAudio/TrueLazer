@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTimeline, getTimelineDuration, getChannelOutputs, isChannelAudible } from '../contexts/TimelineContext';
 import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
 import { useAudio } from '../contexts/AudioContext.jsx';
-import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides } from '../utils/timelineAutomation';
-import { applyEffects } from '../utils/effects';
+import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides, applyCueEffectOverrides } from '../utils/timelineAutomation';
+import { applyEffects, applyOutputProcessing } from '../utils/effects';
+import { getPreset, DEFAULT_PRESET } from '../utils/hardwarePresets';
 import { selectActiveCue, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
 import { useTimelineSync } from './useTimelineSync';
 
@@ -64,7 +65,7 @@ export function flipPoints(points, flipX, flipY) {
 }
 
 export function useTimelinePlayback() {
-    const { state, actions } = useTimeline();
+    const { state, actions, dacOutputSettings } = useTimeline();
     const ildaParserWorker = useIldaParserWorker();
     const sync = useTimelineSync();
     const { audioCtx, connectMediaElement, globalVolume, selectedDeviceId } = useAudio();
@@ -75,6 +76,12 @@ export function useTimelinePlayback() {
 
     const stateRef = useRef(state);
     stateRef.current = state;
+
+    // Mirror of the main app's per-output DAC settings (name/dimmer/outputArea/
+    // safetyZones/PPS target) so the fan-out in `compile` can honor them without
+    // rebinding on every settings change mid-play.
+    const dacOutputSettingsRef = useRef(dacOutputSettings || {});
+    useEffect(() => { dacOutputSettingsRef.current = dacOutputSettings || {}; }, [dacOutputSettings]);
 
     const playheadRef = useRef(0);
     // Replay anchor: the last place the playhead was parked while stopped.
@@ -452,7 +459,10 @@ export function useTimelinePlayback() {
         // per-channel effect stack and applied through the main app's engine.
         const legacyLanes = chLanes.filter((l) => !(l && (l.effectId || (l.genId && l.genParamId))));
         if (legacyLanes.length > 0) frame = applyLanesToPoints(frame, legacyLanes, t);
-        const effects = buildChannelEffects(chLanes, t, ch.id);
+        const effects = applyCueEffectOverrides(
+            buildChannelEffects(chLanes, t, ch.id),
+            pick?.effectOverrides,
+        );
         if (effects.length > 0) {
             const res = applyEffects({ points: frame, isTypedArray: true }, effects, {
                 time: t * 1000,
@@ -474,7 +484,7 @@ export function useTimelinePlayback() {
         const store = stateRef.current;
         const s = store.settings;
         const frames = {};
-        const order = store.channelOrder || [];
+        const order = [...new Set(store.channelOrder || [])];
 
         for (const chId of order) {
             const frame = compileChannelFrame(chId, t);
@@ -492,25 +502,55 @@ export function useTimelinePlayback() {
 
             // One compiled frame, fanned out to every DAC channel of the zone.
             // Invert is per output so a wing (e.g. right laser) can flip while
-            // its mirror-zone twin (left laser) stays native.
+            // its mirror-zone twin (left laser) stays native. Each output then
+            // receives the main app's per-output DAC settings (dimmer, output
+            // area scale/crop, safety-zone blanking, PPS target) — the same
+            // `applyOutputProcessing`/PPS resolution the grid path uses, so the
+            // timeline drives the same hardware behavior the main app promises.
             for (const out of uniq) {
-                const outFrame = out.flipX || out.flipY
+                let outFrame = out.flipX || out.flipY
                     ? flipPoints(frame, !!out.flipX, !!out.flipY)
                     : frame;
+                const settings = dacOutputSettingsRef.current ? dacOutputSettingsRef.current[`${out.ip}:${out.channel}`] : null;
+
+                if (settings) {
+                    if (settings.dimmer !== undefined && settings.dimmer < 1) {
+                        outFrame = scaleRgb(outFrame, Math.max(0, settings.dimmer));
+                    }
+                    if (settings.transformationEnabled || (settings.safetyZones && settings.safetyZones.length > 0)) {
+                        const processed = applyOutputProcessing(
+                            { points: outFrame, isTypedArray: !Array.isArray(outFrame) },
+                            settings,
+                            false
+                        );
+                        if (processed && processed.points) outFrame = processed.points;
+                    }
+                }
+
+                const preset = settings?.ppsPreset && getPreset(settings.ppsPreset)
+                    ? getPreset(settings.ppsPreset)
+                    : getPreset(DEFAULT_PRESET);
+                const targetPpsValue = settings?.ppsOverride && settings.ppsOverride > 0
+                    ? settings.ppsOverride
+                    : (preset && preset.targetPps ? preset.targetPps : 30000);
+                const options = {
+                    skipOptimization: false,
+                    flipX: false,
+                    flipY: false,
+                    pps: targetPpsValue,
+                    targetPps: targetPpsValue,
+                    targetFps: s.fps || 30,
+                    targetMode: 'varFpsFixedPps',
+                };
+                if (settings?.targetFps && settings.targetFps > 0) options.targetFps = settings.targetFps;
+                if (settings?.targetMode) options.targetMode = settings.targetMode;
+
                 frames[`${out.ip}:${out.channel}`] = {
                     points: outFrame,
                     ip: out.ip,
                     channel: out.channel,
                     type: out.type || 'EtherDream',
-                    options: {
-                        skipOptimization: false,
-                        flipX: false,
-                        flipY: false,
-                        pps: 30000,
-                        targetPps: 30000,
-                        targetFps: s.fps || 30,
-                        targetMode: 'varFpsFixedPps',
-                    },
+                    options,
                 };
             }
         }

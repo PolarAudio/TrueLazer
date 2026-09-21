@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from 'react';
-import { useTimeline } from '../../contexts/TimelineContext';
+import { useTimeline, getAdjacentCues } from '../../contexts/TimelineContext';
 import { timeToPx, pxToTime, snapToGrid } from '../../utils/timelineTime';
 
 /**
@@ -14,8 +14,14 @@ import { timeToPx, pxToTime, snapToGrid } from '../../utils/timelineTime';
  * so the group keeps its relative timing. All math is delta-based and captured
  * at pointer-down, so live re-renders (e.g. the move commands themselves) can
  * never make it "jump".
+ *
+ * `trimMode` ("Trim" edit, vs "Stretch"): resize edges are clamped to the
+ * neighbouring cue's boundary so dragging a clip can never make it overlap the
+ * next/previous clip; a looping clip that gets its tail clamped is un-looped
+ * (an endless loop can't honor a finite cut). `overlapping` paints the block
+ * red — its frame play is silently shadowed by another clip on the channel.
  */
-const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps }) => {
+const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMode, overlapping }) => {
     const { state, actions } = useTimeline();
     const dragRef = useRef(null);
 
@@ -50,7 +56,7 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps }) => {
         const notes = ids
             .map((id) => cues[id])
             .filter(Boolean)
-            .map((c) => ({ id: c.id, channelId: c.channelId, startTime: c.startTime, duration: c.duration }));
+            .map((c) => ({ id: c.id, channelId: c.channelId, startTime: c.startTime, duration: c.duration, isLooping: !!c.isLooping }));
         if (notes.length === 0) return null;
         return {
             mode,
@@ -90,22 +96,38 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps }) => {
                 const snappedEnd = snapToGrid(d.anchor.startTime + d.anchor.duration + tx, snapMode, ctx);
                 const delta = snappedEnd - (d.anchor.startTime + d.anchor.duration);
                 // Each clip keeps its own left edge; all right edges shift by
-                // the same snapped delta.
+                // the same snapped delta. In Trim mode the edge is clamped so
+                // it never passes the start of the next clip on that channel.
                 for (const n of d.notes) {
-                    actions.resizeCue(n.id, n.startTime, Math.max(0.1, n.duration + delta));
+                    let end = Math.max(0.1, n.duration + delta);
+                    let clamped = false;
+                    if (trimMode) {
+                        const { nextStart } = getAdjacentCues(state, n.id);
+                        if (nextStart != null && n.startTime + end > nextStart + 1e-6) {
+                            end = Math.max(0.1, nextStart - n.startTime);
+                            clamped = true;
+                        }
+                    }
+                    if (clamped && n.isLooping) actions.updateCue(n.id, { isLooping: false });
+                    actions.resizeCue(n.id, n.startTime, end);
                 }
             } else if (d.mode === 'resize-start') {
                 const delta = snapToGrid(d.anchor.startTime + tx, snapMode, ctx) - d.anchor.startTime;
                 // Each clip keeps its own right edge; all left edges shift by
-                // the same snapped delta.
+                // the same snapped delta. In Trim mode the left edge is clamped
+                // so it never crosses the previous clip's end on that channel.
                 for (const n of d.notes) {
-                    const newStart = Math.max(0, n.startTime + delta);
+                    let newStart = Math.max(0, n.startTime + delta);
+                    if (trimMode) {
+                        const { prevEnd } = getAdjacentCues(state, n.id);
+                        if (prevEnd != null && newStart < prevEnd - 1e-6) newStart = Math.max(0, prevEnd);
+                    }
                     const newDur = Math.max(0.1, n.startTime + n.duration - newStart);
                     actions.resizeCue(n.id, newStart, newDur);
                 }
             }
         },
-        [pxPerSecond, snapMode, bpm, fps, actions]
+        [pxPerSecond, snapMode, bpm, fps, actions, trimMode, state]
     );
 
     const endDrag = useCallback((e) => {
@@ -121,7 +143,7 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps }) => {
 
     return (
         <div
-            className={`timeline-block ${isIlda ? 'ilda' : 'generator'} ${selected ? 'selected' : ''} ${cue.isLooping ? 'looping' : ''}`}
+            className={`timeline-block ${isIlda ? 'ilda' : 'generator'} ${selected ? 'selected' : ''} ${cue.isLooping ? 'looping' : ''} ${overlapping ? 'overlap' : ''}`}
             style={{ left, width }}
             data-cue-id={cue.id}
             data-channel-id={cue.channelId}
@@ -130,7 +152,7 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps }) => {
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
             onDoubleClick={(e) => { e.stopPropagation(); actions.select(cue.id, cue.channelId); }}
-            title={`${cue.name} · ${cue.startTime.toFixed(2)}s → ${(cue.startTime + cue.duration).toFixed(2)}s`}
+            title={`${cue.name} · ${cue.startTime.toFixed(2)}s → ${(cue.startTime + cue.duration).toFixed(2)}s${overlapping ? '\n⚠ overlaps another clip — use Trim to prevent' : ''}${trimMode ? '\nTrim mode: resize clamps at neighbouring clips' : ''}`}
         >
             <div className="timeline-block-icon">{isIlda ? '◈' : '✦'}</div>
             <div className="timeline-block-name">{cue.name}</div>

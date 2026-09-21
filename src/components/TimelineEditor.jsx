@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTimeline, getTimelineDuration, getSortedCues } from '../contexts/TimelineContext';
+import { useTimeline, getTimelineDuration, getSortedCues, getOverlappingCueIds } from '../contexts/TimelineContext';
 import { useTimelinePlayback } from '../hooks/useTimelinePlayback';
 import { useTimelineShortcuts } from '../hooks/useTimelineShortcuts';
 import { timeToPx, pxToTime, snapToGrid, beatGridLines, beatDuration } from '../utils/timelineTime';
@@ -14,6 +14,50 @@ import TimelineWaveform from './timeline/TimelineWaveform';
 import FileBrowser from './FileBrowser';
 import { HEADER_W, RULER_H, BLOCK_ROW_H, AUTO_ROW_H, END_PAD, ZOOM_MIN, ZOOM_MAX } from './timeline/layout';
 
+/**
+ * A channel's clip lane. The drag-select marquee lives ONE level up on
+ * `.timeline-content` (see TimelineEditor) so a box can sweep across every
+ * channel's clips AND automation clips at once. This lane keeps the plain
+ * empty-click (clear selection) and double-click (add generator) gestures.
+ * Block presses stopPropagation so they never start a marquee.
+ */
+const TimelineBlockLane = ({ channel, cues, rowH, gridW, pxPerSecond, snapMode, bpm, fps, selectedCueIds, trimMode, suppressClickRef, onDrop, onDoubleClick }) => {
+    const { state, actions } = useTimeline();
+    const overlapIds = useMemo(() => getOverlappingCueIds(state), [state]);
+    return (
+        <div
+            className="timeline-block-lane"
+            data-channel-id={channel.id}
+            style={{ width: gridW, height: rowH }}
+            onDrop={(e) => onDrop(e, channel.id)}
+            onDragOver={(e) => e.preventDefault()}
+            onDoubleClick={(e) => {
+                if (Date.now() - suppressClickRef.current < 400) return;
+                onDoubleClick(e, channel.id);
+            }}
+            onClick={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (Date.now() - suppressClickRef.current < 400) return;
+                actions.select(null, channel.id);
+            }}
+        >
+            {cues.map((cue) => (
+                <TimelineBlock
+                    key={cue.id}
+                    cue={cue}
+                    selected={selectedCueIds.includes(cue.id)}
+                    pxPerSecond={pxPerSecond}
+                    snapMode={snapMode}
+                    bpm={bpm}
+                    fps={fps}
+                    trimMode={trimMode}
+                    overlapping={overlapIds.has(cue.id)}
+                />
+            ))}
+        </div>
+    );
+};
+
 const TimelineEditor = ({ onBack }) => {
     const { state, actions, loadTimelineAudio } = useTimeline();
     const pb = useTimelinePlayback();
@@ -23,6 +67,91 @@ const TimelineEditor = ({ onBack }) => {
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [fbViewMode, setFbViewMode] = useState('list');
     const [fbPath, setFbPath] = useState(null);
+
+    // Drag-select marquee lives on `.timeline-content` so the box can sweep
+    // across every channel's clip lane AND every automation lane at once. The
+    // start must land on a lane surface (empty lane space) — clips/blocks stop
+    // propagation so their own gestures never begin a box.
+    const contentRef = useRef(null);
+    const marqueeDragRef = useRef(null);
+    const [marqueeBox, setMarqueeBox] = useState(null);
+    // Shared with TimelineBlockLane so an empty-click after a committed marquee
+    // doesn't wipe the freshly painted selection.
+    const suppressClickRef = useRef(0);
+
+    const MARQUEE_SURFACES = '.timeline-block-lane, .timeline-automation-body, .timeline-add-lane-body';
+
+    const commitMarquee = useCallback((d, curX, curY) => {
+        suppressClickRef.current = Date.now();
+        setMarqueeBox(null);
+        const content = contentRef.current;
+        if (!content) return;
+        const marL = Math.min(d.startX, curX);
+        const marR = Math.max(d.startX, curX);
+        const marT = Math.min(d.startY, curY);
+        const marB = Math.max(d.startY, curY);
+        const cueIds = [];
+        const clips = [];
+        content.querySelectorAll('[data-cue-id], [data-auto-clip-id]').forEach((el) => {
+            const r = el.getBoundingClientRect();
+            if (!(r.right > marL && r.left < marR && r.bottom > marT && r.top < marB)) return;
+            const cueId = el.getAttribute('data-cue-id');
+            if (cueId && !cueIds.includes(cueId)) cueIds.push(cueId);
+            const clipId = el.getAttribute('data-auto-clip-id');
+            const laneId = el.getAttribute('data-lane-id');
+            if (clipId && laneId && !clips.some((x) => x.laneId === laneId && x.clipId === clipId)) {
+                clips.push({ laneId, clipId });
+            }
+        });
+        // Automation clips win when the box touches any; otherwise intersect cues.
+        if (clips.length > 0) {
+            actions.selectAutoClips(clips, d.additive);
+        } else if (cueIds.length > 0 || !d.additive) {
+            actions.selectCues(cueIds, d.channelId, d.additive);
+        }
+    }, [actions]);
+
+    const onContentPointerDown = useCallback((e) => {
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        const surface = e.target.closest(MARQUEE_SURFACES);
+        if (!surface) return;
+        const laneEl = surface.closest('[data-channel-id]');
+        marqueeDragRef.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            committed: false,
+            additive: e.shiftKey || e.ctrlKey || e.metaKey,
+            channelId: laneEl ? laneEl.getAttribute('data-channel-id') : null,
+        };
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* released */ }
+    }, []);
+
+    const onContentPointerMove = useCallback((e) => {
+        const d = marqueeDragRef.current;
+        if (!d) return;
+        const moved = Math.abs(e.clientX - d.startX) >= 4 || Math.abs(e.clientY - d.startY) >= 4;
+        if (!d.committed && moved) d.committed = true;
+        if (!d.committed) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const left = Math.min(d.startX, e.clientX) - rect.left;
+        const top = Math.min(d.startY, e.clientY) - rect.top;
+        setMarqueeBox({
+            left,
+            top,
+            width: Math.abs(e.clientX - d.startX),
+            height: Math.max(4, Math.abs(e.clientY - d.startY)),
+        });
+        e.preventDefault();
+    }, []);
+
+    const finishMarquee = useCallback((e) => {
+        const d = marqueeDragRef.current;
+        if (!d) return;
+        marqueeDragRef.current = null;
+        try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) { /* not captured */ }
+        if (d.committed) commitMarquee(d, e.clientX, e.clientY);
+        else setMarqueeBox(null);
+    }, [commitMarquee]);
 
     // Wheel + keyboard shortcuts (vertical zoom, scroll, framing, clipboard,
     // save/new/undo/redo). Attached to the scroll element via gridRef.
@@ -137,7 +266,8 @@ const TimelineEditor = ({ onBack }) => {
     );
 
     // Delete/Backspace removes the selected automation keyframe first (click a
-// point, press Delete), then falls back to removing all selected cues.
+    // point, press Delete), then the selected automation clip(s), then falls
+    // back to removing all selected cues.
     useEffect(() => {
         const onKey = (e) => {
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
@@ -146,6 +276,20 @@ const TimelineEditor = ({ onBack }) => {
                 if (selKf && selKf.laneId && selKf.keyframeId && state.lanes?.[selKf.laneId]) {
                     e.preventDefault();
                     actions.removeKeyframe(selKf.laneId, selKf.keyframeId);
+                    return;
+                }
+                const selAutoClips = s.selectedAutoClipIds;
+                if (Array.isArray(selAutoClips) && selAutoClips.length > 0) {
+                    e.preventDefault();
+                    for (const sc of selAutoClips) {
+                        if (state.lanes?.[sc.laneId]) actions.removeAutoClip(sc.laneId, sc.clipId);
+                    }
+                    return;
+                }
+                const selClip = s.selectedAutoClip;
+                if (selClip && selClip.laneId && selClip.clipId && state.lanes?.[selClip.laneId]) {
+                    e.preventDefault();
+                    actions.removeAutoClip(selClip.laneId, selClip.clipId);
                     return;
                 }
                 if (selectedCueIds.length > 0) {
@@ -160,7 +304,7 @@ const TimelineEditor = ({ onBack }) => {
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [selectedCueIds, s.selectedKeyframe, actions, addGeneratorAtPlayhead, state.lanes]);
+    }, [selectedCueIds, s.selectedKeyframe, s.selectedAutoClip, s.selectedAutoClipIds, actions, addGeneratorAtPlayhead, state.lanes]);
 
     const beatOverlays = useMemo(() => {
         const span = gridW / pxPerSecond;
@@ -204,7 +348,16 @@ const TimelineEditor = ({ onBack }) => {
 
             <div className="timeline-body">
                 <div className="timeline-scroll" ref={gridRef}>
-                    <div className="timeline-content" style={{ width: contentWidth }}>
+                    <div
+                        className="timeline-content"
+                        ref={contentRef}
+                        style={{ width: contentWidth }}
+                        onPointerDown={onContentPointerDown}
+                        onPointerMove={onContentPointerMove}
+                        onPointerUp={finishMarquee}
+                        onPointerCancel={finishMarquee}
+                        onLostPointerCapture={finishMarquee}
+                    >
                         <div className="timeline-row">
                             <div className="timeline-header-cell corner">
                                 <div className="timeline-corner-label" style={{ height: RULER_H }}>
@@ -254,30 +407,21 @@ const TimelineEditor = ({ onBack }) => {
                                         <div className="timeline-header-cell">
                                             <TimelineTrackHeader channel={channel} height={blockRowH} />
                                         </div>
-                                        <div
-                                            className="timeline-block-lane"
-                                            style={{ width: gridW, height: blockRowH }}
-                                            onDrop={(e) => handleDropOnLane(e, chId)}
-                                            onDragOver={(e) => e.preventDefault()}
-                                            onDoubleClick={(e) => handleLaneDoubleClick(e, chId)}
-                                            onClick={(e) => {
-                                                if (e.target === e.currentTarget) {
-                                                    actions.select(null, chId);
-                                                }
-                                            }}
-                                        >
-                                            {cues.map((cue) => (
-                                                <TimelineBlock
-                                                    key={cue.id}
-                                                    cue={cue}
-                                                    selected={selectedCueIds.includes(cue.id)}
-                                                    pxPerSecond={pxPerSecond}
-                                                    snapMode={s.snapMode}
-                                                    bpm={s.bpm}
-                                                    fps={s.fps}
-                                                />
-                                            ))}
-                                        </div>
+                                        <TimelineBlockLane
+                                            channel={channel}
+                                            cues={cues}
+                                            rowH={blockRowH}
+                                            gridW={gridW}
+                                            pxPerSecond={pxPerSecond}
+                                            snapMode={s.snapMode}
+                                            bpm={s.bpm}
+                                            fps={s.fps}
+                                            selectedCueIds={selectedCueIds}
+                                            trimMode={s.clipEditTrim}
+                                            suppressClickRef={suppressClickRef}
+                                            onDrop={handleDropOnLane}
+                                            onDoubleClick={handleLaneDoubleClick}
+                                        />
                                     </div>
 
                                     {channel.expanded && lanes.map((lane) => (
@@ -332,6 +476,9 @@ const TimelineEditor = ({ onBack }) => {
 
                         {/* Playhead */}
                         <div className="timeline-playhead" style={{ left: HEADER_W + timeToPx(pb.playheadSec, pxPerSecond) }} />
+
+                        {/* Drag-select marquee (content-space; sweeps all tracks/lanes) */}
+                        {marqueeBox && <div className="timeline-marquee" style={marqueeBox} />}
                     </div>
                 </div>
 

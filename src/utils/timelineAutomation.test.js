@@ -3,8 +3,9 @@ import {
     evaluateKeyframes, evaluateLane, transformFrame, applyLanesToPoints,
     resolveEasing, getLaneTarget, laneSvgPath,
     getLaneParam, getLaneEffectDef, laneDefaultValue, evaluateLaneForEffect,
-    buildChannelEffects,
+    buildChannelEffects, applyCueEffectOverrides,
     getLaneGenParam, getLaneGenDef, evaluateGenLane, buildGeneratorOverrides,
+    activeAutoClip, automationClipAt, evaluateClipAt,
 } from './timelineAutomation';
 
 describe('resolveEasing', () => {
@@ -281,6 +282,87 @@ describe('effect-linked lanes', () => {
         expect(buildChannelEffects([], 0, 'ch1')).toEqual([]);
         expect(buildChannelEffects([{ id: 'l', effectId: 'mirror', paramId: 'mode' }], 0, 'ch1')).toEqual([]);
     });
+
+    it('buildChannelEffects reads the ACTIVE CLIP (not the lane) for effect and param', () => {
+        const lanes = [{
+            id: 'l1',
+            keyframes: [],
+            clips: [
+                { id: 'a', startTime: 0, duration: 4, effectId: 'rotato', genId: 'circle', keyframes: [], values: {} },
+                { id: 'b', startTime: 4, duration: 4, effectId: 'scale', paramId: 'scaleX', keyframes: [], values: { scaleY: 3 } },
+            ],
+        }];
+        // At t=2 clip 'a' drives: genId only -> generator clip, no channel effect.
+        expect(buildChannelEffects(lanes, 2, 'ch1')).toEqual([]);
+        // At t=5 clip 'b' drives: scaleX via the empty curve -> default 1, and its
+        // per-clip static value scaleY:3 must be merged in.
+        const effects = buildChannelEffects(lanes, 5, 'ch1');
+        expect(effects).toHaveLength(1);
+        expect(effects[0].id).toBe('scale');
+        expect(effects[0].params.scaleX).toBeCloseTo(1);
+        expect(effects[0].params.scaleY).toBeCloseTo(3);
+    });
+
+    it('buildChannelEffects keeps legacy lane-level targets working (synthesized clip)', () => {
+        const effects = buildChannelEffects(
+            [{ id: 'l1', effectId: 'wave', paramId: 'amplitude', keyframes: [{ time: 0, value: 0.5 }] }],
+            0,
+            'ch1'
+        );
+        expect(effects).toHaveLength(1);
+        expect(effects[0].id).toBe('wave');
+        expect(effects[0].params.amplitude).toBeCloseTo(0.5);
+    });
+});
+
+describe('per-clip effect overrides', () => {
+    it('applies non-range overrides and leaves range params to the curves', () => {
+        const lanes = [
+            { id: 'l1', effectId: 'delay', paramId: 'delayAmount', keyframes: [{ time: 0, value: 8 }, { time: 10, value: 8 }] },
+            { id: 'l2', effectId: 'delay', paramId: 'steps', keyframes: [] },
+        ];
+        const effects = buildChannelEffects(lanes, 5, 'ch1');
+        expect(effects).toHaveLength(1);
+        const delay = effects[0];
+        expect(delay.params.delayAmount).toBeCloseTo(8);
+
+        const out = applyCueEffectOverrides(effects, {
+            delay: {
+                delayDirection: 'right_to_left',
+                useCustomOrder: true,
+                // Range params + unknown ids must be ignored, never injected.
+                delayAmount: 999,
+                bogus: 'nope',
+            },
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].params.delayDirection).toBe('right_to_left');
+        expect(out[0].params.useCustomOrder).toBe(true);
+        expect(out[0].params.delayAmount).toBeCloseTo(8);
+        expect(out[0].params.bogus).toBeUndefined();
+    });
+
+    it('overrides for unknown effects change nothing', () => {
+        const effects = buildChannelEffects(
+            [{ id: 'l1', effectId: 'rotate', paramId: 'angle', keyframes: [] }],
+            0,
+            'ch1'
+        );
+        const out = applyCueEffectOverrides(effects, { ghost: { mode: 'x' } });
+        expect(out).toBe(effects);
+        expect(out[0].params.angle).toBeCloseTo(0);
+        expect(out[0].params.mode).toBeUndefined();
+    });
+
+    it('returns the array as-is when there is nothing to override', () => {
+        const effects = [
+            { id: 'rotate', instanceId: 'auto.ch1.rotate', params: { angle: 90, direction: 'CW' } },
+        ];
+        expect(applyCueEffectOverrides(effects, {})).toBe(effects);
+        expect(applyCueEffectOverrides(effects, null)).toBe(effects);
+        expect(applyCueEffectOverrides([], { rotate: { direction: 'CCW' } })).toEqual([]);
+        expect(applyCueEffectOverrides(effects, { rotate: { direction: 'CW' } })).toBe(effects);
+    });
 });
 
 describe('generator parameter automation', () => {
@@ -318,5 +400,123 @@ describe('generator parameter automation', () => {
             { id: 'a', genId: 'square', genParamId: 'width', keyframes: [] },
         ], 0, 'circle', { radius: 0.5 })).toBeNull();
         expect(buildGeneratorOverrides([], 0, 'circle')).toBeNull();
+    });
+});
+
+describe('automation clips (FL-style multi-clip lanes)', () => {
+    const clipLane = (clips) => ({
+        id: 'l1',
+        effectId: 'translate',
+        paramId: 'x',
+        keyframes: [],
+        clips,
+    });
+
+    const legacyLane = {
+        id: 'l1',
+        targetProperty: 'GEOMETRY_SCALE',
+        keyframes: [{ time: 0, value: 1 }, { time: 10, value: 2 }],
+    };
+
+    it('activeAutoClip returns the covering clip (end-exclusive) or null', () => {
+        const lane = clipLane([
+            { id: 'a', startTime: 0, duration: 4, keyframes: [] },
+            { id: 'b', startTime: 4, duration: 3, keyframes: [] },
+        ]);
+        expect(activeAutoClip(lane, 0).id).toBe('a');
+        expect(activeAutoClip(lane, 3.999).id).toBe('a');
+        expect(activeAutoClip(lane, 4).id).toBe('b');
+        expect(activeAutoClip(lane, 6.9).id).toBe('b');
+        expect(activeAutoClip(lane, 7)).toBeNull();
+        expect(activeAutoClip({}, 0)).toBeNull();
+        expect(activeAutoClip({ clips: [] }, 0)).toBeNull();
+    });
+
+    it('evaluateLaneForEffect reads clip-relative keyframes from the active clip', () => {
+        const lane = clipLane([
+            // clip 'a' spans t=2..6; inside it the curve runs 0..2 over 4s.
+            { id: 'a', startTime: 2, duration: 4, keyframes: [{ time: 0, value: 0 }, { time: 2, value: 2 }] },
+        ]);
+        expect(evaluateLaneForEffect(lane, 2)).toBe(0);
+        expect(evaluateLaneForEffect(lane, 3)).toBeCloseTo(1);
+        expect(evaluateLaneForEffect(lane, 4)).toBe(2);
+        expect(evaluateLaneForEffect(lane, 0)).toBe(laneDefaultValue(lane));
+        expect(evaluateLaneForEffect(lane, 6.5)).toBe(laneDefaultValue(lane));
+    });
+
+    it('evaluateGenLane uses the active clip curve and the base value outside clips', () => {
+        const lane = clipLane([
+            { id: 'a', startTime: 1, duration: 2, keyframes: [{ time: 0, value: 0 }, { time: 1, value: 1 }] },
+        ]);
+        expect(evaluateGenLane(lane, 1.5, 5)).toBeCloseTo(0.5);
+        expect(evaluateGenLane(lane, 0, 5)).toBe(5);
+        expect(evaluateGenLane(lane, 3.5, 5)).toBe(5);
+    });
+
+    it('evaluateLaneForEffect falls back to lane.keyframes when the lane has no clips', () => {
+        expect(evaluateLaneForEffect(legacyLane, 0)).toBe(1);
+        expect(evaluateLaneForEffect(legacyLane, 5)).toBeCloseTo(1.5);
+        expect(evaluateLaneForEffect(legacyLane, 10)).toBe(2);
+    });
+
+    it('evaluateLane honors clip-relative keyframes and the default outside them', () => {
+        const lane = clipLane([
+            { id: 'a', startTime: 2, duration: 2, keyframes: [{ time: 0, value: 0 }, { time: 1, value: 1 }] },
+        ]);
+        expect(evaluateLane(lane, 2.5)).toBeCloseTo(0.5);
+        expect(evaluateLane(lane, 1)).toBe(laneDefaultValue(lane));
+    });
+
+    it('automationClipAt synthesizes a whole-lane clip for legacy lanes', () => {
+        const clip = automationClipAt(legacyLane, 5);
+        expect(clip).not.toBeNull();
+        expect(clip.startTime).toBe(0);
+        expect(clip.targetProperty).toBe('GEOMETRY_SCALE');
+        expect(clip.keyframes).toBe(legacyLane.keyframes);
+        expect(automationClipAt(legacyLane, 100)).not.toBeNull();
+    });
+
+    it('automationClipAt returns null inside clip gaps and {} on empty lanes', () => {
+        const lane = clipLane([
+            { id: 'a', startTime: 0, duration: 2, keyframes: [] },
+            { id: 'b', startTime: 4, duration: 2, keyframes: [] },
+        ]);
+        expect(automationClipAt(lane, 1).id).toBe('a');
+        expect(automationClipAt(lane, 3)).toBeNull();
+        expect(automationClipAt(lane, 5).id).toBe('b');
+        expect(automationClipAt({}, 3)).toBeNull();
+    });
+
+    it('evaluateClipAt evaluates clip-relative keyframes and falls back to the default', () => {
+        const clip = { id: 'a', startTime: 2, duration: 4, keyframes: [{ time: 0, value: 10 }, { time: 2, value: 20 }] };
+        expect(evaluateClipAt(clip, 2, 7)).toBe(10);
+        expect(evaluateClipAt(clip, 3, 7)).toBeCloseTo(15);
+        expect(evaluateClipAt(clip, 4, 7)).toBe(20);
+        expect(evaluateClipAt(clip, 6.5, 7)).toBe(7);
+        expect(evaluateClipAt(clip, 0, 7)).toBe(7);
+        expect(evaluateClipAt({ keyframes: [] }, 0, 3)).toBe(3);
+    });
+
+    it('buildGeneratorOverrides merges the active clip values and reads gen ids from the clip', () => {
+        const lanes = [{
+            id: 'l1',
+            keyframes: [],
+            clips: [
+                { id: 'a', startTime: 0, duration: 3, genId: 'circle', genParamId: 'x', keyframes: [], values: { radius: 0.55 } },
+                { id: 'b', startTime: 3, duration: 3, genId: 'circle', genParamId: 'radius', keyframes: [{ time: 0, value: 0.9 }], values: {} },
+            ],
+        }];
+        // Inside clip 'b': radius comes from the curve (0.9), x falls back to the generator's own 0.8.
+        const overB = buildGeneratorOverrides(lanes, 3.5, 'circle', { radius: 0.1, x: 0.8 });
+        expect(overB).not.toBeNull();
+        expect(overB.radius).toBeCloseTo(0.9);
+        expect(overB.x).toBeCloseTo(0.8);
+
+        // Inside clip 'a': empty curve, but the clip's values.radius:0.55 must win
+        // over the generator base, and x stays on the base curve default.
+        const overA = buildGeneratorOverrides(lanes, 1, 'circle', { radius: 0.1, x: 0.4 });
+        expect(overA).not.toBeNull();
+        expect(overA.radius).toBeCloseTo(0.55);
+        expect(overA.x).toBeCloseTo(0.4);
     });
 });

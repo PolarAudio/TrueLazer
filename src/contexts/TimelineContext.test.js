@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     createInitialTimelineState, normalizeHydratedState, getTimelineDuration,
     getSortedCues, isChannelAudible, extractAudioPeaks, getChannelOutputs,
+    getOverlappingCueIds, getAdjacentCues, computeOverlapTrims,
 } from './TimelineContext';
 
 // Import the reducer + a mini dispatch runner so we can unit-test the store
@@ -41,6 +42,31 @@ describe('initial + hydration', () => {
         });
         expect(s.settings.selectedCueIds).toEqual(['c1']);
         expect(s.settings.selectedCueId).toBe('c1');
+    });
+
+    it('migrates a legacy lane curve into one spanning automation clip', () => {
+        const s = normalizeHydratedState({
+            channels: { ch1: { id: 'ch1', automationLanes: ['l1'] } },
+            cues: { c1: { id: 'c1', startTime: 2, duration: 4 } },
+            lanes: {
+                l1: {
+                    id: 'l1',
+                    targetProperty: 'GEOMETRY_SCALE',
+                    keyframes: [{ id: 'k1', time: 0, value: 1 }, { id: 'k2', time: 3, value: 2 }],
+                },
+            },
+        });
+        expect(s.lanes.l1.clips).toHaveLength(1);
+        const clip = s.lanes.l1.clips[0];
+        expect(clip.startTime).toBe(0);
+        expect(clip.keyframes.map((k) => k.id)).toEqual(['k1', 'k2']);
+        expect(clip.duration).toBeGreaterThanOrEqual(8);
+        // A lane with no curve stays clip-less.
+        const s2 = normalizeHydratedState({
+            channels: {},
+            lanes: { l2: { id: 'l2', effectId: 'translate', paramId: 'x', keyframes: [] } },
+        });
+        expect(s2.lanes.l2.clips).toEqual([]);
     });
 
     it('strips stale workerId from ILDA cues on hydration (runtime cache handle)', () => {
@@ -150,6 +176,52 @@ describe('cue lifecycle', () => {
         s = run(s, { type: 'SELECT', payload: { cueId: null, channelId: 'ch2', additive: true } });
         expect(s.settings.selectedCueIds).toEqual([]);
         expect(s.settings.selectedCueId).toBeNull();
+    });
+
+    it('ADD_CUE carries per-clip effectOverrides', () => {
+        let s = seeded();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'a', effectOverrides: { delay: { delayDirection: 'right_to_left' } } } } });
+        expect(s.cues.a.effectOverrides).toEqual({ delay: { delayDirection: 'right_to_left' } });
+        expect(s.cues.a.effectOverrides.delay.delayDirection).toBe('right_to_left');
+    });
+
+    it('SELECT_CUES replaces, merges additively, and keeps channel focus', () => {
+        let s = seeded();
+        for (const id of ['a', 'b', 'c']) {
+            s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id, startTime: 0 } } });
+        }
+        // ADD_CUE leaves 'c' selected; fold a & b in for a multi-selection.
+        s = run(s, { type: 'SELECT', payload: { cueId: 'a', channelId: 'ch1', additive: true } });
+        s = run(s, { type: 'SELECT', payload: { cueId: 'b', channelId: 'ch1', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['c', 'a', 'b']);
+
+        // Lane selection (inspector focus) is released by a bulk select.
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'lane1' } } });
+        s = run(s, { type: 'SELECT_LANE', payload: { laneId: 'lane1' } });
+        expect(s.settings.selectedLaneId).toBe('lane1');
+
+        // Non-additive marquee replaces everything; anchor is the last id.
+        s = run(s, { type: 'SELECT_CUES', payload: { cueIds: ['a', 'c'], channelId: 'ch2' } });
+        expect(s.settings.selectedCueIds).toEqual(['a', 'c']);
+        expect(s.settings.selectedCueId).toBe('c');
+        expect(s.settings.selectedChannelId).toBe('ch2');
+        expect(s.settings.selectedLaneId).toBeNull();
+
+        // Additive marquee unions with the current selection.
+        s = run(s, { type: 'SELECT_CUES', payload: { cueIds: ['b'], channelId: 'ch2', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['a', 'c', 'b']);
+        expect(s.settings.selectedCueId).toBe('b');
+    });
+
+    it('SELECT_CUES ignores unknown ids and clears when the marquee is empty', () => {
+        let s = seeded();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'a' } } });
+        s = run(s, { type: 'SELECT_CUES', payload: { cueIds: ['a', 'ghost'], channelId: 'ch1' } });
+        expect(s.settings.selectedCueIds).toEqual(['a']);
+        s = run(s, { type: 'SELECT_CUES', payload: { cueIds: [], channelId: 'ch1' } });
+        expect(s.settings.selectedCueIds).toEqual([]);
+        expect(s.settings.selectedCueId).toBeNull();
+        expect(s.settings.selectedChannelId).toBe('ch1');
     });
 
     it('REMOVE_CUE prunes a dropped member of a multi-selection', () => {
@@ -382,6 +454,95 @@ describe('selectors + audio', () => {
     });
 });
 
+describe('overlap detection + trim', () => {
+    function withCues(cues) {
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch2' } });
+        for (const c of cues) {
+            s = run(s, { type: 'ADD_CUE', payload: { channelId: c.channel || 'ch1', cue: c } });
+            if (c.isLooping) {
+                s = run(s, { type: 'UPDATE_CUE', payload: { id: c.id, patch: { isLooping: true } } });
+            }
+        }
+        return s;
+    }
+
+    it('marks only genuinely overlapping cues on the same channel', () => {
+        let s = withCues([
+            { id: 'a', startTime: 0, duration: 2 },
+            { id: 'b', startTime: 2, duration: 2 }, // touches exactly
+            { id: 'c', startTime: 5, duration: 1 },
+            { id: 'd', startTime: 4, duration: 3, channel: 'ch2' }, // overlaps on another channel
+        ]);
+        expect(getOverlappingCueIds(s)).toEqual(new Set());
+        s = run(s, { type: 'UPDATE_CUE', payload: { id: 'c', patch: { startTime: 1 } } });
+        // a: 0–2, c: 1–2 now overlap; b still starts exactly where c ends.
+        expect(getOverlappingCueIds(s)).toEqual(new Set(['a', 'c']));
+    });
+
+    it('treats a looping cue as never-ending so it overlaps whatever starts after it', () => {
+        const s = withCues([
+            { id: 'loop', startTime: 0, duration: 2, isLooping: true },
+            { id: 'late', startTime: 6, duration: 1 },
+        ]);
+        expect(getOverlappingCueIds(s)).toEqual(new Set(['loop', 'late']));
+    });
+
+    it('getAdjacentCues reports the previous end / next start per clue', () => {
+        const s = withCues([
+            { id: 'a', startTime: 0, duration: 2 },
+            { id: 'b', startTime: 2, duration: 1 },
+            { id: 'c', startTime: 5, duration: 1 },
+        ]);
+        expect(getAdjacentCues(s, 'a')).toEqual({ prevEnd: null, nextStart: 2 });
+        expect(getAdjacentCues(s, 'b')).toEqual({ prevEnd: 2, nextStart: 5 });
+        expect(getAdjacentCues(s, 'c')).toEqual({ prevEnd: 3, nextStart: null });
+        expect(getAdjacentCues(s, 'nope')).toEqual({ prevEnd: null, nextStart: null });
+    });
+
+    it('computeOverlapTrims shortens each earlier clip to the next start', () => {
+        const s = withCues([
+            { id: 'a', startTime: 0, duration: 4 },
+            { id: 'b', startTime: 3, duration: 5 },
+            { id: 'c', startTime: 7, duration: 1 },
+        ]);
+        expect(computeOverlapTrims(s)).toEqual(new Map([
+            ['a', { duration: 3 }],
+            ['b', { duration: 4 }],
+        ]));
+    });
+
+    it('computeOverlapTrims un-loops a looping clip that must be cut', () => {
+        const s = withCues([
+            { id: 'a', startTime: 0, duration: 4, isLooping: true },
+            { id: 'b', startTime: 3, duration: 1 },
+        ]);
+        expect(computeOverlapTrims(s)).toEqual(new Map([['a', { duration: 3, isLooping: false }]]));
+    });
+
+    it('computeOverlapTrims leaves touching and same-start clips alone', () => {
+        const s = withCues([
+            { id: 'a', startTime: 0, duration: 2 },
+            { id: 'b', startTime: 2, duration: 2 }, // exact touch, no cut
+            { id: 'c', startTime: 2, duration: 2 }, // same start as b, never zero-width
+        ]);
+        expect(computeOverlapTrims(s).size).toBe(0);
+    });
+
+    it('computeOverlapTrims respects a selection filter and different channels', () => {
+        const s = withCues([
+            { id: 'a', startTime: 0, duration: 4 },
+            { id: 'b', startTime: 3, duration: 2 },
+            { id: 'c', startTime: 3, duration: 2, channel: 'ch2' },
+        ]);
+        // Only the selected clip is trimmed.
+        expect(computeOverlapTrims(s, ['a'])).toEqual(new Map([['a', { duration: 3 }]]));
+        // Unknown ids cut nothing.
+        expect(computeOverlapTrims(s, ['gone']).size).toBe(0);
+    });
+});
+
 function seeded() {
     const s = createInitialTimelineState();
     return run(
@@ -448,5 +609,254 @@ describe('keyframe selection', () => {
         s = run(s, { type: 'REMOVE_LANE', payload: { laneId: 'l1' } });
         expect(s.lanes.l1).toBeUndefined();
         expect(s.settings.selectedKeyframe).toBeNull();
+    });
+});
+
+describe('automation track (lane) selection', () => {
+    function withLane() {
+        let s = seeded();
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l1' } } });
+        return s;
+    }
+
+    it('SELECT_LANE selects the track and clears cue/keyframe focus', () => {
+        let s = withLane();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c1', type: 'GENERATOR' } } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'SELECT_LANE', payload: { laneId: 'l1' } });
+        expect(s.settings.selectedLaneId).toBe('l1');
+        expect(s.settings.selectedKeyframe).toBeNull();
+        expect(s.settings.selectedCueId).toBeNull();
+    });
+
+    it('SELECT_LANE ignores an unknown lane id', () => {
+        let s = withLane();
+        s = run(s, { type: 'SELECT_LANE', payload: { laneId: 'nope' } });
+        expect(s.settings.selectedLaneId).toBeNull();
+    });
+
+    it('selecting a keyframe also selects its track', () => {
+        let s = withLane();
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        expect(s.settings.selectedKeyframe).toEqual({ laneId: 'l1', keyframeId: 'k1' });
+        expect(s.settings.selectedLaneId).toBe('l1');
+    });
+
+    it('selecting a cue clears the track selection', () => {
+        let s = withLane();
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'SELECT', payload: { cueId: 'c1', channelId: 'ch1' } });
+        expect(s.settings.selectedLaneId).toBeNull();
+    });
+
+    it('REMOVE_LANE clears a matching selectedLaneId', () => {
+        let s = withLane();
+        s = run(s, { type: 'SELECT_LANE', payload: { laneId: 'l1' } });
+        s = run(s, { type: 'REMOVE_LANE', payload: { laneId: 'l1' } });
+        expect(s.settings.selectedLaneId).toBeNull();
+    });
+});
+
+describe('automation clips (FL-style)', () => {
+    function withClipLane() {
+        let s = seeded();
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l1' } } });
+        s = run(s, { type: 'ADD_AUTO_CLIP', payload: { laneId: 'l1', clip: { id: 'ac1', startTime: 2, duration: 5 } } });
+        return s;
+    }
+
+    it('ADD_AUTO_CLIP appends a clip (with defaults) and selects it', () => {
+        let s = seeded();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l1' } } });
+        s = run(s, { type: 'ADD_AUTO_CLIP', payload: { laneId: 'l1', clip: { id: 'ac1' } } });
+        expect(s.lanes.l1.clips).toHaveLength(1);
+        expect(s.lanes.l1.clips[0]).toMatchObject({ id: 'ac1', startTime: 0, duration: 4, keyframes: [] });
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac1' });
+    });
+
+    it('ADD_AUTO_CLIP generates an id when none is supplied', () => {
+        let s = seeded();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l1' } } });
+        s = run(s, { type: 'ADD_AUTO_CLIP', payload: { laneId: 'l1', clip: { startTime: 1 } } });
+        expect(s.lanes.l1.clips[0].id).toMatch(/^acp-/);
+        expect(s.lanes.l1.clips[0].startTime).toBe(1);
+    });
+
+    it('UPDATE_AUTO_CLIP moves/trims with clamped bounds', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { startTime: 3.2 } } });
+        expect(s.lanes.l1.clips[0].startTime).toBe(3.2);
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { startTime: -4, duration: 0.01 } } });
+        expect(s.lanes.l1.clips[0].startTime).toBe(0);
+        expect(s.lanes.l1.clips[0].duration).toBe(0.05);
+    });
+
+    it('resize-start keeps the end fixed', () => {
+        let s = withClipLane(); // ac1: start 2, dur 5 -> end 7
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { startTime: 3, duration: 4 } } });
+        expect(s.lanes.l1.clips[0]).toMatchObject({ startTime: 3, duration: 4 });
+    });
+
+    it('REMOVE_AUTO_CLIP removes the clip and clears a matching selection', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'REMOVE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        expect(s.lanes.l1.clips).toEqual([]);
+        expect(s.settings.selectedAutoClip).toBeNull();
+    });
+
+    it('SELECT_AUTO_CLIP selects the clip and clears cue/keyframe focus', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c1', type: 'GENERATOR' } } });
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k1', time: 0, value: 1 } } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac1' });
+        expect(s.settings.selectedKeyframe).toBeNull();
+        expect(s.settings.selectedCueId).toBeNull();
+        expect(s.settings.selectedLaneId).toBe('l1');
+    });
+
+    it('SELECT_AUTO_CLIP with an empty/unknown target clears selection', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: null, clipId: null } });
+        expect(s.settings.selectedAutoClip).toBeNull();
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'nope' } });
+        expect(s.settings.selectedAutoClip).toBeNull();
+    });
+
+    it('SELECT / SELECT_KEYFRAME / SELECT_LANE / ADD_CUE clear the clip selection', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c1', type: 'GENERATOR' } } });
+        s = run(s, { type: 'SELECT', payload: { cueId: 'c1', channelId: 'ch1' } });
+        expect(s.settings.selectedAutoClip).toBeNull();
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k9' } });
+        expect(s.settings.selectedAutoClip).toBeNull();
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        s = run(s, { type: 'SELECT_LANE', payload: { laneId: 'l1' } });
+        expect(s.settings.selectedAutoClip).toBeNull();
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c2', type: 'GENERATOR' } } });
+        expect(s.settings.selectedAutoClip).toBeNull();
+    });
+
+    it('ADD_KEYFRAME with a clipId lands in the clip (clip-relative times)', () => {
+        let s = withClipLane(); // ac1 starts at 2
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k1', time: 0.5, value: 1 } } });
+        expect(s.lanes.l1.clips[0].keyframes).toEqual([expect.objectContaining({ id: 'k1', time: 0.5, value: 1 })]);
+        expect(s.lanes.l1.keyframes).toEqual([]);
+    });
+
+    it('UPDATE_KEYFRAME resolves the owning clip by keyframe id', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k1', time: 0, value: 1 } } });
+        s = run(s, { type: 'UPDATE_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1', patch: { value: 9 } } });
+        expect(s.lanes.l1.clips[0].keyframes[0].value).toBe(9);
+    });
+
+    it('REMOVE_KEYFRAME removes from the clip and clears a matching selection', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k1', time: 0, value: 1 } } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        s = run(s, { type: 'REMOVE_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        expect(s.lanes.l1.clips[0].keyframes).toEqual([]);
+        expect(s.settings.selectedKeyframe).toBeNull();
+    });
+
+    it('REMOVE_LANE clears a matching clip selection', () => {
+        let s = withClipLane();
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        s = run(s, { type: 'REMOVE_LANE', payload: { laneId: 'l1' } });
+        expect(s.lanes.l1).toBeUndefined();
+        expect(s.settings.selectedAutoClip).toBeNull();
+    });
+
+    it('hydrates existing clips as-is and strips the transient clip selection', () => {
+        const s = normalizeHydratedState({
+            channels: { ch1: { id: 'ch1', automationLanes: ['l1'] } },
+            lanes: {
+                l1: {
+                    id: 'l1',
+                    effectId: 'translate',
+                    paramId: 'x',
+                    clips: [{ id: 'ac9', startTime: 1, duration: 2, keyframes: [{ id: 'k1', time: 0, value: 2 }] }],
+                },
+            },
+            settings: { selectedAutoClip: { laneId: 'l1', clipId: 'ac9' } },
+        });
+        expect(s.lanes.l1.clips).toHaveLength(1);
+        expect(s.lanes.l1.clips[0].keyframes).toHaveLength(1);
+        expect(s.settings.selectedAutoClip).toBeNull();
+    });
+});
+
+describe('automation clip multi-selection (marquee)', () => {
+    function seedTwoClips() {
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'ch1' } });
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'l1' } } });
+        s = run(s, { type: 'ADD_AUTO_CLIP', payload: { laneId: 'l1', clip: { id: 'ac1' } } });
+        s = run(s, { type: 'ADD_AUTO_CLIP', payload: { laneId: 'l1', clip: { id: 'ac2' } } });
+        return s;
+    }
+
+    it('SELECT_AUTO_CLIPS replaces the selection and anchors the last clip', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }] } });
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }]);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac2' });
+        expect(s.settings.selectedLaneId).toBe('l1');
+        expect(s.settings.selectedCueIds).toEqual([]);
+    });
+
+    it('SELECT_AUTO_CLIPS additive merges and de-duplicates', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }] } });
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac2' }, { laneId: 'l1', clipId: 'ac1' }], additive: true } });
+        expect(s.settings.selectedAutoClipIds).toHaveLength(2);
+        expect(s.settings.selectedAutoClipIds[1]).toEqual({ laneId: 'l1', clipId: 'ac2' });
+    });
+
+    it('SELECT_AUTO_CLIPS validates ids and clears when none remain', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ghost' }, { laneId: 'nope', clipId: 'ac1' }] } });
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }]);
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [] } });
+        expect(s.settings.selectedAutoClipIds).toEqual([]);
+        expect(s.settings.selectedAutoClip).toBeNull();
+    });
+
+    it('SELECT_CUES / SELECT / SELECT_KEYFRAME clear the auto-clip marquee list', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }] } });
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c1', type: 'GENERATOR' } } });
+        expect(s.settings.selectedAutoClipIds).toEqual([]);
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }] } });
+        s = run(s, { type: 'SELECT_CUES', payload: { cueIds: ['c1'], channelId: 'ch1' } });
+        expect(s.settings.selectedAutoClipIds).toEqual([]);
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }] } });
+        s = run(s, { type: 'SELECT_KEYFRAME', payload: { laneId: 'l1', keyframeId: 'k1' } });
+        expect(s.settings.selectedAutoClipIds).toEqual([]);
+    });
+
+    it('SELECT_AUTO_CLIP (single) collapses the list to one entry', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }] } });
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }]);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac1' });
+    });
+
+    it('REMOVE_AUTO_CLIP prunes the multi list and falls back to the previous anchor', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'SELECT_AUTO_CLIPS', payload: { clips: [{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }] } });
+        s = run(s, { type: 'REMOVE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac2' } });
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }]);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac1' });
+        s = run(s, { type: 'REMOVE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
+        expect(s.settings.selectedAutoClipIds).toEqual([]);
+        expect(s.settings.selectedAutoClip).toBeNull();
     });
 });
