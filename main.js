@@ -17,7 +17,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 import dacCommunication from './main/dac-communication.cjs';
-const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
+const { discoverDacs, sendFrame, sendIdleFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
 
 // Setup DAC Status Listener
 setDacStatusCallback((ip, status) => {
@@ -952,9 +952,20 @@ function createWindow() {
   let dacFrameAccumulator = {};
   let dacSendLoopTimer = null;
   let stoppedDacIps = new Set(); // DACs whose output was explicitly stopped (stale renderer frames are dropped)
+  // Always-fed endpoints (Showbridge): fed a continuous 30fps datagram stream —
+  // a real frame when the renderer has one, a dark idle frame otherwise — so the
+  // SDK's DMA never goes quiet. Mirrors EtherDream/Truwave, whose continuous
+  // blank/clear loop keeps DACs responsive the instant a clip becomes active.
+  let dacTargets = [];
   const DAC_SEND_INTERVAL = 1000 / 30; // 30 fps per channel (Truwave default)
   const MAX_MISSED = 5; // ~167ms without a new frame before blanking
   const SILENT_TTL_MS = 3000; // feed laser-off blank/clear frames this long, then retire the channel
+
+  ipcMain.on('dac-set-targets', (event, targets) => {
+    dacTargets = Array.isArray(targets)
+      ? targets.filter((t) => t && t.ip && t.channel != null).map((t) => ({ ip: t.ip, channel: t.channel, type: t.type || 'Showbridge' }))
+      : [];
+  });
 
   ipcMain.on('dac-frame-update', (event, frames) => {
     const now = Date.now();
@@ -989,7 +1000,35 @@ function createWindow() {
     if (dacSendLoopTimer) return;
     dacSendLoopTimer = setInterval(() => {
       const now = Date.now();
+      const targetIds = new Set(dacTargets.map((t) => `${t.ip}:${t.channel}`));
+
+      // Always-fed endpoints first: each tick sends a real frame when one is
+      // waiting, else a dark idle frame so the Showbridge DMA is never starved.
+      // This replaces the old "start sending once there is frame data" model —
+      // the loop runs from laser-on and swaps the idle stream for the compiled
+      // frame buffer the moment a clip is active.
+      for (const t of dacTargets) {
+        // Never reopen a DAC the user just stopped (laser-off window).
+        if (stoppedDacIps.has(t.ip)) continue;
+        const id = `${t.ip}:${t.channel}`;
+        const acc = dacFrameAccumulator[id];
+        if (acc && acc.frame) {
+          acc.missed = 0;
+          acc.blanked = false;
+          acc.blank = null;
+          acc.lastActivity = now;
+          acc.sent = acc.frame;
+          sendFrame(t.ip, t.channel, acc.frame, acc.fps || 30, t.type, acc.options);
+          acc.frame = null;
+        } else {
+          sendIdleFrame(t.ip, t.channel, t.type, acc ? acc.options : undefined);
+        }
+      }
+
       for (const id of Object.keys(dacFrameAccumulator)) {
+        // Target channels are fed above; don't double-handle them in the
+        // legacy silence path (which would blank right after a real frame).
+        if (targetIds.has(id)) continue;
         const acc = dacFrameAccumulator[id];
         if (!acc.frame) {
           acc.missed++;

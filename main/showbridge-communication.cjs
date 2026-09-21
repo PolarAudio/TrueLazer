@@ -459,14 +459,11 @@ function sendHeartbeat(ip) {
 
 // =============== FRAME SENDING ===============
 
-function sendFrame(ip, channel, points, fps, type, options) {
-    const key = `${ip}:${channel}`;
-    const chType = channel === 2 ? 0x01 : 0x00;
-    // Showbridge control byte 3 expects Points Per Second / 1000 (Kpps),
-    // e.g. 30 for 30000 PPS. options.pps arrives as full PPS, so divide here.
-    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
-
-    // Get or create per-channel state
+// Get (or lazily create) the persistent per-channel UDP socket and make sure
+// the per-IP heartbeat is running. Both sendFrame and sendIdleFrame share this
+// so the always-feed loop reuses one socket per channel instead of opening and
+// closing sockets on every 30fps tick.
+function ensureChannel(ip, key) {
     let st = channelState.get(key);
     if (!st) {
         st = {
@@ -478,15 +475,55 @@ function sendFrame(ip, channel, points, fps, type, options) {
         st.socket.on('error', () => { });
         channelState.set(key, st);
     }
-
-    // Start heartbeat once per IP, not once per channel
     if (!heartbeatTimers.has(ip)) {
         sendHeartbeat(ip);
         heartbeatTimers.set(ip, setInterval(() => {
             sendHeartbeat(ip);
         }, 1000));
     }
+    return st;
+}
 
+function flushChunks(st, chunks, ip) {
+    const seq = st.seq & 0xFF;
+    st.seq = (st.seq + 1) & 0xFF;
+    for (const c of chunks) {
+        c.writeUInt8(seq, 2);
+    }
+
+    // Send chunk 0 immediately
+    try {
+        st.socket.send(chunks[0], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
+    } catch (e) {
+        console.error(`[Showbridge] send error on ${ip}: ${e.message}`);
+        return;
+    }
+
+    // Schedule remaining chunks with stagger
+    for (let i = 1; i < chunks.length; i++) {
+        const delay = i * CHUNK_STAGGER_MS;
+        const timer = setTimeout(() => {
+            if (!st.running) return;
+            try {
+                st.socket.send(chunks[i], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
+            } catch (e) {
+                console.error(`[Showbridge] send error on ${ip}: ${e.message}`);
+            }
+            const idx = st.pendingTimers.indexOf(timer);
+            if (idx >= 0) st.pendingTimers.splice(idx, 1);
+        }, delay);
+        st.pendingTimers.push(timer);
+    }
+}
+
+function sendFrame(ip, channel, points, fps, type, options) {
+    const key = `${ip}:${channel}`;
+    const chType = channel === 2 ? 0x01 : 0x00;
+    // Showbridge control byte 3 expects Points Per Second / 1000 (Kpps),
+    // e.g. 30 for 30000 PPS. options.pps arrives as full PPS, so divide here.
+    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
+
+    const st = ensureChannel(ip, key);
     if (!st.running) return;
 
     // Cancel any pending chunk sends from previous frame
@@ -506,36 +543,36 @@ function sendFrame(ip, channel, points, fps, type, options) {
     const chunks = buildFrameChunks(chType, pps, points, mode, effFps);
     if (chunks.length === 0) return;
 
-    // Seq is per-frame — same value on all 5 chunks
-    const seq = st.seq & 0xFF;
-    st.seq = (st.seq + 1) & 0xFF;
-    for (const c of chunks) {
-        c.writeUInt8(seq, 2);
-    }
+    flushChunks(st, chunks, ip);
+}
 
-    // Send chunk 0 immediately
-    try {
-        st.socket.send(chunks[0], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
-    } catch (e) {
-        console.error(`[Showbridge] send error on ${key}: ${e.message}`);
-        return;
-    }
+// Always-feed idle stream: a full PTS_FULL dark frame (center hold) pushed on
+// the persistent per-channel socket every loop tick so the Showbridge DMA never
+// goes quiet. Same continuous-stream model EtherDream / the Truwave app use —
+// the DAC stays warm and the next clip's first frame goes out immediately
+// instead of after a cold start / missed-tick silence.
+function sendIdleFrame(ip, channel, options) {
+    const key = `${ip}:${channel}`;
+    const chType = channel === 2 ? 0x01 : 0x00;
+    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
 
-    // Schedule remaining chunks with stagger
-    for (let i = 1; i < chunks.length; i++) {
-        const delay = i * CHUNK_STAGGER_MS;
-        const timer = setTimeout(() => {
-            if (!st.running) return;
-            try {
-                st.socket.send(chunks[i], 0, UDP_PACKET_SIZE, DAC_PORT, ip);
-            } catch (e) {
-                console.error(`[Showbridge] send error on ${key}: ${e.message}`);
-            }
-            const idx = st.pendingTimers.indexOf(timer);
-            if (idx >= 0) st.pendingTimers.splice(idx, 1);
-        }, delay);
-        st.pendingTimers.push(timer);
+    const st = ensureChannel(ip, key);
+    if (!st.running) return;
+
+    for (const t of st.pendingTimers) {
+        clearTimeout(t);
     }
+    st.pendingTimers = [];
+
+    // A single blanked center point — the interpolation fill pads it to a full
+    // PTS_FULL dark frame whose varPpsFixedFps byte plays it in exactly 1/30s,
+    // a clean 30fps idle stream.
+    const blank = new Float32Array(8);
+    blank[6] = 1;
+    const chunks = buildFrameChunks(chType, pps, blank, 'varFpsFixedFps', 30);
+    if (chunks.length === 0) return;
+
+    flushChunks(st, chunks, ip);
 }
 
 // =============== BLANK FRAME ===============
@@ -663,6 +700,7 @@ module.exports = {
     discoverDacs,
     getDacServices,
     sendFrame,
+    sendIdleFrame,
     sendHeartbeat,
     sendBlankFrame,
     stopSending,

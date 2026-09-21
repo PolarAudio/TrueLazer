@@ -182,7 +182,15 @@ const TimelineEditor = ({ onBack }) => {
     const contentWidth = HEADER_W + gridW;
 
     const handleRulerSeek = useCallback((t) => pb.seek(t), [pb]);
-    const handleZoom = useCallback((z) => actions.setSettings({ zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)) }), [actions]);
+    const handleZoom = useCallback((z) => {
+    const oldZoom = state.settings.zoom;
+    actions.setSettings({ zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)) });
+    // Keep playhead in same screen position during zoom
+    if (gridRef.current && pb.playheadSec != null) {
+        const deltaPx = timeToPx(pb.playheadSec, oldZoom) - timeToPx(pb.playheadSec, z);
+        gridRef.current.scrollLeft = Math.max(0, gridRef.current.scrollLeft - deltaPx);
+    }
+}, [actions, gridRef, state.settings.zoom]);
     const handleFit = useCallback(() => {
         const avail = Math.max(300, viewportW - HEADER_W - 4 - END_PAD);
         const z = getTimelineDuration(state) > 0 ? avail / getTimelineDuration(state) : ZOOM_MIN;

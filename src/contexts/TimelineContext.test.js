@@ -521,6 +521,21 @@ describe('overlap detection + trim', () => {
         expect(computeOverlapTrims(s)).toEqual(new Map([['a', { duration: 3, isLooping: false }]]));
     });
 
+    it('un-loops a looping clip even when its duration already ends before the next clip', () => {
+        // a loops (0..4) but the next clip starts at 6: its recorded duration
+        // fits, yet the loop shadows b forever — Cut Overlaps must still un-loop
+        // it so the red highlight clears. This regressed when the cut only
+        // measured the recorded duration.
+        const s = withCues([
+            { id: 'a', startTime: 0, duration: 4, isLooping: true },
+            { id: 'b', startTime: 6, duration: 2 },
+        ]);
+        expect(computeOverlapTrims(s)).toEqual(new Map([['a', { isLooping: false }]]));
+        // And without the loop a no longer overlaps b.
+        const fixed = run(s, { type: 'UPDATE_CUE', payload: { id: 'a', patch: { isLooping: false } } });
+        expect(getOverlappingCueIds(fixed).has('a')).toBe(false);
+    });
+
     it('computeOverlapTrims leaves touching and same-start clips alone', () => {
         const s = withCues([
             { id: 'a', startTime: 0, duration: 2 },

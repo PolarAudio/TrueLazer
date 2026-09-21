@@ -174,6 +174,18 @@ function stopSending(ip, type) {
     return idn.sendCloseChannel(ip);
 }
 
+// Always-feed idle frame for the continuous 30fps send loop. Only Showbridge
+// consumes it for now — its DMA must keep receiving datagrams to stay warm (a
+// single cold blank packet is not enough to keep it responsive), mirroring
+// EtherDream / Truwave's continuous idle stream. Other DAC types keep the
+// legacy silent-blank behaviour.
+function sendIdleFrame(ip, channel, type, options) {
+    if (type === 'Showbridge') {
+        return showbridge.sendIdleFrame(ip, channel, options || null);
+    }
+    return null;
+}
+
 function connectDac(ip, type) {
     if (type === 'EtherDream') {
         return etherdream.connectDac(ip);
@@ -196,6 +208,7 @@ module.exports = {
     discoverDacs,
     getDacServices,
     sendFrame,
+    sendIdleFrame,
     connectDac,
     startOutput,
     stopSending,

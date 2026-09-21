@@ -187,8 +187,39 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
             };
 
             if (key === 'c') {
-                // Copy the selected automation clip first (it is the most
-                // recent focus), otherwise copy the selected cues.
+                // Copy selected automation clips (single or multi). Multi-select
+                // (marquee across lanes or Shift+click) copies the whole group.
+                const selClipIds = stateRef.current.settings.selectedAutoClipIds;
+                if (Array.isArray(selClipIds) && selClipIds.length > 0) {
+                    e.preventDefault();
+                    const clips = [];
+                    for (const sc of selClipIds) {
+                        const lane = stateRef.current.lanes[sc.laneId];
+                        if (!lane) continue;
+                        const clip = (lane.clips || []).find((c) => c.id === sc.clipId);
+                        if (!clip) continue;
+                        clips.push({
+                            laneId: sc.laneId,
+                            clip: {
+                                startTime: clip.startTime,
+                                duration: clip.duration,
+                                keyframes: (clip.keyframes || []).map((k) => ({ ...k })),
+                                effectId: clip.effectId || null,
+                                paramId: clip.paramId || null,
+                                genId: clip.genId || null,
+                                genParamId: clip.genParamId || null,
+                                targetProperty: clip.targetProperty || null,
+                                values: clip.values ? { ...clip.values } : {},
+                            },
+                        });
+                    }
+                    if (clips.length > 0) {
+                        const anchor = Math.min(...clips.map((c) => c.clip.startTime));
+                        clipboardRef.current = { type: 'autoClipGroup', clips, anchor };
+                    }
+                    return;
+                }
+                // Fall back to the single focused auto clip, then cue copy.
                 const selClip = stateRef.current.settings.selectedAutoClip;
                 if (selClip && stateRef.current.lanes[selClip.laneId]) {
                     const lane = stateRef.current.lanes[selClip.laneId];
@@ -217,6 +248,39 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 return;
             }
             if (key === 'x') {
+                const selClipIds = stateRef.current.settings.selectedAutoClipIds;
+                if (Array.isArray(selClipIds) && selClipIds.length > 0) {
+                    e.preventDefault();
+                    const clips = [];
+                    for (const sc of selClipIds) {
+                        const lane = stateRef.current.lanes[sc.laneId];
+                        if (!lane) continue;
+                        const clip = (lane.clips || []).find((c) => c.id === sc.clipId);
+                        if (!clip) continue;
+                        clips.push({
+                            laneId: sc.laneId,
+                            clip: {
+                                startTime: clip.startTime,
+                                duration: clip.duration,
+                                keyframes: (clip.keyframes || []).map((k) => ({ ...k })),
+                                effectId: clip.effectId || null,
+                                paramId: clip.paramId || null,
+                                genId: clip.genId || null,
+                                genParamId: clip.genParamId || null,
+                                targetProperty: clip.targetProperty || null,
+                                values: clip.values ? { ...clip.values } : {},
+                            },
+                        });
+                    }
+                    if (clips.length > 0) {
+                        const anchor = Math.min(...clips.map((c) => c.clip.startTime));
+                        clipboardRef.current = { type: 'autoClipGroup', clips, anchor };
+                        for (const sc of selClipIds) {
+                            actionsRef.current.removeAutoClip(sc.laneId, sc.clipId);
+                        }
+                    }
+                    return;
+                }
                 const selClip = stateRef.current.settings.selectedAutoClip;
                 if (selClip && stateRef.current.lanes[selClip.laneId]) {
                     const lane = stateRef.current.lanes[selClip.laneId];
@@ -244,19 +308,59 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 }
                 const cues = copySelection();
                 if (!cues) return;
-                // Cut: remember the cues (with their original channels) first.
                 for (const cue of cues) actionsRef.current.removeCue(cue.id);
                 return;
             }
             if (key === 'v') {
                 const clip = clipboardRef.current;
+                if (clip && clip.type === 'autoClipGroup') {
+                    // Paste multiple auto clips across tracks. The target lane is the
+                    // currently selected automation lane (or the first clip's original
+                    // lane if nothing is selected).
+                    const playhead = Math.max(0, pbRef.current.playheadSec);
+                    const targetLaneId = stateRef.current.settings.selectedLaneId;
+                    for (const gc of clip.clips) {
+                        const sourceLane = stateRef.current.lanes[gc.laneId];
+                        if (!sourceLane) continue;
+                        const sourceClip = (sourceLane.clips || []).find((c) => c.id === gc.clipId);
+                        if (!sourceClip) continue;
+                        // Determine target lane: use selected lane if available,
+                        // otherwise keep the original lane
+                        const tgtLaneId = targetLaneId || gc.laneId;
+                        const tgtLane = stateRef.current.lanes[tgtLaneId];
+                        if (!tgtLane) continue;
+                        const delta = playhead - (sourceClip.startTime || 0);
+                        actionsRef.current.addAutoClip(tgtLaneId, {
+                            startTime: Math.max(0, (sourceClip.startTime || 0) + delta),
+                            duration: sourceClip.duration,
+                            keyframes: (sourceClip.keyframes || []).map((k) => ({ ...k })),
+                            effectId: sourceClip.effectId || null,
+                            paramId: sourceClip.paramId || null,
+                            genId: sourceClip.genId || null,
+                            genParamId: sourceClip.genParamId || null,
+                            targetProperty: sourceClip.targetProperty || null,
+                            values: sourceClip.values ? { ...sourceClip.values } : {},
+                        });
+                    }
+                    // Select the last pasted clip in the target lane
+                    const lastClip = clip.clips.length > 0
+                        ? clip.clips[clip.clips.length - 1].clipId
+                        : null;
+                    if (lastClip) {
+                        actionsRef.current.selectAutoClip(targetLaneId || clip.clips[0].laneId, lastClip);
+                    }
+                    return;
+                }
                 if (clip && clip.type === 'autoClip') {
                     const lane = stateRef.current.lanes[clip.laneId];
                     if (!lane) return;
                     e.preventDefault();
                     const playhead = Math.max(0, pbRef.current.playheadSec);
                     const delta = playhead - (clip.clip.startTime || 0);
-                    actionsRef.current.addAutoClip(clip.laneId, {
+                    // Cross-track paste: use the currently selected lane if one is
+                    // selected, otherwise keep the original lane
+                    const tgtLaneId = stateRef.current.settings.selectedLaneId || clip.laneId;
+                    actionsRef.current.addAutoClip(tgtLaneId, {
                         startTime: Math.max(0, (clip.clip.startTime || 0) + delta),
                         duration: clip.clip.duration,
                         keyframes: (clip.clip.keyframes || []).map((k) => ({ ...k })),

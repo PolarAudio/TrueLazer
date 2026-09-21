@@ -235,13 +235,18 @@ export function computeOverlapTrims(state, ids) {
             if (next.startTime <= cur.startTime + 1e-9) continue;
             if (wanted && !wanted.has(cur.id)) continue;
             const boundary = next.startTime;
-            const curEnd = cur.startTime + (cur.duration || 0);
+            // A looping cue never ends on its own — it shadows EVERY later cue,
+            // even when its recorded duration would end before the next one. So
+            // it is treated as overlapping for the cut (trimmed + un-looped),
+            // matching getOverlappingCueIds which paints it red for the same
+            // reason. Without this Cut Overlaps left looping clips highlighted.
+            const curEnd = cur.isLooping ? Infinity : cur.startTime + (cur.duration || 0);
             if (curEnd <= boundary + 1e-6) continue;
-            const newDur = Math.max(MIN_DUR, Math.round((boundary - cur.startTime) * 1000) / 1000);
-            if (newDur >= (cur.duration || 0) - 1e-9) continue;
-            const patch = { duration: newDur };
+            const patch = {};
+            const newDur = Math.round((boundary - cur.startTime) * 1000) / 1000;
             if (cur.isLooping) patch.isLooping = false;
-            trims.set(cur.id, patch);
+            if (newDur < (cur.duration || 0) - 1e-9) patch.duration = Math.max(MIN_DUR, newDur);
+            if (Object.keys(patch).length > 0) trims.set(cur.id, patch);
         }
     }
     return trims;

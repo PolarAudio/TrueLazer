@@ -76,6 +76,7 @@ export function useTimelinePlayback() {
 
     const stateRef = useRef(state);
     stateRef.current = state;
+    const lastPushedT = useRef(-1e100);
 
     // Mirror of the main app's per-output DAC settings (name/dimmer/outputArea/
     // safetyZones/PPS target) so the fan-out in `compile` can honor them without
@@ -183,6 +184,40 @@ export function useTimelinePlayback() {
         }
         return ips;
     }, []);
+
+    // Every routed DAC endpoint (ip+channel+type). Sent to the main process as
+    // the "always-fed targets" list: while the laser toggle is on, Showbridge
+    // endpoints receive a continuous 30fps datagram stream — the idle dark frame
+    // even when no clip is active — so the DMA never idles and the first frame
+    // of a clip fires immediately (EtherDream/Truwave-style).
+    const getDacTargets = useCallback(() => {
+        const s = stateRef.current;
+        const seen = new Set();
+        const targets = [];
+        for (const chId of (s.channelOrder || [])) {
+            const ch = s.channels[chId];
+            for (const out of getChannelOutputs(ch)) {
+                if (!out?.ip || out.channel == null) continue;
+                const key = `${out.ip}:${out.channel}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                targets.push({ ip: out.ip, channel: out.channel, type: out.type || 'EtherDream' });
+            }
+        }
+        return targets;
+    }, []);
+
+    // Keep the main-process target list in sync as routing changes while the
+    // laser is on (channels/outputs can be edited during output).
+    const dacTargetsJsonRef = useRef('');
+    useEffect(() => {
+        const next = JSON.stringify(getDacTargets());
+        if (next === dacTargetsJsonRef.current) return;
+        dacTargetsJsonRef.current = next;
+        if (laserOnRef.current && window.electronAPI) {
+            window.electronAPI.send('dac-set-targets', JSON.parse(next));
+        }
+    }, [getDacTargets, state]);
 
     // --- ILDA bridge: adopt parse results + cache requested frames ---------
     useEffect(() => {
@@ -637,6 +672,17 @@ export function useTimelinePlayback() {
             }
             playheadRef.current = t;
             if (isPlayingRef.current && laserOnRef.current) {
+                // boundary keyframe push: if playhead crossed a cue start since last push,
+                // compile and send the frame immediately so the clip activates at its exact placed time.
+                if (t > lastPushedT.current) {
+                    const cues = Object.values(stateRef.current.cues || {}).filter(Boolean);
+                    const crossed = cues.some(cue => cue.startTime > lastPushedT.current && cue.startTime <= t);
+                    if (crossed) {
+                        accRef.current = 0;
+                        push(t);
+                        lastPushedT.current = t;
+                    }
+                }
                 accRef.current += dt;
                 const fps = stateRef.current.settings.fps || 30;
                 if (accRef.current >= 1 / fps) {
@@ -657,6 +703,7 @@ export function useTimelinePlayback() {
         playheadRef.current = clamped;
         setPlayheadSec(clamped);
         accRef.current = 0;
+        lastPushedT.current = clamped - 0.001;
         // Parking the head while stopped establishes the replay anchor;
         // moving it mid-playback never moves the anchor.
         if (!isPlayingRef.current) anchorRef.current = clamped;
@@ -674,6 +721,16 @@ export function useTimelinePlayback() {
         // the timeline start. A live show clock always knows where it is, so
         // never rewind it.
         if (!following && playheadRef.current >= end) seek(anchorRef.current);
+        // When using external timecode, only start playback if the timecode
+        // signal is actively running — timecode is the master control.
+        // For internal sync, start immediately as before.
+        const shouldPlay = !external || following;
+        if (!shouldPlay) {
+            // Timecode is not running yet; seek to anchor so when signal
+            // arrives playback can start from the right position.
+            seek(anchorRef.current);
+            return;
+        }
         isPlayingRef.current = true;
         setIsPlaying(true);
 
@@ -745,7 +802,11 @@ export function useTimelinePlayback() {
 
         const dacs = getDacIps();
         if (on) {
-            // Start the main-process 30fps send loop (idempotent).
+            // Register the always-fed endpoints and start the main-process 30fps
+            // send loop (idempotent). The loop starts NOW — before any clip is
+            // active — and immediately streams dark idle frames (Showbridge) so
+            // the DACs are warm and responsive the moment frame data arrives.
+            api.send('dac-set-targets', getDacTargets());
             api.send('start-dac-send-loop');
             // Open wired connections + clear the stopped-DAC set so the
             // accumulator doesn't drop our frames.
@@ -753,13 +814,15 @@ export function useTimelinePlayback() {
                 try { await api.startDacOutput(ip, type); } catch (_) {}
             }
         } else {
-            // Cleanly blank + close each DAC we were feeding.
+            // Stop feeding always-fed endpoints + cleanly blank + close each DAC
+            // we were feeding.
+            api.send('dac-set-targets', []);
             for (const [ip, type] of dacs) {
                 try { await api.stopDacOutput(ip, type); } catch (_) {}
             }
             api.send('stop-dac-send-loop');
         }
-    }, [getDacIps]);
+    }, [getDacIps, getDacTargets]);
 
     // Clean up on unmount (e.g. navigating away from the Timeline page).
     useEffect(() => {
@@ -774,6 +837,7 @@ export function useTimelinePlayback() {
             for (const [ip, type] of dacs) {
                 try { window.electronAPI.stopDacOutput(ip, type); } catch (_) {}
             }
+            window.electronAPI.send('dac-set-targets', []);
             window.electronAPI.send('stop-dac-send-loop');
         };
     }, [getDacIps]);
