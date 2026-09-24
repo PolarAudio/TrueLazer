@@ -146,6 +146,16 @@ const ShapeBuilder = ({ onBack }) => {
   const playbackAccumulatorRef = useRef(0);
 
   const CANVAS_SIZE = 1000;
+  // Legacy / foreign frames (older .clip saves, hand-edited clips) can carry
+  // shapes without a `type`, or undefined array entries. Normalize them on load
+  // so every shape has a usable type and no render path can crash on a bare
+  // entry. (The effect system re-renders whatever frame is the source, so this
+  // protects every effect, not just the one currently selected.)
+  const sanitizeShapes = (frameShapes) => (frameShapes || [])
+      .filter(s => !!s && typeof s === 'object')
+      .map(s => (typeof s.type === 'string' && s.type.length)
+          ? s
+          : { ...s, type: 'polyline', points: s.points || [] });
   // While an effect is active the editor/export work on a single source frame
   // (virtual): the effect spans the whole loop by modulating that source set,
   // leaving the stored frames untouched (fully non-destructive).
@@ -1775,9 +1785,10 @@ const ShapeBuilder = ({ onBack }) => {
               if (!loadedFrames || !Array.isArray(loadedFrames) || loadedFrames.length === 0) {
                   throw new Error('Invalid shape clip file');
               }
-              setFrames(loadedFrames);
-              recordHistory(loadedFrames);
-              setFrameCount(loadedFrames.length); setCurrentFrameIndex(0);
+              const cleanFrames = loadedFrames.map(sanitizeShapes);
+              setFrames(cleanFrames);
+              recordHistory(cleanFrames);
+              setFrameCount(cleanFrames.length); setCurrentFrameIndex(0);
               if (clipData.effect && clipData.effect.type) setShapeEffect(clipData.effect);
               if (typeof clipData.bakeEffects === 'boolean') setBakeEffects(clipData.bakeEffects);
               return;
@@ -1816,9 +1827,10 @@ const ShapeBuilder = ({ onBack }) => {
                   }
                   return shapesInFrame;
               });
-              setFrames(newFrames);
-              recordHistory(newFrames);
-              setFrameCount(newFrames.length); setCurrentFrameIndex(0);
+              const cleanFrames = parsedFrames.map(f => sanitizeShapes(f));
+              setFrames(cleanFrames);
+              recordHistory(cleanFrames);
+              setFrameCount(cleanFrames.length); setCurrentFrameIndex(0);
           }
       } catch (e) { console.error(e); } finally { setIsLoading(false); }
   };
@@ -3268,15 +3280,15 @@ const ShapeBuilder = ({ onBack }) => {
           }
           if (onionSkin && currentFrameIndex > 0 && !isPlaying && frames[currentFrameIndex - 1]) { 
               ctx.globalAlpha = 0.15; 
-              frames[currentFrameIndex - 1].forEach(s => drawShape(ctx, s, false, true)); 
+              frames[currentFrameIndex - 1].forEach(s => { if (!s) return; drawShape(ctx, s, false, true); }); 
               ctx.globalAlpha = 1.0; 
           }
         }
         if (backgroundImage) { ctx.globalAlpha = 0.3; ctx.drawImage(backgroundImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE); ctx.globalAlpha = 1.0; }
         if (previewMode === 'off') {
-            if (!(shapeEffect && shapeEffect.type) && shapes.length > 0) shapes.forEach((s, i) => drawShape(ctx, s, selectedShapeIndexes.includes(i)));
+            if (!(shapeEffect && shapeEffect.type) && shapes.length > 0) shapes.forEach((s, i) => { if (!s) return; drawShape(ctx, s, selectedShapeIndexes.includes(i)); });
         } else {
-            if (shapes.length > 0) shapes.forEach(s => drawPreview(ctx, s, previewMode));
+            if (shapes.length > 0) shapes.forEach(s => { if (!s) return; drawPreview(ctx, s, previewMode); });
         }
         if (shapeEffect && shapeEffect.type) {
             const effectPos = frameCount > 1 ? currentFrameIndex / (frameCount - 1) : 0;
@@ -3294,7 +3306,7 @@ const ShapeBuilder = ({ onBack }) => {
             // shapes as-is. Otherwise draw ONLY the modulated layer - no full
             // shape underlay, so blanked gaps/chase jumps read as jumps.
             if (strengthAt < 0.02 && shapes.length > 0) {
-                shapes.forEach((s, i) => previewMode === 'cone' ? drawPreview(ctx, s, 'cone') : drawShape(ctx, s, selectedShapeIndexes.includes(i)));
+                shapes.forEach((s, i) => { if (!s) return; previewMode === 'cone' ? drawPreview(ctx, s, 'cone') : drawShape(ctx, s, selectedShapeIndexes.includes(i)); });
             } else {
                 shapes.forEach(s => {
                     if (!s || s.hidden) return;
@@ -3810,7 +3822,7 @@ const ShapeBuilder = ({ onBack }) => {
                       >
                           <div style={{ width: '10px', height: '10px', background: s.color, marginRight: '8px', borderRadius: '2px' }}></div>
                           <span style={{ fontSize: '0.8rem', color: '#ccc', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {s.type.toUpperCase()} {i}
+                              {s && s.type ? s.type.toUpperCase() : 'SHAPE'} {i}
                           </span>
                           <button 
                               onClick={(e) => { 

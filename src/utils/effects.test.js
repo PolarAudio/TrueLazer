@@ -300,6 +300,109 @@ describe('applyChase', () => {
   });
 });
 
+describe('applyChase driving clock (time / fps / bpm)', () => {
+  // 16 points across 4 segments (4 points per step) so each step has interior
+  // points that keep their color — the 2-point blanking bridge only touches the
+  // boundary points at step crossings.
+  const segFrame = () => {
+    const pts = [];
+    for (let i = 0; i < 16; i++) pts.push({ x: i / 16, y: 0 });
+    return {
+      points: new Float32Array(pts.flatMap((p) => [p.x, p.y, 0, 255, 255, 255, 0, 0])),
+      isTypedArray: true,
+    };
+  };
+
+  const peakSteps = (res) => {
+    const n = res.points.length / 8;
+    const byStep = {};
+    for (let i = 0; i < n; i++) {
+      const step = Math.min(3, Math.floor((i / n) * 4));
+      const r = res.points[i * 8 + 3];
+      if (!(step in byStep) || r > byStep[step]) byStep[step] = r;
+    }
+    return Object.entries(byStep)
+      .filter(([, r]) => r >= 254)
+      .map(([s]) => Number(s));
+  };
+
+  it('time clock (and the default) advances 1 step per second', () => {
+    const base = { id: 'chase', instanceId: 'c-t', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'time' } };
+    expect(peakSteps(applyEffects(segFrame(), [{ ...base, params: { ...base.params } }], { time: 3000 }))).toEqual([3]);
+    // No clock param = historical 'time' behavior
+    const def = { id: 'chase', instanceId: 'c-td', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right' } };
+    expect(peakSteps(applyEffects(segFrame(), [def], { time: 3000 }))).toEqual([3]);
+  });
+
+  it('fps clock advances one step per rendered frame', () => {
+    const effects = [{ id: 'chase', instanceId: 'c-f', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'fps' } }];
+    // 3 s at 30 fps = 90 frames -> 90 % 4 = step 2
+    expect(peakSteps(applyEffects(segFrame(), effects, { time: 3000, fps: 30 }))).toEqual([2]);
+  });
+
+  it('bpm clock advances one step per beat', () => {
+    const effects = [{ id: 'chase', instanceId: 'c-b', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'bpm' } }];
+    // 120 BPM = 2 beats/s; at 2 s -> 4 beats -> 4 % 4 = step 0
+    expect(peakSteps(applyEffects(segFrame(), effects, { time: 2000, bpm: 120 }))).toEqual([0]);
+  });
+
+  it('without a render clock the chase is NOT pinned and animates on wall time', () => {
+    // Regression: applyEffects used to default progress=0 with clipDuration=1,
+    // pinning the timeline chase to step 0 forever. With no progress/clipDuration
+    // passed the chase must run on the free clock.
+    const effects = [{ id: 'chase', instanceId: 'c-free', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'time' } }];
+    expect(peakSteps(applyEffects(segFrame(), effects, { time: 3000 }))).toEqual([3]);
+    expect(peakSteps(applyEffects(segFrame(), effects, { time: 6000 }))).toEqual([2]);
+  });
+
+  it('fps clock selects the driven channel in channel mode across the assigned DACs', () => {
+    const frame = {
+      points: new Float32Array([0, 0, 0, 255, 255, 255, 0, 0]),
+      isTypedArray: true,
+    };
+    const effects = [{
+      id: 'chase',
+      instanceId: 'c-ch',
+      params: { mode: 'channel', clock: 'fps', decay: 0, speed: 1, overlap: 1, emptyStep: true, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['dac-a', 'dac-b', 'dac-c', 'dac-d'], time: 1000, fps: 30 };
+    const res = applyEffects(frame, effects, context);
+    const dists = res.points._channelDistributions;
+    expect(dists.size).toBe(4);
+    // 1 s at 30 fps = 30 steps -> 30 % 4 = step 2 -> dac index 2 is fully lit
+    let lit = [];
+    for (const [dacIndex, dist] of dists.entries()) {
+      if (res.points[dist.start + 3] >= 254) lit.push(dacIndex);
+    }
+    expect(lit).toEqual([2]);
+  });
+
+  it('steps = 1 leaves every point untouched (chase floor = no effect)', () => {
+    const effects = [{ id: 'chase', instanceId: 'c-one', params: { mode: 'segment', steps: 1, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'time' } }];
+    const res = applyEffects(segFrame(), effects, { time: 5000 });
+    expect(res.points.length / 8).toBe(16);
+    for (let i = 0; i < res.points.length / 8; i++) {
+      expect(res.points[i * 8 + 3]).toBe(255); // full color kept
+      expect(res.points[i * 8 + 6]).toBe(0);    // nothing blanked
+    }
+  });
+
+  it('automated steps below 1 clamp to the no-effect floor', () => {
+    // A curve driving `steps` to 0.5 must behave exactly like the 1-step floor
+    // instead of producing negative step indices / boosted colors. 1.05 s gives a
+    // fractional clock (t = 1.05) that diverges only when unclamped.
+    const stepped = { id: 'chase', instanceId: 'c-low', params: { mode: 'segment', steps: 0.5, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'time' } };
+    const clamped = { id: 'chase', instanceId: 'c-low2', params: { mode: 'segment', steps: 1, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'time' } };
+    const a = applyEffects(segFrame(), [stepped], { time: 1050 });
+    const b = applyEffects(segFrame(), [clamped], { time: 1050 });
+    expect(a.points).toEqual(b.points);
+    for (let i = 0; i < a.points.length / 8; i++) {
+      expect(a.points[i * 8 + 3]).toBeGreaterThan(0);
+      expect(a.points[i * 8 + 3]).toBeLessThanOrEqual(255);
+    }
+  });
+});
+
 describe('applyDelay channel mode regression', () => {
   const mockFrame = (points) => ({
     points: new Float32Array(points.flatMap(p => [p.x, p.y, 0, 255, 255, 255, 0, 0])),
@@ -681,6 +784,18 @@ describe('applyColor', () => {
       expect(buf[i * 8 + 4]).toBe(136);
       expect(buf[i * 8 + 5]).toBe(0);
     }
+  });
+
+  it('keeps the HSV solid path lit all the way down to zero (brightness never snaps off early)', () => {
+    const numPoints = 4;
+    const buf = createBuffer(numPoints);
+    applyColor(buf, numPoints, { mode: 'solid', hue: 0, saturation: 1, brightness: 0.25 }, 0);
+    expect(buf[3]).toBeCloseTo(63.75);
+    expect(buf[5]).toBe(0);
+    applyColor(buf, numPoints, { mode: 'solid', hue: 0, saturation: 1, brightness: 0.02 }, 0);
+    expect(buf[3]).toBeGreaterThan(0); // 5.1 — sub-8-bit levels must not vanish early
+    applyColor(buf, numPoints, { mode: 'solid', hue: 0, saturation: 1, brightness: 0 }, 0);
+    expect(buf[3]).toBe(0);
   });
 
   it('interpolates rainbow colors across points without NaN or out-of-bounds values', () => {

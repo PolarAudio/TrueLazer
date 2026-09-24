@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useTimeline } from '../../contexts/TimelineContext';
 import { useMidi } from '../../contexts/MidiContext';
 import { formatClock, SNAP_MODES, snapInterval } from '../../utils/timelineTime';
@@ -13,8 +13,46 @@ const SYNC_LABELS = {
     midiClock: 'MIDI Clock',
     ltc: 'LTC Audio',
     artnet: 'Art-Net TC',
+    tcnet: 'TCNet Sync',
+    prolink: 'PRO DJ LINK',
+    stagelinq: 'STAGELINQ',
 };
-const FRAME_SOURCES = ['mtc', 'ltc', 'artnet'];
+const FRAME_SOURCES = ['mtc', 'ltc', 'artnet', 'tcnet'];
+
+/**
+ * Number input that edits a local draft while focused and only commits the
+ * clamped value on blur / Enter. Letting onChange clamp immediately (as a
+ * <input type="number"> bound straight to state does) blocks typing: e.g. a
+ * BPM clamped to [20, 300] would lock the field the moment "1" is pressed.
+ */
+const DraftNumber = ({ value, min, max, step = 1, onCommit, title }) => {
+    const [draft, setDraft] = useState(null);
+    const commit = () => {
+        const raw = draft != null && String(draft).trim() !== '' ? draft : value;
+        const n = parseFloat(raw);
+        const hadDraft = draft != null;
+        setDraft(null);
+        if (!hadDraft || !Number.isFinite(n) || n === Number(value)) return;
+        let v = n;
+        if (Number.isFinite(min)) v = Math.max(min, v);
+        if (Number.isFinite(max)) v = Math.min(max, v);
+        onCommit(v);
+    };
+    return (
+        <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={draft != null ? draft : value}
+            title={title}
+            onFocus={(e) => setDraft(e.target.value)}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        />
+    );
+};
 
 const TimelineTransport = ({
     onBack,
@@ -51,9 +89,14 @@ const TimelineTransport = ({
         ? formatTimecode(sync.timecode, sync.rate)
         : (sync && sync.signal ? formatClock(sync.seconds) : '――:――:――');
     const diag = src === 'mtc' || src === 'midiClock' ? (sync && sync.midi) : null;
+    const bpmInfo = (src === 'prolink' || src === 'stagelinq') && sync && sync.bpm
+        ? ` @ ${sync.bpm} BPM`
+        : src === 'midiClock'
+            ? ` @ ${sync.rate} BPM`
+            : ` @ ${sync.rate} fps`;
     const statusTitle = sync
         ? (sync.signal
-            ? `${SYNC_LABELS[src] || src} ${sync.running ? 'running' : 'locked'} · ${statusText}${src === 'midiClock' ? ` @ ${sync.rate} BPM` : ` @ ${sync.rate} fps`} · ${midiBound ? `on ${(midiInputs.find((i) => i.id === midiBound) || {}).name || midiBound}` : ''}`
+            ? `${SYNC_LABELS[src] || src} ${sync.running ? 'running' : 'locked'} · ${statusText}${bpmInfo}${src === 'midiClock' ? ` · ${diag?.count ?? 0} bytes · last: ${diag?.lastHex || '—'}` : ''}${midiBound ? ` · on ${(midiInputs.find((i) => i.id === midiBound) || {}).name || midiBound}` : ''}`
             : `${SYNC_LABELS[src] || src} — no signal${diag ? ` · ${diag.count} bytes · last: ${diag.lastHex || '—'}` : ''}${midiBound ? ` · on ${(midiInputs.find((i) => i.id === midiBound) || {}).name || midiBound}` : ''}`)
         : '';
 
@@ -92,9 +135,12 @@ const TimelineTransport = ({
             <div className="timeline-transport-center">
                 <label className="timeline-tool">
                     <span>BPM</span>
-                    <input
-                        type="number" min={20} max={300} step={1} value={s.bpm}
-                        onChange={(e) => actions.setSettings({ bpm: Math.max(20, Math.min(300, parseFloat(e.target.value) || 120)) })}
+                    <DraftNumber
+                        value={s.bpm}
+                        min={20}
+                        max={300}
+                        step={1}
+                        onCommit={(v) => actions.setSettings({ bpm: v })}
                     />
                 </label>
                 <select
@@ -109,9 +155,12 @@ const TimelineTransport = ({
                 </select>
                 <label className="timeline-tool">
                     <span>Zoom</span>
-                    <input
-                        type="number" min={ZOOM_MIN} max={ZOOM_MAX} step={1} value={Math.round(s.zoom)}
-                        onChange={(e) => setZoom(parseFloat(e.target.value) || s.zoom)}
+                    <DraftNumber
+                        value={Math.round(s.zoom)}
+                        min={ZOOM_MIN}
+                        max={ZOOM_MAX}
+                        step={1}
+                        onCommit={setZoom}
                     />
                 </label>
                 <button className="timeline-btn-sm" title="Zoom out" onClick={() => setZoom(s.zoom / 1.2)}>−</button>
@@ -145,9 +194,12 @@ const TimelineTransport = ({
                 {FRAME_SOURCES.includes(src) && (
                     <label className="timeline-tool" title="Frame rate used when decoding & generating for the source">
                         <span>fps</span>
-                        <input
-                            type="number" min={24} max={60} step={1} value={s.sync?.fps ?? 30}
-                            onChange={(e) => setSync({ fps: Math.max(24, Math.min(60, parseFloat(e.target.value) || 30)) })}
+                        <DraftNumber
+                            value={s.sync?.fps ?? 30}
+                            min={24}
+                            max={60}
+                            step={1}
+                            onCommit={(v) => setSync({ fps: v })}
                         />
                     </label>
                 )}
@@ -181,13 +233,21 @@ const TimelineTransport = ({
                 </button>
                 {s.loopEnabled && (
                     <span className="timeline-loop-pos">
-                        <input type="number" min={0} step={0.1} value={s.loop?.start ?? 0}
-                            onChange={(e) => actions.setSettings({ loop: { start: parseFloat(e.target.value) || 0, end: s.loop?.end ?? 60 } })}
-                            title="Loop start (s)" />
+                        <DraftNumber
+                            value={s.loop?.start ?? 0}
+                            min={0}
+                            step={0.1}
+                            title="Loop start (s)"
+                            onCommit={(v) => actions.setSettings({ loop: { start: v, end: s.loop?.end ?? 60 } })}
+                        />
                         –
-                        <input type="number" min={0} step={0.1} value={s.loop?.end ?? 60}
-                            onChange={(e) => actions.setSettings({ loop: { start: s.loop?.start ?? 0, end: parseFloat(e.target.value) || 60 } })}
-                            title="Loop end (s)" />
+                        <DraftNumber
+                            value={s.loop?.end ?? 60}
+                            min={0}
+                            step={0.1}
+                            title="Loop end (s)"
+                            onCommit={(v) => actions.setSettings({ loop: { start: s.loop?.start ?? 0, end: v } })}
+                        />
                     </span>
                 )}
                 <button className="timeline-btn" onClick={() => actions.addChannel({ name: `Channel ${state.channelOrder.length + 1}` })}>

@@ -103,9 +103,16 @@ const TimelineEditor = ({ onBack }) => {
                 clips.push({ laneId, clipId });
             }
         });
-        // Automation clips win when the box touches any; otherwise intersect cues.
+        // Automation clips win when the box touches any; a box that ALSO sweeps
+        // cue blocks selects both kinds together so the two can be copied as
+        // one group (Ctrl+C/V handles the mixed clipboard). Otherwise intersect
+        // cues.
         if (clips.length > 0) {
-            actions.selectAutoClips(clips, d.additive);
+            if (cueIds.length > 0) {
+                actions.selectMixed(cueIds, clips, d.channelId, d.additive);
+            } else {
+                actions.selectAutoClips(clips, d.additive);
+            }
         } else if (cueIds.length > 0 || !d.additive) {
             actions.selectCues(cueIds, d.channelId, d.additive);
         }
@@ -340,8 +347,8 @@ const TimelineEditor = ({ onBack }) => {
         <div className="timeline-page">
             <TimelineTransport
                 onBack={onBack}
-                isPlaying={pb.isPlaying}
-                onPlay={pb.isPlaying ? pb.pause : pb.play}
+                isPlaying={pb.isPlaying || !!pb.externalRunning}
+                onPlay={(pb.isPlaying || pb.externalRunning) ? pb.pause : pb.play}
                 onStop={pb.stop}
                 playheadSec={pb.playheadSec}
                 onSeek={pb.seek}
@@ -366,7 +373,7 @@ const TimelineEditor = ({ onBack }) => {
                         onPointerCancel={finishMarquee}
                         onLostPointerCapture={finishMarquee}
                     >
-                        <div className="timeline-row">
+                        <div className="timeline-row timeline-ruler-row">
                             <div className="timeline-header-cell corner">
                                 <div className="timeline-corner-label" style={{ height: RULER_H }}>
                                     {s.audio ? (
@@ -442,6 +449,7 @@ const TimelineEditor = ({ onBack }) => {
                                             bpm={s.bpm}
                                             fps={s.fps}
                                             rowH={autoRowH}
+                                            trimMode={s.clipEditTrim}
                                         />
                                     ))}
 

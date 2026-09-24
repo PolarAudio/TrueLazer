@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { useTimeline } from '../../contexts/TimelineContext';
+import { useTimeline, getAdjacentCues } from '../../contexts/TimelineContext';
 import {
     getLaneTarget,
     laneDefaultValue,
@@ -122,7 +122,7 @@ function getLaneRange(laneOrClip) {
     return RANGES[laneOrClip?.targetProperty] || { min: 0, max: 2 };
 }
 
-const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, rowH = AUTO_ROW_H }) => {
+const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, rowH = AUTO_ROW_H, trimMode }) => {
     const { state, actions } = useTimeline();
     const dragRef = useRef(null); // active keyframe drag
     const tensionRef = useRef(null); // active segment-curve (tension) drag
@@ -287,20 +287,73 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
         actions.selectKeyframe(null, null); // clicking empty clip space clears selection
     };
 
+    // On pointer-down, freeze the whole drag GROUP (the current multi-selection,
+    // or this clip alone) and capture each member's start/duration — the same
+    // delta-based model cue blocks use, so the group keeps its relative timing.
+    // Returns null when there is nothing to drag (e.g. the pointer toggled the
+    // anchor clip off, or it is a legacy synthesized clip).
+    const buildClipDrag = (e, c, mode) => {
+        if (c.id == null) return null; // legacy clip: never draggable
+        const mod = e.shiftKey || e.ctrlKey || e.metaKey;
+        const wasSelected = isClipSelected(c.id);
+        const cur = Array.isArray(state.settings.selectedAutoClipIds) ? state.settings.selectedAutoClipIds : [];
+        let ids;
+        let includeSelectedCues = false;
+        if (mod && !wasSelected) {
+            // Shift/Ctrl+click on an unselected clip: add it (and drag it).
+            actions.selectAutoClip(lane.id, c.id, true);
+            ids = [...cur, { laneId: lane.id, clipId: c.id }];
+        } else if (mod) {
+            // Shift/Ctrl+click on a selected clip: just deselect it.
+            actions.selectAutoClip(lane.id, c.id, true);
+            return null;
+        } else if (wasSelected) {
+            // Plain click on a selected clip drags the whole selection.
+            ids = cur;
+            includeSelectedCues = true;
+        } else {
+            // Plain click on an unselected clip: select it alone.
+            actions.selectAutoClip(lane.id, c.id);
+            ids = [{ laneId: lane.id, clipId: c.id }];
+        }
+        const notes = ids
+            .filter((sc) => sc && sc.clipId)
+            .map((sc) => {
+                const cl = state.lanes[sc.laneId];
+                const clip = cl && (cl.clips || []).find((x) => x.id === sc.clipId);
+                return clip
+                    ? { kind: 'clip', laneId: sc.laneId, clipId: clip.id, startTime: clip.startTime, duration: clip.duration }
+                    : null;
+            })
+            .filter(Boolean);
+        // A mixed selection (marquee over cues + automation) drags BOTH kinds
+        // together, mirroring the cue-block group.
+        if (includeSelectedCues) {
+            const cueSel = state.settings.selectedCueIds || [];
+            const cues = state.cues;
+            for (const id of cueSel) {
+                const cue = cues[id];
+                if (cue) {
+                    notes.push({ kind: 'cue', id: cue.id, channelId: cue.channelId, startTime: cue.startTime, duration: cue.duration, isLooping: !!cue.isLooping });
+                }
+            }
+        }
+        if (notes.length === 0) return null;
+        return {
+            mode,
+            startX: e.clientX,
+            notes,
+            anchor: { startTime: c.startTime, duration: c.duration },
+        };
+    };
+
     const startClipDrag = (e, c, mode) => {
         if (e.button !== 0 && e.pointerType === 'mouse') return;
         e.preventDefault();
         e.stopPropagation();
-        const rect = e.currentTarget.closest('.timeline-automation-body').getBoundingClientRect();
-        clipDragRef.current = {
-            clipId: c.id,
-            mode,
-            rect,
-            startX: e.clientX,
-            startTime: c.startTime,
-            startDuration: c.duration,
-            moved: false,
-        };
+        const drag = buildClipDrag(e, c, mode);
+        if (!drag) return;
+        clipDragRef.current = drag;
         try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* noop */ }
     };
 
@@ -309,20 +362,66 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
         if (!d) return;
         if (!d.moved && Math.abs(e.clientX - d.startX) < 4) return;
         d.moved = true;
-        if (d.clipId == null) return; // legacy clip can't be moved/trimmed
+        if (!d.notes || d.notes.length === 0) return; // legacy clip can't be moved/trimmed
         const dxT = (e.clientX - d.startX) / pxPerSecond;
         if (d.mode === 'move') {
-            const t = Math.max(0, snapToGrid(d.startTime + dxT, snapMode, { bpm, fps }));
-            actions.updateAutoClip(lane.id, d.clipId, { startTime: t });
+            // Snap the dragged clip's target, apply that same delta to the whole
+            // group so their relative spacing is preserved.
+            const t = Math.max(0, snapToGrid(d.anchor.startTime + dxT, snapMode, { bpm, fps }));
+            const delta = t - d.anchor.startTime;
+            for (const n of d.notes) {
+                if (n.kind === 'cue') {
+                    actions.moveCue(n.id, n.channelId, Math.max(0, n.startTime + delta));
+                } else {
+                    actions.updateAutoClip(n.laneId, n.clipId, { startTime: Math.max(0, n.startTime + delta) });
+                }
+            }
         } else if (d.mode === 'resize-end') {
-            const dur = Math.max(0.05, snapToGrid(d.startDuration + dxT, snapMode, { bpm, fps }));
-            actions.updateAutoClip(lane.id, d.clipId, { duration: dur });
+            // Trim mode changes the visible length only (keyframes hold their
+            // timeline positions); otherwise the curve stretches with the clip.
+            // Each member keeps its own left edge; all right edges shift by the
+            // same snapped delta.
+            const dur = Math.max(0.05, snapToGrid(d.anchor.duration + dxT, snapMode, { bpm, fps }));
+            const delta = dur - d.anchor.duration;
+            for (const n of d.notes) {
+                if (n.kind === 'cue') {
+                    let end = Math.max(0.1, n.duration + delta);
+                    let clamped = false;
+                    if (trimMode) {
+                        const { nextStart } = getAdjacentCues(state, n.id);
+                        if (nextStart != null && n.startTime + end > nextStart + 1e-6) {
+                            end = Math.max(0.1, nextStart - n.startTime);
+                            clamped = true;
+                        }
+                    }
+                    if (clamped && n.isLooping) actions.updateCue(n.id, { isLooping: false });
+                    actions.resizeCue(n.id, n.startTime, end, trimMode ? { trim: n } : undefined);
+                } else {
+                    const nextDur = Math.max(0.05, n.duration + delta);
+                    actions.updateAutoClip(n.laneId, n.clipId, trimMode ? { duration: nextDur, trim: true } : { duration: nextDur });
+                }
+            }
         } else {
-            // resize-start keeps the END fixed.
-            const end = d.startTime + d.startDuration;
-            let start = Math.max(0, snapToGrid(d.startTime + dxT, snapMode, { bpm, fps }));
-            start = Math.min(start, end - 0.05);
-            actions.updateAutoClip(lane.id, d.clipId, { startTime: start, duration: end - start });
+            // resize-start keeps each clip's own END fixed.
+            const start = Math.max(0, snapToGrid(d.anchor.startTime + dxT, snapMode, { bpm, fps }));
+            const delta = start - d.anchor.startTime;
+            for (const n of d.notes) {
+                if (n.kind === 'cue') {
+                    let newStart = Math.max(0, n.startTime + delta);
+                    if (trimMode) {
+                        const { prevEnd } = getAdjacentCues(state, n.id);
+                        if (prevEnd != null && newStart < prevEnd - 1e-6) newStart = Math.max(0, prevEnd);
+                    }
+                    const newDur = Math.max(0.1, n.startTime + n.duration - newStart);
+                    actions.resizeCue(n.id, newStart, newDur, trimMode ? { trim: n } : undefined);
+                } else {
+                    const nextStart = Math.min(Math.max(0, n.startTime + delta), n.startTime + n.duration - 0.05);
+                    const nextDur = Math.max(0.05, n.startTime + n.duration - nextStart);
+                    actions.updateAutoClip(n.laneId, n.clipId, trimMode
+                        ? { startTime: nextStart, duration: nextDur, trim: true }
+                        : { startTime: nextStart, duration: nextDur });
+                }
+            }
         }
     };
 
@@ -330,9 +429,7 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
         const d = clipDragRef.current;
         clipDragRef.current = null;
         try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) { /* noop */ }
-        if (d && !d.moved && d.mode === 'move' && d.clipId != null) {
-            actions.selectAutoClip(lane.id, d.clipId);
-        }
+        // Selection is established on pointer-down in buildClipDrag.
     };
 
     // --- Editing ----------
@@ -471,6 +568,7 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
                             className={`timeline-auto-clip${isSel ? ' selected' : ''}${c.legacy ? ' legacy' : ''}`}
                             style={{ left: timeToPx(c.startTime, pxPerSecond), width: clipW }}
                             data-auto-clip-id={c.id}
+                            data-lane-id={lane.id}
                             onPointerDown={(e) => addKfInClip(e, c)}
                             onDoubleClick={(e) => e.stopPropagation()}
                             onContextMenu={(e) => deleteClip(e, c)}

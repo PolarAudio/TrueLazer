@@ -27,15 +27,19 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
 
     // Decide the drag group on pointer-down and capture each member's frozen
     // start/duration. Returns null when there is nothing to drag (e.g. the
-    // pointer toggled the anchor block off).
+    // pointer toggled the anchor block off). When the dragged block is part of
+    // the current selection, the group carries BOTH the selected cues AND the
+    // selected automation clips (mixed marquee) so the two kinds edit together.
     const buildDrag = useCallback((e, mode) => {
         if (e.button !== 0 && e.pointerType === 'mouse') return null;
         e.preventDefault();
         e.stopPropagation();
         const selIds = state.settings.selectedCueIds || [];
+        const selClips = state.settings.selectedAutoClipIds || [];
         const mod = e.shiftKey || e.ctrlKey || e.metaKey;
         const wasSelected = selIds.includes(cue.id);
         let ids;
+        let includeSelectedClips = false;
         if (mod && !wasSelected) {
             // Shift/Ctrl+click on an unselected block: add it (and drag it).
             actions.select(cue.id, cue.channelId, { additive: true });
@@ -47,6 +51,7 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
         } else if (wasSelected) {
             // Plain click on a selected block drags the whole selection.
             ids = selIds;
+            includeSelectedClips = true;
         } else {
             // Plain click on an unselected block: select it alone.
             actions.select(cue.id, cue.channelId);
@@ -56,7 +61,17 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
         const notes = ids
             .map((id) => cues[id])
             .filter(Boolean)
-            .map((c) => ({ id: c.id, channelId: c.channelId, startTime: c.startTime, duration: c.duration, isLooping: !!c.isLooping }));
+            .map((c) => ({ kind: 'cue', id: c.id, channelId: c.channelId, startTime: c.startTime, duration: c.duration, isLooping: !!c.isLooping, totalFrames: c.totalFrames || 0, frameStart: c.frameStart || 0, frameCount: c.frameCount ?? null }));
+        if (includeSelectedClips) {
+            for (const sc of Array.isArray(selClips) ? selClips : []) {
+                if (!sc || !sc.clipId) continue;
+                const cl = state.lanes?.[sc.laneId];
+                const clip = cl && (cl.clips || []).find((x) => x.id === sc.clipId);
+                if (clip) {
+                    notes.push({ kind: 'clip', laneId: sc.laneId, clipId: clip.id, startTime: clip.startTime, duration: clip.duration });
+                }
+            }
+        }
         if (notes.length === 0) return null;
         return {
             mode,
@@ -90,15 +105,24 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
                 // whole group so their relative spacing is preserved.
                 const delta = snapToGrid(d.anchor.startTime + tx, snapMode, ctx) - d.anchor.startTime;
                 for (const n of d.notes) {
-                    actions.moveCue(n.id, n.channelId, Math.max(0, n.startTime + delta));
+                    if (n.kind === 'clip') {
+                        actions.updateAutoClip(n.laneId, n.clipId, { startTime: Math.max(0, n.startTime + delta) });
+                    } else {
+                        actions.moveCue(n.id, n.channelId, Math.max(0, n.startTime + delta));
+                    }
                 }
             } else if (d.mode === 'resize-end') {
                 const snappedEnd = snapToGrid(d.anchor.startTime + d.anchor.duration + tx, snapMode, ctx);
                 const delta = snappedEnd - (d.anchor.startTime + d.anchor.duration);
-                // Each clip keeps its own left edge; all right edges shift by
-                // the same snapped delta. In Trim mode the edge is clamped so
-                // it never passes the start of the next clip on that channel.
+                // Each member keeps its own left edge; all right edges shift by
+                // the same snapped delta. In Trim mode cue edges are clamped so
+                // they never pass the start of the next clip on that channel.
                 for (const n of d.notes) {
+                    if (n.kind === 'clip') {
+                        const nextDur = Math.max(0.05, n.duration + delta);
+                        actions.updateAutoClip(n.laneId, n.clipId, trimMode ? { duration: nextDur, trim: true } : { duration: nextDur });
+                        continue;
+                    }
                     let end = Math.max(0.1, n.duration + delta);
                     let clamped = false;
                     if (trimMode) {
@@ -109,21 +133,29 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
                         }
                     }
                     if (clamped && n.isLooping) actions.updateCue(n.id, { isLooping: false });
-                    actions.resizeCue(n.id, n.startTime, end);
+                    actions.resizeCue(n.id, n.startTime, end, trimMode ? { trim: n } : undefined);
                 }
             } else if (d.mode === 'resize-start') {
                 const delta = snapToGrid(d.anchor.startTime + tx, snapMode, ctx) - d.anchor.startTime;
-                // Each clip keeps its own right edge; all left edges shift by
-                // the same snapped delta. In Trim mode the left edge is clamped
-                // so it never crosses the previous clip's end on that channel.
+                // Each member keeps its own right edge; all left edges shift by
+                // the same snapped delta. In Trim mode cue edges are clamped so
+                // they never cross the previous clip's end on that channel.
                 for (const n of d.notes) {
+                    if (n.kind === 'clip') {
+                        const nextStart = Math.min(Math.max(0, n.startTime + delta), n.startTime + n.duration - 0.05);
+                        const nextDur = Math.max(0.05, n.startTime + n.duration - nextStart);
+                        actions.updateAutoClip(n.laneId, n.clipId, trimMode
+                            ? { startTime: nextStart, duration: nextDur, trim: true }
+                            : { startTime: nextStart, duration: nextDur });
+                        continue;
+                    }
                     let newStart = Math.max(0, n.startTime + delta);
                     if (trimMode) {
                         const { prevEnd } = getAdjacentCues(state, n.id);
                         if (prevEnd != null && newStart < prevEnd - 1e-6) newStart = Math.max(0, prevEnd);
                     }
                     const newDur = Math.max(0.1, n.startTime + n.duration - newStart);
-                    actions.resizeCue(n.id, newStart, newDur);
+                    actions.resizeCue(n.id, newStart, newDur, trimMode ? { trim: n } : undefined);
                 }
             }
         },

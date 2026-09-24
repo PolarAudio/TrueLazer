@@ -714,6 +714,46 @@ describe('automation clips (FL-style)', () => {
         expect(s.lanes.l1.clips[0]).toMatchObject({ startTime: 3, duration: 4 });
     });
 
+    it('UPDATE_AUTO_CLIP scales keyframes with the clip length', () => {
+        let s = withClipLane(); // ac1: start 2, dur 5
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k1', time: 3, value: 1 } } });
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k2', time: 0.5, value: 1 } } });
+        // Trim to half length: keyframes scale proportionally (3 -> 1.5, 0.5 -> 0.25).
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { duration: 2.5 } } });
+        let kfs = s.lanes.l1.clips[0].keyframes;
+        expect(kfs.find((k) => k.id === 'k1').time).toBeCloseTo(1.5, 5);
+        expect(kfs.find((k) => k.id === 'k2').time).toBeCloseTo(0.25, 5);
+        // Growing again stretches them back (ratios compose: dur 2.5 -> 10).
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { duration: 10 } } });
+        kfs = s.lanes.l1.clips[0].keyframes;
+        expect(kfs.find((k) => k.id === 'k1').time).toBeCloseTo(6, 5);
+        expect(kfs.find((k) => k.id === 'k2').time).toBeCloseTo(1, 5);
+        // A pure move (start-only) keeps keyframe times glued to the body.
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { startTime: 6 } } });
+        kfs = s.lanes.l1.clips[0].keyframes;
+        expect(kfs.find((k) => k.id === 'k1').time).toBeCloseTo(6, 5);
+        expect(kfs.find((k) => k.id === 'k2').time).toBeCloseTo(1, 5);
+    });
+
+    it('UPDATE_AUTO_CLIP with trim cuts the window without scaling or ghosts', () => {
+        let s = withClipLane(); // ac1: start 2, dur 5 -> end 7
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k1', time: 3, value: 1 } } });
+        s = run(s, { type: 'ADD_KEYFRAME', payload: { laneId: 'l1', clipId: 'ac1', keyframe: { id: 'k2', time: 0.5, value: 1 } } });
+        // Trim the start edge right (2 -> 4): keyframes hold their absolute
+        // timeline positions; k2 lands before the new start and is cut to 0.
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { startTime: 4, duration: 3, trim: true } } });
+        let kfs = s.lanes.l1.clips[0].keyframes;
+        expect(kfs.find((k) => k.id === 'k1').time).toBeCloseTo(1, 5);
+        expect(kfs.find((k) => k.id === 'k2').time).toBe(0);
+        // Trim the end further: no scaling, k1 stays at 1.
+        s = run(s, { type: 'UPDATE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', patch: { duration: 1, trim: true } } });
+        kfs = s.lanes.l1.clips[0].keyframes;
+        expect(kfs.find((k) => k.id === 'k1').time).toBeCloseTo(1, 5);
+        expect(kfs.find((k) => k.id === 'k2').time).toBe(0);
+        // The trim flag is transient and never stored on the clip.
+        expect(s.lanes.l1.clips[0].trim).toBeUndefined();
+    });
+
     it('REMOVE_AUTO_CLIP removes the clip and clears a matching selection', () => {
         let s = withClipLane();
         s = run(s, { type: 'REMOVE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
@@ -873,5 +913,41 @@ describe('automation clip multi-selection (marquee)', () => {
         s = run(s, { type: 'REMOVE_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1' } });
         expect(s.settings.selectedAutoClipIds).toEqual([]);
         expect(s.settings.selectedAutoClip).toBeNull();
+    });
+
+    it('SELECT_AUTO_CLIP additive preserves an existing cue selection', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c1', type: 'GENERATOR' } } });
+        s = run(s, { type: 'SELECT_CUES', payload: { cueIds: ['c1'], channelId: 'ch1' } });
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['c1']);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac1' });
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }]);
+    });
+
+    it('SELECT_MIXED replaces both cue and auto-clip selections (non-additive)', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c1', type: 'GENERATOR' } } });
+        s = run(s, { type: 'SELECT_CUES', payload: { cueIds: ['c1'], channelId: 'ch1' } });
+        s = run(s, { type: 'SELECT_AUTO_CLIP', payload: { laneId: 'l1', clipId: 'ac1', additive: true } });
+        s = run(s, { type: 'SELECT_MIXED', payload: { cueIds: ['c2'], clips: [{ laneId: 'l1', clipId: 'ac2' }], channelId: 'ch1' } });
+        expect(s.settings.selectedCueIds).toEqual([]);
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac2' }]);
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c2', type: 'GENERATOR' } } });
+        s = run(s, { type: 'SELECT_MIXED', payload: { cueIds: ['c1', 'c2'], clips: [{ laneId: 'l1', clipId: 'ac1' }], channelId: 'ch1' } });
+        expect(s.settings.selectedCueIds).toEqual(['c1', 'c2']);
+        expect(s.settings.selectedCueId).toBe('c2');
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }]);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac1' });
+    });
+
+    it('SELECT_MIXED additive merges into both existing selections', () => {
+        let s = seedTwoClips();
+        s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id: 'c1', type: 'GENERATOR' } } });
+        s = run(s, { type: 'SELECT_MIXED', payload: { cueIds: ['c1'], clips: [{ laneId: 'l1', clipId: 'ac1' }], channelId: 'ch1' } });
+        s = run(s, { type: 'SELECT_MIXED', payload: { cueIds: ['c1'], clips: [{ laneId: 'l1', clipId: 'ac2' }], channelId: 'ch1', additive: true } });
+        expect(s.settings.selectedCueIds).toEqual(['c1']);
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }]);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac2' });
     });
 });

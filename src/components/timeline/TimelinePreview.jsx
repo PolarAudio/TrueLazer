@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTimeline, getChannelOutputs, getChannelDisplayName } from '../../contexts/TimelineContext';
 import { flipPoints } from '../../hooks/useTimelinePlayback';
 import { applyOutputProcessing } from '../../utils/effects';
@@ -48,6 +48,46 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
     const singleSettings = outputs.length === 1 && dacOutputSettings
         ? dacOutputSettings[`${outputs[0].ip}:${outputs[0].channel}`] || null
         : null;
+
+    // Fingerprint every state input that changes the compiled preview apart
+    // from the playhead (cue geometry/types, generator params, effect overrides,
+    // automation lanes, intensities). Paused edits — toggling an effect, moving
+    // a keyframe, restyling a generator — must recompile even though the key's
+    // channel+playhead halves are unchanged.
+    const contentStamp = useMemo(() => {
+        if (!state || !channel) return '';
+        const lanesStamp = (channel.automationLanes || []).map((id) => {
+            const l = state.lanes[id];
+            if (!l) return null;
+            return {
+                target: l.target || null,
+                clips: (l.clips || []).map((c) => ({
+                    s: c.startTime, d: c.duration, cat: c.category,
+                    eid: c.effectId || null, pid: c.paramId || null,
+                    gid: c.genId || null, gpid: c.genParamId || null,
+                    v: c.values || null,
+                })),
+                keys: l.keyframes || null,
+            };
+        });
+        const cueStamp = (channel.cues || [])
+            .map((id) => state.cues[id])
+            .filter(Boolean)
+            .map((c) => ({
+                id: c.id, s: c.startTime, d: c.duration, type: c.type, loop: !!c.isLooping,
+                gen: c.generatorId, gp: c.generatorParams,
+                fx: c.effects, ovr: c.effectOverrides,
+                total: c.totalFrames, fs: c.frameStart || 0, fc: c.frameCount ?? null,
+            }));
+        return JSON.stringify([
+            cueStamp,
+            lanesStamp,
+            channel.intensity,
+            !!channel.muted, !!channel.soloed,
+            state.settings.masterIntensity, !!state.settings.blackout,
+            state.settings.bpm, !!state.settings.beatSync, state.settings.sync || null,
+        ]);
+    }, [state, channel]);
 
     // Keep the backing store DPR-aware and matched to the wrapper size.
     useEffect(() => {
@@ -136,7 +176,7 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
         let raf;
         const loop = () => {
             if (channel) {
-                const key = `${channel.id}:${playheadSec.toFixed(3)}`;
+                const key = `${channel.id}:${playheadSec.toFixed(3)}:${contentStamp}`;
                 if (key !== lastKeyRef.current) {
                     lastKeyRef.current = key;
                     let frame = previewFrame(channel.id, playheadSec);
@@ -166,7 +206,7 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
         };
         raf = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(raf);
-    }, [channel, playheadSec, previewFrame, draw]);
+    }, [channel, playheadSec, previewFrame, draw, contentStamp]);
 
     return (
         <div className="timeline-preview">

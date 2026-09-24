@@ -464,3 +464,141 @@ export function encodeArtnetTimecode({ hours, minutes, seconds, frames, type = 3
     buf[18] = type;
     return buf;
 }
+
+/* ------------------------------------------------------------------ *
+ *  TCNet — TMB TCNet Time Packet (UDP 60001 broadcast)
+ *
+ *  The TCNet Time Packet (Message Type 254) is broadcast on UDP 60001 by
+ *  every master ~1-40 ms. It carries (little-endian) per-layer playhead
+ *  time in milliseconds AND a per-layer 4-beat marker. Two independent
+ *  consumers read this same stream:
+ *
+ *    • Timeline Editor   — decode the master/L1 SMPTE timecode fields
+ *                          (SMPTE Mode/State + BCD Hours/Min/Sec/Frames)
+ *                          and slave the playhead to it, just like MTC/LTC.
+ *    • ShowControl       — track the cadence of the L1 beat-marker (1..4)
+ *                          transitions → derive BPM for the deck's BPM
+ *                          trigger-sync. Beat markers are 1..4 per bar; each
+ *                          marker *change* is one beat, so
+ *                          BPM = 60000 / mean(interval between changes).
+ *
+ *  Reference: TCNet LINK SPECIFICATION, Message Type 254 "Time Packet",
+ *  broadcast on UDP 60001 (port 60001 / broadcast). Node registration on
+ *  port 60000 is not required to *receive* the broadcast time stream.
+ *
+ *  NOTE — BCD helper: the packet packs timecode as SMPTE BCD nibbles
+ *  (hours/min/sec/frames), exactly like the MTC layer code. We reuse the
+ *  same decodeMtcFullFrame-style nibble math via tiny BCD helpers below.
+ * ------------------------------------------------------------------ */
+
+export const TCNET_MSG_TIME_PACKET = 254;
+export const TCNET_TIME_PORT = 60001;
+export const TCNET_LAYERS = ['L1', 'L2', 'L3', 'L4', 'LA', 'LB', 'LM', 'LC'];
+
+/**
+ * True when `buf` is a valid TCNet Time Packet: "TCN" header at 4-6,
+ * message type 254 at byte 7, and a sane 162-byte broadcast payload.
+ */
+export function isTcnetTimePacket(buf) {
+    if (!buf || buf.length < 112) return false;
+    const b = buf instanceof Uint8Array || Buffer.isBuffer(buf) ? buf : new Uint8Array(buf);
+    return b[4] === 0x54 && b[5] === 0x43 && b[6] === 0x4E && b[7] === TCNET_MSG_TIME_PACKET;
+}
+
+/** Packed SMPTE BCD byte → value (e.g. 0x29 → 29). */
+const bcdOf = (byte) => ((byte >> 4) & 0x0F) * 10 + (byte & 0x0F);
+
+/**
+ * Parse a TCNet Time Packet buffer into a per-layer timecode (master /
+ * layer-1 SMPTE fields) + per-layer beat markers. Returns null when the
+ * buffer is not a TCNet Type 254 packet.
+ */
+export function parseTcnetTimePacket(buf, defaultFps = 30) {
+    if (!isTcnetTimePacket(buf)) return null;
+    const b = buf instanceof Uint8Array || Buffer.isBuffer(buf) ? buf : new Uint8Array(buf);
+    const layerTimes = {};
+    const beats = {};
+    for (let i = 0; i < TCNET_LAYERS.length; i++) {
+        layerTimes[TCNET_LAYERS[i]] = b.readUInt32LE(24 + i * 4);   // layer playhead ms
+        beats[TCNET_LAYERS[i]] = b[88 + i];                          // beat marker 1..4
+    }
+    // Master SMPTE mode (byte 105) + Layer 1 SMPTE mode/state (106/107)
+    const smpteMode = b[105];
+    const layer1fps = b[106] || smpteMode || defaultFps;
+    return {
+        nodeId: b.readUInt16LE(0),
+        seq: b[16],
+        timestampUs: b.readUInt32LE(20),
+        layerTimes,
+        beats,
+        // Layer-1 SMPTE timecode (BCD) — the layer the Timeline Editor uses.
+        hours: bcdOf(b[108]),
+        minutes: bcdOf(b[109]),
+        seconds: bcdOf(b[110]),
+        frames: bcdOf(b[111]),
+        rate: layer1fps,        // 24 / 25 / 29 / 30
+        smpteMode,
+    };
+}
+
+/**
+ * Track the cadence of TCNet beat markers to derive a stable BPM.
+ * Feed each parsed Time Packet; poll `get()` for { bpm, beat, running }.
+ * Only layer-1 (L1) markers are used — the master deck grid.
+ */
+export class TcnetBpmTracker {
+    constructor() {
+        this._bpm = null;
+        this._beat = 0;
+        this._lastBeatAt = 0;
+        this._intervals = [];
+        this._running = false;
+    }
+
+    /**
+     * Feed one parsed TCNet Time Packet. Returns { bpm, beat, running }.
+     */
+    push(tc) {
+        if (!tc) return null;
+        const marker = (tc.beats && (tc.beats.L1 || tc.beats.l1)) || 1;
+        const now = performance.now();
+        if (this._beat === 0) { this._beat = marker; }
+        if (marker !== this._beat && this._lastBeatAt) {
+            const interval = now - this._lastBeatAt;
+            if (interval > 80 && interval < 4000) this._intervals.push(interval);
+            if (this._intervals.length > 8) this._intervals.shift();
+        }
+        if (marker !== this._beat) {
+            this._lastBeatAt = now;
+            this._beat = marker;
+            if (this._intervals.length >= 2) {
+                const avg = this._intervals.slice(-6).reduce((a, b) => a + b, 0) / Math.min(6, this._intervals.length);
+                this._bpm = Math.round(60000 / avg);
+                this._running = true;
+            }
+        }
+        return { bpm: this._bpm, beat: this._beat, running: this._running };
+    }
+
+    get() {
+        return { bpm: this._bpm, beat: this._beat, running: this._running };
+    }
+
+    reset() {
+        this._bpm = null;
+        this._beat = 0;
+        this._lastBeatAt = 0;
+        this._intervals = [];
+        this._running = false;
+    }
+}
+
+/**
+ * Decode a raw TCNet Time Packet from a UDP 60001 datagram and derive the
+ * layer-1 SMPTE timecode (for the timeline) + the current L1 beat marker
+ * (for BPM tracking). Pure helper used by the main-process UDP listener.
+ */
+export function decodeTcnetPacket(buf) {
+    if (!isTcnetTimePacket(buf)) return null;
+    return parseTcnetTimePacket(buf);
+}

@@ -575,8 +575,18 @@ self.onmessage = async function(e) {
       
       const index = Math.floor(frameIndex);
 
-      if (!Number.isFinite(index) || index >= framesMetadata.length || index < 0) {
-        self.postMessage({ type: 'error', message: `Frame index ${frameIndex} out of bounds or invalid`, originalType: 'get-frame', workerId, browserFile, filePath, layerIndex, colIndex });
+      if (!Number.isFinite(index)) {
+        self.postMessage({ type: 'error', message: `Frame index ${frameIndex} invalid`, originalType: 'get-frame', workerId, browserFile, filePath, layerIndex, colIndex });
+        return;
+      }
+
+      if (index >= framesMetadata.length || index < 0) {
+        // Tell the renderer the REAL frame count for this session handle. A
+        // persisted cue.totalFrames can outlive the file (older saves, stale
+        // pastes), and the renderer keeps requesting the ever-growing index —
+        // logging an error every frame. With the correction it clamps and
+        // settles. No error post here: the OOB case is expected and handled.
+        self.postMessage({ type: 'frame-count', workerId, totalFrames: framesMetadata.length });
         return;
       }
 

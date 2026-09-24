@@ -21,6 +21,7 @@ import RenameModal from './components/RenameModal';
 import OutputSettingsWindow from './components/OutputSettingsWindow';
 import AudioSettingsWindow from './components/AudioSettingsWindow';
 import GeneralSettingsWindow from './components/GeneralSettingsWindow';
+import LinkSyncSettingsWindow from './components/LinkSyncSettingsWindow';
 import OutputProcessingWindow from './components/OutputProcessingWindow';
 import RelocateModal from './components/RelocateModal';
 import ClipExportWarningModal from './components/ClipExportWarningModal';
@@ -2188,6 +2189,7 @@ function App() {
     const [showFftSettingsWindow, setShowFftSettingsWindow] = useState(false);
     const [showGeneralSettingsWindow, setShowGeneralSettingsWindow] = useState(false);
     const [showOutputProcessingWindow, setShowOutputProcessingWindow] = useState(false);
+    const [showLinkSyncSettingsWindow, setShowLinkSyncSettingsWindow] = useState(false);
     const [exportTimingWarning, setExportTimingWarning] = useState(null);
     const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => { } });
     const [activeBottomTab_1, setActiveBottomTab_1] = useState('files');
@@ -4600,6 +4602,8 @@ function App() {
                     setShowFftSettingsWindow(true);
                 } else if (action === 'settings-general') {
                     setShowGeneralSettingsWindow(true);
+                } else if (action === 'link-sync-settings') {
+                    setShowLinkSyncSettingsWindow(true);
                 } else if (action === 'output-processing') {
                     setShowOutputProcessingWindow(true);
                 } else if (action.startsWith('set-theme-')) {
@@ -6168,7 +6172,7 @@ function App() {
     const handleTapTempo = useCallback(() => {
         const now = Date.now();
         const times = [...tapTempoTimesRef.current, now].slice(-4);
-        tapTempoTimesRef.current = times;
+            tapTempoTimesRef.current = times;
 
         if (times.length >= 2) {
             let sum = 0;
@@ -6180,6 +6184,97 @@ function App() {
             dispatch({ type: 'SET_BPM', payload: Math.max(1, Math.min(999, tappedBpm)) });
         }
     }, [dispatch]);
+
+    /* --- Which BPM feeds the deck's BPM Trigger-Sync: 'tap' (manual TapTempo /
+    *      typed BPM) or 'tcnet' (TCNet L1 beat-grid BPM from the TCNet grid) or
+    *      'prolink' (ProDJ Link CDJ beat-grid BPM from prolink-connect).
+    *      Defaults to 'tap' so nothing changes until the user flips the toggle. - */
+    const [bpmSource, setBpmSource] = useState('tap');
+    const handleBpmSourceChange = useCallback((src) => setBpmSource(src === 'tcnet' ? 'tcnet' : src === 'prolink' ? 'prolink' : src === 'stagelinq' ? 'stagelinq' : 'tap'), []);
+    // Only dispatch a SET_BPM when the sourced value actually changes — the CDJ
+    // reports on every status packet, and re-rendering the whole show on an
+    // unchanged BPM is wasted work (and stalls the UI frame rate).
+    const lastTcnetBpmRef = useRef(0);
+    const lastProlinkBpmRef = useRef(0);
+    const lastStagelinqBpmRef = useRef(0);
+
+    /* --- TCNet BPM Trigger-Sync: when the deck's BPM source is TCNet, feed the
+     *     beat-grid BPM (broadcast by main.js on `tcnet-timecode`) into the deck's
+     *     BPM so BPM Trigger-Syncing locks to the TCNet L1 beat-marker grid. ------ */
+    useEffect(() => {
+        if (!window.electronAPI || bpmSource !== 'tcnet') return;
+        let cancelled = false;
+        const off = window.electronAPI.onTcnetTimecode((tc) => {
+            if (cancelled) return;
+            if (tc && typeof tc.bpm === 'number' && tc.bpm > 0) {
+                const rounded = Math.max(1, Math.min(999, Math.round(tc.bpm)));
+                if (rounded !== lastTcnetBpmRef.current) {
+                    lastTcnetBpmRef.current = rounded;
+                    dispatch({ type: 'SET_BPM', payload: rounded });
+                }
+            }
+        });
+        return () => {
+            cancelled = true;
+            off();
+        };
+    }, [dispatch, bpmSource]);
+
+    /* --- ProDJ Link BPM Trigger-Sync: when the deck's BPM source is ProDJ, feed
+     *     the CDJ beat-grid BPM (broadcast by main.js on `prolink-status`) into
+     *     the deck's BPM so BPM Trigger-Syncing locks to the CDJ's own grid.
+     *     Boots the Pro DJ Link listener too, so status packets (and with them
+     *     BPM updates) start flowing the moment this source is picked. ------- */
+    useEffect(() => {
+        if (!window.electronAPI || bpmSource !== 'prolink') return;
+        if (window.electronAPI.startProlinkStateListener) {
+            window.electronAPI.startProlinkStateListener();
+        }
+        let cancelled = false;
+        const off = window.electronAPI.onProlinkState((st) => {
+            if (cancelled) return;
+            const bpm = st?.bpm || st?.effectiveBpm;
+            if (bpm && typeof bpm === 'number' && bpm > 0) {
+                const rounded = Math.max(1, Math.min(999, Math.round(bpm)));
+                if (rounded !== lastProlinkBpmRef.current) {
+                    lastProlinkBpmRef.current = rounded;
+                    dispatch({ type: 'SET_BPM', payload: rounded });
+                }
+            }
+        });
+return () => {
+            cancelled = true;
+            off();
+        };
+    }, [dispatch, bpmSource]);
+
+    /* --- StageLinq BPM Trigger-Sync: when the deck's BPM source is StageLinq,
+     *     feed the followed Denon deck's current BPM (broadcast by main.js on
+     *     `stagelinq-status`) into the deck's BPM so Trigger-Syncing locks to
+     *     the Denon player's tempo. Boots the StageLinq listener too, so status
+     *     packets (and with them BPM updates) start flowing straight away. ---- */
+    useEffect(() => {
+        if (!window.electronAPI || bpmSource !== 'stagelinq') return;
+        if (window.electronAPI.startStagelinqListener) {
+            window.electronAPI.startStagelinqListener();
+        }
+        let cancelled = false;
+        const off = window.electronAPI.onStagelinqState((st) => {
+            if (cancelled) return;
+            const bpm = st?.bpm || st?.effectiveBpm;
+            if (bpm && typeof bpm === 'number' && bpm > 0) {
+                const rounded = Math.max(1, Math.min(999, Math.round(bpm)));
+                if (rounded !== lastStagelinqBpmRef.current) {
+                    lastStagelinqBpmRef.current = rounded;
+                    dispatch({ type: 'SET_BPM', payload: rounded });
+                }
+            }
+        });
+        return () => {
+            cancelled = true;
+            off();
+        };
+    }, [dispatch, bpmSource]);
 
     const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon', assignment = null) => {
         // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
@@ -7025,6 +7120,8 @@ function App() {
                 <BPMControls
                     bpm={bpm}
                     onBpmChange={(newBpm) => dispatch({ type: 'SET_BPM', payload: newBpm })}
+                    bpmSource={bpmSource}
+                    onBpmSourceChange={handleBpmSourceChange}
                     onTap={handleTapTempo}
                 />
             </div>
@@ -7070,7 +7167,7 @@ function App() {
                 <MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
             </div>
         </div>
-    ), [bpm, dispatch, numPages, activePageId, pageNames, isPlaying, isStopped, playbackFps, handlePlay, handlePause, handleStop, handlePlaybackFpsChange]);
+    ), [bpm, dispatch, numPages, activePageId, pageNames, isPlaying, isStopped, playbackFps, handlePlay, handlePause, handleStop, handlePlaybackFpsChange, handleTapTempo, bpmSource, handleBpmSourceChange]);
 
     return (
         <MidiProvider onMidiCommand={handleMidiCommand} theme={theme} enabledShortcuts={enabledShortcuts}>
@@ -7114,6 +7211,13 @@ function App() {
                                 <GeneralSettingsWindow
                                     show={showGeneralSettingsWindow}
                                     onClose={() => setShowGeneralSettingsWindow(false)}
+                                />
+                                <LinkSyncSettingsWindow
+                                    show={showLinkSyncSettingsWindow}
+                                    onClose={() => setShowLinkSyncSettingsWindow(false)}
+                                    onUpdateSettings={() => {}}
+                                    bpmSource={bpmSource}
+                                    onBpmSourceChange={handleBpmSourceChange}
                                 />
                                 <OutputProcessingWindow
                                     show={showOutputProcessingWindow}

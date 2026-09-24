@@ -182,33 +182,41 @@ export function buildChannelEffects(lanes = [], time, channelId = '') {
  * only drive continuous 'range' params; every other control (select, checkbox,
  * color, text) is static per channel — this lets individual clips override
  * those (e.g. a Delay direction per clip) without touching the shared defaults.
- * Unknown effects/params and range params are ignored; when nothing applies the
- * array is returned as-is.
+ * Unknown effects/params and range params are ignored. Effects whose params are
+ * all non-range (e.g. Invert's checkboxes) are never built by the lanes, so a
+ * fresh default-param instance is created for them here. When nothing applies
+ * the array is returned as-is.
  */
 export function applyCueEffectOverrides(effects = [], overrides = {}) {
-    if (!effects || effects.length === 0 || !overrides || Object.keys(overrides).length === 0) {
-        return effects;
-    }
+    if (!overrides || Object.keys(overrides).length === 0) return effects;
     let changed = false;
-    const out = effects.map((eff) => {
-        const set = overrides[eff.id];
-        if (!set) return eff;
-        const def = effectDefinitions.find((d) => d.id === eff.id);
+    const out = [...effects];
+    for (const effId of Object.keys(overrides)) {
+        const def = effectDefinitions.find((d) => d.id === effId);
+        const set = overrides[effId];
+        if (!def || !set || typeof set !== 'object') continue;
+        let idx = out.findIndex((e) => e.id === effId);
+        if (idx === -1) {
+            out.push({ id: effId, instanceId: `override.${effId}`, params: { ...(def.defaultParams || {}) } });
+            idx = out.length - 1;
+            changed = true;
+        }
+        let target = out[idx];
         let effOut = null;
         for (const paramId of Object.keys(set)) {
-            const ctrl = (def?.paramControls || []).find((c) => c.id === paramId);
+            const ctrl = (def.paramControls || []).find((c) => c.id === paramId);
             if (!ctrl || ctrl.type === 'range') continue;
-            if (eff.params[paramId] !== set[paramId]) {
+            if (target.params[paramId] !== set[paramId]) {
                 if (!effOut) {
-                    effOut = { ...eff, params: { ...(eff.params || {}) } };
+                    effOut = { ...target, params: { ...(target.params || {}) } };
                     changed = true;
                 }
                 effOut.params[paramId] = set[paramId];
             }
         }
-        return effOut || eff;
-    });
-    return changed ? out : effects;
+        if (effOut) out[idx] = effOut;
+    }
+    return changed ? out : (out.length === effects.length ? effects : out);
 }
 
 // ---------------------------------------------------------------------------

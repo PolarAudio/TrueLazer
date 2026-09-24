@@ -354,13 +354,41 @@ describe('per-clip effect overrides', () => {
         expect(out[0].params.mode).toBeUndefined();
     });
 
+    it('creates checkbox-only effects (e.g. Invert) from overrides when no lane built them', () => {
+        // All of Invert's params are checkboxes — none is a 'range' control, so
+        // the lane-array never includes it. A clip enabling it via overrides
+        // previously vanished (applyCueEffectOverrides early-returned on []).
+        const effects = buildChannelEffects(
+            [{ id: 'l1', effectId: 'delay', paramId: 'delayAmount', keyframes: [{ time: 0, value: 8 }, { time: 10, value: 8 }] }],
+            0,
+            'ch1'
+        );
+        const out = applyCueEffectOverrides(effects, { invert: { invertColor: true } });
+        expect(out).toHaveLength(2);
+        const inv = out.find((e) => e.id === 'invert');
+        expect(inv.instanceId).toBe('override.invert');
+        expect(inv.params).toEqual({
+            invertX: true,
+            invertY: true,
+            invertZ: false,
+            invertColor: true,
+        });
+    });
+
     it('returns the array as-is when there is nothing to override', () => {
         const effects = [
             { id: 'rotate', instanceId: 'auto.ch1.rotate', params: { angle: 90, direction: 'CW' } },
         ];
-        expect(applyCueEffectOverrides(effects, {})).toBe(effects);
+        expect(applyCueEffectOverrides(effects,{})).toBe(effects);
         expect(applyCueEffectOverrides(effects, null)).toBe(effects);
-        expect(applyCueEffectOverrides([], { rotate: { direction: 'CCW' } })).toEqual([]);
+        // Effects whose params are all non-range never get built by the lanes,
+        // so an empty array grows a default-param instance the override can land on.
+        const created = applyCueEffectOverrides([], { rotate: { direction: 'CCW' } });
+        expect(created).toHaveLength(1);
+        expect(created[0].id).toBe('rotate');
+        expect(created[0].instanceId).toBe('override.rotate');
+        expect(created[0].params.direction).toBe('CCW');
+        expect(created[0].params.angle).toBe(0);
         expect(applyCueEffectOverrides(effects, { rotate: { direction: 'CW' } })).toBe(effects);
     });
 });

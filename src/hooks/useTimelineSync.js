@@ -37,6 +37,10 @@ export function resolveMidiSyncDevice(inputDeviceId, inputs, globalSelectedId = 
  *   midiClock  MIDI Clock / Song Position Pointer (tempo-based)
  *   ltc        LTC audio (biphase-mark) read off the analyser
  *   artnet     Art-Net TimeCode packets (UDP 6454 via main process)
+ *   tcnet      TCNet LINK TimePacket (UDP 60001 via main process)
+ *   prolink    PRO DJ LINK CDJ deviceState (prolink-connect, LinkBridge bypass)
+ *   stagelinq  DENON DJ StageLinq — the DJ-Link alternative (StateMap + BeatInfo
+ *              absolute sample position via the `stagelinq` npm library)
  *
  * Returns `{ source, running, seconds, timecode, rate, signal, lastUpdate }`.
  * `rate` is fps for frame codecs (mtc/ltc/artnet) or BPM for midiClock.
@@ -81,6 +85,10 @@ export const useTimelineSync = () => {
     const ltcRef = useRef(null);
     const stopWatchRef = useRef(null);
     const lastPublishRef = useRef(0);
+    // Last published sample, used to skip re-emitting the same value when a
+    // source keeps reporting (e.g. a paused CDJ broadcasts status packets
+    // continuously). Consumers only re-render when the clock actually moves.
+    const lastSampleRef = useRef(null);
     const midiDiagRef = useRef({ count: 0, lastHex: '' });
     const PUBLISH_MS = 50;
 
@@ -131,6 +139,18 @@ export const useTimelineSync = () => {
         }
         const now = performance.now();
         const sample = { ...patch, running, signal: true, lastUpdate: now };
+        // No-op samples (same seconds, same BPM, same run-state) drop out here:
+        // an idle source would otherwise re-render every consumer forever.
+        const prevSample = lastSampleRef.current;
+        lastSampleRef.current = sample;
+        if (
+            prevSample &&
+            prevSample.running === sample.running &&
+            prevSample.bpm === sample.bpm &&
+            prevSample.seconds === sample.seconds
+        ) {
+            return;
+        }
         if (now - lastPublishRef.current >= PUBLISH_MS) {
             lastPublishRef.current = now;
             setSync((prev) => ({ ...prev, ...sample }));
@@ -212,6 +232,85 @@ export const useTimelineSync = () => {
         return () => {
             off();
             if (window.electronAPI) window.electronAPI.stopArtnetTimecodeListener();
+        };
+    }, [source, report]);
+
+    /* -------- TCNet — TMB TCNet LINK TimePacket (UDP 60001 slave timecode) --- */
+    /* ---  Mirror of the ArtNet branch: main.js broadcasts `tcnet-timecode` --- */
+    /* ---  with { hours, minutes, seconds, frames, rate, beats, bpm, ... } --- */
+    useEffect(() => {
+        if (window.electronAPI && source === 'tcnet') {
+            window.electronAPI.startTcnetTimecodeListener();
+        }
+        if (!window.electronAPI || source !== 'tcnet') return;
+        const off = window.electronAPI.onTcnetTimecode((tc) => {
+            if (sourceRef.current !== 'tcnet') return;
+            if (!tc || tc.hours == null) return;
+            const rate = tc.rate || cfgRef.current.fps || 30;
+            report({
+                timecode: { hours: tc.hours, minutes: tc.minutes, seconds: tc.seconds, frames: tc.frames },
+                rate,
+                seconds: timecodeToSeconds(
+                    { hours: tc.hours, minutes: tc.minutes, seconds: tc.seconds, frames: tc.frames },
+                    rate
+                ),
+            });
+        });
+        return () => {
+            off();
+            if (window.electronAPI) window.electronAPI.stopTcnetTimecodeListener();
+        };
+    }, [source, report]);
+
+    /* -------- PRO DJ LINK — prolink-connect CDJ deviceState (LinkBridge bypass) -- */
+    /* ---  main.js broadcasts `prolink-status` with the master deck's beat grid -- */
+    /* ---  ({ seconds, timecode, rate, bpm, beat, running }) from the CDJ's own - */
+    /* ---  beat cadence + TcnetBpmTracker-style beat math. ------------------------ */
+    useEffect(() => {
+        if (window.electronAPI && source === 'prolink') {
+            window.electronAPI.startProlinkStateListener();
+        }
+        if (!window.electronAPI || source !== 'prolink') return;
+        const off = window.electronAPI.onProlinkState((st) => {
+            if (sourceRef.current !== 'prolink') return;
+            if (!st || st.seconds == null) return;
+            report({
+                timecode: st.timecode || null,
+                rate: st.rate || cfgRef.current.fps || 30,
+                seconds: st.seconds,
+                running: !!st.running,
+                bpm: st.bpm || st.effectiveBpm || null,
+            });
+        });
+        return () => {
+            off();
+            if (window.electronAPI) window.electronAPI.stopProlinkStateListener();
+        };
+    }, [source, report]);
+
+    /* -------- STAGELINQ — Denon DJ StageLinq (the DJ-Link alternative) ---------- */
+    /* ---  Mirror of the prolink branch: main.js broadcasts                    --- */
+    /* ---  `stagelinq-status` with the followed deck's absolute playhead         --- */
+    /* ---  ({ seconds, timecode, rate, bpm, beat, running }) from BeatInfo.      --- */
+    useEffect(() => {
+        if (window.electronAPI && source === 'stagelinq') {
+            window.electronAPI.startStagelinqListener();
+        }
+        if (!window.electronAPI || source !== 'stagelinq') return;
+        const off = window.electronAPI.onStagelinqState((st) => {
+            if (sourceRef.current !== 'stagelinq') return;
+            if (!st || st.seconds == null) return;
+            report({
+                timecode: st.timecode || null,
+                rate: st.rate || cfgRef.current.fps || 30,
+                seconds: st.seconds,
+                running: !!st.running,
+                bpm: st.bpm || st.effectiveBpm || null,
+            });
+        });
+        return () => {
+            off();
+            if (window.electronAPI) window.electronAPI.stopStagelinqListener();
         };
     }, [source, report]);
 

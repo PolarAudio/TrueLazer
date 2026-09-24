@@ -175,6 +175,10 @@ export function getOverlappingCueIds(state) {
             for (let j = i + 1; j < sorted.length; j++) {
                 const b = sorted[j];
                 if (b.startTime >= aEnd - 1e-6) break;
+                // Same-start siblings fully coincide and are resolved by
+                // layerPriority — "Cut Overlaps" refuses to zero-width them, so
+                // painting them red would leave a warning nothing can clear.
+                if (b.startTime <= a.startTime + 1e-9) continue;
                 ids.add(a.id);
                 ids.add(b.id);
             }
@@ -233,7 +237,10 @@ export function computeOverlapTrims(state, ids) {
             // and trimming one to a zero-width sliver would be destructive.
             const next = sorted[i + 1];
             if (next.startTime <= cur.startTime + 1e-9) continue;
-            if (wanted && !wanted.has(cur.id)) continue;
+            // Selecting EITHER side of an overlapping pair cuts it — the fix
+            // always trims the earlier cue, so picking the later (front) clip
+            // alone previously did nothing.
+            if (wanted && !wanted.has(cur.id) && !wanted.has(next.id)) continue;
             const boundary = next.startTime;
             // A looping cue never ends on its own — it shadows EVERY later cue,
             // even when its recorded duration would end before the next one. So
@@ -250,6 +257,49 @@ export function computeOverlapTrims(state, ids) {
         }
     }
     return trims;
+}
+
+/**
+ * Pure math for an ILDA "Input Trim" resize. A plain resize re-times every
+ * recorded frame across the new duration — the clip's frame rate changes
+ * (speeding it up or slowing it down). Trim mode instead crops the
+ * [frameStart, frameStart + frameCount) playback window so a second of screen
+ * time keeps playing the same number of file frames per second.
+ *
+ * `patch` carries the target geometry ({ startTime?, duration? }) plus an
+ * optional `trim` snapshot of the ORIGINAL pre-drag cue ({ startTime,
+ * duration, totalFrames, frameStart, frameCount }) so every drag move computes
+ * the window from the source, not from the previous move (which would make a
+ * shrink irreversible mid-drag). Returns a cue patch ({ startTime?, duration,
+ * frameStart?, frameCount? }).
+ */
+export function computeIldaTrimPatch(cue, patch) {
+    const out = {};
+    const oldStart = (patch.trim && patch.trim.startTime != null) ? patch.trim.startTime : (cue.startTime || 0);
+    const oldSpan = Math.max(1e-9, (patch.trim && patch.trim.duration != null) ? patch.trim.duration : (cue.duration || 0));
+    const newStart = patch.startTime != null ? patch.startTime : (cue.startTime || 0);
+    const newDur = patch.duration != null ? Math.max(0.1, patch.duration) : (cue.duration || 0);
+    if (patch.startTime != null) out.startTime = newStart;
+    if (patch.duration != null) out.duration = newDur;
+    const total = cue && cue.type === 'ILDA'
+        ? ((patch.trim && Number.isFinite(patch.trim.totalFrames)) ? patch.trim.totalFrames : (cue.totalFrames || 0))
+        : 0;
+    if (!total || !patch.trim) return out;
+    const frameStart0 = Math.max(0, Math.min(Math.floor((patch.trim.frameStart != null ? patch.trim.frameStart : 0)), total - 1));
+    const frameCount0 = (patch.trim.frameCount != null && patch.trim.frameCount > 0)
+        ? Math.min(Math.floor(patch.trim.frameCount), total - frameStart0)
+        : total - frameStart0;
+    // Shrink the window in proportion to the kept time (right-edge drags)…
+    const kept = Math.max(0, Math.min(1, newDur / oldSpan));
+    // …and when the left edge moves alone, the window slides instead.
+    const cut = Math.max(0, Math.min(1, Math.max(0, newStart - oldStart) / oldSpan));
+    let newStartF = Math.min(total - 1, frameStart0 + Math.round(frameCount0 * cut));
+    let newCount = Math.max(1, Math.round(frameCount0 * kept));
+    newCount = Math.min(newCount, total - newStartF);
+    if (newCount < 1) { newStartF = total - 1; newCount = 1; }
+    out.frameStart = newStartF;
+    out.frameCount = Math.max(1, newCount);
+    return out;
 }
 
 /** True when every channel is muted, or at least one solo is active and this channel isn't it. */
@@ -316,6 +366,12 @@ function newCue(id, patch = {}) {
         // effect id → param id → value; only non-range params are honored at
         // compile time.
         effectOverrides: patch.effectOverrides || {},
+        // ILDA input-trim window: frameStart = first frame played, frameCount =
+        // number of frames played (null = whole file). "Input Trim" resizing
+        // crops this window so the clip keeps its file frame rate instead of
+        // re-timing every frame across the new duration.
+        frameStart: patch.frameStart || 0,
+        frameCount: patch.frameCount != null ? patch.frameCount : null,
         playbackSettings: {
             mode: 'fps',
             duration: 1,
@@ -755,9 +811,7 @@ export function reducer(state, action) {
         case 'RESIZE_CUE': {
             const cue = state.cues[action.payload.id];
             if (!cue) return state;
-            const patch = {};
-            if (action.payload.startTime != null) patch.startTime = action.payload.startTime;
-            if (action.payload.duration != null) patch.duration = Math.max(0.1, action.payload.duration);
+            const patch = computeIldaTrimPatch(cue, action.payload);
             return { ...state, cues: { ...state.cues, [cue.id]: { ...cue, ...patch } } };
         }
 
@@ -796,9 +850,13 @@ export function reducer(state, action) {
             const settings = { ...state.settings };
             // Selecting a clip/canvas moves Inspector focus off the automation
             // track (a keyframe selection, being more specific, is preserved).
-            settings.selectedLaneId = null;
-            settings.selectedAutoClip = null;
-            settings.selectedAutoClipIds = [];
+            // Additive (Shift/Ctrl) keeps any auto-clip selection so cues and
+            // effect clips can be selected AND copied together.
+            if (!additive) {
+                settings.selectedLaneId = null;
+                settings.selectedAutoClip = null;
+                settings.selectedAutoClipIds = [];
+            }
             const cur = Array.isArray(settings.selectedCueIds)
                 ? settings.selectedCueIds
                 : (settings.selectedCueId != null ? [settings.selectedCueId] : []);
@@ -839,9 +897,11 @@ export function reducer(state, action) {
             const { cueIds, channelId, additive } = action.payload || {};
             const valid = (cueIds || []).filter((id) => state.cues[id]);
             const settings = { ...state.settings };
-            settings.selectedLaneId = null;
-            settings.selectedAutoClip = null;
-            settings.selectedAutoClipIds = [];
+            if (!additive) {
+                settings.selectedLaneId = null;
+                settings.selectedAutoClip = null;
+                settings.selectedAutoClipIds = [];
+            }
             const cur = Array.isArray(settings.selectedCueIds)
                 ? settings.selectedCueIds
                 : (settings.selectedCueId != null ? [settings.selectedCueId] : []);
@@ -1038,7 +1098,30 @@ export function reducer(state, action) {
                 if (c.id !== clipId) return c;
                 const startTime = patch.startTime != null ? Math.max(0, patch.startTime) : c.startTime;
                 const duration = patch.duration != null ? Math.max(0.05, patch.duration) : c.duration;
-                return { ...c, ...patch, startTime, duration };
+                // Keyframes are clip-relative. A length change either stretches
+                // the curve with the clip (default: proportional scale) or —
+                // when trimming (patch.trim) — holds them timeline-anchored so
+                // only the visible window is cut, never the timing. The trim
+                // flag is transient and never persisted on the clip.
+                let keyframes = c.keyframes;
+                if (Array.isArray(c.keyframes)) {
+                    if (patch.trim === true) {
+                        const deltaStart = startTime - c.startTime;
+                        keyframes = c.keyframes.map((k) => {
+                            const t = Math.max(0, Math.min(duration, k.time - deltaStart));
+                            return Math.abs(t - k.time) < 1e-9 ? k : { ...k, time: t };
+                        });
+                    } else {
+                        const ratio = duration / Math.max(0.05, c.duration);
+                        keyframes = c.keyframes.map((k) => {
+                            const t = Math.min(duration, Math.max(0, k.time * ratio));
+                            return Math.abs(t - k.time) < 1e-9 ? k : { ...k, time: t };
+                        });
+                    }
+                }
+                const cleanPatch = { ...patch };
+                delete cleanPatch.trim;
+                return { ...c, ...cleanPatch, startTime, duration, keyframes };
             });
             return { ...state, lanes: { ...state.lanes, [lane.id]: { ...lane, clips } } };
         }
@@ -1062,7 +1145,7 @@ export function reducer(state, action) {
         }
 
         case 'SELECT_AUTO_CLIP': {
-            const { laneId, clipId } = action.payload || {};
+            const { laneId, clipId, additive } = action.payload || {};
             const lane = laneId ? state.lanes[laneId] : null;
             const hasClip = !!lane && clipId && (lane.clips || []).some((c) => c.id === clipId);
             if (!hasClip) {
@@ -1070,6 +1153,26 @@ export function reducer(state, action) {
                 return {
                     ...state,
                     settings: { ...state.settings, selectedAutoClip: null, selectedLaneId: null, selectedAutoClipIds: [] },
+                };
+            }
+            if (additive) {
+                // Shift/Ctrl + click toggles membership WITHOUT wiping the cue
+                // selection — cues + effect clips stay co-selected so both can
+                // be copied together.
+                const cur = Array.isArray(state.settings.selectedAutoClipIds) ? state.settings.selectedAutoClipIds : [];
+                const exists = cur.some((x) => x.laneId === laneId && x.clipId === clipId);
+                const next = exists
+                    ? cur.filter((x) => !(x.laneId === laneId && x.clipId === clipId))
+                    : [...cur, { laneId, clipId }];
+                return {
+                    ...state,
+                    settings: {
+                        ...state.settings,
+                        selectedAutoClip: next.length ? next[next.length - 1] : null,
+                        selectedAutoClipIds: next,
+                        selectedLaneId: next.length ? next[next.length - 1].laneId : null,
+                        selectedKeyframe: null,
+                    },
                 };
             }
             return {
@@ -1103,18 +1206,61 @@ export function reducer(state, action) {
             for (const sc of valid) {
                 if (!next.some((x) => x.laneId === sc.laneId && x.clipId === sc.clipId)) next.push(sc);
             }
+            const mixedSettings = { ...state.settings };
+            if (!additive) {
+                // A fresh (non-additive) marquee owns the Inspector focus.
+                mixedSettings.selectedKeyframe = null;
+                mixedSettings.selectedCueIds = [];
+                mixedSettings.selectedCueId = null;
+            }
             return {
                 ...state,
                 settings: {
-                    ...state.settings,
+                    ...mixedSettings,
                     selectedAutoClipIds: next,
                     selectedAutoClip: next.length ? next[next.length - 1] : null,
                     selectedLaneId: next.length ? next[next.length - 1].laneId : null,
-                    selectedKeyframe: null,
-                    selectedCueIds: [],
-                    selectedCueId: null,
                 },
             };
+        }
+
+        // A marquee sweeping BOTH cue lanes and automation lanes selects both
+        // kinds at once (so "effect clips + normal clips" can be copied as one
+        // group). Additive merges into each current selection instead of
+        // replacing them.
+        case 'SELECT_MIXED': {
+            const { cueIds, clips, channelId, additive } = action.payload || {};
+            const validCues = (cueIds || []).filter((id) => state.cues[id]);
+            const validClips = (clips || []).filter(
+                (sc) =>
+                    sc && sc.laneId && sc.clipId && state.lanes?.[sc.laneId] &&
+                    (state.lanes[sc.laneId].clips || []).some((c) => c.id === sc.clipId)
+            );
+            const settings = { ...state.settings, selectedKeyframe: null, selectedLaneId: null };
+            if (!additive) {
+                settings.selectedCueIds = [];
+                settings.selectedCueId = null;
+                settings.selectedAutoClipIds = [];
+                settings.selectedAutoClip = null;
+            }
+            const cueCur = additive && Array.isArray(settings.selectedCueIds)
+                ? settings.selectedCueIds
+                : [];
+            settings.selectedCueIds = additive ? [...new Set([...cueCur, ...validCues])] : validCues;
+            settings.selectedCueId = settings.selectedCueIds.length
+                ? settings.selectedCueIds[settings.selectedCueIds.length - 1]
+                : null;
+            const autoCur = additive && Array.isArray(settings.selectedAutoClipIds)
+                ? settings.selectedAutoClipIds
+                : [];
+            const autoNext = [...autoCur];
+            for (const sc of validClips) {
+                if (!autoNext.some((x) => x.laneId === sc.laneId && x.clipId === sc.clipId)) autoNext.push(sc);
+            }
+            settings.selectedAutoClipIds = autoNext;
+            settings.selectedAutoClip = autoNext.length ? autoNext[autoNext.length - 1] : null;
+            if (channelId && state.channels[channelId]) settings.selectedChannelId = channelId;
+            return { ...state, settings };
         }
 
         case 'REMOVE_LANE': {
@@ -1245,19 +1391,22 @@ export const TimelineProvider = ({ children }) => {
                 lastEditRef.current = { type: null, at: 0 };
             }
             if (!NON_EDIT_ACTIONS.has(type)) {
-                const h = historyRef.current;
-                const last = lastEditRef.current;
-                const now = Date.now();
-                if (last.type === type && now - last.at < 400 && h.past.length > 0) {
-                    h.past[h.past.length - 1] = stateRef.current; // replace snapshot
-                } else {
-                    h.past.push(stateRef.current);
-                    if (h.past.length > 100) h.past.shift();
+                const isSilent = action.payload && action.payload.silent === true;
+                if (!isSilent) {
+                    const h = historyRef.current;
+                    const last = lastEditRef.current;
+                    const now = Date.now();
+                    if (last.type === type && now - last.at < 400 && h.past.length > 0) {
+                        h.past[h.past.length - 1] = stateRef.current; // replace snapshot
+                    } else {
+                        h.past.push(stateRef.current);
+                        if (h.past.length > 100) h.past.shift();
+                    }
+                    last.type = type;
+                    last.at = now;
+                    h.future = [];
+                    setHistTick((t) => t + 1);
                 }
-                last.type = type;
-                last.at = now;
-                h.future = [];
-                setHistTick((t) => t + 1);
             }
             baseDispatch(action);
         },
@@ -1523,9 +1672,12 @@ export const TimelineProvider = ({ children }) => {
             setChannelExpanded: (channelId, expanded) => dispatch({ type: 'SET_CHANNEL_EXPANDED', payload: { channelId, expanded } }),
             setOutputFlip: (channelId, ip, channel, axis) => dispatch({ type: 'SET_OUTPUT_FLIP', payload: { channelId, ip, channel, axis } }),
             addCue: (channelId, cue) => dispatch({ type: 'ADD_CUE', payload: { channelId, cue } }),
-            updateCue: (id, patch) => dispatch({ type: 'UPDATE_CUE', payload: { id, patch } }),
+            updateCue: (id, patch, silent) => dispatch({ type: 'UPDATE_CUE', payload: { id, patch, silent } }),
             moveCue: (id, channelId, startTime) => dispatch({ type: 'MOVE_CUE', payload: { id, channelId, startTime } }),
-            resizeCue: (id, startTime, duration) => dispatch({ type: 'RESIZE_CUE', payload: { id, startTime, duration } }),
+            resizeCue: (id, startTime, duration, options) => dispatch({
+                type: 'RESIZE_CUE',
+                payload: { id, startTime, duration, ...(options || {}) },
+            }),
             removeCue: (id) => dispatch({ type: 'REMOVE_CUE', payload: { id } }),
             // Cut selected cues (or all when `ids` is null/empty) so none
             // overlaps its next neighbour on the channel. Returns how many
@@ -1548,8 +1700,9 @@ export const TimelineProvider = ({ children }) => {
             addAutoClip: (laneId, clip) => dispatch({ type: 'ADD_AUTO_CLIP', payload: { laneId, clip } }),
             updateAutoClip: (laneId, clipId, patch) => dispatch({ type: 'UPDATE_AUTO_CLIP', payload: { laneId, clipId, patch } }),
             removeAutoClip: (laneId, clipId) => dispatch({ type: 'REMOVE_AUTO_CLIP', payload: { laneId, clipId } }),
-            selectAutoClip: (laneId, clipId) => dispatch({ type: 'SELECT_AUTO_CLIP', payload: { laneId, clipId } }),
+            selectAutoClip: (laneId, clipId, additive) => dispatch({ type: 'SELECT_AUTO_CLIP', payload: { laneId, clipId, additive } }),
             selectAutoClips: (clips, additive) => dispatch({ type: 'SELECT_AUTO_CLIPS', payload: { clips, additive } }),
+            selectMixed: (cueIds, clips, channelId, additive) => dispatch({ type: 'SELECT_MIXED', payload: { cueIds, clips, channelId, additive } }),
             removeLane: (laneId) => dispatch({ type: 'REMOVE_LANE', payload: { laneId } }),
             setSettings: (patch) => dispatch({ type: 'SET_SETTINGS', payload: patch }),
             setAudio: (payload) => dispatch({ type: 'SET_AUDIO', payload }),

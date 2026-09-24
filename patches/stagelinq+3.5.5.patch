@@ -1,0 +1,164 @@
+diff --git a/node_modules/stagelinq/dist/Databases/DbConnection.js b/node_modules/stagelinq/dist/Databases/DbConnection.js
+index 2c8af95..f5919f1 100644
+--- a/node_modules/stagelinq/dist/Databases/DbConnection.js
++++ b/node_modules/stagelinq/dist/Databases/DbConnection.js
+@@ -4,7 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.DbConnection = void 0;
+-const better_sqlite3_multiple_ciphers_1 = __importDefault(require("better-sqlite3-multiple-ciphers"));
++const better_sqlite3_multiple_ciphers_1 = __importDefault(require("../sqlite-stub")); // TrueLazer vendored patch (Electron ABI)
+ const logger_1 = require("../types/logger");
+ class DbConnection {
+     constructor(dbPath, logger = logger_1.noopLogger) {
+diff --git a/node_modules/stagelinq/dist/devices/Player.js b/node_modules/stagelinq/dist/devices/Player.js
+index 1c7e36b..a7fc722 100644
+--- a/node_modules/stagelinq/dist/devices/Player.js
++++ b/node_modules/stagelinq/dist/devices/Player.js
+@@ -82,20 +82,22 @@ class Player extends events_1.EventEmitter {
+                 trackPath: this.getSourceAndTrackPath(json.string).trackPath,
+                 trackPathAbsolute: this.getSourceAndTrackPath(json.string).trackPathAbsolute
+             }
+-                : (/Track\/SongLoaded$/.test(name)) ? { songLoaded: json.state }
+-                    : (/Track\/SongName$/.test(name)) ? { title: json.string }
+-                        : (/Track\/ArtistName$/.test(name)) ? { artist: json.string }
+-                            : (/Track\/TrackData$/.test(name)) ? { hasTrackData: json.state }
+-                                : (/Track\/TrackName$/.test(name)) ? { fileLocation: json.string }
+-                                    : (/Track\/Genre$/.test(name)) ? { genre: json.string }
+-                                        : (/Track\/CurrentKey$/.test(name)) ? { key: json.string }
+-                                            : (/Track\/TrackLength$/.test(name)) ? { trackLength: json.value }
+-                                                : (/Track\/TrackUri$/.test(name)) ? { trackUri: json.string }
+-                                                    : (/CurrentBPM$/.test(name)) ? { currentBpm: json.value }
+-                                                        : (/ExternalMixerVolume$/.test(name)) ? { externalMixerVolume: json.value }
+-                                                            : (/Play$/.test(name)) ? { play: json.state }
+-                                                                : (/PlayerJogColor[A-D]$/.test(name)) ? { jogColor: json.color }
+-                                                                    : null;
++: (/Track\/SongLoaded$/.test(name)) ? { songLoaded: json.state }
++                                        : (/Track\/SampleRate$/.test(name)) ? { sampleRate: json.value } // TrueLazer vendored patch
++                                            : (/Track\/SongName$/.test(name)) ? { title: json.string }
++                                                : (/Track\/ArtistName$/.test(name)) ? { artist: json.string }
++                                                    : (/Track\/TrackData$/.test(name)) ? { hasTrackData: json.state }
++                                                        : (/Track\/TrackName$/.test(name)) ? { fileLocation: json.string }
++                                                            : (/Track\/Genre$/.test(name)) ? { genre: json.string }
++                                                                : (/Track\/CurrentKey$/.test(name)) ? { key: json.string }
++                                                                    : (/Track\/TrackLength$/.test(name)) ? { trackLength: json.value }
++                                                                        : (/Track\/TrackUri$/.test(name)) ? { trackUri: json.string }
++                                                                            : (/CurrentBPM$/.test(name)) ? { currentBpm: json.value }
++                                                                                : (/DeckIsMaster$/.test(name)) ? { deckIsMaster: json.state } // TrueLazer vendored patch
++                                                                                    : (/ExternalMixerVolume$/.test(name)) ? { externalMixerVolume: json.value }
++                                                                                        : (/Play$/.test(name)) ? { play: json.state }
++                                                                                            : (/PlayerJogColor[A-D]$/.test(name)) ? { jogColor: json.color }
++                                                                                                : null;
+         if (cueData && deck) {
+             this.queue[deck].push({ layer: deck, ...cueData });
+         }
+diff --git a/node_modules/stagelinq/dist/network/NetworkDevice.js b/node_modules/stagelinq/dist/network/NetworkDevice.js
+index f6b6cff..c08a9a9 100644
+--- a/node_modules/stagelinq/dist/network/NetworkDevice.js
++++ b/node_modules/stagelinq/dist/network/NetworkDevice.js
+@@ -47,7 +47,7 @@ const WriteContext_1 = require("../utils/WriteContext");
+ const FileType = __importStar(require("file-type"));
+ const fs = __importStar(require("fs"));
+ const tcp = __importStar(require("../utils/tcp"));
+-const better_sqlite3_multiple_ciphers_1 = __importDefault(require("better-sqlite3-multiple-ciphers"));
++const better_sqlite3_multiple_ciphers_1 = __importDefault(require("../sqlite-stub")); // TrueLazer vendored patch (Electron ABI)
+ class NetworkDevice {
+     constructor(info, logger = logger_1.noopLogger) {
+         this.connection = null;
+diff --git a/node_modules/stagelinq/dist/network/announce.js b/node_modules/stagelinq/dist/network/announce.js
+index 8cef4b4..cc1757f 100644
+--- a/node_modules/stagelinq/dist/network/announce.js
++++ b/node_modules/stagelinq/dist/network/announce.js
+@@ -35,10 +35,14 @@ function findBroadcastTargets() {
+             continue;
+         for (const entry of i) {
+             if (entry.family === 'IPv4' && entry.internal === false) {
+-                // Skip link-local addresses (169.254.x.x) — these are auto-configured
+-                // interfaces that rarely host StageLinq devices
+-                if (entry.address.startsWith('169.254.'))
+-                    continue;
++                // TrueLazer vendored patch: upstream skips link-local addresses
++                // (169.254.x.x) here, but that is exactly the direct-Ethernet-to-
++                // player setup used on show racks — no DHCP, both ends self-assign
++                // link-local. Skipping the interface means the Login announce
++                // never reaches the player, so it RSTs our TCP connection
++                // ("Failed to requestServices") even though discovery found it.
++                // Broadcasting to an interface's own broadcast address is scoped
++                // to that L2 segment, so link-local targets are safe to include.
+                 const info = (0, ip_1.subnet)(entry.address, entry.netmask);
+                 targets.push({
+                     broadcastIP: info.broadcastAddress,
+diff --git a/node_modules/stagelinq/dist/services/StateMap.js b/node_modules/stagelinq/dist/services/StateMap.js
+index 30be638..b777214 100644
+--- a/node_modules/stagelinq/dist/services/StateMap.js
++++ b/node_modules/stagelinq/dist/services/StateMap.js
+@@ -42,6 +42,7 @@ exports.States = [
+     types_1.StageLinqValue.EngineDeck1TrackCurrentKey,
+     types_1.StageLinqValue.EngineDeck1TrackTrackLength,
+     types_1.StageLinqValue.EngineDeck1TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck1TrackSampleRate, // TrueLazer vendored patch: samples->seconds conversion
+     types_1.StageLinqValue.EngineDeck2Play,
+     types_1.StageLinqValue.EngineDeck2PlayState,
+     types_1.StageLinqValue.EngineDeck2PlayStatePath,
+@@ -57,6 +58,7 @@ exports.States = [
+     types_1.StageLinqValue.EngineDeck2TrackCurrentKey,
+     types_1.StageLinqValue.EngineDeck2TrackTrackLength,
+     types_1.StageLinqValue.EngineDeck2TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck2TrackSampleRate, // TrueLazer vendored patch
+     types_1.StageLinqValue.EngineDeck3Play,
+     types_1.StageLinqValue.EngineDeck3PlayState,
+     types_1.StageLinqValue.EngineDeck3PlayStatePath,
+@@ -72,6 +74,7 @@ exports.States = [
+     types_1.StageLinqValue.EngineDeck3TrackCurrentKey,
+     types_1.StageLinqValue.EngineDeck3TrackTrackLength,
+     types_1.StageLinqValue.EngineDeck3TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck3TrackSampleRate, // TrueLazer vendored patch
+     types_1.StageLinqValue.EngineDeck4Play,
+     types_1.StageLinqValue.EngineDeck4PlayState,
+     types_1.StageLinqValue.EngineDeck4PlayStatePath,
+@@ -87,6 +90,7 @@ exports.States = [
+     types_1.StageLinqValue.EngineDeck4TrackCurrentKey,
+     types_1.StageLinqValue.EngineDeck4TrackTrackLength,
+     types_1.StageLinqValue.EngineDeck4TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck4TrackSampleRate, // TrueLazer vendored patch
+     types_1.StageLinqValue.ClientPreferencesLayerA,
+     types_1.StageLinqValue.ClientPreferencesPlayer,
+     types_1.StageLinqValue.ClientPreferencesPlayerJogColorA,
+diff --git a/node_modules/stagelinq/dist/sqlite-stub.js b/node_modules/stagelinq/dist/sqlite-stub.js
+new file mode 100644
+index 0000000..942d279
+--- /dev/null
++++ b/node_modules/stagelinq/dist/sqlite-stub.js
+@@ -0,0 +1,31 @@
++"use strict";
++/**
++ * TrueLazer vendored patch — sqlite stub for the StageLinq library.
++ *
++ * StageLinq eagerly requires better-sqlite3-multiple-ciphers at module load
++ * (dist/network/NetworkDevice.js, dist/Databases/DbConnection.js). That native
++ * module is built for the Node ABI and cannot load under Electron's ABI, which
++ * would crash the entire TrueLazer main process at import time — even though
++ * TrueLazer only uses StageLinq for transport sync (StateMap + BeatInfo) and
++ * deliberately disables database download / file transfer.
++ *
++ * This stub replaces the native module ONLY for the database/album-art path we
++ * never exercise (downloadDbSources:false, enableFileTranfer:false). If those
++ * features are ever enabled, the throw below names the fix: rebuild the module
++ * for the Electron ABI (@electron/rebuild -w better-sqlite3-multiple-ciphers).
++ *
++ * Re-apply after every `npm install` (same convention as the vendored
++ * prolink-connect watchBeatPackets patch).
++ *
++ * Patched files:
++ *   dist/network/NetworkDevice.js   -> require("better-sqlite3-multiple-ciphers")
++ *   dist/Databases/DbConnection.js  -> require("better-sqlite3-multiple-ciphers")
++ */
++module.exports = function sqliteStub() {
++  throw new Error(
++    "TrueLazer: better-sqlite3-multiple-ciphers is intentionally stubbed for " +
++      "Electron (vended patch). StageLinq database / album-art features are " +
++      "disabled. Rebuild for Electron ABI to enable them."
++  );
++};
++module.exports.default = module.exports;
+\ No newline at end of file

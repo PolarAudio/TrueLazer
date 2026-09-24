@@ -141,12 +141,52 @@ contextBridge.exposeInMainWorld(
                                             openTimelineProject: () => ipcRenderer.invoke('open-timeline-project'),
                                             startArtnetTimecodeListener: () => ipcRenderer.invoke('start-artnet-timecode-listener'),
                                             stopArtnetTimecodeListener: () => ipcRenderer.send('stop-artnet-timecode-listener'),
-                                            onArtnetTimecode: (callback) => {
-                                                const listener = (event, payload) => callback(payload);
-                                                ipcRenderer.on('artnet-timecode', listener);
-                                                return () => ipcRenderer.removeListener('artnet-timecode', listener);
-                                            },
-                                            // OSC
+                                                    onArtnetTimecode: (callback) => {
+                                                        const listener = (event, payload) => callback(payload);
+                                                        ipcRenderer.on('artnet-timecode', listener);
+                                                        return () => ipcRenderer.removeListener('artnet-timecode', listener);
+                                                    },
+                                                    // TCNet TMB LINk — UDP 60001 broadcast Time Packet (slave timecode + BPM grid)
+                                                    startTcnetTimecodeListener: () => ipcRenderer.invoke('start-tcnet-timecode-listener'),
+                                                    stopTcnetTimecodeListener: () => ipcRenderer.send('stop-tcnet-timecode-listener'),
+                                                    onTcnetTimecode: (callback) => {
+                                                        const listener = (event, payload) => callback(payload);
+                                                        ipcRenderer.on('tcnet-timecode', listener);
+                                                        return () => ipcRenderer.removeListener('tcnet-timecode', listener);
+                                                    },
+                                                    // PRO DJ LINK — prolink-connect CDJ deviceState (LinkBridge bypass)
+                                                    startProlinkStateListener: () => ipcRenderer.invoke('start-prolink-state-listener'),
+                                                    stopProlinkStateListener: () => ipcRenderer.send('stop-prolink-state-listener'),
+                                                    onProlinkState: (callback) => {
+                                                        const listener = (event, payload) => callback(payload);
+                                                        ipcRenderer.on('prolink-status', listener);
+                                                        return () => ipcRenderer.removeListener('prolink-status', listener);
+                                                    },
+                                                    onProlinkManagerStatus: (callback) => {
+                                                        const listener = (event, payload) => callback(payload);
+                                                        ipcRenderer.on('prolink-manager-status', listener);
+                                                        return () => ipcRenderer.removeListener('prolink-manager-status', listener);
+                                                    },
+                                                    getProlinkSettings: () => ipcRenderer.invoke('get-prolink-settings'),
+                                                    setProlinkSettings: (settings) => ipcRenderer.invoke('set-prolink-settings', settings),
+                                                    getProlinkStatus: () => ipcRenderer.invoke('get-prolink-status'),
+                                                    // STAGELINQ — Denon DJ StageLinq (Open SoundControl-style network protocol)
+                                                    startStagelinqListener: () => ipcRenderer.invoke('start-stagelinq-listener'),
+                                                    stopStagelinqListener: () => ipcRenderer.send('stop-stagelinq-listener'),
+                                                    onStagelinqState: (callback) => {
+                                                        const listener = (event, payload) => callback(payload);
+                                                        ipcRenderer.on('stagelinq-status', listener);
+                                                        return () => ipcRenderer.removeListener('stagelinq-status', listener);
+                                                    },
+                                                    onStagelinqManagerStatus: (callback) => {
+                                                        const listener = (event, payload) => callback(payload);
+                                                        ipcRenderer.on('stagelinq-manager-status', listener);
+                                                        return () => ipcRenderer.removeListener('stagelinq-manager-status', listener);
+                                                    },
+                                                    getStagelinqSettings: () => ipcRenderer.invoke('get-stagelinq-settings'),
+                                                    setStagelinqSettings: (settings) => ipcRenderer.invoke('set-stagelinq-settings', settings),
+                                                    getStagelinqStatus: () => ipcRenderer.invoke('get-stagelinq-status'),
+                                                    // OSC
                                             initializeOsc: (config) => ipcRenderer.invoke('initialize-osc', config),
                                             sendOscMessage: (address, args) => ipcRenderer.send('send-osc-message', address, args),
                                             closeOsc: () => ipcRenderer.send('close-osc'),

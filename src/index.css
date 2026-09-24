@@ -2774,6 +2774,15 @@ input[type="checkbox"].tl-checkbox:after {
   display: flex;
 }
 
+/* Pin the ruler row to the top of the scroll viewport so the time scale stays
+   visible while the timeline scrolls vertically (the corner header cell keeps
+   its own sticky-left behavior for horizontal scrolling). */
+.timeline-ruler-row {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
 .timeline-header-cell {
   position: sticky;
   left: 0;
@@ -2921,6 +2930,8 @@ input[type="checkbox"].tl-checkbox:after {
   padding: 2px 6px;
   min-height: 20px;
   flex-wrap: wrap;
+  overflow-y: auto;
+
 }
 
 .timeline-track-dac:hover {
@@ -3033,11 +3044,9 @@ input[type="checkbox"].tl-checkbox:after {
   border-color: #ff6b6b;
   outline: 1px dashed #ff6b6b;
   outline-offset: 2px;
-  background-image: repeating-linear-gradient(
-    -45deg,
-    rgba(255, 107, 107, 0.16) 0 8px,
-    transparent 8px 16px
-  );
+  background-image: repeating-linear-gradient(-45deg,
+      rgba(255, 107, 107, 0.16) 0 8px,
+      transparent 8px 16px);
 }
 
 .timeline-overlap-hint {
@@ -3200,9 +3209,17 @@ input[type="checkbox"].tl-checkbox:after {
   flex: none;
 }
 
-.timeline-lane-info-badge.type-select { color: #f0b45a; }
-.timeline-lane-info-badge.type-checkbox { color: #70c7a6; }
-.timeline-lane-info-badge.type-color { color: #9a9aff; }
+.timeline-lane-info-badge.type-select {
+  color: #f0b45a;
+}
+
+.timeline-lane-info-badge.type-checkbox {
+  color: #70c7a6;
+}
+
+.timeline-lane-info-badge.type-color {
+  color: #9a9aff;
+}
 
 .timeline-lane-info-plabel {
   overflow: hidden;
@@ -3325,11 +3342,9 @@ input[type="checkbox"].tl-checkbox:after {
   border: 1px solid #3a4252;
   border-radius: 3px;
   background:
-    repeating-linear-gradient(
-      135deg,
+    repeating-linear-gradient(135deg,
       rgba(255, 255, 255, 0.025) 0 6px,
-      transparent 6px 12px
-    ),
+      transparent 6px 12px),
     rgba(30, 35, 46, 0.55);
   cursor: copy;
   box-sizing: border-box;

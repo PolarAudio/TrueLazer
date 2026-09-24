@@ -64,6 +64,32 @@ export function flipPoints(points, flipX, flipY) {
     return out;
 }
 
+// External-clock follower tuning (PLL-lite). Instead of snapping the playhead to
+// every raw sample, our rAF wall clock runs 1:1 and is gently pulled toward the
+// source, so beat-quantized updates (a step every ~0.47 s at 128 bpm) become a
+// smooth glide rather than a sawtooth. A drift larger than EXT_RESYNC_S is a
+// genuine discontinuity (new track / seek) and hard-snaps. On pause the head
+// eases onto the frozen sample and holds, so the transport parks where the CDJ did.
+const EXT_RESYNC_S = 1.0;    // drift beyond this = real jump, snap to the source
+const EXT_PULL_RATE = 0.2;   // fraction of remaining drift corrected per frame
+const EXT_MAX_PULL = 0.18;   // per-frame correction cap (s) keeps the glide smooth
+const EXT_PAUSE_GLIDE = 0.4; // ease fraction toward the frozen stop position
+const EXT_PARK_EPS = 0.003;  // once this close to the parked sample, hold hard
+
+// Resolve the ILDA frame window a cue plays: [frameStart] to
+// [frameStart + frameCount) (frameCount null/absent = the whole file). "Input
+// Trim" resizing crops this window so the clip keeps its file frame rate, and
+// the warmer/buildCueFrame only ever request frames inside it.
+function ildaFrameWindow(cue) {
+    const total = Math.max(1, (cue && cue.totalFrames) || 0);
+    const start = Math.max(0, Math.min(Math.floor((cue && cue.frameStart) || 0), total - 1));
+    const end = cue && cue.frameCount != null && cue.frameCount > 0
+        ? Math.min(start + Math.floor(cue.frameCount), total)
+        : total;
+    const count = Math.max(1, end - start);
+    return { start, end, count, total };
+}
+
 export function useTimelinePlayback() {
     const { state, actions, dacOutputSettings } = useTimeline();
     const ildaParserWorker = useIldaParserWorker();
@@ -77,6 +103,17 @@ export function useTimelinePlayback() {
     const stateRef = useRef(state);
     stateRef.current = state;
     const lastPushedT = useRef(-1e100);
+    // While following an external source, the playhead UI only needs to refresh
+    // at ~30 Hz — every rAF otherwise re-renders the whole editor.
+    const lastFollowPublishRef = useRef(-1e9);
+    // External-source velocity tracking (unit = seconds per wall-second, so
+    // ~+1 forward, ~-1 backward). The follower advances at this velocity and
+    // gently pulls toward the latest sample, so CDJ backward play and reverse
+    // scrubs glide instead of the forward-only ramp grinding into a snap.
+    const lastExtTargetRef = useRef(null);
+    const lastExtTargetAtRef = useRef(-1e9);
+    const extVelRef = useRef(1);
+    const lastFollowingRef = useRef(false);
 
     // Mirror of the main app's per-output DAC settings (name/dimmer/outputArea/
     // safetyZones/PPS target) so the fan-out in `compile` can honor them without
@@ -246,7 +283,7 @@ export function useTimelinePlayback() {
                             duration: c.duration === 0 && totalFrames > 0
                                 ? Math.max(0.1, totalFrames / (stateRef.current.settings.fps || 30))
                                 : c.duration,
-                        });
+                        }, true);
                     }
                 }
                 return;
@@ -278,6 +315,22 @@ export function useTimelinePlayback() {
                         }
                     ildaLiveRef.current.set(`${d.workerId}@${d.frameIndex}`, { idx: d.frameIndex, frame: d.frame });
                 }
+                return;
+            }
+            if (d.type === 'frame-count' && d.workerId != null) {
+                // The worker reports the file's REAL frame count when a get-frame
+                // lands out of bounds. A persisted cue.totalFrames can lie (older
+                // saves, stale pastes), and the renderer keeps requesting the
+                // ever-growing index — logging errors every frame. Clamp every
+                // cue on that workerId so the warmer/buildCueFrame stop walking
+                // past the end of the file.
+                const n = Math.max(1, d.totalFrames || 0);
+                for (const c of Object.values(stateRef.current.cues)) {
+                    if (c.type === 'ILDA' && c.workerId === d.workerId && (c.totalFrames || 0) !== n) {
+                        actions.updateCue(c.id, { totalFrames: n });
+                    }
+                }
+                return;
             }
         };
         ildaParserWorker.addEventListener('message', handler);
@@ -384,17 +437,17 @@ export function useTimelinePlayback() {
                 if (!pick || pick.type !== 'ILDA') continue;
                 const wId = pick.workerId;
                 if (!wId || !pick.totalFrames) continue;
-                const totalFrames = Math.max(1, pick.totalFrames);
-                const interval = pick.totalFrames ? pick.duration / totalFrames : 1 / fps;
+                const { start, end, count } = ildaFrameWindow(pick);
+                const interval = pick.totalFrames ? pick.duration / Math.max(1, count) : 1 / fps;
                 const rel = t - pick.startTime;
                 let idx = Math.floor(rel / Math.max(1e-4, interval));
                 if (pick.isLooping) {
-                    idx = ((idx % totalFrames) + totalFrames) % totalFrames;
+                    idx = start + (((idx - start) % count) + count) % count;
                 } else {
-                    idx = Math.max(0, Math.min(idx, totalFrames - 1));
+                    idx = Math.max(start, Math.min(idx, end - 1));
                 }
                 for (let k = 0; k < ILDA_PREFETCH_FRAMES; k++) {
-                    const i = (idx + k) % totalFrames;
+                    const i = start + (idx - start + k) % count;
                     const key = `${wId}@${i}`;
                     if (ildaLiveRef.current.has(key) || ildaRequestedRef.current.get(key) === i) continue;
                     if (ildaRequestedRef.current.size > 4096) ildaRequestedRef.current.clear();
@@ -412,15 +465,15 @@ export function useTimelinePlayback() {
         if (cue.type === 'ILDA') {
             const wId = cue.workerId;
             if (!wId) return null;
-            const totalFrames = Math.max(1, cue.totalFrames || 0);
+            const { start, end, count } = ildaFrameWindow(cue);
             const fps = stateRef.current.settings.fps || 30;
-            const interval = cue.totalFrames ? cue.duration / totalFrames : 1 / fps;
+            const interval = cue.totalFrames ? cue.duration / Math.max(1, count) : 1 / fps;
             const rel = t - cue.startTime;
             let idx = Math.floor(rel / Math.max(1e-4, interval));
             if (cue.isLooping) {
-                idx = ((idx % totalFrames) + totalFrames) % totalFrames;
+                idx = start + (((idx - start) % count) + count) % count;
             } else {
-                idx = Math.max(0, Math.min(idx, totalFrames - 1));
+                idx = Math.max(start, Math.min(idx, end - 1));
             }
             const liveKey = `${wId}@${idx}`;
             const live = ildaLiveRef.current.get(liveKey);
@@ -502,6 +555,14 @@ export function useTimelinePlayback() {
             const res = applyEffects({ points: frame, isTypedArray: true }, effects, {
                 time: t * 1000,
                 effectStates: effectStatesRef.current,
+                // Channel-mode Delay/Chase distribute across the zone's actually
+                // assigned DAC channels — the timeline's equivalent of the main
+                // app's "Track layers assigned DAC Channels".
+                assignedDacs: getChannelOutputs(ch),
+                // Chase's selectable clock (time/fps/bpm) reads the timeline's
+                // transport values so steps lock to movie frames or beats.
+                fps: store.settings.fps || 30,
+                bpm: store.settings.bpm || 120,
             });
             if (res && res.points) frame = res.points;
         }
@@ -543,9 +604,22 @@ export function useTimelinePlayback() {
             // `applyOutputProcessing`/PPS resolution the grid path uses, so the
             // timeline drives the same hardware behavior the main app promises.
             for (const out of uniq) {
+                // A channel-mode Delay/Chase produces a concatenated buffer plus a
+                // per-DAC slice map (keyed by the output's position in the assigned
+                // order) — each DAC must receive only its own share, exactly like the
+                // main app's per-channel fan-out. Outputs outside the map get a blank
+                // frame instead of the whole concatenation.
+                let chanFrame = frame;
+                if (frame && frame._channelDistributions && frame._channelDistributions.size > 0) {
+                    const idx = uniq.indexOf(out);
+                    const dist = frame._channelDistributions.get(idx);
+                    chanFrame = dist
+                        ? frame.subarray(dist.start, dist.start + dist.length)
+                        : new Float32Array(0);
+                }
                 let outFrame = out.flipX || out.flipY
-                    ? flipPoints(frame, !!out.flipX, !!out.flipY)
-                    : frame;
+                    ? flipPoints(chanFrame, !!out.flipX, !!out.flipY)
+                    : chanFrame;
                 const settings = dacOutputSettingsRef.current ? dacOutputSettingsRef.current[`${out.ip}:${out.channel}`] : null;
 
                 if (settings) {
@@ -616,6 +690,15 @@ export function useTimelinePlayback() {
         const following = external && sync.signal;
         const active = isPlaying || following;
         if (!active) return;
+        // Re-entering follow after a gap: clear the stale velocity/sample so we
+        // don't keep drifting a leftover backward direction when forward play
+        // resumes on a different clock.
+        if (following && !lastFollowingRef.current) {
+            extVelRef.current = 1;
+            lastExtTargetRef.current = null;
+            lastExtTargetAtRef.current = -1e9;
+        }
+        lastFollowingRef.current = following;
         let raf;
         let last = performance.now();
         const tick = (now) => {
@@ -623,8 +706,62 @@ export function useTimelinePlayback() {
             last = now;
             let t;
             if (following) {
-                // Jump to the latest external sample, extrapolate past it.
-                t = syncRef.current.seconds + Math.min(0.5, (now - syncRef.current.lastUpdate) / 1000);
+                // PLL-lite follower: advance on the rAF wall clock at the
+                // source's own velocity (measured from successive samples) and
+                // gently pull toward the latest external sample so beat-stepped
+                // sources glide instead of sawtoothing. A drift larger than
+                // EXT_RESYNC_S is a genuine discontinuity (new track / seek) and
+                // hard-snaps. On pause the head eases onto the frozen sample and
+                // holds, so the transport parks where the CDJ did.
+                const s = syncRef.current;
+                const target = s.seconds;
+                if (typeof target === 'number' && isFinite(target)) {
+                    // Velocity = moving average of (target delta / wall time
+                    // between samples). ~30 Hz absolute-position packets yield the
+                    // true motion (including reverse); the beat-stepped fallback
+                    // lands at roughly ±1. Slow samples carry the whole step, so
+                    // trust the estimate more the longer between publishes.
+                    if (target !== lastExtTargetRef.current) {
+                        const tMs = performance.now();
+                        if (lastExtTargetRef.current != null) {
+                            const age = Math.max(1 / 120, (tMs - lastExtTargetAtRef.current) / 1000);
+                            const inst = (target - lastExtTargetRef.current) / age;
+                            const trust = Math.min(1, age / 0.5);
+                            extVelRef.current = extVelRef.current * (1 - 0.35 * trust) + inst * 0.35 * trust;
+                        }
+                        lastExtTargetRef.current = target;
+                        lastExtTargetAtRef.current = tMs;
+                    }
+                    const cur = playheadRef.current;
+                    if (s.running) {
+                        const vel = Math.abs(extVelRef.current) < 0.05
+                            ? 1
+                            : Math.max(-3, Math.min(3, extVelRef.current));
+                        let next = cur + dt * vel;
+                        const drift = target - next;
+                        if (Math.abs(drift) > EXT_RESYNC_S) {
+                            next = target;
+                        } else {
+                            next += Math.max(-EXT_MAX_PULL, Math.min(EXT_MAX_PULL, drift * EXT_PULL_RATE));
+                        }
+                        t = Math.max(0, next);
+                    } else {
+                        // Source paused/stopped: hold at the frozen sample so the
+                        // transport parks where the player did. A drift past
+                        // EXT_RESYNC_S is a real discontinuity, not a settle:
+                        // stopping a deck parks its playhead back on the cue, and
+                        // gliding there would visibly rewind the timeline over
+                        // several seconds, so snap and keep the ease sub-second.
+                        const drift = target - cur;
+                        if (Math.abs(drift) < EXT_PARK_EPS || Math.abs(drift) > EXT_RESYNC_S) {
+                            t = target;
+                        } else {
+                            t = cur + Math.max(-EXT_MAX_PULL, Math.min(EXT_MAX_PULL, drift * EXT_PAUSE_GLIDE));
+                        }
+                    }
+                } else {
+                    t = playheadRef.current + dt;
+                }
             } else {
                 // Wall-clock master: the playhead always advances on rAF time,
                 // so a stalled/paused audio element can never freeze the show.
@@ -690,7 +827,13 @@ export function useTimelinePlayback() {
                     push(t);
                 }
             }
-            setPlayheadSec(t);
+            // UI refresh: internal clock updates every frame; an external
+            // master is throttled to ~30 Hz so following the CDJ doesn't force
+            // a full editor re-render at 60 fps.
+            if (!following || now - lastFollowPublishRef.current >= 33) {
+                if (following) lastFollowPublishRef.current = now;
+                setPlayheadSec(t);
+            }
             raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
@@ -852,5 +995,10 @@ export function useTimelinePlayback() {
         [compileChannelFrame],
     );
 
-    return { isPlaying, playheadSec, laserOn, setLaserOn, play, pause, stop, seek, sync, previewFrame, anchor: anchorRef.current };
+    // True while following a live external source that is actually running —
+    // lets the transport UI reflect the master clock (e.g. the CDJ's play state).
+    const externalRunning =
+        sync.source !== 'internal' && !!sync.signal && !!sync.running;
+
+    return { isPlaying, playheadSec, laserOn, setLaserOn, play, pause, stop, seek, sync, previewFrame, anchor: anchorRef.current, externalRunning };
 }
