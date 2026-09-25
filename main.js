@@ -1713,6 +1713,12 @@ function createWindow() {
   // slider moves. A short EMA over a few status packets kills the jitter but
   // still tracks a real tempo change within ~100-150 ms.
   let prolinkSmoothPitch = null;
+  // Last transport state we smoothed against. The CDJ reports effectivePitch =
+  // -100% while stopped, so pitch-scaling the analyzer BPM across a stop/start
+  // drove the reported tempo down through zero (the UI then clamps it to its
+  // 1 BPM floor) and back up again. Snapping the EMA on a transport transition
+  // keeps the readout at the track's real tempo instead of ramping.
+  let prolinkWasPlaying = false;
   // Which tempo estimate drives the position math right now ('eff' = pitch-
   // scaled analyzer BPM, 'grid' = measured beat cadence). Switching sources is
   // debounced so beat-to-beat tracker jitter can't flap it (flapping makes both
@@ -1732,6 +1738,105 @@ function createWindow() {
   let prolinkGridDurationMs = null;
   let prolinkTrackKey = null;
   let prolinkGridLoading = false;
+  // Now-playing text for the middle-bar DJ-Link display. Populated by the same
+  // db.getMetadata round-trip that fetches the beat grid, so no extra query.
+  let prolinkTrackTitle = null;
+  let prolinkTrackArtist = null;
+  // Source colour per player. Pro DJ Link puts this in the CDJ "media slot"
+  // announcement — the byte the player uses to tint its USB slot and that linked
+  // players adopt in the top-left display, so an operator can see at a glance
+  // which machine a track was loaded from. The byte indexes MediaColor:
+  // 0 Default, 1 Pink, 2 Red, 3 Orange, 4 Yellow, 5 Green, 6 Aqua, 7 Blue,
+  // 8 Purple. Only non-default colours are forwarded, so the UI keeps its own
+  // default instead of claiming a colour nobody assigned.
+  const PROLINK_MEDIA_COLORS = {
+    1: '#ff8fb0', // Pink
+    2: '#ff3b30', // Red
+    3: '#ff9500', // Orange
+    4: '#ffd60a', // Yellow
+    5: '#32d74b', // Green
+    6: '#40c8e0', // Aqua
+    7: '#0a84ff', // Blue
+    8: '#bf5af2', // Purple
+  };
+  const prolinkSourceColors = new Map(); // deviceId -> '#rrggbb'
+  const prolinkSourceNames = new Map();  // deviceId -> mounted media name
+  const prolinkMediaSlotLogged = new Set();
+
+  const applyProlinkMediaSlot = (info) => {
+    if (!info || info.deviceId == null) return;
+    const hex = PROLINK_MEDIA_COLORS[info.color] || null;
+    const prev = prolinkSourceColors.get(info.deviceId) || null;
+    if (hex) prolinkSourceColors.set(info.deviceId, hex);
+    if (info.name) prolinkSourceNames.set(info.deviceId, info.name);
+    const logKey = `${info.deviceId}:${info.slot}:${info.color}`;
+    if (!prolinkMediaSlotLogged.has(logKey)) {
+      prolinkMediaSlotLogged.add(logKey);
+      console.log(
+        'Prolink: media slot', info.slot, 'on player', info.deviceId,
+        '—', JSON.stringify(info.name || ''),
+        'colour', info.color, hex ? `(${hex})` : '(default)'
+      );
+    }
+    if (hex !== prev) broadcastProlinkStatus();
+  };
+  // Cover art per track, as a data URL. A miss is cached as null so a track with
+  // no artwork is not re-queried on every load of the same file.
+  const prolinkArtwork = new Map(); // trackKey -> dataUrl | null
+  const prolinkArtworkPending = new Set();
+
+  const sendDjLinkArtwork = (source, deviceId, trackKey, dataUrl) => {
+    if (!dataUrl) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('djlink-artwork', { source, deviceId, trackKey, dataUrl });
+  };
+
+  // rekordbox artwork can come back as a raw Buffer or as a wrapped object
+  // depending on whether it was resolved locally (pdb) or remotely.
+  // rekordbox artwork comes back as a raw Buffer, so the mime type has to come
+  // from the file extension recorded in the database rather than the payload.
+  const prolinkArtworkToDataUrl = (art, fallbackMime) => {
+    if (!art) return null;
+    const buf = Buffer.isBuffer(art) ? art : (art.data || art.buffer || art.image);
+    if (!buf || !buf.length) return null;
+    const mime = (art.mimeType || art.contentType || fallbackMime || 'image/jpeg').toString();
+    return `data:${mime};base64,${Buffer.from(buf).toString('base64')}`;
+  };
+
+  const mimeFromArtworkPath = (p) => {
+    const ext = String(p || '').split('.').pop().toLowerCase();
+    if (ext === 'png') return 'image/png';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'webp') return 'image/webp';
+    return 'image/jpeg';
+  };
+
+  const queueProlinkArtworkFetch = (opts, trackKey, track) => {
+    if (!prolinkNetwork || !prolinkNetwork.db) return;
+    if (!track || !track.artwork || !track.artwork.path) return; // no artwork in the rekordbox db
+    if (prolinkArtwork.has(trackKey) || prolinkArtworkPending.has(trackKey)) return;
+    prolinkArtworkPending.add(trackKey);
+    // getArtwork()'s local path takes the already-resolved track object (it
+    // reads track.artwork.path) rather than a trackId, then pulls the image off
+    // the player's media over NFS.
+    Promise.resolve()
+      .then(() => prolinkNetwork.db.getArtwork({ ...opts, track }))
+      .then((art) => {
+        prolinkArtworkPending.delete(trackKey);
+        if (prolinkTrackKey !== trackKey) return; // deck moved on to another track
+        const dataUrl = prolinkArtworkToDataUrl(art, mimeFromArtworkPath(track.artwork.path));
+        prolinkArtwork.set(trackKey, dataUrl);
+        if (dataUrl) {
+          console.log('Prolink: cover art for track', opts.trackId, `(${Math.round(dataUrl.length / 1024)} KB data URL)`);
+          sendDjLinkArtwork('prolink', opts.deviceId, trackKey, dataUrl);
+        }
+      })
+      .catch((err) => {
+        prolinkArtworkPending.delete(trackKey);
+        prolinkArtwork.set(trackKey, null);
+        console.log('Prolink: no cover art for track', opts.trackId, '-', err && err.message);
+      });
+  };
 
   // Fetch the analyzed beat grid + duration for a loaded track so the playhead
   // can anchor to true track milliseconds. Falls back to the beat-derived ramp
@@ -1754,6 +1859,19 @@ function createWindow() {
       .then((track) => {
         prolinkGridLoading = false;
         if (prolinkTrackKey !== trackKey) return;
+        if (track) {
+          // Now-playing text for the DJ-Link display. The pdb track row carries
+          // `title` directly; the artist is only an `artistId` there, so accept
+          // whichever artist shape this lookup path actually produced and leave
+          // it null (placeholder in the UI) when it is only an id.
+          prolinkTrackTitle = typeof track.title === 'string' ? track.title : null;
+          const artist = track.artist;
+          prolinkTrackArtist =
+            typeof artist === 'string' ? artist
+              : (artist && typeof artist.name === 'string') ? artist.name
+                : (typeof track.artistName === 'string' ? track.artistName : null);
+          if (!prolinkArtwork.has(trackKey)) queueProlinkArtworkFetch(opts, trackKey, track);
+        }
         if (track && Array.isArray(track.beatGrid) && track.beatGrid.length > 0) {
           prolinkGrid = track.beatGrid;
           const grid = prolinkGrid;
@@ -1947,6 +2065,13 @@ function createWindow() {
         throw new Error('status service unavailable');
       }
 
+      // The player sends this unprompted on the status port whenever a track is
+      // loaded (measured on a CDJ-3000: the media-slot packet carrying the
+      // assigned colour appears on a track change, NOT when the colour setting is
+      // edited, and it is never sent in reply to a request — queryMediaSlot goes
+      // unanswered on every port). So just listen.
+      network.statusEmitter.on('mediaSlot', applyProlinkMediaSlot);
+
       // Decode the port-50001 packets prolink-connect otherwise discards, so
       // the clock can anchor to the CDJ's own beat timing / playhead. The
       // watcher hook is provided by a small patch to prolink-connect (see
@@ -2016,6 +2141,7 @@ function createWindow() {
           prolinkClock = { lastBeat: -1, lastBeatAt: 0 };
           prolinkDirection = 1;
           prolinkSmoothPitch = null;
+          prolinkWasPlaying = false;
           prolinkBpmSource = 'eff';
           prolinkBpmSourceChangedAt = 0;
         }
@@ -2031,6 +2157,15 @@ function createWindow() {
         const playing = PLAYING_PLAYSTATES.includes(active.playState);
         const nowMs = Date.now();
         const rawPitch = active.effectivePitch || 0; // prolink-connect reports % (6 = +6%)
+        // Snap on a transport transition rather than easing across it. A stop
+        // reports -100% pitch and a start ramps it back to 0, so smoothing
+        // through that would walk the reported BPM all the way to 1 and up
+        // again — which also made every BPM-synced effect and preview recompute
+        // its timing on the way, showing as jumping frames.
+        if (playing !== prolinkWasPlaying) {
+          prolinkWasPlaying = playing;
+          prolinkSmoothPitch = rawPitch;
+        }
         prolinkSmoothPitch =
           prolinkSmoothPitch == null
             ? rawPitch
@@ -2039,9 +2174,14 @@ function createWindow() {
         const speed = 1 + pitchPct / 100; // track-ms consumed per real-ms
         // effectivePitch is a PERCENTAGE (+6% → 6.00) — scaling by (1 + pitch)
         // reported 3-7× the real BPM; it must be (1 + pitch/100).
+        // Only scale it while the deck is actually rolling: stopped/paused there
+        // is no playback rate to report, and the -100% stop pitch would otherwise
+        // scale the analyzer BPM down to nothing. Paused/cued decks therefore
+        // report the track's own tempo, which is what the CDJ's readout shows.
+        const rollPitchPct = playing ? pitchPct : 0;
         const effectiveBpm =
           active.trackBPM && active.trackBPM > 0
-            ? active.trackBPM * (1 + pitchPct / 100)
+            ? active.trackBPM * (1 + rollPitchPct / 100)
             : null;
 
         // TcnetBpmTracker-style beat math: beatInMeasure transitions (1→2→3→4)
@@ -2102,9 +2242,14 @@ function createWindow() {
           prolinkGrid = null;
           prolinkGridDurationMs = null;
           prolinkGridLoading = false;
-          // Skip the beat-grid DB fetch for decks that already proved they send
-          // Absolute Position packets — that path needs no grid at all.
-          if (trackKey && !prolinkAbsCapable.has(active.deviceId)) {
+          prolinkTrackTitle = null;
+          prolinkTrackArtist = null;
+          // Always fetch on a track change. It used to be skipped for decks that
+          // send Absolute Position packets, since the grid was then redundant for
+          // timing — but this same lookup is what supplies the now-playing title,
+          // artist and cover art for the DJ-Link display, so it is needed even
+          // when the position maths ignores the grid.
+          if (trackKey) {
             queueProlinkGridFetch(active);
           }
         }
@@ -2218,6 +2363,12 @@ function createWindow() {
 
         enqueueProlinkStatus({
           deviceId: active.deviceId,
+          playerId: active.deviceId,
+          trackKey: prolinkTrackKey,
+          trackTitle: prolinkTrackTitle,
+          trackArtist: prolinkTrackArtist,
+          // Assigned source colour for this player, already normalised to #rrggbb.
+          deckColor: prolinkSourceColors.get(active.deviceId) || null,
           trackId: active.trackId,
           trackLoaded: active.trackId > 0,
           playState: active.playState,
@@ -2348,7 +2499,11 @@ function createWindow() {
     prolinkGridDurationMs = null;
     prolinkTrackKey = null;
     prolinkGridLoading = false;
+    prolinkWasPlaying = false;
     prolinkPackets.clear();
+    prolinkSourceColors.clear();
+    prolinkSourceNames.clear();
+    prolinkMediaSlotLogged.clear();
     prolinkLastAbsMs.clear();
     prolinkBeatPacketLogged = false;
     prolinkAbsPacketLogged = false;
@@ -2467,6 +2622,52 @@ function createWindow() {
   const stagelinqPosSourceLogged = { samples: false, beat: false };
   const stageLinqDeckKey = (address, layer) => `${address}|${layer}`;
   const stageLinqDeckId = (d) => `${d.player}${d.layer}`; // matches PlayerStatus.deck
+  // Embedded cover art per loaded track. Title/artist already arrive free on the
+  // StateMap (/Track/SongName, /Track/ArtistName); only artwork needs the
+  // FileTransfer service to read the file header. Cached per track so the header
+  // is read once, not on every state packet.
+  const stagelinqArtwork = new Map();   // "deviceId|networkPath" -> dataUrl | null
+  const stagelinqArtworkPending = new Set();
+
+  // Pulls embedded cover art out of the loaded file's header. `cachePath` is the
+  // stable track identity used for caching; `filePath` is what FileTransfer's
+  // stat call actually accepts — measured on a SC5000 (JP07), `trackNetworkPath`
+  // stats as size 0 and silently yields no metadata, while `trackPathAbsolute`
+  // (the /Engine Library/../... form the device reports) returns the real size.
+  const fetchStagelinqArtwork = (deviceId, cachePath, filePath) => {
+    if (!deviceId || !cachePath) return;
+    if (!filePath) return;                       // nothing addressable to read
+    if (cachePath.startsWith('streaming://')) return;
+    const trackKey = `${deviceId}|${cachePath}`;
+    if (stagelinqArtwork.has(trackKey) || stagelinqArtworkPending.has(trackKey)) return;
+    stagelinqArtworkPending.add(trackKey);
+    Promise.resolve()
+      .then(() => {
+        if (!stagelinqClient) return null;
+        const entry = stagelinqClient.devices.devices.get(deviceId);
+        const fileTransfer = entry && entry.fileTransferService;
+        if (!fileTransfer) return null;
+        const { extractMetadataFromDevice } = require('stagelinq');
+        return extractMetadataFromDevice(fileTransfer, filePath);
+      })
+      .then((meta) => {
+        stagelinqArtworkPending.delete(trackKey);
+        if (!meta || !meta.artwork || !meta.artwork.length) {
+          stagelinqArtwork.set(trackKey, null);
+          return;
+        }
+        const mime = meta.artworkMimeType || 'image/jpeg';
+        const dataUrl = `data:${mime};base64,${Buffer.from(meta.artwork).toString('base64')}`;
+        stagelinqArtwork.set(trackKey, dataUrl);
+        console.log('StageLinq: cover art for', cachePath.split('/').pop(), `(${Math.round(meta.artwork.length / 1024)} KB)`);
+        sendDjLinkArtwork('stagelinq', deviceId, trackKey, dataUrl);
+      })
+      .catch((err) => {
+        stagelinqArtworkPending.delete(trackKey);
+        stagelinqArtwork.set(trackKey, null);
+        console.log('StageLinq: no cover art for', cachePath.split('/').pop(), '-', err && err.message);
+      });
+  };
 
   // Manager status (settings-panel Connection row) broadcaster.
   const broadcastStagelinqStatus = () => {
@@ -2527,6 +2728,10 @@ function createWindow() {
     const prev = stagelinqDeckStates.get(key) || {};
     const deck = { ...prev, ...status, key };
     stagelinqDeckStates.set(key, deck);
+    // New track on this deck -> pull its embedded cover once (cached by path).
+    if (status.trackNetworkPath && status.trackNetworkPath !== prev.trackNetworkPath) {
+      fetchStagelinqArtwork(status.deviceId, status.trackNetworkPath, status.trackPathAbsolute);
+    }
     if (!stagelinqStatusLogged.has(key)) {
       stagelinqStatusLogged.add(key);
       console.log(
@@ -2674,7 +2879,15 @@ function createWindow() {
     const frames = seconds == null ? 0 : Math.floor((seconds % 1) * fps);
     enqueueStagelinqStatus({
       deviceId: deck.key,
+      playerId: deck.deck || stageLinqDeckId(deck),
+      trackKey: deck.trackNetworkPath ? `${deck.deviceId || ''}|${deck.trackNetworkPath}` : null,
       trackId: deck.trackNetworkPath || null,
+      trackTitle: deck.title || null,
+      trackArtist: deck.artist || null,
+      // The deck's assigned colour, as the player reports it for its jog ring
+      // ("#AARRGGBB"). Lets the UI label each player in the colour the operator
+      // assigned to it, which is how the decks are told apart on the floor.
+      deckColor: deck.jogColor || null,
       trackLoaded: !!(deck.songLoaded || deck.trackNetworkPath),
       playState: deck.playState ? 3 : 1,
       playing: !!deck.playState && running,
@@ -2701,7 +2914,13 @@ function createWindow() {
       bpm: reportedBpm,
       running: !!running,
       positionSource,
-      trackDuration: deck.trackLength || null,
+      // Denon reports TrackLength in SAMPLES, not milliseconds (a 4:22 track at
+      // 44.1 kHz reads back as 11574144). Convert with the deck's own sample rate
+      // so this payload is milliseconds like the ProDJ one — otherwise a consumer
+      // that assumes ms renders the duration as 3:12:54 instead of 4:22.
+      trackDuration: deck.trackLength && sampleRate
+        ? (deck.trackLength / sampleRate) * 1000
+        : null,
       sampleRate,
     });
   };
@@ -2758,16 +2977,18 @@ function createWindow() {
     console.log('StageLinq: starting listener (UDP 51337 discovery)…');
     try {
       const { StageLinqInstance } = require('stagelinq');
-      // Database download + file transfer need better-sqlite3-multiple-ciphers,
-      // which cannot load under Electron's ABI — the vended sqlite-stub throws
-      // only if that disabled path is ever touched.
+      // Database download needs better-sqlite3-multiple-ciphers, which cannot load
+      // under Electron's ABI — the vended sqlite-stub throws only if that disabled
+      // path is ever touched. File Transfer is left ON: it is a separate service
+      // that needs no native module, and TrueLazer uses it to read the embedded
+      // cover art out of the loaded file's header.
       const slLogger = {
         trace: () => {}, debug: () => {}, info: (...a) => console.log('StageLinq:', ...a),
         warn: (...a) => console.warn('StageLinq:', ...a), error: (...a) => console.error('StageLinq:', ...a),
       };
       const client = new StageLinqInstance({
         downloadDbSources: false,
-        enableFileTranfer: false,
+        enableFileTranfer: true,
         maxRetries: 2,
         logger: slLogger,
       });
@@ -2840,6 +3061,8 @@ function createWindow() {
     stagelinqDirection = 1;
     stagelinqSmoothBpm = null;
     stagelinqStatusLogged.clear();
+    stagelinqArtwork.clear();
+    stagelinqArtworkPending.clear();
     stagelinqPosSourceLogged.samples = false;
     stagelinqPosSourceLogged.beat = false;
     broadcastStagelinqStatus();
@@ -2878,6 +3101,21 @@ function createWindow() {
       deckCount: stagelinqDeckStates.size,
       networkConnected: stagelinqClient != null,
     };
+  });
+
+  // Cover art is pushed once per track, ~130ms after the track is first seen. A
+  // renderer that mounts (or reloads) after that push never receives it, so it
+  // would sit on the placeholder forever. This lets the renderer pull whatever
+  // has already been fetched, keyed exactly as the push channel keys it.
+  ipcMain.handle('get-djlink-artwork', () => {
+    const all = {};
+    for (const [key, dataUrl] of stagelinqArtwork) {
+      if (dataUrl) all[`stagelinq|${key}`] = dataUrl;
+    }
+    for (const [key, dataUrl] of prolinkArtwork) {
+      if (dataUrl) all[`prolink|${key}`] = dataUrl;
+    }
+    return all;
   });
 
   // NDI IPC Handlers

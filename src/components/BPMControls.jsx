@@ -44,14 +44,15 @@ const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceCh
     }
   };
 
-  const isProlink = bpmSource === 'prolink' || bpmSource === 'stagelinq';
+  // Tap tempo and the +/- nudge only make sense when the BPM is ours to set.
+  // On a sync source the deck drives the value, so those controls are removed
+  // outright and the number stays as a read-only readout of the incoming BPM.
+  const isTapMode = bpmSource === 'tap';
+  const sourceLabel = bpmSource === 'prolink' ? 'ProDJ Link' : bpmSource === 'stagelinq' ? 'StageLinq' : bpmSource === 'tcnet' ? 'TCNet' : null;
 
   return (
     <div className="bpm-controls">
       <div className="bpm-display">
-        <Mappable id="bpm_tap">
-          <button className="bpm-tap-btn" onClick={handleTap} disabled={isProlink || bpmSource === 'tcnet'} title={isProlink ? 'Disabled — BPM is controlled by ProDJ Link / StageLinq' : bpmSource === 'tcnet' ? 'Disabled — BPM is controlled by TCNet' : 'Tap to set BPM'}>TAP</button>
-        </Mappable>
         <button
           className={`bpm-source-toggle ${bpmSource === 'tcnet' ? 'active' : ''}`}
           onClick={handleBpmSourceChange}
@@ -59,10 +60,17 @@ const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceCh
         >
           {bpmSource === 'prolink' ? 'ProDJ' : bpmSource === 'tcnet' ? 'TCNet' : bpmSource === 'stagelinq' ? 'StLq' : 'Tap'}
         </button>
-        <div className="bpm-fine-controls">
-          <Mappable id="bpm_fine_down">
-            <button className="bpm-fine-btn" onClick={() => onBpmChange(Math.max(1, bpm - 0.1))} disabled={isProlink}>-</button>
+        {isTapMode && (
+          <Mappable id="bpm_tap">
+            <button className="bpm-tap-btn" onClick={handleTap} title="Tap to set BPM">TAP</button>
           </Mappable>
+        )}
+        <div className="bpm-fine-controls">
+          {isTapMode && (
+            <Mappable id="bpm_fine_down">
+              <button className="bpm-fine-btn" onClick={() => onBpmChange(Math.max(1, bpm - 0.1))}>-</button>
+            </Mappable>
+          )}
           <Mappable id="bpm_value">
             <input
               type="number"
@@ -73,12 +81,15 @@ const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceCh
               max="999"
               step="0.1"
               ref={bpmInputRef}
-              disabled={isProlink}
+              disabled={!isTapMode}
+              title={sourceLabel ? `BPM is driven by ${sourceLabel}` : 'Show BPM'}
             />
           </Mappable>
-          <Mappable id="bpm_fine_up">
-            <button className="bpm-fine-btn" onClick={() => onBpmChange(Math.min(999, bpm + 0.1))} disabled={isProlink}>+</button>
-          </Mappable>
+          {isTapMode && (
+            <Mappable id="bpm_fine_up">
+              <button className="bpm-fine-btn" onClick={() => onBpmChange(Math.min(999, bpm + 0.1))}>+</button>
+            </Mappable>
+          )}
         </div>
         <span className="bpm-label">BPM</span>
       </div>

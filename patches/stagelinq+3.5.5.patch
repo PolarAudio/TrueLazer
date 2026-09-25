@@ -65,6 +65,31 @@ index f6b6cff..c08a9a9 100644
  class NetworkDevice {
      constructor(info, logger = logger_1.noopLogger) {
          this.connection = null;
+diff --git a/node_modules/stagelinq/dist/network/StageLinqDevices.js b/node_modules/stagelinq/dist/network/StageLinqDevices.js
+index 4d1d626..3f3e6a4 100644
+--- a/node_modules/stagelinq/dist/network/StageLinqDevices.js
++++ b/node_modules/stagelinq/dist/network/StageLinqDevices.js
+@@ -246,7 +246,19 @@ class StageLinqDevices extends events_1.EventEmitter {
+         const sourceId = this.sourceId(connectionInfo);
+         if (this.options.enableFileTranfer) {
+             this.logger.info(`Starting file transfer for ${this.deviceId(connectionInfo)}`);
+-            const fileTransferService = await networkDevice.connectToService(services_1.FileTransfer);
++            // TrueLazer vendored patch: FileTransfer is optional. Upstream lets a
++            // failure here reject connectToDevice's try block, so a device that
++            // simply does not advertise the service gets marked FAILED and never
++            // connects at all. TrueLazer only needs FileTransfer to read embedded
++            // track artwork, so degrade to "no artwork for this device" instead of
++            // losing the device.
++            let fileTransferService = null;
++            try {
++                fileTransferService = await networkDevice.connectToService(services_1.FileTransfer);
++            }
++            catch (e) {
++                this.logger.warn(`File transfer unavailable for ${connectionInfo.address}: ${e}`);
++            }
+             this.devices.set(`net://${sourceId}`, {
+                 networkDevice: networkDevice,
+                 fileTransferService: fileTransferService
 diff --git a/node_modules/stagelinq/dist/network/announce.js b/node_modules/stagelinq/dist/network/announce.js
 index 8cef4b4..cc1757f 100644
 --- a/node_modules/stagelinq/dist/network/announce.js
@@ -89,7 +114,7 @@ index 8cef4b4..cc1757f 100644
                  targets.push({
                      broadcastIP: info.broadcastAddress,
 diff --git a/node_modules/stagelinq/dist/services/StateMap.js b/node_modules/stagelinq/dist/services/StateMap.js
-index 30be638..b777214 100644
+index 30be638..1d89e5a 100644
 --- a/node_modules/stagelinq/dist/services/StateMap.js
 +++ b/node_modules/stagelinq/dist/services/StateMap.js
 @@ -42,6 +42,7 @@ exports.States = [
@@ -116,7 +141,7 @@ index 30be638..b777214 100644
      types_1.StageLinqValue.EngineDeck4Play,
      types_1.StageLinqValue.EngineDeck4PlayState,
      types_1.StageLinqValue.EngineDeck4PlayStatePath,
-@@ -87,6 +90,7 @@ exports.States = [
+@@ -87,10 +90,13 @@ exports.States = [
      types_1.StageLinqValue.EngineDeck4TrackCurrentKey,
      types_1.StageLinqValue.EngineDeck4TrackTrackLength,
      types_1.StageLinqValue.EngineDeck4TrackTrackURI,
@@ -124,6 +149,12 @@ index 30be638..b777214 100644
      types_1.StageLinqValue.ClientPreferencesLayerA,
      types_1.StageLinqValue.ClientPreferencesPlayer,
      types_1.StageLinqValue.ClientPreferencesPlayerJogColorA,
+     types_1.StageLinqValue.ClientPreferencesPlayerJogColorB,
++    types_1.StageLinqValue.ClientPreferencesPlayerJogColorC, // TrueLazer vendored patch (4-deck players)
++    types_1.StageLinqValue.ClientPreferencesPlayerJogColorD, // TrueLazer vendored patch (4-deck players)
+     types_1.StageLinqValue.EngineDeck1DeckIsMaster,
+     types_1.StageLinqValue.EngineDeck2DeckIsMaster,
+     types_1.StageLinqValue.EngineMasterMasterTempo,
 diff --git a/node_modules/stagelinq/dist/sqlite-stub.js b/node_modules/stagelinq/dist/sqlite-stub.js
 new file mode 100644
 index 0000000..942d279
@@ -162,3 +193,20 @@ index 0000000..942d279
 +};
 +module.exports.default = module.exports;
 \ No newline at end of file
+diff --git a/node_modules/stagelinq/dist/types/common.js b/node_modules/stagelinq/dist/types/common.js
+index d66d07a..03f5df7 100644
+--- a/node_modules/stagelinq/dist/types/common.js
++++ b/node_modules/stagelinq/dist/types/common.js
+@@ -238,6 +238,12 @@ var StageLinqValue;
+     StageLinqValue["MixerNumberOfChannels"] = "/Mixer/NumberOfChannels";
+     StageLinqValue["ClientPreferencesPlayerJogColorA"] = "/Client/Preferences/PlayerJogColorA";
+     StageLinqValue["ClientPreferencesPlayerJogColorB"] = "/Client/Preferences/PlayerJogColorB";
++    // TrueLazer vendored patch: upstream only declares A/B, so 4-deck players
++    // (Prime 4) never subscribe to the C/D deck colors. Player.js already maps
++    // /PlayerJogColor[A-D]$/ onto PlayerStatus.jogColor, so declaring the two
++    // missing paths is all it takes for layers C and D to report a color too.
++    StageLinqValue["ClientPreferencesPlayerJogColorC"] = "/Client/Preferences/PlayerJogColorC";
++    StageLinqValue["ClientPreferencesPlayerJogColorD"] = "/Client/Preferences/PlayerJogColorD";
+     StageLinqValue["EngineDeck1DeckIsMaster"] = "/Client/Deck1/DeckIsMaster";
+     StageLinqValue["EngineDeck2DeckIsMaster"] = "/Client/Deck2/DeckIsMaster";
+     StageLinqValue["ClientPreferencesLayerA"] = "/Client/Preferences/LayerA";

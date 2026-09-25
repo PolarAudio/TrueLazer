@@ -186,6 +186,14 @@ contextBridge.exposeInMainWorld(
                                                     getStagelinqSettings: () => ipcRenderer.invoke('get-stagelinq-settings'),
                                                     setStagelinqSettings: (settings) => ipcRenderer.invoke('set-stagelinq-settings', settings),
                                                     getStagelinqStatus: () => ipcRenderer.invoke('get-stagelinq-status'),
+                                                    // DJ-Link display: cover art arrives on its own channel because
+                                                    // a data URL is far too big to re-send on every status packet.
+                                                    onDjLinkArtwork: (callback) => {
+                                                        const listener = (event, payload) => callback(payload);
+                                                        ipcRenderer.on('djlink-artwork', listener);
+                                                        return () => ipcRenderer.removeListener('djlink-artwork', listener);
+                                                    },
+                                                    getDjLinkArtwork: () => ipcRenderer.invoke('get-djlink-artwork'),
                                                     // OSC
                                             initializeOsc: (config) => ipcRenderer.invoke('initialize-osc', config),
                                             sendOscMessage: (address, args) => ipcRenderer.send('send-osc-message', address, args),

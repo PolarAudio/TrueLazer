@@ -13,6 +13,7 @@ import NotificationPopup from './components/NotificationPopup';
 import IldaPlayer from './components/IldaPlayer';
 import WorldPreview from './components/WorldPreview';
 import BPMControls from './components/BPMControls';
+import DJLink from './components/DJLink';
 import TransportControls from './components/TransportControls';
 import SettingsPanel from './components/SettingsPanel';
 import GeneratorSettingsPanel from './components/GeneratorSettingsPanel';
@@ -1870,7 +1871,12 @@ const SidePanelContainer = React.memo(({
     layerSolosRef, // Use Ref
     layerBlackoutsRef, // Use Ref
     optimizationEnabled,
-    activePageId
+    activePageId,
+    onPlay,
+    onPause,
+    onStop,
+    isPlaying,
+    isStopped
 }) => {
     const [tick, setTick] = useState(0);
     const lastPreviewTimeRef = useRef(0);
@@ -1937,37 +1943,37 @@ const SidePanelContainer = React.memo(({
         const loop = (timestamp) => {
             try {
                 if (timestamp - lastPreviewTimeRef.current > previewInterval) {
-                // Always count the frame: UI-FPS is the permanent loop health, not the
-                // preview render rate.
-                previewFrameCountRef.current++;
-                lastPreviewTimeRef.current = timestamp;
+                    // Always count the frame: UI-FPS is the permanent loop health, not the
+                    // preview render rate.
+                    previewFrameCountRef.current++;
+                    lastPreviewTimeRef.current = timestamp;
 
-                // The preview memos read refs (liveFramesRef, progressRef) that never
-                // trigger renders by themselves, so this tick drives them. Re-render only
-                // when something observable actually changed — an idle-selected clip or an
-                // empty deck must not re-render the whole panel at 70fps.
-                const hasPreviewContent =
-                    activeClipIndexesRef.current.some(info => info && info.colIndex !== null) ||
-                    (selectedLayerIndex !== null && selectedColIndex !== null);
-                if (hasPreviewContent) {
-                    lastPreviewContentRef.current = true;
-                    const sig = buildPreviewSignature();
-                    if (!sigsEqual(sig, lastPreviewSigRef.current)) {
-                        lastPreviewSigRef.current = sig;
+                    // The preview memos read refs (liveFramesRef, progressRef) that never
+                    // trigger renders by themselves, so this tick drives them. Re-render only
+                    // when something observable actually changed — an idle-selected clip or an
+                    // empty deck must not re-render the whole panel at 70fps.
+                    const hasPreviewContent =
+                        activeClipIndexesRef.current.some(info => info && info.colIndex !== null) ||
+                        (selectedLayerIndex !== null && selectedColIndex !== null);
+                    if (hasPreviewContent) {
+                        lastPreviewContentRef.current = true;
+                        const sig = buildPreviewSignature();
+                        if (!sigsEqual(sig, lastPreviewSigRef.current)) {
+                            lastPreviewSigRef.current = sig;
+                            previewTimeRef.current = performance.now();
+                            setTick(t => t + 1);
+                        }
+                    } else if (lastPreviewContentRef.current) {
+                        // Just became fully idle (e.g. the last clip was deactivated): force
+                        // one final render so the memoized worldFrames/activeFrames empties
+                        // and the world preview drops its last frame — with nothing active,
+                        // no further tick would ever re-render to clear it.
+                        lastPreviewContentRef.current = false;
                         previewTimeRef.current = performance.now();
                         setTick(t => t + 1);
+                    } else {
+                        lastPreviewSigRef.current = [];
                     }
-                } else if (lastPreviewContentRef.current) {
-                    // Just became fully idle (e.g. the last clip was deactivated): force
-                    // one final render so the memoized worldFrames/activeFrames empties
-                    // and the world preview drops its last frame — with nothing active,
-                    // no further tick would ever re-render to clear it.
-                    lastPreviewContentRef.current = false;
-                    previewTimeRef.current = performance.now();
-                    setTick(t => t + 1);
-                } else {
-                    lastPreviewSigRef.current = [];
-                }
                 }
             } catch (err) {
                 // UI-FPS tracker must never die: keep the rAF health chain alive.
@@ -2084,6 +2090,15 @@ const SidePanelContainer = React.memo(({
 
     return (
         <div className="side-panel">
+            <div className="side-panel-transport">
+                <TransportControls
+                    onPlay={onPlay}
+                    onPause={onPause}
+                    onStop={onStop}
+                    isPlaying={isPlaying}
+                    isStopped={isStopped}
+                />
+            </div>
             <IldaPlayer
                 frame={selectedClipFrame}
                 effects={selectedClipEffects}
@@ -2515,6 +2530,11 @@ function App() {
     const lastNdiSourceNameRef = useRef(null); // Ref to track NDI source name across renders
 
     const accumulatedTimeRef = useRef({}); // Add accumulatedTimeRef
+    // Beat counter for clips whose playback mode is 'bpm'. Progress is advanced
+    // beat-by-beat rather than derived from a fixed elapsed-ms base divided by a
+    // BPM-dependent duration, so a tempo change alters how fast the clip travels
+    // instead of teleporting it to another frame.
+    const accumulatedBeatsRef = useRef({});
 
     const hoveredClipRef = useRef(null); // { layerIndex, colIndex } or null
 
@@ -3546,338 +3566,362 @@ function App() {
         // Frame fetcher loop for updating liveFrames
         const frameFetcherLoop = (timestamp) => {
             try {
-            const currentFrameInterval = 1000 / playbackFpsRef.current;
-            const currentBpm = bpmRef.current || 120;
+                const currentFrameInterval = 1000 / playbackFpsRef.current;
+                const currentBpm = bpmRef.current || 120;
 
-            const processClip = (clip, layerIndex, colIndex, workerId, isPreview = false, ts = timestamp, skipRegen = false) => {
-                const pageIdx = clip.pageId !== undefined ? clip.pageId : stateRef.current.activePageId;
+                const processClip = (clip, layerIndex, colIndex, workerId, isPreview = false, ts = timestamp, skipRegen = false) => {
+                    const pageIdx = clip.pageId !== undefined ? clip.pageId : stateRef.current.activePageId;
 
-                if (!lastFrameFetchTimeRef.current[workerId]) {
-                    lastFrameFetchTimeRef.current[workerId] = ts;
-                }
-
-                // Calculate time since last frame
-                let dt = ts - lastFrameFetchTimeRef.current[workerId];
-
-                // Sanity check for huge jumps (e.g. tab inactive)
-                if (dt > 1000) dt = currentFrameInterval;
-
-                // Only advance time if playing, OR if this is a virtual
-                // preview (hovered/selected generator clip) so its thumbnail
-                // can render live even when the transport is stopped.
-                if (isPlayingRef.current || isPreview) {
-                    if (accumulatedTimeRef.current[workerId] === undefined) {
-                        accumulatedTimeRef.current[workerId] = 0;
+                    if (!lastFrameFetchTimeRef.current[workerId]) {
+                        lastFrameFetchTimeRef.current[workerId] = ts;
                     }
-                    accumulatedTimeRef.current[workerId] += dt;
-                }
 
-                const totalElapsed = accumulatedTimeRef.current[workerId] || 0;
+                    // Calculate time since last frame
+                    let dt = ts - lastFrameFetchTimeRef.current[workerId];
 
-                // We only use audio sync if it's an active clip (not a preview only)
-                const activeInfo = activeClipIndexesRef.current[layerIndex];
-                const isActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
-                const audioInfo = isActive ? getAudioInfoRef.current(layerIndex) : null;
+                    // Sanity check for huge jumps (e.g. tab inactive)
+                    if (dt > 1000) dt = currentFrameInterval;
 
-                let targetIndex = frameIndexesRef.current[workerId] || 0;
-                let currentProgress = 0;
-                const totalFrames = clip.totalFrames || 1;
-                const pSettings = clip.playbackSettings || { mode: 'fps', duration: totalFrames / 30, beats: 8, speedMultiplier: 1 };
+                    // Clips without audio integrate their position from wall-clock
+                    // dt, so a main-thread stall is integrated as elapsed time and
+                    // teleports the clip: a parameter update causes a re-render plus
+                    // a worker postMessage burst, the loop misses frames, and the
+                    // clip freezes then jumps — which reads as a stutter. Cap the
+                    // integrated step so a hitch is absorbed instead of integrated.
+                    // 100ms is ~3 frames at 30fps, so normal playback is untouched
+                    // and only a stall long enough to be visible gets clamped. Clips
+                    // WITH audio are unaffected either way: they read the element's
+                    // own currentTime rather than integrating dt.
+                    const integrationDt = Math.min(dt, 100);
 
-                if (audioInfo && isPlayingRef.current && !audioInfo.paused) {
-                    currentProgress = audioInfo.duration > 0 ? (audioInfo.currentTime / audioInfo.duration) : 0;
-                    targetIndex = Math.floor(currentProgress * totalFrames);
-                } else if (pSettings.mode === 'timeline') {
-                    const totalDurationMs = (pSettings.duration * 1000) / (pSettings.speedMultiplier || 1);
-                    if (totalDurationMs > 0) {
-                        currentProgress = (totalElapsed / totalDurationMs) % 1.0;
+                    // Only advance time if playing, OR if this is a virtual
+                    // preview (hovered/selected generator clip) so its thumbnail
+                    // can render live even when the transport is stopped.
+                    if (isPlayingRef.current || isPreview) {
+                        if (accumulatedTimeRef.current[workerId] === undefined) {
+                            accumulatedTimeRef.current[workerId] = 0;
+                        }
+                        accumulatedTimeRef.current[workerId] += integrationDt;
+                    }
+
+                    const totalElapsed = accumulatedTimeRef.current[workerId] || 0;
+
+                    // We only use audio sync if it's an active clip (not a preview only)
+                    const activeInfo = activeClipIndexesRef.current[layerIndex];
+                    const isActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
+                    const audioInfo = isActive ? getAudioInfoRef.current(layerIndex) : null;
+
+                    let targetIndex = frameIndexesRef.current[workerId] || 0;
+                    let currentProgress = 0;
+                    const totalFrames = clip.totalFrames || 1;
+                    const pSettings = clip.playbackSettings || { mode: 'fps', duration: totalFrames / 30, beats: 8, speedMultiplier: 1 };
+
+                    if (audioInfo && isPlayingRef.current && !audioInfo.paused) {
+                        currentProgress = audioInfo.duration > 0 ? (audioInfo.currentTime / audioInfo.duration) : 0;
                         targetIndex = Math.floor(currentProgress * totalFrames);
-                    }
-                } else if (pSettings.mode === 'bpm') {
-                    const oneBeatMs = 60000 / currentBpm;
-                    const totalDurationMs = (pSettings.beats * oneBeatMs) / (pSettings.speedMultiplier || 1);
-                    if (totalDurationMs > 0) {
-                        currentProgress = (totalElapsed / totalDurationMs) % 1.0;
-                        targetIndex = Math.floor(currentProgress * totalFrames);
-                    }
-                } else {
-                    // FPS Mode (Default)
-                    const clipFps = pSettings.fps || 30;
-                    const clipFrameInterval = 1000 / (clipFps * (pSettings.speedMultiplier || 1));
-
-                    const isSingleFrameGen = clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1);
-
-                    if (dt >= clipFrameInterval || isSingleFrameGen) {
-                        const framesToAdvance = Math.floor(dt / clipFrameInterval);
+                    } else if (pSettings.mode === 'timeline') {
+                        const totalDurationMs = (pSettings.duration * 1000) / (pSettings.speedMultiplier || 1);
+                        if (totalDurationMs > 0) {
+                            currentProgress = (totalElapsed / totalDurationMs) % 1.0;
+                            targetIndex = Math.floor(currentProgress * totalFrames);
+                        }
+                    } else if (pSettings.mode === 'bpm') {
+                        const beatsWanted = pSettings.beats || 8;
+                        const speedMult = pSettings.speedMultiplier || 1;
+                        // Advance a BEAT counter instead of computing
+                        // totalElapsed / (beats * 60000 / bpm). The old form
+                        // divided by a BPM-dependent duration, so every tempo
+                        // change moved the divisor and jumped the clip to a
+                        // different frame — with a slow tempo change (a ramping
+                        // BPM, or a deck syncing) that reads as the clip
+                        // restarting. Counting beats keeps the clip where it is
+                        // and only changes its speed from that point on.
                         if (isPlayingRef.current || isPreview) {
-                            lastFrameFetchTimeRef.current[workerId] = ts - (dt % clipFrameInterval);
-                            targetIndex = (targetIndex + framesToAdvance);
-                        } else {
-                            lastFrameFetchTimeRef.current[workerId] = ts;
+                            accumulatedBeatsRef.current[workerId] =
+                                (accumulatedBeatsRef.current[workerId] || 0)
+                                + (integrationDt / 60000) * currentBpm * speedMult;
                         }
-
-                        if (isSingleFrameGen) {
-                            // Virtual progress for single-frame generators based on pSettings.duration
-                            const virtualDurMs = (pSettings.duration || 1.0) * 1000;
-                            currentProgress = (totalElapsed / virtualDurMs) % 1.0;
-                            targetIndex = 0; // Always frame 0
-                        } else {
-                            currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
-                        }
+                        const beatsElapsed = accumulatedBeatsRef.current[workerId] || 0;
+                        currentProgress = beatsWanted > 0 ? (beatsElapsed / beatsWanted) % 1.0 : 0;
+                        targetIndex = Math.floor(currentProgress * totalFrames);
                     } else {
-                        // If not enough time passed for a new frame, we still keep current targetIndex
-                        // and we don't return here anymore, so parameter animation can run every loop
-                        targetIndex = frameIndexesRef.current[workerId] || 0;
-                        currentProgress = progressRef.current[workerId] || 0;
+                        // FPS Mode (Default)
+                        const clipFps = pSettings.fps || 30;
+                        const clipFrameInterval = 1000 / (clipFps * (pSettings.speedMultiplier || 1));
+
+                        const isSingleFrameGen = clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1);
+
+                        if (dt >= clipFrameInterval || isSingleFrameGen) {
+                            const framesToAdvance = Math.floor(dt / clipFrameInterval);
+                            if (isPlayingRef.current || isPreview) {
+                                lastFrameFetchTimeRef.current[workerId] = ts - (dt % clipFrameInterval);
+                                targetIndex = (targetIndex + framesToAdvance);
+                            } else {
+                                lastFrameFetchTimeRef.current[workerId] = ts;
+                            }
+
+                            if (isSingleFrameGen) {
+                                // Virtual progress for single-frame generators based on pSettings.duration
+                                const virtualDurMs = (pSettings.duration || 1.0) * 1000;
+                                currentProgress = (totalElapsed / virtualDurMs) % 1.0;
+                                targetIndex = 0; // Always frame 0
+                            } else {
+                                currentProgress = totalFrames > 0 ? ((targetIndex % totalFrames) / totalFrames) : 0;
+                            }
+                        } else {
+                            // If not enough time passed for a new frame, we still keep current targetIndex
+                            // and we don't return here anymore, so parameter animation can run every loop
+                            targetIndex = frameIndexesRef.current[workerId] || 0;
+                            currentProgress = progressRef.current[workerId] || 0;
+                        }
                     }
-                }
 
-                // For non-FPS modes, we update lastFrameFetchTimeRef every loop to keep dt correct
-                if (pSettings.mode !== 'fps') {
-                    lastFrameFetchTimeRef.current[workerId] = ts;
-                }
-
-                if (isNaN(targetIndex)) targetIndex = 0;
-                if (isNaN(currentProgress)) currentProgress = 0;
-
-                // Apply playback direction and style for ILDA clips (not generators)
-                if (clip.type === 'ilda' && clip.playbackSettings) {
-                    const playbackSettings = clip.playbackSettings;
-                    const direction = playbackSettings.direction || 'forward';
-                    const style = playbackSettings.style || 'loop';
-
-                    if (direction !== 'forward' || style !== 'loop') {
-                        // Use calculateAnimPhase to get the modified progress
-                        const animPhase = calculateAnimPhase(currentProgress, { style, direction }, 0, [0, totalFrames - 1]);
-                        targetIndex = Math.floor(animPhase);
+                    // For non-FPS modes, we update lastFrameFetchTimeRef every loop to keep dt correct
+                    if (pSettings.mode !== 'fps') {
+                        lastFrameFetchTimeRef.current[workerId] = ts;
                     }
-                }
 
-                const prevProgress = previousProgressRef.current[workerId] || 0;
-                // Check for loop/completion
-                const didLoop = (prevProgress > 0.9 && currentProgress < 0.1);
+                    if (isNaN(targetIndex)) targetIndex = 0;
+                    if (isNaN(currentProgress)) currentProgress = 0;
 
-                previousProgressRef.current[workerId] = currentProgress;
-                progressRef.current[workerId] = currentProgress;
-                if (totalFrames > 0) {
-                    targetIndex = targetIndex % totalFrames;
-                    if (targetIndex < 0) targetIndex += totalFrames;
-                }
+                    // Apply playback direction and style for ILDA clips (not generators)
+                    if (clip.type === 'ilda' && clip.playbackSettings) {
+                        const playbackSettings = clip.playbackSettings;
+                        const direction = playbackSettings.direction || 'forward';
+                        const style = playbackSettings.style || 'loop';
 
-                // Autopilot Trigger
-                if (didLoop && isPlayingRef.current) {
-                    const mode = layerAutopilotsRef.current[layerIndex];
-                    if (mode && mode !== 'off') {
-                        // Trigger next clip
-                        const currentLayerClips = clipContentsRef.current[pageIdx]?.[layerIndex] || [];
-                        const activeInfo = activeClipIndexesRef.current[layerIndex];
-                        if (activeInfo && activeInfo.pageId === pageIdx) {
-                            const currentCol = activeInfo.colIndex;
-                            let nextCol = -1;
-                            if (mode === 'forward') {
-                                for (let i = 1; i < 8; i++) {
-                                    const idx = (currentCol + i) % 8;
-                                    if (currentLayerClips[idx]) {
-                                        nextCol = idx;
-                                        break;
+                        if (direction !== 'forward' || style !== 'loop') {
+                            // Use calculateAnimPhase to get the modified progress
+                            const animPhase = calculateAnimPhase(currentProgress, { style, direction }, 0, [0, totalFrames - 1]);
+                            targetIndex = Math.floor(animPhase);
+                        }
+                    }
+
+                    const prevProgress = previousProgressRef.current[workerId] || 0;
+                    // Check for loop/completion
+                    const didLoop = (prevProgress > 0.9 && currentProgress < 0.1);
+
+                    previousProgressRef.current[workerId] = currentProgress;
+                    progressRef.current[workerId] = currentProgress;
+                    if (totalFrames > 0) {
+                        targetIndex = targetIndex % totalFrames;
+                        if (targetIndex < 0) targetIndex += totalFrames;
+                    }
+
+                    // Autopilot Trigger
+                    if (didLoop && isPlayingRef.current) {
+                        const mode = layerAutopilotsRef.current[layerIndex];
+                        if (mode && mode !== 'off') {
+                            // Trigger next clip
+                            const currentLayerClips = clipContentsRef.current[pageIdx]?.[layerIndex] || [];
+                            const activeInfo = activeClipIndexesRef.current[layerIndex];
+                            if (activeInfo && activeInfo.pageId === pageIdx) {
+                                const currentCol = activeInfo.colIndex;
+                                let nextCol = -1;
+                                if (mode === 'forward') {
+                                    for (let i = 1; i < 8; i++) {
+                                        const idx = (currentCol + i) % 8;
+                                        if (currentLayerClips[idx]) {
+                                            nextCol = idx;
+                                            break;
+                                        }
+                                    }
+                                } else if (mode === 'random') {
+                                    const validCols = currentLayerClips.map((c, idx) => c ? idx : null).filter(idx => idx !== null && idx !== currentCol);
+                                    if (validCols.length > 0) {
+                                        nextCol = validCols[Math.floor(Math.random() * validCols.length)];
                                     }
                                 }
-                            } else if (mode === 'random') {
-                                const validCols = currentLayerClips.map((c, idx) => c ? idx : null).filter(idx => idx !== null && idx !== currentCol);
-                                if (validCols.length > 0) {
-                                    nextCol = validCols[Math.floor(Math.random() * validCols.length)];
+                                if (nextCol !== -1) {
+                                    setTimeout(() => handleActivateClick(layerIndex, nextCol), 0);
                                 }
-                            }
-                            if (nextCol !== -1) {
-                                setTimeout(() => handleActivateClick(layerIndex, nextCol), 0);
                             }
                         }
                     }
-                }
 
-                // Calculate clip duration for sync
-                let clipDuration = 1;
-                if (pSettings.mode === 'timeline') {
-                    clipDuration = pSettings.duration || 1;
-                } else if (pSettings.mode === 'bpm') {
-                    clipDuration = ((pSettings.beats || 8) * 60) / currentBpm;
-                } else {
-                    // FPS mode or default
-                    if (clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1)) {
-                        clipDuration = pSettings.duration || 1.0;
+                    // Calculate clip duration for sync
+                    let clipDuration = 1;
+                    if (pSettings.mode === 'timeline') {
+                        clipDuration = pSettings.duration || 1;
+                    } else if (pSettings.mode === 'bpm') {
+                        clipDuration = ((pSettings.beats || 8) * 60) / currentBpm;
                     } else {
-                        clipDuration = totalFrames / (pSettings.fps || 30);
-                    }
-                }
-
-                // Generator Parameter Animation Sync + real-time re-generation.
-                // processClip is called by multiple drivers — the active output loop
-                // (once per rAF), the thumbnail regen loop AND the background loop for
-                // released flash clips. Time-based animated params change every call,
-                // so without ONE shared per-clip budget each driver would enqueue a fresh
-                // full-frame regen every rAF (~80+/s for an active flash generator): the
-                // worker queue floods and every response structured-clones a big typed
-                // array back to the main thread, tanking UI and DAC output frames.
-                if (clip.type === 'generator') {
-                    const syncSettings = clip.syncSettings || {};
-                    const generatorId = clip.generatorDefinition?.id;
-                    const genDef = clip.generatorDefinition;
-
-                    const genLiveMinInterval = Math.max(16, 1000 / Math.max(1, pSettings.fps || 30));
-                    const lastGenLive = generatorLiveRegenTimeRef.current.get(workerId) || 0;
-                    const genBudgetOk = (ts - lastGenLive) >= genLiveMinInterval;
-
-                    const animatedParams = Object.keys(syncSettings).filter(key => key.startsWith(`${generatorId}.`));
-                    let resolvedParams = null;
-                    let changed = false;
-
-                    if (animatedParams.length > 0) {
-                        const currentParams = clip.currentParams || {};
-                        resolvedParams = { ...currentParams };
-
-                        const context = {
-                            time: ts,
-                            progress: currentProgress,
-                            bpm: currentBpm,
-                            clipDuration: clipDuration,
-                            fftLevels: getFftLevels ? getFftLevels() : fftLevels,
-                            activationTime: clipActivationTimesRef.current[layerIndex] || 0
-                        };
-
-                        for (const paramKey of animatedParams) {
-                            const paramId = paramKey.split('.')[1];
-                            const control = genDef?.paramControls?.find(c => c.id === paramId);
-                            const baseValue = currentParams[paramId] !== undefined ? currentParams[paramId] : clip.generatorDefinition.defaultParams[paramId];
-                            const newValue = resolveParam(paramId, baseValue, syncSettings[paramKey], context, control?.min, control?.max);
-
-                            if (newValue !== resolvedParams[paramId]) {
-                                resolvedParams[paramId] = newValue;
-                                changed = true;
-                            }
+                        // FPS mode or default
+                        if (clip.type === 'generator' && (!clip.frames || clip.frames.length <= 1)) {
+                            clipDuration = pSettings.duration || 1.0;
+                        } else {
+                            clipDuration = totalFrames / (pSettings.fps || 30);
                         }
                     }
 
-                    const timeVarying = generatorId === 'waveform' || generatorId === 'timer';
+                    // Generator Parameter Animation Sync + real-time re-generation.
+                    // processClip is called by multiple drivers — the active output loop
+                    // (once per rAF), the thumbnail regen loop AND the background loop for
+                    // released flash clips. Time-based animated params change every call,
+                    // so without ONE shared per-clip budget each driver would enqueue a fresh
+                    // full-frame regen every rAF (~80+/s for an active flash generator): the
+                    // worker queue floods and every response structured-clones a big typed
+                    // array back to the main thread, tanking UI and DAC output frames.
+                    if (clip.type === 'generator') {
+                        const syncSettings = clip.syncSettings || {};
+                        const generatorId = clip.generatorDefinition?.id;
+                        const genDef = clip.generatorDefinition;
 
-                    if (genBudgetOk && !skipRegen && (changed || timeVarying)) {
-                        generatorLiveRegenTimeRef.current.set(workerId, ts);
+                        const genLiveMinInterval = Math.max(16, 1000 / Math.max(1, pSettings.fps || 30));
+                        const lastGenLive = generatorLiveRegenTimeRef.current.get(workerId) || 0;
+                        const genBudgetOk = (ts - lastGenLive) >= genLiveMinInterval;
 
-                        if (changed) {
-                            // Param-animation wins the shared budget for this tick: it
-                            // carries the resolved params, the frame is regenerated with
-                            // them, and the audio-driven paths wait for the next slot.
-                            const seq = ++generatorRequestSeqRef.current;
-                            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, resolvedParams, seq, true, false, null, null, pageIdx);
-                        } else if (generatorId === 'waveform') {
-                            const params = clip.currentParams || {};
-                            const data = (params.mode === 'waveform') ? timeDataRef.current : fftDataRef.current;
-                            const seq = ++generatorRequestSeqRef.current;
+                        const animatedParams = Object.keys(syncSettings).filter(key => key.startsWith(`${generatorId}.`));
+                        let resolvedParams = null;
+                        let changed = false;
+
+                        if (animatedParams.length > 0) {
+                            const currentParams = clip.currentParams || {};
+                            resolvedParams = { ...currentParams };
+
                             const context = {
                                 time: ts,
+                                progress: currentProgress,
+                                bpm: currentBpm,
+                                clipDuration: clipDuration,
+                                fftLevels: getFftLevels ? getFftLevels() : fftLevels,
                                 activationTime: clipActivationTimesRef.current[layerIndex] || 0
                             };
-                            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data, context, pageIdx);
-                        } else if (generatorId === 'timer') {
-                            const params = clip.currentParams || {};
-                            const seq = ++generatorRequestSeqRef.current;
-                            const context = {
-                                time: ts,
-                                activationTime: clipActivationTimesRef.current[layerIndex] || 0
-                            };
-                            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, null, context, pageIdx);
-                        }
-                    }
-                }
 
-                if (frameIndexesRef.current[workerId] !== targetIndex || !liveFramesRef.current[workerId]) {
-                    frameIndexesRef.current[workerId] = targetIndex;
-                    if (!skipRegen) {
-                        if (clip.type === 'ilda') {
-                            ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: targetIndex, pageId: pageIdx });
-                        } else if (clip.type === 'generator') {
-                            // Only overwrite from clip.frames if it's an animation (multi-frame)
-                            // For single-frame generators, the worker updates liveFramesRef directly
-                            // and we avoid overwriting with potentially stale frames from state.
-                            if (clip.frames && clip.frames.length > 1) {
-                                if (clip.frames[targetIndex % clip.frames.length]) {
-                                    liveFramesRef.current[workerId] = clip.frames[targetIndex % clip.frames.length];
+                            for (const paramKey of animatedParams) {
+                                const paramId = paramKey.split('.')[1];
+                                const control = genDef?.paramControls?.find(c => c.id === paramId);
+                                const baseValue = currentParams[paramId] !== undefined ? currentParams[paramId] : clip.generatorDefinition.defaultParams[paramId];
+                                const newValue = resolveParam(paramId, baseValue, syncSettings[paramKey], context, control?.min, control?.max);
+
+                                if (newValue !== resolvedParams[paramId]) {
+                                    resolvedParams[paramId] = newValue;
+                                    changed = true;
                                 }
-                            } else if (!liveFramesRef.current[workerId] && clip.frames && clip.frames.length > 0) {
-                                // Initial load
-                                liveFramesRef.current[workerId] = clip.frames[0];
+                            }
+                        }
+
+                        const timeVarying = generatorId === 'waveform' || generatorId === 'timer';
+
+                        if (genBudgetOk && !skipRegen && (changed || timeVarying)) {
+                            generatorLiveRegenTimeRef.current.set(workerId, ts);
+
+                            if (changed) {
+                                // Param-animation wins the shared budget for this tick: it
+                                // carries the resolved params, the frame is regenerated with
+                                // them, and the audio-driven paths wait for the next slot.
+                                const seq = ++generatorRequestSeqRef.current;
+                                regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, resolvedParams, seq, true, false, null, null, pageIdx);
+                            } else if (generatorId === 'waveform') {
+                                const params = clip.currentParams || {};
+                                const data = (params.mode === 'waveform') ? timeDataRef.current : fftDataRef.current;
+                                const seq = ++generatorRequestSeqRef.current;
+                                const context = {
+                                    time: ts,
+                                    activationTime: clipActivationTimesRef.current[layerIndex] || 0
+                                };
+                                regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data, context, pageIdx);
+                            } else if (generatorId === 'timer') {
+                                const params = clip.currentParams || {};
+                                const seq = ++generatorRequestSeqRef.current;
+                                const context = {
+                                    time: ts,
+                                    activationTime: clipActivationTimesRef.current[layerIndex] || 0
+                                };
+                                regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, null, context, pageIdx);
+                            }
+                        }
+                    }
+
+                    if (frameIndexesRef.current[workerId] !== targetIndex || !liveFramesRef.current[workerId]) {
+                        frameIndexesRef.current[workerId] = targetIndex;
+                        if (!skipRegen) {
+                            if (clip.type === 'ilda') {
+                                ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: targetIndex, pageId: pageIdx });
+                            } else if (clip.type === 'generator') {
+                                // Only overwrite from clip.frames if it's an animation (multi-frame)
+                                // For single-frame generators, the worker updates liveFramesRef directly
+                                // and we avoid overwriting with potentially stale frames from state.
+                                if (clip.frames && clip.frames.length > 1) {
+                                    if (clip.frames[targetIndex % clip.frames.length]) {
+                                        liveFramesRef.current[workerId] = clip.frames[targetIndex % clip.frames.length];
+                                    }
+                                } else if (!liveFramesRef.current[workerId] && clip.frames && clip.frames.length > 0) {
+                                    // Initial load
+                                    liveFramesRef.current[workerId] = clip.frames[0];
+                                }
+                            }
+                        }
+                    }
+                };
+
+                // Expose the current processClip instance so the flash background loop can
+                // advance released clips with the SAME timing/state driver as the active
+                // loop (progress, sync parameters, frame indexes stay continuous).
+                processClipRef.current = (bgClip, layerIdx, colIdx, workerId, isPreview = false, ts = performance.now(), skipRegen = false) => {
+                    processClip(bgClip, layerIdx, colIdx, workerId, isPreview, ts, skipRegen);
+                };
+
+                // 1. Process active clips across ALL pages (as tracked in activeClipIndexes)
+                layers.forEach((_, layerIndex) => {
+                    const activeInfo = activeClipIndexesRef.current[layerIndex];
+                    if (!activeInfo || activeInfo.colIndex === null) return;
+
+                    const { pageId, colIndex } = activeInfo;
+                    // Use live content ref for latest params
+                    const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+                    const clip = clipSource[pageId]?.[layerIndex]?.[colIndex];
+                    if (!clip) return;
+
+                    let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${pageId}-${layerIndex}-${colIndex}` : null);
+                    if (!workerId) return;
+
+                    processClip(clip, layerIndex, colIndex, workerId);
+                });
+
+                // 2. Process selected clip (for preview) if it's not already handled as active
+                const selWorkerId = selectedIldaWorkerIdRef.current;
+                if (selWorkerId && !activeClipsDataRef.current.some(c => c.workerId === selWorkerId)) {
+                    const lIdx = selectedLayerIndexRef.current;
+                    const cIdx = selectedColIndexRef.current;
+                    const pIdx = stateRef.current.activePageId;
+
+                    if (lIdx !== null && cIdx !== null) {
+                        const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+                        const clip = clipSource[pIdx]?.[lIdx]?.[cIdx];
+                        if (clip) {
+                            processClip(clip, lIdx, cIdx, selWorkerId, clip.type === 'generator');
+                        }
+                    }
+                }
+
+                // 3. Process hovered clip (for hover preview). Only needed in live thumbnail
+                // render mode — in still mode the hovered thumbnail shows a static frame, so
+                // generating per-frame preview frames nobody renders is pure waste.
+                if (stateRef.current.thumbnailRenderMode === 'active' && hoveredClipRef.current) {
+                    const { layerIndex, colIndex } = hoveredClipRef.current;
+                    const pIdx = stateRef.current.activePageId;
+
+                    // Avoid double processing if it's already active or selected. Also skip the
+                    // hover preview while ANY clip is selected for preview: clicking a
+                    // new clip's preview should become the sole running preview instead of
+                    // leaving a previously hovered/selected preview animating too.
+                    const activeInfo = activeClipIndexesRef.current[layerIndex];
+                    const isActive = activeInfo && activeInfo.pageId === pIdx && activeInfo.colIndex === colIndex;
+                    const selWorkerId = selectedIldaWorkerIdRef.current;
+                    const anySelectedPreview = selectedLayerIndexRef.current !== null && selectedColIndexRef.current !== null;
+
+                    if (!isActive && !anySelectedPreview) {
+                        const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+                        const clip = clipSource[pIdx]?.[layerIndex]?.[colIndex];
+                        if (clip) {
+                            let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${pIdx}-${layerIndex}-${colIndex}` : null);
+                            if (workerId && workerId !== selWorkerId) {
+                                processClip(clip, layerIndex, colIndex, workerId, clip.type === 'generator');
                             }
                         }
                     }
                 }
-            };
-
-            // Expose the current processClip instance so the flash background loop can
-            // advance released clips with the SAME timing/state driver as the active
-            // loop (progress, sync parameters, frame indexes stay continuous).
-            processClipRef.current = (bgClip, layerIdx, colIdx, workerId, isPreview = false, ts = performance.now(), skipRegen = false) => {
-                processClip(bgClip, layerIdx, colIdx, workerId, isPreview, ts, skipRegen);
-            };
-
-            // 1. Process active clips across ALL pages (as tracked in activeClipIndexes)
-            layers.forEach((_, layerIndex) => {
-                const activeInfo = activeClipIndexesRef.current[layerIndex];
-                if (!activeInfo || activeInfo.colIndex === null) return;
-
-                const { pageId, colIndex } = activeInfo;
-                // Use live content ref for latest params
-                const clipSource = liveClipContentsRef.current || clipContentsRef.current;
-                const clip = clipSource[pageId]?.[layerIndex]?.[colIndex];
-                if (!clip) return;
-
-                let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${pageId}-${layerIndex}-${colIndex}` : null);
-                if (!workerId) return;
-
-                processClip(clip, layerIndex, colIndex, workerId);
-            });
-
-            // 2. Process selected clip (for preview) if it's not already handled as active
-            const selWorkerId = selectedIldaWorkerIdRef.current;
-            if (selWorkerId && !activeClipsDataRef.current.some(c => c.workerId === selWorkerId)) {
-                const lIdx = selectedLayerIndexRef.current;
-                const cIdx = selectedColIndexRef.current;
-                const pIdx = stateRef.current.activePageId;
-
-                if (lIdx !== null && cIdx !== null) {
-                    const clipSource = liveClipContentsRef.current || clipContentsRef.current;
-                    const clip = clipSource[pIdx]?.[lIdx]?.[cIdx];
-                    if (clip) {
-                        processClip(clip, lIdx, cIdx, selWorkerId, clip.type === 'generator');
-                    }
-                }
-            }
-
-            // 3. Process hovered clip (for hover preview). Only needed in live thumbnail
-            // render mode — in still mode the hovered thumbnail shows a static frame, so
-            // generating per-frame preview frames nobody renders is pure waste.
-            if (stateRef.current.thumbnailRenderMode === 'active' && hoveredClipRef.current) {
-                const { layerIndex, colIndex } = hoveredClipRef.current;
-                const pIdx = stateRef.current.activePageId;
-
-                // Avoid double processing if it's already active or selected. Also skip the
-                // hover preview while ANY clip is selected for preview: clicking a
-                // new clip's preview should become the sole running preview instead of
-                // leaving a previously hovered/selected preview animating too.
-                const activeInfo = activeClipIndexesRef.current[layerIndex];
-                const isActive = activeInfo && activeInfo.pageId === pIdx && activeInfo.colIndex === colIndex;
-                const selWorkerId = selectedIldaWorkerIdRef.current;
-                const anySelectedPreview = selectedLayerIndexRef.current !== null && selectedColIndexRef.current !== null;
-
-                if (!isActive && !anySelectedPreview) {
-                    const clipSource = liveClipContentsRef.current || clipContentsRef.current;
-                    const clip = clipSource[pIdx]?.[layerIndex]?.[colIndex];
-                    if (clip) {
-                        let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${pIdx}-${layerIndex}-${colIndex}` : null);
-                        if (workerId && workerId !== selWorkerId) {
-                            processClip(clip, layerIndex, colIndex, workerId, clip.type === 'generator');
-                        }
-                    }
-                }
-            }
 
             } catch (err) {
                 console.error('[frameFetcherLoop] preview-loop error (kept alive):', err);
@@ -3910,61 +3954,61 @@ function App() {
             let soonest = 500;
             try {
                 const pageIdx = stateRef.current.activePageId;
-            const clipSource = liveClipContentsRef.current || clipContentsRef.current;
-            const pageClips = clipSource?.[pageIdx] || [];
-            const mode = stateRef.current.thumbnailRenderMode;
+                const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+                const pageClips = clipSource?.[pageIdx] || [];
+                const mode = stateRef.current.thumbnailRenderMode;
 
-            if (mode !== 'active') {
-                genThumbnailTimer = setTimeout(genThumbnailLoop, 500);
-                return;
-            }
+                if (mode !== 'active') {
+                    genThumbnailTimer = setTimeout(genThumbnailLoop, 500);
+                    return;
+                }
 
-            const now = performance.now();
-            const due = [];
+                const now = performance.now();
+                const due = [];
 
-            for (let li = 0; li < pageClips.length; li++) {
-                const row = pageClips[li] || [];
-                for (let ci = 0; ci < row.length; ci++) {
-                    const clip = row[ci];
-                    if (!clip || clip.type !== 'generator') continue;
-                    // Skip clips already being driven live elsewhere.
-                    const activeInfo = activeClipIndexesRef.current[li];
-                    if (activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === ci) continue;
-                    if (selectedLayerIndexRef.current === li && selectedColIndexRef.current === ci) continue;
-                    const hovered = hoveredClipRef.current;
-                    if (hovered && hovered.layerIndex === li && hovered.colIndex === ci) continue;
-                    const genWorkerId = `generator-${pageIdx}-${li}-${ci}`;
-                    if ([...backgroundRunningClipsRef.current].some(entry => entry.workerId === genWorkerId)) continue;
+                for (let li = 0; li < pageClips.length; li++) {
+                    const row = pageClips[li] || [];
+                    for (let ci = 0; ci < row.length; ci++) {
+                        const clip = row[ci];
+                        if (!clip || clip.type !== 'generator') continue;
+                        // Skip clips already being driven live elsewhere.
+                        const activeInfo = activeClipIndexesRef.current[li];
+                        if (activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === ci) continue;
+                        if (selectedLayerIndexRef.current === li && selectedColIndexRef.current === ci) continue;
+                        const hovered = hoveredClipRef.current;
+                        if (hovered && hovered.layerIndex === li && hovered.colIndex === ci) continue;
+                        const genWorkerId = `generator-${pageIdx}-${li}-${ci}`;
+                        if ([...backgroundRunningClipsRef.current].some(entry => entry.workerId === genWorkerId)) continue;
 
-                    const gid = clip.generatorDefinition?.id;
-                    const hasParamAnim = clip.syncSettings && Object.keys(clip.syncSettings).some(k => k.startsWith(`${gid}.`));
-                    const isTimeVarying = TIME_VARYING_GEN.has(gid) || hasParamAnim;
-                    // Static generators change only when their params change (that path
-                    // regenerates on its own), so skip them unless no frame exists yet —
-                    // a fresh clip still needs one bootstrap preview regeneration.
-                    if (!isTimeVarying && liveFramesRef.current[genWorkerId]) continue;
+                        const gid = clip.generatorDefinition?.id;
+                        const hasParamAnim = clip.syncSettings && Object.keys(clip.syncSettings).some(k => k.startsWith(`${gid}.`));
+                        const isTimeVarying = TIME_VARYING_GEN.has(gid) || hasParamAnim;
+                        // Static generators change only when their params change (that path
+                        // regenerates on its own), so skip them unless no frame exists yet —
+                        // a fresh clip still needs one bootstrap preview regeneration.
+                        if (!isTimeVarying && liveFramesRef.current[genWorkerId]) continue;
 
-                    const fps = clip.playbackSettings?.fps || 30;
-                    const interval = Math.max(THUMB_PREVIEW_MIN_MS, 1000 / Math.max(1, fps));
-                    const last = lastPreviewRegen.get(genWorkerId) || 0;
-                    const wait = last + interval - now;
-                    if (wait <= 0) {
-                        // Time-varying clips repeat at their interval; static clips are
-                        // only bootstrapped once (retrying slowly if no frame arrived).
-                        lastPreviewRegen.set(genWorkerId, isTimeVarying ? now : now + 5000);
-                        due.push([li, ci, genWorkerId]);
-                    } else {
-                        soonest = Math.min(soonest, wait);
+                        const fps = clip.playbackSettings?.fps || 30;
+                        const interval = Math.max(THUMB_PREVIEW_MIN_MS, 1000 / Math.max(1, fps));
+                        const last = lastPreviewRegen.get(genWorkerId) || 0;
+                        const wait = last + interval - now;
+                        if (wait <= 0) {
+                            // Time-varying clips repeat at their interval; static clips are
+                            // only bootstrapped once (retrying slowly if no frame arrived).
+                            lastPreviewRegen.set(genWorkerId, isTimeVarying ? now : now + 5000);
+                            due.push([li, ci, genWorkerId]);
+                        } else {
+                            soonest = Math.min(soonest, wait);
+                        }
                     }
                 }
-            }
 
-            for (const [li, ci, genWorkerId] of due) {
-                const clip = pageClips[li]?.[ci];
-                if (clip && clip.currentParams) {
-                    processClipRef.current(clip, li, ci, genWorkerId, true, now);
+                for (const [li, ci, genWorkerId] of due) {
+                    const clip = pageClips[li]?.[ci];
+                    if (clip && clip.currentParams) {
+                        processClipRef.current(clip, li, ci, genWorkerId, true, now);
+                    }
                 }
-            }
 
             } catch (err) {
                 console.error('[genThumbnailLoop] thumbnail-loop error (kept alive):', err);
@@ -5414,41 +5458,41 @@ function App() {
         const loop = () => {
             try {
                 if (!isPlayingRef.current) {
-                // Global playback stopped/paused - clear all background clips
-                backgroundRunningClipsRef.current.clear();
-                backgroundRafRef.current = null;
-                return;
-            }
-
-            const clipsToRemove = [];
-
-            for (const bgClip of backgroundRunningClipsRef.current) {
-                const { pageIdx, layerIndex, colIndex, workerId } = bgClip;
-
-                // Verify clip still exists and is flash trigger
-                const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
-
-                if (!clip || clip.triggerStyle !== 'flash' || !clip.frames || clip.frames.length === 0) {
-                    clipsToRemove.push(bgClip);
-                    continue;
+                    // Global playback stopped/paused - clear all background clips
+                    backgroundRunningClipsRef.current.clear();
+                    backgroundRafRef.current = null;
+                    return;
                 }
 
-                // Advance released flash clips through the SAME driver the active loop
-                // uses so frame indexes, accumulated progress and sync parameter
-                // animation stay continuous between flash press/release (matches ILDA).
-                // The warm-up only needs the main-thread timing state to keep advancing —
-                // skipRegen skips the worker regen + liveFramesRef writes entirely, so a
-                // released flash clip stops triggering regens and grid-thumbnail updates
-                // for a track that isn't visible on screen.
-                if (processClipRef.current) {
-                    processClipRef.current(clip, layerIndex, colIndex, workerId, false, performance.now(), true);
-                }
-            }
+                const clipsToRemove = [];
 
-            // Remove invalid clips
-            clipsToRemove.forEach(clip => {
-                backgroundRunningClipsRef.current.delete(clip);
-            });
+                for (const bgClip of backgroundRunningClipsRef.current) {
+                    const { pageIdx, layerIndex, colIndex, workerId } = bgClip;
+
+                    // Verify clip still exists and is flash trigger
+                    const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
+
+                    if (!clip || clip.triggerStyle !== 'flash' || !clip.frames || clip.frames.length === 0) {
+                        clipsToRemove.push(bgClip);
+                        continue;
+                    }
+
+                    // Advance released flash clips through the SAME driver the active loop
+                    // uses so frame indexes, accumulated progress and sync parameter
+                    // animation stay continuous between flash press/release (matches ILDA).
+                    // The warm-up only needs the main-thread timing state to keep advancing —
+                    // skipRegen skips the worker regen + liveFramesRef writes entirely, so a
+                    // released flash clip stops triggering regens and grid-thumbnail updates
+                    // for a track that isn't visible on screen.
+                    if (processClipRef.current) {
+                        processClipRef.current(clip, layerIndex, colIndex, workerId, false, performance.now(), true);
+                    }
+                }
+
+                // Remove invalid clips
+                clipsToRemove.forEach(clip => {
+                    backgroundRunningClipsRef.current.delete(clip);
+                });
 
             } catch (err) {
                 // Swallow and continue: a single bad background clip must never
@@ -5576,7 +5620,10 @@ function App() {
         if (style === 'normal') {
             if (!isPress) return;
             // Proceed to activate - reset frame index only on NEW activation
-            if (clipWorkerId) frameIndexesRef.current[clipWorkerId] = 0;
+            if (clipWorkerId) {
+                frameIndexesRef.current[clipWorkerId] = 0;
+                accumulatedBeatsRef.current[clipWorkerId] = 0;
+            }
         } else if (style === 'toggle') {
             if (!isPress) return;
             if (isCurrentActive) {
@@ -5584,7 +5631,10 @@ function App() {
                 return;
             }
             // Proceed to activate - reset frame index only on NEW activation
-            if (clipWorkerId) frameIndexesRef.current[clipWorkerId] = 0;
+            if (clipWorkerId) {
+                frameIndexesRef.current[clipWorkerId] = 0;
+                accumulatedBeatsRef.current[clipWorkerId] = 0;
+            }
         } else if (style === 'flash') {
             if (isPress) {
                 // Proceed to activate
@@ -5623,7 +5673,10 @@ function App() {
         } else if (style === 'temp') {
             if (isPress) {
                 // Reset frame index to 0 for restart (intended behavior for temp)
-                if (clipWorkerId) frameIndexesRef.current[clipWorkerId] = 0;
+                if (clipWorkerId) {
+                    frameIndexesRef.current[clipWorkerId] = 0;
+                    accumulatedBeatsRef.current[clipWorkerId] = 0;
+                }
                 // Proceed to activate
             } else {
                 if (isCurrentActive) {
@@ -6172,7 +6225,7 @@ function App() {
     const handleTapTempo = useCallback(() => {
         const now = Date.now();
         const times = [...tapTempoTimesRef.current, now].slice(-4);
-            tapTempoTimesRef.current = times;
+        tapTempoTimesRef.current = times;
 
         if (times.length >= 2) {
             let sum = 0;
@@ -6198,24 +6251,66 @@ function App() {
     const lastProlinkBpmRef = useRef(0);
     const lastStagelinqBpmRef = useRef(0);
 
+    // Feeds a linked deck's BPM into the show without letting a fast pitch sweep
+    // stutter the output. Two separate concerns:
+    //   * bpmRef is written on EVERY packet, so the clip playback loop integrates
+    //     at the freshest tempo no matter how slow the UI update is.
+    //   * The React dispatch is throttled, because every whole-BPM change
+    //     re-renders large parts of the show. A quick pitch sweep crosses dozens
+    //     of whole-BPM values per second, and that re-render storm is what the
+    //     stutter actually was. A trailing dispatch makes sure the final value
+    //     still lands once the sweep settles.
+    const BPM_DISPATCH_MIN_MS = 80;
+    const createBpmFeeder = (lastRef) => {
+        let lastDispatchAt = 0;
+        let pending = null;
+        let trailing = null;
+        const feeder = (raw, dispatch) => {
+            if (typeof raw !== 'number' || !(raw > 0)) return;
+            const rounded = Math.max(1, Math.min(999, Math.round(raw)));
+            bpmRef.current = rounded;
+            if (rounded === lastRef.current) return;
+            lastRef.current = rounded;
+            const now = Date.now();
+            if (!trailing && now - lastDispatchAt >= BPM_DISPATCH_MIN_MS) {
+                lastDispatchAt = now;
+                dispatch({ type: 'SET_BPM', payload: rounded });
+                return;
+            }
+            pending = rounded;
+            if (!trailing) {
+                trailing = setTimeout(() => {
+                    trailing = null;
+                    if (pending != null) {
+                        lastDispatchAt = Date.now();
+                        dispatch({ type: 'SET_BPM', payload: pending });
+                    }
+                    pending = null;
+                }, BPM_DISPATCH_MIN_MS);
+            }
+        };
+        feeder.cancel = () => {
+            if (trailing) clearTimeout(trailing);
+            trailing = null;
+            pending = null;
+        };
+        return feeder;
+    };
+
     /* --- TCNet BPM Trigger-Sync: when the deck's BPM source is TCNet, feed the
      *     beat-grid BPM (broadcast by main.js on `tcnet-timecode`) into the deck's
      *     BPM so BPM Trigger-Syncing locks to the TCNet L1 beat-marker grid. ------ */
     useEffect(() => {
         if (!window.electronAPI || bpmSource !== 'tcnet') return;
+        const feedBpm = createBpmFeeder(lastTcnetBpmRef);
         let cancelled = false;
         const off = window.electronAPI.onTcnetTimecode((tc) => {
             if (cancelled) return;
-            if (tc && typeof tc.bpm === 'number' && tc.bpm > 0) {
-                const rounded = Math.max(1, Math.min(999, Math.round(tc.bpm)));
-                if (rounded !== lastTcnetBpmRef.current) {
-                    lastTcnetBpmRef.current = rounded;
-                    dispatch({ type: 'SET_BPM', payload: rounded });
-                }
-            }
+            feedBpm(tc?.bpm, dispatch);
         });
         return () => {
             cancelled = true;
+            feedBpm.cancel();
             off();
         };
     }, [dispatch, bpmSource]);
@@ -6231,19 +6326,14 @@ function App() {
             window.electronAPI.startProlinkStateListener();
         }
         let cancelled = false;
+        const feedBpm = createBpmFeeder(lastProlinkBpmRef);
         const off = window.electronAPI.onProlinkState((st) => {
             if (cancelled) return;
-            const bpm = st?.bpm || st?.effectiveBpm;
-            if (bpm && typeof bpm === 'number' && bpm > 0) {
-                const rounded = Math.max(1, Math.min(999, Math.round(bpm)));
-                if (rounded !== lastProlinkBpmRef.current) {
-                    lastProlinkBpmRef.current = rounded;
-                    dispatch({ type: 'SET_BPM', payload: rounded });
-                }
-            }
+            feedBpm(st?.bpm || st?.effectiveBpm, dispatch);
         });
-return () => {
+        return () => {
             cancelled = true;
+            feedBpm.cancel();
             off();
         };
     }, [dispatch, bpmSource]);
@@ -6259,19 +6349,14 @@ return () => {
             window.electronAPI.startStagelinqListener();
         }
         let cancelled = false;
+        const feedBpm = createBpmFeeder(lastStagelinqBpmRef);
         const off = window.electronAPI.onStagelinqState((st) => {
             if (cancelled) return;
-            const bpm = st?.bpm || st?.effectiveBpm;
-            if (bpm && typeof bpm === 'number' && bpm > 0) {
-                const rounded = Math.max(1, Math.min(999, Math.round(bpm)));
-                if (rounded !== lastStagelinqBpmRef.current) {
-                    lastStagelinqBpmRef.current = rounded;
-                    dispatch({ type: 'SET_BPM', payload: rounded });
-                }
-            }
+            feedBpm(st?.bpm || st?.effectiveBpm, dispatch);
         });
         return () => {
             cancelled = true;
+            feedBpm.cancel();
             off();
         };
     }, [dispatch, bpmSource]);
@@ -7157,17 +7242,10 @@ return () => {
                 </div>
             </div>
             <div className="middle-bar-right-area">
-                <TransportControls
-                    onPlay={handlePlay}
-                    onPause={handlePause}
-                    onStop={handleStop}
-                    isPlaying={isPlaying}
-                    isStopped={isStopped}
-                />
-                <MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
+                <DJLink source={bpmSource} />
             </div>
         </div>
-    ), [bpm, dispatch, numPages, activePageId, pageNames, isPlaying, isStopped, playbackFps, handlePlay, handlePause, handleStop, handlePlaybackFpsChange, handleTapTempo, bpmSource, handleBpmSourceChange]);
+    ), [bpm, dispatch, numPages, activePageId, pageNames, handleTapTempo, bpmSource, handleBpmSourceChange]);
 
     return (
         <MidiProvider onMidiCommand={handleMidiCommand} theme={theme} enabledShortcuts={enabledShortcuts}>
@@ -7211,11 +7289,12 @@ return () => {
                                 <GeneralSettingsWindow
                                     show={showGeneralSettingsWindow}
                                     onClose={() => setShowGeneralSettingsWindow(false)}
+                                    masterSpeed={<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />}
                                 />
                                 <LinkSyncSettingsWindow
                                     show={showLinkSyncSettingsWindow}
                                     onClose={() => setShowLinkSyncSettingsWindow(false)}
-                                    onUpdateSettings={() => {}}
+                                    onUpdateSettings={() => { }}
                                     bpmSource={bpmSource}
                                     onBpmSourceChange={handleBpmSourceChange}
                                 />
@@ -7252,9 +7331,9 @@ return () => {
                                     show={!!exportTimingWarning}
                                     mismatchCount={exportTimingWarning?.mismatchCount || 0}
                                     clipSyncMode={exportTimingWarning?.clipSyncMode || 'fps'}
-                                    onCancel={exportTimingWarning?.onCancel || (() => {})}
-                                    onExportAnyway={exportTimingWarning?.onExportAnyway || (() => {})}
-                                    onAutoCorrect={exportTimingWarning?.onAutoCorrect || (() => {})}
+                                    onCancel={exportTimingWarning?.onCancel || (() => { })}
+                                    onExportAnyway={exportTimingWarning?.onExportAnyway || (() => { })}
+                                    onAutoCorrect={exportTimingWarning?.onAutoCorrect || (() => { })}
                                 />
                                 <ShortcutsWindow
                                     show={showShortcutsWindow}
@@ -7468,6 +7547,11 @@ return () => {
                                         layerBlackoutsRef={layerBlackoutsRef}
                                         optimizationEnabled={optimizationEnabled}
                                         activePageId={activePageId}
+                                        onPlay={handlePlay}
+                                        onPause={handlePause}
+                                        onStop={handleStop}
+                                        isPlaying={isPlaying}
+                                        isStopped={isStopped}
                                     />
                                     {middleBarMemo}
                                     {bottomPanelMemo}
