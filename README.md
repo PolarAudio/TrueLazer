@@ -27,9 +27,6 @@ software. Here's what sets us apart:
 - **Extensive Effects Library:** Manipulate your laser content with a rich set of built-in effects (transform,
   wave, warp, noise, delay, chase, color palettes, blanking, strobe, etc.).
 
-- **Audio-Visual Integration:** Sync your laser shows to the beat of the music with advanced audio analysis
-  capabilities.
-
 - **Comprehensive Control Options:** Designed for professional use, TrueLazer supports MIDI, HOTKEYS, NDI and
   DMX/Artnet for seamless integration with existing show control systems and external hardware.
 
@@ -111,7 +108,7 @@ usable, with continuous improvements to performance, DAC communication and the e
 
 - ☑ Project scaffolding and basic file structure are in place.
 - ☑ Initial UI components for the clip deck, layers, and controls.
-- ☒ ILDA file parsing and rendering (needs further performance improvements).
+- ☒ ILDA file parsing and rendering.
 - ☒ Showbridge DAC communication protocol (analyzed, communication works, trailing-line issues being fixed).
 - ☒ EtherDream DAC communication protocol re-written to JavaScript, needs further adjustments.
 - ☑ IDN communication protocol re-written in JavaScript and working great with the LaserVR test application.
@@ -146,7 +143,6 @@ Discovered NDI sources can be dragged from the Generator Panel onto the clip gri
 2. **Generative Content System**
    - ☑ Simple set of shape generators (dots, lines, circles, text) as base layers.
    - ☒ Generator Panel (NDI-Source, Clock/Countdown/Timer).
-   - ☑ Generator Designer (Pencil, Shapes, Curves, Lines, Color, Grid, Background-Image, Snapping).
 
 3. **Effects System**
    - ☑ Core transform, spatial, temporal/channel and color effects.
@@ -169,12 +165,11 @@ Discovered NDI sources can be dragged from the Generator Panel onto the clip gri
 6. **Remaining Roadmap**
    - ☐ "Global intensity" slider (dark to light color fade).
    - ☑ "Speed" select (speed source: BPM, manual, midi-clock).
-   - ☐ Timeline Mode.
-   - ☐ Show Editor view.
-   - ☐ DAC Brand Selector (multiple selection).
-   - ☒ Projector Setup (Info, Rendering, Color-Balance, Safety-Zones, Test-Image) per channel/DAC.
+   - ☑ Timeline Editor Window.
+   - ☑ Show Editor Window.
+   - ☑ Projector Setup (Info, Rendering, Color-Balance, Safety-Zones, Test-Image) per channel/DAC.
    - ☑ Audio Settings (Input and Output).
-   - ☒ General Settings (Save, Load, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS, ILDA Scan
+   - ☑ General Settings (Save, Load, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS, ILDA Scan
      Safety).
    - ☐ Reset Functions (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.).
    - ☐ Bug report feature.

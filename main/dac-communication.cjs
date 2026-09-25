@@ -1,6 +1,7 @@
 const idn = require('./idn-communication.cjs');
 const etherdream = require('./etherdream-communication.cjs');
 const showbridge = require('./showbridge-communication.cjs');
+const { countPoints, computePointBudget, decimatePoints, clamp } = require('./dac-budget.cjs');
 
 let globalStatusCallback = null;
 
@@ -22,8 +23,22 @@ async function discoverDacs(timeout = 2000, networkInterfaceIp) {
     idnDacs.forEach(d => d.type = 'idn');
     edDacs.forEach(d => d.type = 'EtherDream');
     sbDacs.forEach(d => d.type = 'Showbridge');
-    
-    return [...idnDacs, ...edDacs, ...sbDacs];
+
+    // Collapse every result to ONE entry per device IP. The Showbridge backend
+    // answers the discovery broadcast once PER CHANNEL (a 6-channel unit yields
+    // 6 entries with the same IP), and getDacServices() then lists all of that
+    // device's channels — so every extra entry is a duplicate of the same
+    // device. Without this, the renderer's per-DAC service expansion multiplies
+    // (6 physical channels -> 36 descriptors) and repeated scans can seed the
+    // same outputs over and over.
+    const seenIps = new Set();
+    const merged = [...idnDacs, ...edDacs, ...sbDacs].filter(d => {
+        if (!d || !d.ip || seenIps.has(d.ip)) return false;
+        seenIps.add(d.ip);
+        return true;
+    });
+
+    return merged;
 }
 
 function getDacServices(ip, localIp, timeout = 1000, type) {
@@ -40,6 +55,20 @@ function getDacServices(ip, localIp, timeout = 1000, type) {
 function sendFrame(ip, channel, points, fps, type, options) {
     if (!points) {
         console.error(`[DacComm] Invalid points for ${ip}`);
+        return;
+    }
+
+    // Only canonical point containers are supported: Float32Array (8 floats per
+    // point), Buffer/Uint8Array, or a plain array. Anything else (e.g. a frame
+    // metadata wrapper object) would make downstream length math yield NaN and
+    // crash with Buffer.alloc(NaN) — drop it loudly instead.
+    const isTypedPoints = points instanceof Float32Array || Buffer.isBuffer(points) || points instanceof Uint8Array;
+    if (!isTypedPoints && !Array.isArray(points)) {
+        console.error(`[DacComm] Ignoring non-point payload for ${ip}:`, Object.prototype.toString.call(points), points?.constructor?.name || typeof points);
+        return;
+    }
+    if (isTypedPoints && !Number.isFinite(points.length)) {
+        console.error(`[DacComm] Ignoring points with non-finite length for ${ip}`);
         return;
     }
 
@@ -62,6 +91,34 @@ function sendFrame(ip, channel, points, fps, type, options) {
         targetFps,
         targetMode,
     };
+
+    // Enforce the per-frame point budget (pointBudget = targetPps / targetFps,
+    // the speedTarget engine relation). Frames the renderer optimizer produced
+    // beyond the budget are evenly decimated so the DAC never overruns its
+    // 1/fps frame window — the cause of the "constant-PPS fill runs out of
+    // points" lag on complex clips. Showbridge gets an extra hard cap to its
+    // bench-verified single-chunk size (PTS_FULL) so frames never spill into
+    // the 2-chunk boundary arc. The budget is enforced on a CLONE (decimate
+    // returns a new array when it cuts), so the renderer's source buffer is
+    // never mutated.
+    const showbridgeCap = type === 'Showbridge' ? showbridge.PTS_FULL : 0;
+    const pointBudget = computePointBudget({ targetPps, targetFps, cap: showbridgeCap });
+    const contentCount = countPoints(points);
+    const decimated = decimatePoints(points, pointBudget);
+    if (decimated !== points) {
+        console.warn(`[DacComm] Decimating ${ip} frame from ${contentCount} to ${pointBudget} points (pps=${targetPps}, fps=${targetFps})`);
+        points = decimated;
+    }
+
+    // Mode-aware PPS: in Variable PPS -> Fixed FPS the pps must rise/fall so
+    // the frame's play time stays exactly 1/targetFps; in Variable FPS -> Fixed
+    // PPS it stays at the hardware preset target while the effective frame rate
+    // varies with content. This is the value both backends consume.
+    const sendPps = (targetMode === 'varPpsFixedFps')
+        ? clamp(Math.round(countPoints(points) * targetFps), 1000, 120000)
+        : targetPps;
+    sendOptions.pps = sendPps;
+    sendOptions.targetPps = sendPps;
 
     // Apply the user's X/Y hardware-correction invert ONLY at the physical DAC
     // boundary. The frontend preview uses the un-flipped points, so the output
@@ -117,6 +174,18 @@ function stopSending(ip, type) {
     return idn.sendCloseChannel(ip);
 }
 
+// Always-feed idle frame for the continuous 30fps send loop. Only Showbridge
+// consumes it for now — its DMA must keep receiving datagrams to stay warm (a
+// single cold blank packet is not enough to keep it responsive), mirroring
+// EtherDream / Truwave's continuous idle stream. Other DAC types keep the
+// legacy silent-blank behaviour.
+function sendIdleFrame(ip, channel, type, options) {
+    if (type === 'Showbridge') {
+        return showbridge.sendIdleFrame(ip, channel, options || null);
+    }
+    return null;
+}
+
 function connectDac(ip, type) {
     if (type === 'EtherDream') {
         return etherdream.connectDac(ip);
@@ -139,6 +208,7 @@ module.exports = {
     discoverDacs,
     getDacServices,
     sendFrame,
+    sendIdleFrame,
     connectDac,
     startOutput,
     stopSending,

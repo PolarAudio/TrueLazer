@@ -1,4 +1,4 @@
-import React, { useReducer, useEffect, useCallback, useRef, useMemo, useState } from 'react';
+import React, { useReducer, useEffect, useCallback, useRef, useMemo, useState, startTransition } from 'react';
 import CompositionControls from './components/CompositionControls';
 import ColumnHeader from './components/ColumnHeader';
 import LayerControls from './components/LayerControls';
@@ -21,6 +21,7 @@ import RenameModal from './components/RenameModal';
 import OutputSettingsWindow from './components/OutputSettingsWindow';
 import AudioSettingsWindow from './components/AudioSettingsWindow';
 import GeneralSettingsWindow from './components/GeneralSettingsWindow';
+import LinkSyncSettingsWindow from './components/LinkSyncSettingsWindow';
 import OutputProcessingWindow from './components/OutputProcessingWindow';
 import RelocateModal from './components/RelocateModal';
 import ClipExportWarningModal from './components/ClipExportWarningModal';
@@ -28,6 +29,7 @@ import Mappable from './components/Mappable';
 import ErrorBoundary from './components/ErrorBoundary';
 import ShapeBuilder from './components/ShapeBuilder';
 import TimelineEditor from './components/TimelineEditor';
+import { timelineBridge } from './contexts/TimelineContext';
 import AboutWindow from './components/aboutWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
@@ -1201,7 +1203,7 @@ function reducer(state, action) {
                 page.map(layer =>
                     layer.map(clip => {
                         if (clip && clip.type === 'ilda') {
-                            return { ...clip, workerId: null, parsing: false };
+                            return { ...clip, workerId: null, parsing: false, parsingFailed: false };
                         }
                         return clip;
                     })
@@ -1873,22 +1875,109 @@ const SidePanelContainer = React.memo(({
     const [tick, setTick] = useState(0);
     const lastPreviewTimeRef = useRef(0);
     const previewTimeRef = useRef(performance.now());
+    const lastPreviewSigRef = useRef([]);
+    const lastPreviewContentRef = useRef(false);
     const previewInterval = 1000 / 70; // Target >60Hz to reliably catch every 60Hz VSync frame
+
+    // Cheap snapshot of everything the two preview panels actually consume. The tick is
+    // allowed to skip the heavy re-render when nothing observable changed (e.g. a clip
+    // selected while playback is stopped) without freezing the permanent UI-FPS loop,
+    // which always counts frames regardless of whether a render happened. Interaction-
+    // driven values (intensity/blackout/effects) are included so slider/toggle edits
+    // still re-render immediately.
+    const buildPreviewSignature = () => {
+        const sig = [];
+        const lr = liveFramesRef.current;
+        const pr = progressRef.current;
+
+        const addFrame = (wId) => {
+            const f = wId ? lr[wId] : null;
+            sig.push(wId || '', f ? (f.points || f) : null, pr[wId] !== undefined ? +pr[wId].toFixed(3) : 0);
+        };
+
+        // Selected clip preview (IldaPlayer)
+        if (selectedLayerIndex !== null && selectedColIndex !== null) {
+            const sc = liveClipContentsRef.current?.[activePageId]?.[selectedLayerIndex]?.[selectedColIndex];
+            const wId = sc
+                ? (sc.type === 'ilda' ? sc.workerId : `generator-${activePageId}-${selectedLayerIndex}-${selectedColIndex}`)
+                : null;
+            addFrame(wId);
+            sig.push(sc || null); // effect/param edits produce a new clip identity -> re-render
+        }
+
+        // World preview (WorldPreview) — every active clip's frame + progress
+        activeClipIndexesRef.current.forEach((info, layerIndex) => {
+            if (info && info.colIndex !== null) {
+                const clip = liveClipContentsRef.current?.[info.pageId]?.[layerIndex]?.[info.colIndex];
+                const wId = clip ? (clip.type === 'ilda' ? clip.workerId : `generator-${info.pageId}-${layerIndex}-${info.colIndex}`) : null;
+                addFrame(wId);
+                // Active set membership changes must re-render even if the remaining
+                // frames are identical (deactivations/activations while paused).
+                sig.push(clip || null, `${info.pageId}:${layerIndex}:${info.colIndex}`);
+            }
+        });
+
+        // Live mixing/effect refs that must re-render as the user interacts
+        sig.push(
+            masterIntensityRef.current,
+            globalBlackoutRef.current === true,
+            (layerIntensitiesRef.current || []).join(','),
+            (layerBlackoutsRef.current || []).join(','),
+            (layerSolosRef.current || []).join(','),
+            (layerEffectSpeedsRef.current || []).map(s => (s ? `${s.mode}:${s.beats}:${s.duration}:${s.speedMultiplier}` : '')).join('|'),
+            JSON.stringify(layerSyncSettingsRef.current || [])
+        );
+
+        return sig;
+    };
+    const sigsEqual = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
     useEffect(() => {
         let rafId;
         const loop = (timestamp) => {
-            if (timestamp - lastPreviewTimeRef.current > previewInterval) {
+            try {
+                if (timestamp - lastPreviewTimeRef.current > previewInterval) {
+                // Always count the frame: UI-FPS is the permanent loop health, not the
+                // preview render rate.
                 previewFrameCountRef.current++;
-                previewTimeRef.current = performance.now();
-                setTick(t => t + 1);
                 lastPreviewTimeRef.current = timestamp;
+
+                // The preview memos read refs (liveFramesRef, progressRef) that never
+                // trigger renders by themselves, so this tick drives them. Re-render only
+                // when something observable actually changed — an idle-selected clip or an
+                // empty deck must not re-render the whole panel at 70fps.
+                const hasPreviewContent =
+                    activeClipIndexesRef.current.some(info => info && info.colIndex !== null) ||
+                    (selectedLayerIndex !== null && selectedColIndex !== null);
+                if (hasPreviewContent) {
+                    lastPreviewContentRef.current = true;
+                    const sig = buildPreviewSignature();
+                    if (!sigsEqual(sig, lastPreviewSigRef.current)) {
+                        lastPreviewSigRef.current = sig;
+                        previewTimeRef.current = performance.now();
+                        setTick(t => t + 1);
+                    }
+                } else if (lastPreviewContentRef.current) {
+                    // Just became fully idle (e.g. the last clip was deactivated): force
+                    // one final render so the memoized worldFrames/activeFrames empties
+                    // and the world preview drops its last frame — with nothing active,
+                    // no further tick would ever re-render to clear it.
+                    lastPreviewContentRef.current = false;
+                    previewTimeRef.current = performance.now();
+                    setTick(t => t + 1);
+                } else {
+                    lastPreviewSigRef.current = [];
+                }
+                }
+            } catch (err) {
+                // UI-FPS tracker must never die: keep the rAF health chain alive.
+                console.error('[previewTickLoop] error (kept alive):', err);
             }
             rafId = requestAnimationFrame(loop);
         };
         rafId = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(rafId);
-    }, [previewInterval, previewFrameCountRef]);
+    }, [previewInterval, previewFrameCountRef, selectedLayerIndex, selectedColIndex, activePageId]);
 
     // DERIVED PREVIEW DATA - Use Live Refs for immediate feedback and to avoid re-renders
     const clipSource = liveClipContentsRef?.current;
@@ -2082,7 +2171,7 @@ function App() {
     const frameIndexesRef = useRef({});
     const backgroundRunningClipsRef = useRef(new Set()); // {layerIndex, clipWorkerId, pageIdx, clipType}
     const backgroundRafRef = useRef(null);
-    const bgClipTimersRef = useRef(new Map()); // Track elapsed time per background clip for frame advancement
+    const processClipRef = useRef(null); // Latest processClip instance, shared with the background flash loop
     const workerLoadedFontsRef = useRef(new Set()); // Track fonts already sent to worker
     const lastMidiValuesRef = useRef({}); // For 'fake_relative' mode mapping
     const tapTempoTimesRef = useRef([]); // Timestamps for tap tempo (shared by TAP button + mappings)
@@ -2100,6 +2189,7 @@ function App() {
     const [showFftSettingsWindow, setShowFftSettingsWindow] = useState(false);
     const [showGeneralSettingsWindow, setShowGeneralSettingsWindow] = useState(false);
     const [showOutputProcessingWindow, setShowOutputProcessingWindow] = useState(false);
+    const [showLinkSyncSettingsWindow, setShowLinkSyncSettingsWindow] = useState(false);
     const [exportTimingWarning, setExportTimingWarning] = useState(null);
     const [renameModalConfig, setRenameModalConfig] = useState({ title: '', initialValue: '', onSave: () => { } });
     const [activeBottomTab_1, setActiveBottomTab_1] = useState('files');
@@ -2222,7 +2312,8 @@ function App() {
                         pageId,
                         colIndex,
                         syncSettings: clip.syncSettings || {},
-                        fps: clip.fps || null
+                        fps: clip.fps || null,
+                        frames: clip.frames || []
                     };
                 } else if (clip.type === 'generator' && clip.frames && clip.generatorDefinition) {
                     workerId = `generator-${layerIndex}-${colIndex}`; // workerId remains position-based for now? No, should probably be page-aware if we want multiple pages active.
@@ -2243,7 +2334,8 @@ function App() {
                         pageId,
                         colIndex,
                         syncSettings: clip.syncSettings || {},
-                        fps: clip.fps || null
+                        fps: clip.fps || null,
+                        frames: clip.frames || []
                     };
                 }
             }
@@ -2376,6 +2468,12 @@ function App() {
     }, [optimizationSettings]);
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
     useEffect(() => { isWorldOutputActiveRef.current = isWorldOutputActive; }, [isWorldOutputActive]);
+
+    // While the Timeline window is open the grid's render loop must not feed a
+    // second, competing dac-frame-update stream to the same DAC channels.
+    const isTimelinePageActiveRef = useRef(currentPage === 'timeline');
+    useEffect(() => { isTimelinePageActiveRef.current = currentPage === 'timeline'; }, [currentPage]);
+
     useEffect(() => { selectedDacRef.current = selectedDac; }, [selectedDac]);
     useEffect(() => { bpmRef.current = state.bpm; }, [state.bpm]);
     useEffect(() => { selectedLayerIndexRef.current = selectedLayerIndex; }, [selectedLayerIndex]);
@@ -2421,6 +2519,9 @@ function App() {
     const hoveredClipRef = useRef(null); // { layerIndex, colIndex } or null
 
     const generatorRequestSeqRef = useRef(0); // Track latest request ID
+    // Last wall-clock time a genuine "live" regeneration (waveform/timer) was issued
+    // per workerId, so those never regenerate faster than the clip's frame rate.
+    const generatorLiveRegenTimeRef = useRef(new Map()); // key: workerId, val: ts
     const latestProcessedSeqRef = useRef(new Map()); // Track latest processed response ID per clip
     const generatorLastRequestedSeqRef = useRef(new Map()); // Track latest REQUESTED seq per clip
     const generatorProcessingMap = useRef(new Map()); // key: "layer-col", val: boolean
@@ -2729,6 +2830,8 @@ function App() {
 
                 if (layerIndex === undefined || colIndex === undefined) return;
 
+                const existingClip = clipContentsRef.current?.[pageId]?.[layerIndex]?.[colIndex] || {};
+
                 const newClipContent = {
                     type: 'ilda',
                     workerId,
@@ -2737,7 +2840,12 @@ function App() {
                     fileName,
                     filePath,
                     parsing: true, // Set parsing status to true
-                    playbackSettings: {
+                    // Preserve the user's saved playback config across re-parses
+                    // (BPM/timeline sync speed, beats, duration, FPS). A re-parse
+                    // runs on every project load, so hardcoding FPS defaults here
+                    // silently reverted BPM-synced clips — same caveat applies to
+                    // the relocated filePath echoed below.
+                    playbackSettings: existingClip.playbackSettings || {
                         mode: 'fps',
                         duration: totalFrames / 60,
                         beats: 8,
@@ -2905,8 +3013,17 @@ function App() {
             }
 
             const now = performance.now();
-            if (now - lastFrameTime > dacFrameInterval) {
-                if (window.electronAPI && isWorldOutputActiveRef.current) {
+            if (now - lastFrameTime >= dacFrameInterval) {
+                // Fixed-step cadence: advance the frame clock to the CURRENT slot
+                // instead of `lastFrameTime = now`. Under a main-thread stall the
+                // accumulated delay is collapsed into whole missed slots (dropped
+                // frames), never partial drift — so the stream re-fires on the exact
+                // 30fps grid instead of bursting after a stall, which the main
+                // process's rigid 30fps sampler previously rode as a per-channel
+                // "repeat, then catch back up".
+                const missedFrames = Math.max(1, Math.floor((now - lastFrameTime) / dacFrameInterval));
+                lastFrameTime += missedFrames * dacFrameInterval;
+                if (window.electronAPI && isWorldOutputActiveRef.current && !isTimelinePageActiveRef.current) {
                     const dacGroups = new Map(); // key: "ip:channel", value: { ip, channel, frames: [] }
 
                     // 1. Process Clip Content
@@ -3414,10 +3531,12 @@ function App() {
                         window.electronAPI.send('dac-frame-update', framesToSend);
                     }
                 }
-                lastFrameTime = now;
+                // lastFrameTime was already aligned to the current frame slot at the
+                // top of the tick; do NOT reset it to `now` here, or the grid drifts.
             }
-            const elapsedThisTick = performance.now() - now;
-            dacProcessTimeoutId = setTimeout(animate, Math.max(0, dacFrameInterval - elapsedThisTick));
+            // Fire exactly on the next 30fps grid slot (lastFrameTime is on-slot).
+            const nextFireAt = lastFrameTime + dacFrameInterval;
+            dacProcessTimeoutId = setTimeout(animate, Math.max(0, nextFireAt - performance.now()));
         };
 
         function isTypedArray(obj) {
@@ -3426,24 +3545,27 @@ function App() {
 
         // Frame fetcher loop for updating liveFrames
         const frameFetcherLoop = (timestamp) => {
+            try {
             const currentFrameInterval = 1000 / playbackFpsRef.current;
             const currentBpm = bpmRef.current || 120;
 
-            const processClip = (clip, layerIndex, colIndex, workerId) => {
+            const processClip = (clip, layerIndex, colIndex, workerId, isPreview = false, ts = timestamp, skipRegen = false) => {
                 const pageIdx = clip.pageId !== undefined ? clip.pageId : stateRef.current.activePageId;
 
                 if (!lastFrameFetchTimeRef.current[workerId]) {
-                    lastFrameFetchTimeRef.current[workerId] = timestamp;
+                    lastFrameFetchTimeRef.current[workerId] = ts;
                 }
 
                 // Calculate time since last frame
-                let dt = timestamp - lastFrameFetchTimeRef.current[workerId];
+                let dt = ts - lastFrameFetchTimeRef.current[workerId];
 
                 // Sanity check for huge jumps (e.g. tab inactive)
                 if (dt > 1000) dt = currentFrameInterval;
 
-                // Only advance time if playing
-                if (isPlayingRef.current) {
+                // Only advance time if playing, OR if this is a virtual
+                // preview (hovered/selected generator clip) so its thumbnail
+                // can render live even when the transport is stopped.
+                if (isPlayingRef.current || isPreview) {
                     if (accumulatedTimeRef.current[workerId] === undefined) {
                         accumulatedTimeRef.current[workerId] = 0;
                     }
@@ -3487,11 +3609,11 @@ function App() {
 
                     if (dt >= clipFrameInterval || isSingleFrameGen) {
                         const framesToAdvance = Math.floor(dt / clipFrameInterval);
-                        if (isPlayingRef.current) {
-                            lastFrameFetchTimeRef.current[workerId] = timestamp - (dt % clipFrameInterval);
+                        if (isPlayingRef.current || isPreview) {
+                            lastFrameFetchTimeRef.current[workerId] = ts - (dt % clipFrameInterval);
                             targetIndex = (targetIndex + framesToAdvance);
                         } else {
-                            lastFrameFetchTimeRef.current[workerId] = timestamp;
+                            lastFrameFetchTimeRef.current[workerId] = ts;
                         }
 
                         if (isSingleFrameGen) {
@@ -3512,7 +3634,7 @@ function App() {
 
                 // For non-FPS modes, we update lastFrameFetchTimeRef every loop to keep dt correct
                 if (pSettings.mode !== 'fps') {
-                    lastFrameFetchTimeRef.current[workerId] = timestamp;
+                    lastFrameFetchTimeRef.current[workerId] = ts;
                 }
 
                 if (isNaN(targetIndex)) targetIndex = 0;
@@ -3588,21 +3710,33 @@ function App() {
                     }
                 }
 
-                // Generator Parameter Animation Sync
+                // Generator Parameter Animation Sync + real-time re-generation.
+                // processClip is called by multiple drivers — the active output loop
+                // (once per rAF), the thumbnail regen loop AND the background loop for
+                // released flash clips. Time-based animated params change every call,
+                // so without ONE shared per-clip budget each driver would enqueue a fresh
+                // full-frame regen every rAF (~80+/s for an active flash generator): the
+                // worker queue floods and every response structured-clones a big typed
+                // array back to the main thread, tanking UI and DAC output frames.
                 if (clip.type === 'generator') {
                     const syncSettings = clip.syncSettings || {};
                     const generatorId = clip.generatorDefinition?.id;
                     const genDef = clip.generatorDefinition;
 
+                    const genLiveMinInterval = Math.max(16, 1000 / Math.max(1, pSettings.fps || 30));
+                    const lastGenLive = generatorLiveRegenTimeRef.current.get(workerId) || 0;
+                    const genBudgetOk = (ts - lastGenLive) >= genLiveMinInterval;
+
                     const animatedParams = Object.keys(syncSettings).filter(key => key.startsWith(`${generatorId}.`));
+                    let resolvedParams = null;
+                    let changed = false;
 
                     if (animatedParams.length > 0) {
                         const currentParams = clip.currentParams || {};
-                        const resolvedParams = { ...currentParams };
-                        let changed = false;
+                        resolvedParams = { ...currentParams };
 
                         const context = {
-                            time: timestamp,
+                            time: ts,
                             progress: currentProgress,
                             bpm: currentBpm,
                             clipDuration: clipDuration,
@@ -3621,51 +3755,67 @@ function App() {
                                 changed = true;
                             }
                         }
-                        if (changed) {
-                            const seq = ++generatorRequestSeqRef.current;
-                            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, resolvedParams, seq, true, false, null, null, pageIdx);
-                        }
                     }
 
-                    // Real-time re-generation for audio-reactive generators
-                    if (generatorId === 'waveform') {
-                        const params = clip.currentParams || {};
-                        const data = (params.mode === 'waveform') ? timeDataRef.current : fftDataRef.current;
-                        const seq = ++generatorRequestSeqRef.current;
-                        const context = {
-                            time: timestamp,
-                            activationTime: clipActivationTimesRef.current[layerIndex] || 0
-                        };
-                        regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data, context, pageIdx);
-                    } else if (generatorId === 'timer') {
-                        const params = clip.currentParams || {};
-                        const seq = ++generatorRequestSeqRef.current;
-                        const context = {
-                            time: timestamp,
-                            activationTime: clipActivationTimesRef.current[layerIndex] || 0
-                        };
-                        regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, null, context, pageIdx);
+                    const timeVarying = generatorId === 'waveform' || generatorId === 'timer';
+
+                    if (genBudgetOk && !skipRegen && (changed || timeVarying)) {
+                        generatorLiveRegenTimeRef.current.set(workerId, ts);
+
+                        if (changed) {
+                            // Param-animation wins the shared budget for this tick: it
+                            // carries the resolved params, the frame is regenerated with
+                            // them, and the audio-driven paths wait for the next slot.
+                            const seq = ++generatorRequestSeqRef.current;
+                            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, resolvedParams, seq, true, false, null, null, pageIdx);
+                        } else if (generatorId === 'waveform') {
+                            const params = clip.currentParams || {};
+                            const data = (params.mode === 'waveform') ? timeDataRef.current : fftDataRef.current;
+                            const seq = ++generatorRequestSeqRef.current;
+                            const context = {
+                                time: ts,
+                                activationTime: clipActivationTimesRef.current[layerIndex] || 0
+                            };
+                            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, data, context, pageIdx);
+                        } else if (generatorId === 'timer') {
+                            const params = clip.currentParams || {};
+                            const seq = ++generatorRequestSeqRef.current;
+                            const context = {
+                                time: ts,
+                                activationTime: clipActivationTimesRef.current[layerIndex] || 0
+                            };
+                            regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, params, seq, false, true, null, context, pageIdx);
+                        }
                     }
                 }
 
                 if (frameIndexesRef.current[workerId] !== targetIndex || !liveFramesRef.current[workerId]) {
                     frameIndexesRef.current[workerId] = targetIndex;
-                    if (clip.type === 'ilda') {
-                        ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: targetIndex, pageId: pageIdx });
-                    } else if (clip.type === 'generator') {
-                        // Only overwrite from clip.frames if it's an animation (multi-frame)
-                        // For single-frame generators, the worker updates liveFramesRef directly
-                        // and we avoid overwriting with potentially stale frames from state.
-                        if (clip.frames && clip.frames.length > 1) {
-                            if (clip.frames[targetIndex % clip.frames.length]) {
-                                liveFramesRef.current[workerId] = clip.frames[targetIndex % clip.frames.length];
+                    if (!skipRegen) {
+                        if (clip.type === 'ilda') {
+                            ildaParserWorker.postMessage({ type: 'get-frame', workerId, frameIndex: targetIndex, pageId: pageIdx });
+                        } else if (clip.type === 'generator') {
+                            // Only overwrite from clip.frames if it's an animation (multi-frame)
+                            // For single-frame generators, the worker updates liveFramesRef directly
+                            // and we avoid overwriting with potentially stale frames from state.
+                            if (clip.frames && clip.frames.length > 1) {
+                                if (clip.frames[targetIndex % clip.frames.length]) {
+                                    liveFramesRef.current[workerId] = clip.frames[targetIndex % clip.frames.length];
+                                }
+                            } else if (!liveFramesRef.current[workerId] && clip.frames && clip.frames.length > 0) {
+                                // Initial load
+                                liveFramesRef.current[workerId] = clip.frames[0];
                             }
-                        } else if (!liveFramesRef.current[workerId] && clip.frames && clip.frames.length > 0) {
-                            // Initial load
-                            liveFramesRef.current[workerId] = clip.frames[0];
                         }
                     }
                 }
+            };
+
+            // Expose the current processClip instance so the flash background loop can
+            // advance released clips with the SAME timing/state driver as the active
+            // loop (progress, sync parameters, frame indexes stay continuous).
+            processClipRef.current = (bgClip, layerIdx, colIdx, workerId, isPreview = false, ts = performance.now(), skipRegen = false) => {
+                processClip(bgClip, layerIdx, colIdx, workerId, isPreview, ts, skipRegen);
             };
 
             // 1. Process active clips across ALL pages (as tracked in activeClipIndexes)
@@ -3696,36 +3846,133 @@ function App() {
                     const clipSource = liveClipContentsRef.current || clipContentsRef.current;
                     const clip = clipSource[pIdx]?.[lIdx]?.[cIdx];
                     if (clip) {
-                        processClip(clip, lIdx, cIdx, selWorkerId);
+                        processClip(clip, lIdx, cIdx, selWorkerId, clip.type === 'generator');
                     }
                 }
             }
 
-            // 3. Process hovered clip (for hover preview)
-            if (hoveredClipRef.current) {
+            // 3. Process hovered clip (for hover preview). Only needed in live thumbnail
+            // render mode — in still mode the hovered thumbnail shows a static frame, so
+            // generating per-frame preview frames nobody renders is pure waste.
+            if (stateRef.current.thumbnailRenderMode === 'active' && hoveredClipRef.current) {
                 const { layerIndex, colIndex } = hoveredClipRef.current;
                 const pIdx = stateRef.current.activePageId;
 
-                // Avoid double processing if it's already active or selected
+                // Avoid double processing if it's already active or selected. Also skip the
+                // hover preview while ANY clip is selected for preview: clicking a
+                // new clip's preview should become the sole running preview instead of
+                // leaving a previously hovered/selected preview animating too.
                 const activeInfo = activeClipIndexesRef.current[layerIndex];
                 const isActive = activeInfo && activeInfo.pageId === pIdx && activeInfo.colIndex === colIndex;
-                const isSelected = selectedLayerIndexRef.current === layerIndex && selectedColIndexRef.current === colIndex;
                 const selWorkerId = selectedIldaWorkerIdRef.current;
+                const anySelectedPreview = selectedLayerIndexRef.current !== null && selectedColIndexRef.current !== null;
 
-                if (!isActive) {
+                if (!isActive && !anySelectedPreview) {
                     const clipSource = liveClipContentsRef.current || clipContentsRef.current;
                     const clip = clipSource[pIdx]?.[layerIndex]?.[colIndex];
                     if (clip) {
                         let workerId = clip.type === 'ilda' ? clip.workerId : (clip.type === 'generator' ? `generator-${pIdx}-${layerIndex}-${colIndex}` : null);
                         if (workerId && workerId !== selWorkerId) {
-                            processClip(clip, layerIndex, colIndex, workerId);
+                            processClip(clip, layerIndex, colIndex, workerId, clip.type === 'generator');
                         }
                     }
                 }
             }
 
+            } catch (err) {
+                console.error('[frameFetcherLoop] preview-loop error (kept alive):', err);
+            }
+
             animationFrameId = requestAnimationFrame(frameFetcherLoop);
         };
+
+        // Generator preview regeneration scheduler — lives in the EFFECT scope (created
+        // once per effect run), NOT inside frameFetcherLoop: being inside the per-frame
+        // loop made it rebuild its closures and spawn cascading timer chains 60x/s (the
+        // "most active loop" in the debugger) and put its rAF/timer vars out of scope for
+        // the effect cleanup (ReferenceError on toggling laser output). Single-frame
+        // generators animate ONLY by regenerating (the worker produces frames from the
+        // current params/sync); actively-outputting, hovered, selected and
+        // background-flash clips are driven live elsewhere, so this self-scheduled loop
+        // regenerates every OTHER generator clip that actually changes over time
+        // (timer/waveform, NDI/Spout sources, clips with parameter animation) at its own
+        // clip fps, and stays dormant (a slow timeout) when nothing time-varying is on
+        // the page.
+        const TIME_VARYING_GEN = new Set(['timer', 'waveform', 'ndi-source', 'spout-receiver']);
+        const THUMB_PREVIEW_MIN_MS = 50; // never regenerate a single clip faster than 20x/s
+        let genThumbnailTimer = 0;
+        let genThumbnailRaf = 0; // legacy cleanup compatibility (scheduler uses timers only)
+        const lastPreviewRegen = new Map(); // generator workerId -> last regeneration time
+        const genThumbnailLoop = () => {
+            // Declared OUTSIDE the try block: it is read after the catch closes
+            // (when scheduling the next tick), so a let inside try would be out of
+            // scope and throw "soonest is not defined" whenever this loop completes.
+            let soonest = 500;
+            try {
+                const pageIdx = stateRef.current.activePageId;
+            const clipSource = liveClipContentsRef.current || clipContentsRef.current;
+            const pageClips = clipSource?.[pageIdx] || [];
+            const mode = stateRef.current.thumbnailRenderMode;
+
+            if (mode !== 'active') {
+                genThumbnailTimer = setTimeout(genThumbnailLoop, 500);
+                return;
+            }
+
+            const now = performance.now();
+            const due = [];
+
+            for (let li = 0; li < pageClips.length; li++) {
+                const row = pageClips[li] || [];
+                for (let ci = 0; ci < row.length; ci++) {
+                    const clip = row[ci];
+                    if (!clip || clip.type !== 'generator') continue;
+                    // Skip clips already being driven live elsewhere.
+                    const activeInfo = activeClipIndexesRef.current[li];
+                    if (activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === ci) continue;
+                    if (selectedLayerIndexRef.current === li && selectedColIndexRef.current === ci) continue;
+                    const hovered = hoveredClipRef.current;
+                    if (hovered && hovered.layerIndex === li && hovered.colIndex === ci) continue;
+                    const genWorkerId = `generator-${pageIdx}-${li}-${ci}`;
+                    if ([...backgroundRunningClipsRef.current].some(entry => entry.workerId === genWorkerId)) continue;
+
+                    const gid = clip.generatorDefinition?.id;
+                    const hasParamAnim = clip.syncSettings && Object.keys(clip.syncSettings).some(k => k.startsWith(`${gid}.`));
+                    const isTimeVarying = TIME_VARYING_GEN.has(gid) || hasParamAnim;
+                    // Static generators change only when their params change (that path
+                    // regenerates on its own), so skip them unless no frame exists yet —
+                    // a fresh clip still needs one bootstrap preview regeneration.
+                    if (!isTimeVarying && liveFramesRef.current[genWorkerId]) continue;
+
+                    const fps = clip.playbackSettings?.fps || 30;
+                    const interval = Math.max(THUMB_PREVIEW_MIN_MS, 1000 / Math.max(1, fps));
+                    const last = lastPreviewRegen.get(genWorkerId) || 0;
+                    const wait = last + interval - now;
+                    if (wait <= 0) {
+                        // Time-varying clips repeat at their interval; static clips are
+                        // only bootstrapped once (retrying slowly if no frame arrived).
+                        lastPreviewRegen.set(genWorkerId, isTimeVarying ? now : now + 5000);
+                        due.push([li, ci, genWorkerId]);
+                    } else {
+                        soonest = Math.min(soonest, wait);
+                    }
+                }
+            }
+
+            for (const [li, ci, genWorkerId] of due) {
+                const clip = pageClips[li]?.[ci];
+                if (clip && clip.currentParams) {
+                    processClipRef.current(clip, li, ci, genWorkerId, true, now);
+                }
+            }
+
+            } catch (err) {
+                console.error('[genThumbnailLoop] thumbnail-loop error (kept alive):', err);
+            }
+
+            genThumbnailTimer = setTimeout(genThumbnailLoop, Math.max(10, Math.min(soonest, 500)));
+        };
+        genThumbnailTimer = setTimeout(genThumbnailLoop, 500);
 
         animationFrameId = requestAnimationFrame(frameFetcherLoop);
 
@@ -3743,6 +3990,8 @@ function App() {
         return () => {
             ildaParserWorker.removeEventListener('message', handleMessage);
             cancelAnimationFrame(animationFrameId);
+            cancelAnimationFrame(genThumbnailRaf);
+            clearTimeout(genThumbnailTimer);
             clearTimeout(dacProcessTimeoutId);
             if (window.electronAPI) window.electronAPI.send('stop-dac-send-loop');
         };
@@ -4003,6 +4252,10 @@ function App() {
 
                         if (contentToPaste.type === 'ilda') {
                             contentToPaste.workerId = null;
+                            // Give the pasted clip a fresh parse: clear any stale
+                            // parsingFailed flag so the re-parse effect fires.
+                            contentToPaste.parsingFailed = false;
+                            contentToPaste.parsing = false;
                         }
 
                         // Regenerate effect instance IDs to ensure they are unique in the new clip
@@ -4349,6 +4602,8 @@ function App() {
                     setShowFftSettingsWindow(true);
                 } else if (action === 'settings-general') {
                     setShowGeneralSettingsWindow(true);
+                } else if (action === 'link-sync-settings') {
+                    setShowLinkSyncSettingsWindow(true);
                 } else if (action === 'output-processing') {
                     setShowOutputProcessingWindow(true);
                 } else if (action.startsWith('set-theme-')) {
@@ -4424,6 +4679,18 @@ function App() {
                 } catch (error) {
                     console.warn(`File missing or read error: ${filePath}`, error.message);
 
+                    // Tell the worker the read failed so its pending request is
+                    // cleaned up and the parse attempt fails fast instead of
+                    // hanging forever (a dangling request silently leaves the
+                    // timeline clip dead until the view is reopened).
+                    try {
+                        ildaParserWorker.postMessage({
+                            type: 'file-content-response',
+                            requestId,
+                            error: `File read failed: ${error.message}`,
+                        });
+                    } catch (err) { /* ignore */ }
+
                     // Instead of immediate prompt, add to missing files list
                     const fileName = filePath.split(/[/\\]/).pop();
                     setMissingFiles(prev => {
@@ -4435,11 +4702,19 @@ function App() {
             } else if (e.data.type === 'parsing-status') {
                 const { layerIndex, colIndex, status, pageId } = e.data;
                 if (layerIndex !== undefined && colIndex !== undefined) {
+                    // Only update the parsing spinner flag. The worker posts
+                    // status:false after SUCCESS too, so it must not be treated
+                    // as a failure — parsingFailed is set via the 'error' branch.
                     dispatch({ type: 'SET_CLIP_PARSING_STATUS', payload: { layerIndex, colIndex, status, pageId } });
-                    if (!status) {
-                        // Mark as failed so we don't retry endlessly
-                        dispatch({ type: 'SET_CLIP_PARSING_FAILED', payload: { layerIndex, colIndex, failed: true, pageId } });
-                    }
+                }
+            } else if (e.data.type === 'error') {
+                const { layerIndex, colIndex, originalType, pageId } = e.data;
+                console.warn('ILDA parser worker error:', e.data.message, e.data);
+                if (originalType === 'parse-ilda' && layerIndex !== undefined && colIndex !== undefined) {
+                    // Genuine parse failure: stop the spinner and mark the clip
+                    // failed so we don't retry endlessly (e.g. missing file).
+                    dispatch({ type: 'SET_CLIP_PARSING_STATUS', payload: { layerIndex, colIndex, status: false, pageId } });
+                    dispatch({ type: 'SET_CLIP_PARSING_FAILED', payload: { layerIndex, colIndex, failed: true, pageId } });
                 }
             }
         };
@@ -4743,12 +5018,109 @@ function App() {
         dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex } });
     }, [dispatch, selectedLayerIndex]);
 
+    // Shared live-ref mutation helper for clip edits that are dispatched to the
+    // reducer. The ClipSettingsPanel renders from liveClipContentsRef (the same
+    // object the DAC loop reads), which is only re-synced from committed state
+    // on the NEXT render — and ref mutations don't trigger renders. So any edit
+    // that skips this helper shows stale UI on the first interaction ("needs a
+    // second click / collapse launch") and lags in the live output too. The
+    // mutation must return the next clip (or the same reference to no-op).
+    const applyLiveClipMutation = useCallback((layerIndex, colIndex, mutateClip) => {
+        const pageIdx = state.activePageId;
+        if (liveClipContentsRef.current && liveClipContentsRef.current[pageIdx]
+            && liveClipContentsRef.current[pageIdx][layerIndex]
+            && liveClipContentsRef.current[pageIdx][layerIndex][colIndex]) {
+            const clip = liveClipContentsRef.current[pageIdx][layerIndex][colIndex];
+            const nextClip = mutateClip(clip);
+            if (nextClip && nextClip !== clip) {
+                const newLayer = [...liveClipContentsRef.current[pageIdx][layerIndex]];
+                newLayer[colIndex] = nextClip;
+                const next = [...liveClipContentsRef.current];
+                next[pageIdx] = [...liveClipContentsRef.current[pageIdx].slice(0, layerIndex), newLayer, ...liveClipContentsRef.current[pageIdx].slice(layerIndex + 1)];
+                liveClipContentsRef.current = next;
+                hasPendingClipUpdate.current = true; // Signal that we have a local update
+            }
+        }
+    }, [state.activePageId]);
+
+    // Assigned-DAC edits: same first-click staleness fix — apply to the live ref
+    // immediately (so the DAC list and the delay/chase channel order update on the
+    // first interaction), then persist to committed state via the reducer.
+    const handleToggleDacMirror = useCallback((lIdx, cIdx, dacIndex, axis) => {
+        applyLiveClipMutation(lIdx, cIdx, (clip) => {
+            if (!clip || !clip.assignedDacs || !clip.assignedDacs[dacIndex]) return clip;
+            const newAssignedDacs = [...clip.assignedDacs];
+            const targetDac = { ...newAssignedDacs[dacIndex] };
+            if (axis === 'x') targetDac.mirrorX = !targetDac.mirrorX;
+            if (axis === 'y') targetDac.mirrorY = !targetDac.mirrorY;
+            newAssignedDacs[dacIndex] = targetDac;
+            return { ...clip, assignedDacs: newAssignedDacs };
+        });
+        dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex, axis } });
+    }, [applyLiveClipMutation, dispatch]);
+
+    const handleRemoveDac = useCallback((dacIndex) => {
+        applyLiveClipMutation(selectedLayerIndex, selectedColIndex, (clip) => {
+            if (!clip || !clip.assignedDacs || dacIndex >= clip.assignedDacs.length) return clip;
+            const newAssignedDacs = [...clip.assignedDacs];
+            newAssignedDacs.splice(dacIndex, 1);
+            return { ...clip, assignedDacs: newAssignedDacs };
+        });
+        dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } });
+    }, [applyLiveClipMutation, dispatch, selectedLayerIndex, selectedColIndex]);
+
+    const handleReorderDacs = useCallback((lIdx, cIdx, oldIndex, newIndex) => {
+        applyLiveClipMutation(lIdx, cIdx, (clip) => {
+            if (!clip || !clip.assignedDacs || clip.assignedDacs.length <= 1) return clip;
+            const newAssignedDacs = [...clip.assignedDacs];
+            if (oldIndex < 0 || oldIndex >= newAssignedDacs.length) return clip;
+            const [movedDac] = newAssignedDacs.splice(oldIndex, 1);
+            const clampedNew = Math.max(0, Math.min(newIndex, newAssignedDacs.length));
+            newAssignedDacs.splice(clampedNew, 0, movedDac);
+            return { ...clip, assignedDacs: newAssignedDacs };
+        });
+        dispatch({ type: 'REORDER_CLIP_DACS', payload: { layerIndex: lIdx, colIndex: cIdx, oldIndex, newIndex } });
+    }, [applyLiveClipMutation, dispatch]);
+
     const handleSetParamSync = useCallback((paramId, syncMode) => {
+        const pageIdx = state.activePageId;
+        // 1. Direct Live-update for Instant Preview — mirrors handleEffectParameterChange.
+        // Without this, the first click would only reach the committed state; the
+        // [clipContents] effect syncs the live ref on the NEXT render, but ref mutations
+        // never trigger a render, so the EffectEditor keeps showing the stale syncSettings
+        // until some other interaction (a second click, or collapsing/toggling the panel)
+        // forces a render — the "playback sliders don't start until clicked twice" bug.
+        // Update both the ref AND the individual clip object identity immediately. The
+        // string/object semantics are mirrored from the SET_CLIP_PARAM_SYNC reducer.
+        if (liveClipContentsRef.current && liveClipContentsRef.current[pageIdx]
+            && liveClipContentsRef.current[pageIdx][selectedLayerIndex]
+            && liveClipContentsRef.current[pageIdx][selectedLayerIndex][selectedColIndex]) {
+            const clip = liveClipContentsRef.current[pageIdx][selectedLayerIndex][selectedColIndex];
+            if (clip) {
+                const currentSync = clip.syncSettings || {};
+                let nextSyncValue;
+                if (typeof syncMode === 'string') {
+                    nextSyncValue = currentSync[paramId] === syncMode ? null : syncMode;
+                } else {
+                    nextSyncValue = syncMode;
+                }
+                const newClip = { ...clip, syncSettings: { ...currentSync, [paramId]: nextSyncValue } };
+                const newLayer = [...liveClipContentsRef.current[pageIdx][selectedLayerIndex]];
+                newLayer[selectedColIndex] = newClip;
+                const next = [...liveClipContentsRef.current];
+                next[pageIdx] = [...liveClipContentsRef.current[pageIdx].slice(0, selectedLayerIndex), newLayer, ...liveClipContentsRef.current[pageIdx].slice(selectedLayerIndex + 1)];
+                liveClipContentsRef.current = next;
+                hasPendingClipUpdate.current = true; // Signal that we have a local update
+            }
+        }
+        // 2. Dispatch for State Persistence - DEBOUNCED (leading fires instantly
+        // for discrete clicks; a continuous stream only triggers the trailing
+        // commit once it rests, keeping re-renders off the DAC loop's thread)
         debouncedDispatch(
             `clip-param-sync-${selectedLayerIndex}-${selectedColIndex}-${paramId}`,
             { type: 'SET_CLIP_PARAM_SYNC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, paramId, syncMode } }
         );
-    }, [debouncedDispatch, selectedLayerIndex, selectedColIndex]);
+    }, [debouncedDispatch, selectedLayerIndex, selectedColIndex, state.activePageId]);
 
     const handleSetLayerParamSync = useCallback((paramId, syncMode) => {
         if (selectedLayerIndex === null) return;
@@ -4982,7 +5354,9 @@ function App() {
     const handleDeactivateLayerClips = useCallback((layerIndex) => {
         stopAudio(layerIndex); // Stop audio for this layer
         if (activeClipIndexesRef.current) activeClipIndexesRef.current[layerIndex] = null;
-        dispatch({ type: 'DEACTIVATE_LAYER_CLIPS', payload: { layerIndex } });
+        // Deferred render: the output loop reads the ref (updated above) synchronously,
+        // so deferring the UI update keeps keyboard/midi trigger latency low.
+        startTransition(() => dispatch({ type: 'DEACTIVATE_LAYER_CLIPS', payload: { layerIndex } }));
     }, [stopAudio]);
 
     const handleClearAllActive = useCallback(() => {
@@ -5038,86 +5412,60 @@ function App() {
         if (backgroundRafRef.current) return; // Already running
 
         const loop = () => {
-            if (!isPlayingRef.current) {
+            try {
+                if (!isPlayingRef.current) {
                 // Global playback stopped/paused - clear all background clips
                 backgroundRunningClipsRef.current.clear();
-                bgClipTimersRef.current.clear();
                 backgroundRafRef.current = null;
                 return;
             }
 
             const clipsToRemove = [];
-            const now = performance.now();
 
             for (const bgClip of backgroundRunningClipsRef.current) {
                 const { pageIdx, layerIndex, colIndex, workerId } = bgClip;
 
                 // Verify clip still exists and is flash trigger
-                const clip = clipContents[pageIdx]?.[layerIndex]?.[colIndex];
+                const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
 
                 if (!clip || clip.triggerStyle !== 'flash' || !clip.frames || clip.frames.length === 0) {
                     clipsToRemove.push(bgClip);
                     continue;
                 }
 
-                // Time-based frame advancement based on clip playback settings
-                const timer = bgClipTimersRef.current.get(workerId) || { lastTime: now, accumulated: 0 };
-                const dt = now - timer.lastTime;
-                timer.lastTime = now;
-                timer.accumulated += dt;
-
-                const pSettings = clip.playbackSettings || { mode: 'fps', duration: clip.frames.length / 30, beats: 8, speedMultiplier: 1 };
-                const totalFrames = clip.totalFrames || clip.frames.length;
-
-                let framesToAdvance = 0;
-
-                if (pSettings.mode === 'fps') {
-                    const clipFps = pSettings.fps || 30;
-                    const clipFrameInterval = 1000 / (clipFps * (pSettings.speedMultiplier || 1));
-                    framesToAdvance = Math.floor(timer.accumulated / clipFrameInterval);
-                    if (framesToAdvance > 0) {
-                        timer.accumulated %= clipFrameInterval;
-                    }
-                } else if (pSettings.mode === 'timeline') {
-                    const totalDurationMs = (pSettings.duration * 1000) / (pSettings.speedMultiplier || 1);
-                    if (totalDurationMs > 0) {
-                        const progressPerMs = totalFrames / totalDurationMs;
-                        framesToAdvance = Math.floor(dt * progressPerMs);
-                    }
-                } else if (pSettings.mode === 'bpm') {
-                    const oneBeatMs = 60000 / (bpmRef.current || 120);
-                    const totalDurationMs = (pSettings.beats * oneBeatMs) / (pSettings.speedMultiplier || 1);
-                    if (totalDurationMs > 0) {
-                        const progressPerMs = totalFrames / totalDurationMs;
-                        framesToAdvance = Math.floor(dt * progressPerMs);
-                    }
+                // Advance released flash clips through the SAME driver the active loop
+                // uses so frame indexes, accumulated progress and sync parameter
+                // animation stay continuous between flash press/release (matches ILDA).
+                // The warm-up only needs the main-thread timing state to keep advancing —
+                // skipRegen skips the worker regen + liveFramesRef writes entirely, so a
+                // released flash clip stops triggering regens and grid-thumbnail updates
+                // for a track that isn't visible on screen.
+                if (processClipRef.current) {
+                    processClipRef.current(clip, layerIndex, colIndex, workerId, false, performance.now(), true);
                 }
-
-                if (framesToAdvance > 0) {
-                    const currentIndex = frameIndexesRef.current[workerId] || 0;
-                    frameIndexesRef.current[workerId] = (currentIndex + framesToAdvance) % totalFrames;
-                }
-
-                bgClipTimersRef.current.set(workerId, timer);
             }
 
             // Remove invalid clips
             clipsToRemove.forEach(clip => {
                 backgroundRunningClipsRef.current.delete(clip);
-                bgClipTimersRef.current.delete(clip.workerId);
             });
+
+            } catch (err) {
+                // Swallow and continue: a single bad background clip must never
+                // freeze the released-flash preview render chain.
+                console.error('[backgroundFlashLoop] error (kept alive):', err);
+            }
 
             // Continue loop if there are still clips
             if (backgroundRunningClipsRef.current.size > 0) {
                 backgroundRafRef.current = requestAnimationFrame(loop);
             } else {
                 backgroundRafRef.current = null;
-                bgClipTimersRef.current.clear();
             }
         };
 
         backgroundRafRef.current = requestAnimationFrame(loop);
-    }, [clipContents, bpmRef]);
+    }, []);
 
     const handleToggleWorldOutput = useCallback(() => {
         const nextActive = !isWorldOutputActive;
@@ -5158,13 +5506,15 @@ function App() {
         if (!stickyClipColsRef.current[pageIdx]) stickyClipColsRef.current[pageIdx] = {};
         stickyClipColsRef.current[pageIdx][layerIndex] = colIndex;
 
-        dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
-        if (clip.type === 'ilda') {
-            dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames, generatorId: null, generatorParams: {} } });
-        } else if (clip.type === 'generator') {
-            const generatorWorkerId = `generator-${pageIdx}-${layerIndex}-${colIndex}`;
-            dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
-        }
+        startTransition(() => {
+            dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
+            if (clip.type === 'ilda') {
+                dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: clip.workerId, totalFrames: clip.totalFrames, generatorId: null, generatorParams: {} } });
+            } else if (clip.type === 'generator') {
+                const generatorWorkerId = `generator-${pageIdx}-${layerIndex}-${colIndex}`;
+                dispatch({ type: 'SET_SELECTED_ILDA_DATA', payload: { workerId: generatorWorkerId, generatorId: clip.generatorDefinition.id, generatorParams: clip.currentParams, totalFrames: clip.frames.length } });
+            }
+        });
     }, [dispatch]);
     const handleClipHover = useCallback((layerIndex, colIndex, isHovering) => {
         if (isHovering) {
@@ -5238,19 +5588,28 @@ function App() {
         } else if (style === 'flash') {
             if (isPress) {
                 // Proceed to activate
-                // If clip was running in background, remove from background set
+                // If clip was running in background, remove from background set (match by
+                // workerId — entries are object refs, so a fresh object can't Set.delete it).
                 if (clipWorkerId) {
-                    const bgClip = { pageIdx, layerIndex, colIndex, workerId: clipWorkerId };
-                    backgroundRunningClipsRef.current.delete(bgClip);
+                    backgroundRunningClipsRef.current.forEach(entry => {
+                        if (entry.workerId === clipWorkerId && entry.pageIdx === pageIdx && entry.layerIndex === layerIndex) {
+                            backgroundRunningClipsRef.current.delete(entry);
+                        }
+                    });
                 }
                 // Add to active clips (output enabled) - PRESERVE frame index
             } else {
                 if (isCurrentActive) {
                     // Option B: Remove from activeClipIndexesRef (stops DAC output), keep frame index running in background
                     if (activeClipIndexesRef.current) activeClipIndexesRef.current[layerIndex] = null;
-                    dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex: null } });
+                    startTransition(() => dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex: null } }));
                     // Add to background running clips if it's an ILDA or generator clip with frames
                     if (clipWorkerId && clip.frames && clip.frames.length > 0) {
+                        // Drop any stale entry for this clip first so it can't be advanced
+                        // in parallel by the background loop while it is back in the active loop.
+                        backgroundRunningClipsRef.current.forEach(entry => {
+                            if (entry.workerId === clipWorkerId) backgroundRunningClipsRef.current.delete(entry);
+                        });
                         const bgClip = { pageIdx, layerIndex, colIndex, workerId: clipWorkerId };
                         backgroundRunningClipsRef.current.add(bgClip);
                         // Start background render loop if not running
@@ -5336,18 +5695,24 @@ function App() {
         clipActivationTimesRef.current[layerIndex] = performance.now();
 
         if (activeClipIndexesRef.current) activeClipIndexesRef.current[layerIndex] = { pageId: pageIdx, colIndex };
-        dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } });
+        // Deferred render: output/audio start from the refs above on the next rAF, so
+        // wrapping the UI update in a transition keeps key/midi trigger latency low.
+        startTransition(() => dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } }));
 
         // Capture still frame for thumbnail
-        if (clip) {
+        // NOTE: skipped for FLASH triggers — flash is a momentary action that repeats
+        // on every trigger (MIDI pads, repeated clicks), and each press would write a
+        // fresh still frame (a full generator frame, up to ~512KB of Float32Array) into
+        // Redux state and re-render the whole grid for zero visible benefit.
+        if (clip && style !== 'flash') {
             if (clip.type === 'ilda' && clip.workerId) {
                 const currentIndex = frameIndexesRef.current[clip.workerId] || 0;
-                dispatch({ type: 'UPDATE_THUMBNAIL', payload: { layerIndex, colIndex, frameIndex: currentIndex } });
+                startTransition(() => dispatch({ type: 'UPDATE_THUMBNAIL', payload: { layerIndex, colIndex, frameIndex: currentIndex } }));
             } else if (clip.type === 'generator' && clip.frames) {
                 const currentIdx = frameIndexesRef.current[`generator-${pageIdx}-${layerIndex}-${colIndex}`] || 0;
                 const currentFrame = clip.frames[currentIdx % clip.frames.length];
                 if (currentFrame) {
-                    dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame } } });
+                    startTransition(() => dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { stillFrame: currentFrame } } }));
                 }
             }
         }
@@ -5807,7 +6172,7 @@ function App() {
     const handleTapTempo = useCallback(() => {
         const now = Date.now();
         const times = [...tapTempoTimesRef.current, now].slice(-4);
-        tapTempoTimesRef.current = times;
+            tapTempoTimesRef.current = times;
 
         if (times.length >= 2) {
             let sum = 0;
@@ -5819,6 +6184,97 @@ function App() {
             dispatch({ type: 'SET_BPM', payload: Math.max(1, Math.min(999, tappedBpm)) });
         }
     }, [dispatch]);
+
+    /* --- Which BPM feeds the deck's BPM Trigger-Sync: 'tap' (manual TapTempo /
+    *      typed BPM) or 'tcnet' (TCNet L1 beat-grid BPM from the TCNet grid) or
+    *      'prolink' (ProDJ Link CDJ beat-grid BPM from prolink-connect).
+    *      Defaults to 'tap' so nothing changes until the user flips the toggle. - */
+    const [bpmSource, setBpmSource] = useState('tap');
+    const handleBpmSourceChange = useCallback((src) => setBpmSource(src === 'tcnet' ? 'tcnet' : src === 'prolink' ? 'prolink' : src === 'stagelinq' ? 'stagelinq' : 'tap'), []);
+    // Only dispatch a SET_BPM when the sourced value actually changes — the CDJ
+    // reports on every status packet, and re-rendering the whole show on an
+    // unchanged BPM is wasted work (and stalls the UI frame rate).
+    const lastTcnetBpmRef = useRef(0);
+    const lastProlinkBpmRef = useRef(0);
+    const lastStagelinqBpmRef = useRef(0);
+
+    /* --- TCNet BPM Trigger-Sync: when the deck's BPM source is TCNet, feed the
+     *     beat-grid BPM (broadcast by main.js on `tcnet-timecode`) into the deck's
+     *     BPM so BPM Trigger-Syncing locks to the TCNet L1 beat-marker grid. ------ */
+    useEffect(() => {
+        if (!window.electronAPI || bpmSource !== 'tcnet') return;
+        let cancelled = false;
+        const off = window.electronAPI.onTcnetTimecode((tc) => {
+            if (cancelled) return;
+            if (tc && typeof tc.bpm === 'number' && tc.bpm > 0) {
+                const rounded = Math.max(1, Math.min(999, Math.round(tc.bpm)));
+                if (rounded !== lastTcnetBpmRef.current) {
+                    lastTcnetBpmRef.current = rounded;
+                    dispatch({ type: 'SET_BPM', payload: rounded });
+                }
+            }
+        });
+        return () => {
+            cancelled = true;
+            off();
+        };
+    }, [dispatch, bpmSource]);
+
+    /* --- ProDJ Link BPM Trigger-Sync: when the deck's BPM source is ProDJ, feed
+     *     the CDJ beat-grid BPM (broadcast by main.js on `prolink-status`) into
+     *     the deck's BPM so BPM Trigger-Syncing locks to the CDJ's own grid.
+     *     Boots the Pro DJ Link listener too, so status packets (and with them
+     *     BPM updates) start flowing the moment this source is picked. ------- */
+    useEffect(() => {
+        if (!window.electronAPI || bpmSource !== 'prolink') return;
+        if (window.electronAPI.startProlinkStateListener) {
+            window.electronAPI.startProlinkStateListener();
+        }
+        let cancelled = false;
+        const off = window.electronAPI.onProlinkState((st) => {
+            if (cancelled) return;
+            const bpm = st?.bpm || st?.effectiveBpm;
+            if (bpm && typeof bpm === 'number' && bpm > 0) {
+                const rounded = Math.max(1, Math.min(999, Math.round(bpm)));
+                if (rounded !== lastProlinkBpmRef.current) {
+                    lastProlinkBpmRef.current = rounded;
+                    dispatch({ type: 'SET_BPM', payload: rounded });
+                }
+            }
+        });
+return () => {
+            cancelled = true;
+            off();
+        };
+    }, [dispatch, bpmSource]);
+
+    /* --- StageLinq BPM Trigger-Sync: when the deck's BPM source is StageLinq,
+     *     feed the followed Denon deck's current BPM (broadcast by main.js on
+     *     `stagelinq-status`) into the deck's BPM so Trigger-Syncing locks to
+     *     the Denon player's tempo. Boots the StageLinq listener too, so status
+     *     packets (and with them BPM updates) start flowing straight away. ---- */
+    useEffect(() => {
+        if (!window.electronAPI || bpmSource !== 'stagelinq') return;
+        if (window.electronAPI.startStagelinqListener) {
+            window.electronAPI.startStagelinqListener();
+        }
+        let cancelled = false;
+        const off = window.electronAPI.onStagelinqState((st) => {
+            if (cancelled) return;
+            const bpm = st?.bpm || st?.effectiveBpm;
+            if (bpm && typeof bpm === 'number' && bpm > 0) {
+                const rounded = Math.max(1, Math.min(999, Math.round(bpm)));
+                if (rounded !== lastStagelinqBpmRef.current) {
+                    lastStagelinqBpmRef.current = rounded;
+                    dispatch({ type: 'SET_BPM', payload: rounded });
+                }
+            }
+        });
+        return () => {
+            cancelled = true;
+            off();
+        };
+    }, [dispatch, bpmSource]);
 
     const handleMidiCommand = useCallback((id, value, maxValue = 127, type = 'noteon', assignment = null) => {
         // Basic threshold for button triggers to avoid noise or NoteOff (velocity 0)
@@ -6200,6 +6656,12 @@ function App() {
                         ildaParserWorker.postMessage({
                             type: 'file-content-response',
                             requestId: fileEntry.requestId,
+                            // The worker echoes `filePath` from its request context in the
+                            // parse-ilda success message. Passing the relocated path here
+                            // lets it update that context, so the clip is NOT reverted to
+                            // the old missing path when SET_CLIP_CONTENT runs (which
+                            // previously made the RelocateModal reappear every load).
+                            filePath: newPath,
                             arrayBuffer: newArrayBuffer,
                         }, [newArrayBuffer]);
                     }
@@ -6263,6 +6725,66 @@ function App() {
                         }
                     }
                 }
+
+                // 3. Timeline project: rewrite ILDA cue + audio paths in the old directory
+                const bridge = timelineBridge;
+                const tlState = bridge?.stateRef?.current;
+                const tlActions = bridge?.actionsRef?.current;
+                if (tlState && tlActions) {
+                    const channelOrder = tlState.channelOrder || [];
+                    for (const chId of channelOrder) {
+                        const channel = tlState.channels[chId];
+                        for (const cueId of (channel?.cues || [])) {
+                            const cue = tlState.cues[cueId];
+                            if (!cue || cue.type !== 'ILDA' || !cue.filePath) continue;
+
+                            // The timeline is a SEPARATE store from the main grid, so
+                            // the main-grid `processedOldPaths` set must NOT suppress
+                            // rewrites here — a file referenced by BOTH the grid and
+                            // the timeline used to keep its broken path (skipped by
+                            // the old guard), making the RelocateModal reappear for it
+                            // on every reload.
+
+                            // The specifically located file itself: bind regardless of name
+                            if (cue.filePath === fileEntry.filePath) {
+                                const newFileName = getFile(newPath);
+                                tlActions.updateCue(cueId, { filePath: newPath, fileName: newFileName });
+                                setMissingFiles(prev => prev.filter(f => f.filePath !== cue.filePath));
+                                continue;
+                            }
+
+                            // Other same-directory timeline ILDA cues
+                            if (getDir(cue.filePath) === oldDirectory) {
+                                const fileName = getFile(cue.filePath);
+                                const potentialPath = `${newDirectory}${sep}${fileName}`;
+                                if (cue.filePath !== potentialPath) {
+                                    const exists = await window.electronAPI.checkFileExists(potentialPath);
+                                    if (exists) {
+                                        console.log(`[Relocate] Auto-resolving timeline ILDA: ${fileName}`);
+                                        tlActions.updateCue(cueId, { filePath: potentialPath, fileName });
+                                        setMissingFiles(prev => prev.filter(f => f.filePath !== cue.filePath));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Timeline audio file in the same directory
+                    const tlAudio = tlState.audio;
+                    if (tlAudio?.path && getDir(tlAudio.path) === oldDirectory) {
+                        const fileName = getFile(tlAudio.path);
+                        const potentialPath = `${newDirectory}${sep}${fileName}`;
+                        if (tlAudio.path !== potentialPath) {
+                            const exists = await window.electronAPI.checkFileExists(potentialPath);
+                            if (exists) {
+                                console.log(`[Relocate] Auto-resolving timeline audio: ${fileName}`);
+                                tlActions.setAudio({ ...tlAudio, path: potentialPath });
+                                processedOldPaths.add(tlAudio.path);
+                                setMissingFiles(prev => prev.filter(f => f.filePath !== tlAudio.path));
+                            }
+                        }
+                    }
+                }
             }
         } catch (error) {
             console.error("Relocation failed:", error);
@@ -6272,38 +6794,57 @@ function App() {
 
     const handleThumbnailError = useCallback((layerIndex, colIndex) => {
         const pageIdx = stateRef.current.activePageId;
-        console.log(`Thumbnail load error for ${pageIdx}-${layerIndex}-${colIndex}, requesting regeneration...`);
-        // Use live ref to get latest clip data if possible
-        const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
+        try {
+            // Use live ref to get latest clip data if possible
+            const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
+            const thumbPath = clip?.thumbnailPath || 'unknown';
+            console.warn(`Thumbnail not found for clip ${pageIdx}-${layerIndex}-${colIndex} (${thumbPath}), requesting regeneration...`);
 
-        if (clip) {
-            if (clip.type === 'ilda' && clip.workerId && ildaParserWorker) {
-                const frameIndex = thumbnailFrameIndexes[pageIdx][layerIndex][colIndex] || 0;
-                ildaParserWorker.postMessage({
-                    type: 'get-frame',
-                    workerId: clip.workerId,
-                    frameIndex: frameIndex,
-                    isStillFrame: true,
-                    layerIndex,
-                    colIndex,
-                    pageId: pageIdx
-                });
-            } else if (clip.type === 'generator') {
-                const frameForThumbnail = clip.stillFrame || (clip.frames && clip.frames[0]);
-                if (frameForThumbnail && frameForThumbnail.points) {
-                    generateThumbnail(frameForThumbnail, clip.effects, layerIndex, colIndex, optimizationEnabled, pageIdx).then(path => {
-                        if (path) {
-                            dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { thumbnailPath: path, thumbnailVersion: Date.now() }, pageId: pageIdx } });
-                        }
+            if (clip) {
+                if (clip.type === 'ilda' && clip.workerId && ildaParserWorker) {
+                    const frameIndex = (thumbnailFrameIndexes[pageIdx]?.[layerIndex]?.[colIndex]) || 0;
+                    ildaParserWorker.postMessage({
+                        type: 'get-frame',
+                        workerId: clip.workerId,
+                        frameIndex: frameIndex,
+                        isStillFrame: true,
+                        layerIndex,
+                        colIndex,
+                        pageId: pageIdx
                     });
-                } else if (clip.generatorDefinition) {
-                    // No still frame available (e.g. right after a project load before
-                    // regeneration finished) - rebuild the clip so a thumbnail can exist.
-                    console.log(`Regenerating generator clip ${pageIdx}-${layerIndex}-${colIndex} to restore its thumbnail`);
-                    const seq = ++generatorRequestSeqRef.current;
-                    regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams, seq, false, false, null, null, pageIdx);
+                } else if (clip.type === 'ilda' && clip.filePath && ildaParserWorker) {
+                    // Older projects load with a stale thumbnailPath but no workerId yet
+                    // (LOAD_PROJECT invalidates workerIds and re-parse is scheduled).
+                    // Re-queue the parse so the workerBecameValid effect can regenerate
+                    // the thumbnail from actual frame data.
+                    console.warn(`Thumbnail regeneration: clip ${pageIdx}-${layerIndex}-${colIndex} has no workerId, re-parsing ${clip.filePath} to recreate the thumbnail`);
+                    ildaParserWorker.postMessage({
+                        type: 'load-and-parse-ilda',
+                        fileName: clip.fileName,
+                        filePath: clip.filePath,
+                        layerIndex,
+                        colIndex,
+                        pageId: pageIdx
+                    });
+                } else if (clip.type === 'generator') {
+                    const frameForThumbnail = clip.stillFrame || (clip.frames && clip.frames[0]);
+                    if (frameForThumbnail && frameForThumbnail.points) {
+                        generateThumbnail(frameForThumbnail, clip.effects, layerIndex, colIndex, optimizationEnabled, pageIdx).then(path => {
+                            if (path) {
+                                dispatch({ type: 'SET_CLIP_CONTENT', payload: { layerIndex, colIndex, content: { thumbnailPath: path, thumbnailVersion: Date.now() }, pageId: pageIdx } });
+                            }
+                        }).catch(err => console.error(`Thumbnail regeneration failed for generator ${pageIdx}-${layerIndex}-${colIndex}:`, err));
+                    } else if (clip.generatorDefinition) {
+                        // No still frame available (e.g. right after a project load before
+                        // regeneration finished) - rebuild the clip so a thumbnail can exist.
+                        console.log(`Regenerating generator clip ${pageIdx}-${layerIndex}-${colIndex} to restore its thumbnail`);
+                        const seq = ++generatorRequestSeqRef.current;
+                        regenerateGeneratorClip(layerIndex, colIndex, clip.generatorDefinition, clip.currentParams, seq, false, false, null, null, pageIdx);
+                    }
                 }
             }
+        } catch (error) {
+            console.error(`Thumbnail regeneration failed for ${pageIdx}-${layerIndex}-${colIndex}:`, error);
         }
     }, [clipContentsRef, thumbnailFrameIndexes, ildaParserWorker, optimizationEnabled, regenerateGeneratorClip]);
 
@@ -6481,9 +7022,9 @@ function App() {
                             }}
                             onUpdatePlaybackSettings={(lIdx, cIdx, settings) => dispatch({ type: 'UPDATE_CLIP_PLAYBACK_SETTINGS', payload: { layerIndex: lIdx, colIndex: cIdx, settings } })}
                             onSetParamSync={handleSetParamSync}
-                            onToggleDacMirror={(lIdx, cIdx, dIdx, axis) => dispatch({ type: 'TOGGLE_CLIP_DAC_MIRROR', payload: { layerIndex: lIdx, colIndex: cIdx, dacIndex: dIdx, axis } })}
-                            onRemoveDac={(dacIndex) => dispatch({ type: 'REMOVE_CLIP_DAC', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, dacIndex } })}
-                            onReorderDacs={(lIdx, cIdx, oldIdx, newIdx) => dispatch({ type: 'REORDER_CLIP_DACS', payload: { layerIndex: lIdx, colIndex: cIdx, oldIndex: oldIdx, newIndex: newIdx } })}
+                            onToggleDacMirror={handleToggleDacMirror}
+                            onRemoveDac={handleRemoveDac}
+                            onReorderDacs={handleReorderDacs}
                             onRemoveEffect={handleRemoveEffect}
                             onReorderEffects={handleReorderEffects}
                             onAddEffect={handleAddEffect}
@@ -6569,7 +7110,7 @@ function App() {
                 />
             </div>
         </>
-    ), [activeBottomTab_1, activeBottomTab_2, fileBrowserViewMode, fileBrowserPath, ildaParserWorker, activePageId, setActiveBottomTab_1, setActiveBottomTab_2, dispatch, selectedLayerIndex, selectedColIndex, selectedClip, getAudioInfo, bpm, getFftLevels, stopAudio, setClipVolume, handleEffectParameterChange, handleAddEffect, handleRemoveEffect, handleReorderEffects, handleAddLayerEffect, handleRemoveLayerEffect, handleSetParamSync, handleSetLayerParamSync, handleAudioError, handleRegisterPreset, liveFramesRef, layerAutopilots, layerEffects, layerUiStates, layerEffectSpeeds, layerSyncSettings, layerAssignedDacs, dacs, dacOutputSettings, handleDacSelected, handleDacsDiscovered, handleUpdateDacSettings, handleApplyDacGroup, enabledShortcuts, quickAssigns, setShowOutputSettingsWindow, setShowShortcutsWindow, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, worldShowBeamEffect, worldBeamRenderMode, state.settingsPanelCollapsed, optimizationEnabled, optimizationMaxDist, optimizationPathDwell, optimizationSettings, handleUpdateQuickControl, handleToggleQuickButton, handleOpenOutputSettings, handleOpenShortcutsSettings, handleSetRenderSetting, handleAssignQuickControl, handleClearThumbnailCache, settingsPanelRenderSettings, playbackFps, progressRef, selectedLayerActiveClip, committedPlaybackSettings, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef]);
+    ), [activeBottomTab_1, activeBottomTab_2, fileBrowserViewMode, fileBrowserPath, ildaParserWorker, activePageId, setActiveBottomTab_1, setActiveBottomTab_2, dispatch, selectedLayerIndex, selectedColIndex, selectedClip, getAudioInfo, bpm, getFftLevels, stopAudio, setClipVolume, handleEffectParameterChange, handleAddEffect, handleRemoveEffect, handleReorderEffects, handleAddLayerEffect, handleRemoveLayerEffect, handleSetParamSync, handleSetLayerParamSync, handleToggleDacMirror, handleRemoveDac, handleReorderDacs, handleAudioError, handleRegisterPreset, liveFramesRef, layerAutopilots, layerEffects, layerUiStates, layerEffectSpeeds, layerSyncSettings, layerAssignedDacs, dacs, dacOutputSettings, handleDacSelected, handleDacsDiscovered, handleUpdateDacSettings, handleApplyDacGroup, enabledShortcuts, quickAssigns, setShowOutputSettingsWindow, setShowShortcutsWindow, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, worldShowBeamEffect, worldBeamRenderMode, state.settingsPanelCollapsed, optimizationEnabled, optimizationMaxDist, optimizationPathDwell, optimizationSettings, handleUpdateQuickControl, handleToggleQuickButton, handleOpenOutputSettings, handleOpenShortcutsSettings, handleSetRenderSetting, handleAssignQuickControl, handleClearThumbnailCache, settingsPanelRenderSettings, playbackFps, progressRef, selectedLayerActiveClip, committedPlaybackSettings, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef]);
 
     // Memoized middle-bar subtree: none of its inputs change on a clip trigger, so
     // React reuses this element and skips diffing it, reducing per-trigger work.
@@ -6579,6 +7120,8 @@ function App() {
                 <BPMControls
                     bpm={bpm}
                     onBpmChange={(newBpm) => dispatch({ type: 'SET_BPM', payload: newBpm })}
+                    bpmSource={bpmSource}
+                    onBpmSourceChange={handleBpmSourceChange}
                     onTap={handleTapTempo}
                 />
             </div>
@@ -6624,7 +7167,7 @@ function App() {
                 <MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />
             </div>
         </div>
-    ), [bpm, dispatch, numPages, activePageId, pageNames, isPlaying, isStopped, playbackFps, handlePlay, handlePause, handleStop, handlePlaybackFpsChange]);
+    ), [bpm, dispatch, numPages, activePageId, pageNames, isPlaying, isStopped, playbackFps, handlePlay, handlePause, handleStop, handlePlaybackFpsChange, handleTapTempo, bpmSource, handleBpmSourceChange]);
 
     return (
         <MidiProvider onMidiCommand={handleMidiCommand} theme={theme} enabledShortcuts={enabledShortcuts}>
@@ -6668,6 +7211,13 @@ function App() {
                                 <GeneralSettingsWindow
                                     show={showGeneralSettingsWindow}
                                     onClose={() => setShowGeneralSettingsWindow(false)}
+                                />
+                                <LinkSyncSettingsWindow
+                                    show={showLinkSyncSettingsWindow}
+                                    onClose={() => setShowLinkSyncSettingsWindow(false)}
+                                    onUpdateSettings={() => {}}
+                                    bpmSource={bpmSource}
+                                    onBpmSourceChange={handleBpmSourceChange}
                                 />
                                 <OutputProcessingWindow
                                     show={showOutputProcessingWindow}
@@ -6729,6 +7279,30 @@ function App() {
                                         {layers.map((layerName, layerIndex) => {
                                             const activeClipDataForLayer = activeClipsData.find(clip => clip.layerIndex === layerIndex);
                                             const liveFrameForLayer = activeClipDataForLayer ? liveFramesRef.current[activeClipDataForLayer.workerId] : null;
+                                            const liveProgressForLayer = (activeClipDataForLayer && activeClipDataForLayer.type === 'generator') ? (progressRef.current[activeClipDataForLayer.workerId] || 0) : 0;
+
+                                            // Layer thumbnail effect timing mirrors the output loop: layer Effect Speed
+                                            // duration when configured, otherwise the active clip's playback duration
+                                            // (speedMultiplier-adjusted), so sync'd layer/clip effects resolve like output.
+                                            const layerClipContent = activeClipDataForLayer ? (clipContents[activeClipDataForLayer.pageId]?.[activeClipDataForLayer.layerIndex]?.[activeClipDataForLayer.colIndex]) : null;
+                                            const layerThumbPb = layerClipContent?.playbackSettings || {};
+                                            let layerThumbDuration = resolveLayerEffectDuration(
+                                                layerEffectSpeeds[layerIndex], bpm, playbackFps, activeClipDataForLayer?.totalFrames
+                                            );
+                                            if (layerThumbDuration === null) {
+                                                if (layerThumbPb.mode === 'timeline') layerThumbDuration = layerThumbPb.duration || 1;
+                                                else if (layerThumbPb.mode === 'bpm') layerThumbDuration = ((layerThumbPb.beats || 8) * 60) / (bpm || 120);
+                                                else layerThumbDuration = (activeClipDataForLayer?.totalFrames || 30) / (layerThumbPb.fps || activeClipDataForLayer?.fps || playbackFps || 30);
+                                                const layerSpeedMult = layerThumbPb.speedMultiplier || 1;
+                                                if (layerSpeedMult !== 0) layerThumbDuration /= layerSpeedMult;
+                                            }
+
+                                            // Layer thumbnail preview cycle for inactive clips in live render mode,
+                                            // timed to the layer's active clip playback speed (same as its thumbnail duration).
+                                            const layerCycleFrames = activeClipDataForLayer?.frames || [];
+                                            const layerCycleInterval = (layerThumbDuration > 0 && (activeClipDataForLayer?.totalFrames || 30) > 0)
+                                                ? (layerThumbDuration * 1000) / (activeClipDataForLayer?.totalFrames || 30)
+                                                : 0;
 
                                             return (
                                                 <LayerControls
@@ -6738,9 +7312,19 @@ function App() {
                                                     onDropEffect={handleDropEffectOnLayer}
                                                     onDropDac={handleDropDacOnLayer}
                                                     layerEffects={layerEffects[layerIndex]}
+                                                    layerSyncSettings={layerSyncSettings}
                                                     activeClipData={activeClipDataForLayer}
                                                     liveFrame={liveFrameForLayer}
+                                                    liveProgress={liveProgressForLayer}
                                                     thumbnailRenderMode={thumbnailRenderMode} // Add this prop
+                                                    thumbBpm={bpm}
+                                                    thumbClipDuration={layerThumbDuration}
+                                                    fftLevels={fftLevels}
+                                                    liveFramesRef={liveFramesRef}
+                                                    progressRef={progressRef}
+                                                    cycleFrames={layerCycleFrames}
+                                                    cycleInterval={layerCycleInterval}
+                                                    cycleEnabled={thumbnailRenderMode === 'active' && isPlaying}
                                                     intensity={layerIntensities[layerIndex]}
                                                     onIntensityChange={handleLayerIntensityChange}
                                                     onDeactivateLayerClips={handleDeactivateLayerClips}
@@ -6782,7 +7366,27 @@ function App() {
                                                         }
 
                                                         const clipLiveFrame = clipWorkerId ? liveFramesRef.current[clipWorkerId] : null;
+                                                        const clipLiveProgress = (clipWorkerId && currentClipContent?.type === 'generator') ? (progressRef.current[clipWorkerId] || 0) : 0;
                                                         const clipStillFrame = currentClipContent?.stillFrame || (currentClipContent?.type === 'generator' ? currentClipContent.frames?.[0] : null);
+
+                                                        // Clip thumbnail effect timing mirrors the output loop's clip duration so
+                                                        // timeline/bpm sync'd effects animate at the same speed as the laser output.
+                                                        const clipThumbPb = currentClipContent?.playbackSettings || {};
+                                                        let thumbClipDuration = 1;
+                                                        if (clipThumbPb.mode === 'timeline') thumbClipDuration = clipThumbPb.duration || 1;
+                                                        else if (clipThumbPb.mode === 'bpm') thumbClipDuration = ((clipThumbPb.beats || 8) * 60) / (bpm || 120);
+                                                        else thumbClipDuration = (currentClipContent?.totalFrames || currentClipContent?.frames?.length || 30) / (clipThumbPb.fps || currentClipContent?.fps || playbackFps || 30);
+                                                        const thumbSpeedMult = clipThumbPb.speedMultiplier || 1;
+                                                        if (thumbSpeedMult !== 0) thumbClipDuration /= thumbSpeedMult;
+
+                                                        // Local preview cycle for this clip's thumbnail in live render mode: every clip
+                                                        // animates through its own frames at its own playback speed when not actively
+                                                        // outputting (live frames take priority over the local cycle).
+                                                        const thumbCycleFrames = currentClipContent?.frames || [];
+                                                        const thumbCycleInterval = (thumbClipDuration > 0 && (currentClipContent?.totalFrames || thumbCycleFrames.length || 30) > 0)
+                                                            ? (thumbClipDuration * 1000) / (currentClipContent?.totalFrames || thumbCycleFrames.length || 30)
+                                                            : 0;
+                                                        const thumbCycleEnabled = thumbnailRenderMode === 'active' && isPlaying && currentClipContent?.triggerStyle !== 'temp';
 
                                                         const activeInfo = activeClipIndexes[layerIndex];
                                                         const isActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
@@ -6798,7 +7402,17 @@ function App() {
                                                                 thumbnailFrameIndex={thumbnailFrameIndexes[pageIdx]?.[layerIndex]?.[colIndex] || 0}
                                                                 thumbnailRenderMode={thumbnailRenderMode} // Add this prop
                                                                 liveFrame={clipLiveFrame} // Add this prop
+                                                                liveProgress={clipLiveProgress}
                                                                 stillFrame={clipStillFrame} // Add this prop
+                                                                liveWorkerId={clipWorkerId}
+                                                                liveFramesRef={liveFramesRef}
+                                                                progressRef={progressRef}
+                                                                thumbBpm={bpm}
+                                                                thumbClipDuration={thumbClipDuration}
+                                                                fftLevels={fftLevels}
+                                                                cycleFrames={thumbCycleFrames}
+                                                                cycleInterval={thumbCycleInterval}
+                                                                cycleEnabled={thumbCycleEnabled}
                                                                 onActivateClick={handleActivateClick}
                                                                 isActive={isActive}
                                                                 onUnsupportedFile={showNotification}
@@ -6861,9 +7475,15 @@ function App() {
                             </ErrorBoundary>
                         </div>
                     ) : currentPage === 'shapeBuilder' ? (
-                        <ShapeBuilder onBack={() => setCurrentPage('main')} />
+                        <>
+                            <ShapeBuilder onBack={() => setCurrentPage('main')} />
+                            <RelocateModal missingFiles={missingFiles} onRelocate={handleRelocate} onClose={() => setMissingFiles([])} />
+                        </>
                     ) : (
-                        <TimelineEditor onBack={() => setCurrentPage('main')} />
+                        <>
+                            <TimelineEditor onBack={() => setCurrentPage('main')} />
+                            <RelocateModal missingFiles={missingFiles} onRelocate={handleRelocate} onClose={() => setMissingFiles([])} />
+                        </>
                     )}
                 </KeyboardProvider>
             </ArtnetProvider>

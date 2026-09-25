@@ -5,10 +5,18 @@ import Mappable from './Mappable';
 
 const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects,
   activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu,
-  thumbnailRenderMode, intensity, onIntensityChange, liveFrame, isBlackout, isSolo,
-  onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker, blendMode, onBlendModeChange }) => {
+  thumbnailRenderMode, intensity, onIntensityChange, liveFrame, liveProgress = 0, isBlackout, isSolo,
+  onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker, blendMode, onBlendModeChange,
+  layerSyncSettings, thumbBpm, thumbClipDuration, fftLevels, liveFramesRef, progressRef,
+  cycleFrames, cycleInterval, cycleEnabled }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
+
+  // If the thumbnail path/version changes (e.g. regenerated), clear the error latch
+  useEffect(() => {
+    if (thumbError) setThumbError(false);
+  }, [activeClipData?.thumbnailPath, activeClipData?.thumbnailVersion]);
 
   const handleClear = () => {
       if (onDeactivateLayerClips) onDeactivateLayerClips(index);
@@ -55,6 +63,10 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
   const combinedEffects = useMemo(() => {
       return [...(activeClipData?.effects || []), ...(layerEffects || [])];
   }, [activeClipData?.effects, layerEffects]);
+
+  const combinedSyncSettings = useMemo(() => {
+      return { ...(activeClipData?.syncSettings || {}), ...(layerSyncSettings?.[index] || {}) };
+  }, [activeClipData?.syncSettings, layerSyncSettings, index]);
 
   const handleDragStart = (e, type, paramName, targetType, label) => {
     e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
@@ -199,12 +211,16 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
         >
 			{activeClipData && (
                 shouldShowLive ? (
-                    <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} frames={activeClipData?.frames} effects={combinedEffects} ildaParserWorker={ildaParserWorker} workerId={activeClipData?.workerId} />
+                    <IldaThumbnail frame={liveFrame || activeClipData.stillFrame} frames={activeClipData?.frames} effects={combinedEffects} progress={activeClipData?.type === 'generator' ? liveProgress : 0} syncSettings={combinedSyncSettings} clipDuration={thumbClipDuration} bpm={thumbBpm || 120} fftLevels={fftLevels} ildaParserWorker={ildaParserWorker} workerId={activeClipData?.workerId} liveFramesRef={liveFramesRef} progressRef={progressRef} cycleFrames={cycleFrames} cycleInterval={cycleInterval} cycleEnabled={cycleEnabled} liveEnabled={thumbnailRenderMode === 'active'} />
                 ) : (
-                    activeClipData.thumbnailPath ? (
+                    activeClipData.thumbnailPath && !thumbError ? (
                         <img 
                             src={`file://${activeClipData.thumbnailPath}?t=${activeClipData.thumbnailVersion || Date.now()}`}
                             alt="layer-thumbnail"
+                            onError={() => {
+                                console.warn(`LayerControls: Thumbnail not found: ${activeClipData.thumbnailPath}`);
+                                setThumbError(true);
+                            }}
                             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                         />
                     ) : (

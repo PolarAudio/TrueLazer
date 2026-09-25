@@ -23,6 +23,39 @@ const NonPassiveWheel = ({ onWheel, children }) => {
     return <span ref={ref} style={{ display: 'contents' }}>{children}</span>;
 };
 
+// A controlled number input that edits a local text draft and only commits the
+// parsed value on blur/Enter. The live value is thus never recomputed out from
+// under the caret while typing (e.g. the shape editor re-renders every frame
+// during playback, which used to reset the field and made typing impossible).
+const NumField = ({ value, onCommit, min, max, step, style }) => {
+    const [draft, setDraft] = useState(String(value));
+
+    useEffect(() => { setDraft(String(value)); }, [value]);
+
+    const commit = () => {
+        let n = parseFloat(draft);
+        if (!isFinite(n)) n = value;
+        if (min != null) n = Math.max(min, n);
+        if (max != null) n = Math.min(max, n);
+        setDraft(String(n));
+        onCommit(n);
+    };
+
+    return (
+        <input
+            type="number"
+            step={step}
+            min={min}
+            max={max}
+            value={draft}
+            style={style}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        />
+    );
+};
+
 const ShapeBuilder = ({ onBack }) => {
   // --- STATE ---
   const [tool, setTool] = useState('select');
@@ -113,6 +146,16 @@ const ShapeBuilder = ({ onBack }) => {
   const playbackAccumulatorRef = useRef(0);
 
   const CANVAS_SIZE = 1000;
+  // Legacy / foreign frames (older .clip saves, hand-edited clips) can carry
+  // shapes without a `type`, or undefined array entries. Normalize them on load
+  // so every shape has a usable type and no render path can crash on a bare
+  // entry. (The effect system re-renders whatever frame is the source, so this
+  // protects every effect, not just the one currently selected.)
+  const sanitizeShapes = (frameShapes) => (frameShapes || [])
+      .filter(s => !!s && typeof s === 'object')
+      .map(s => (typeof s.type === 'string' && s.type.length)
+          ? s
+          : { ...s, type: 'polyline', points: s.points || [] });
   // While an effect is active the editor/export work on a single source frame
   // (virtual): the effect spans the whole loop by modulating that source set,
   // leaving the stored frames untouched (fully non-destructive).
@@ -919,36 +962,82 @@ const ShapeBuilder = ({ onBack }) => {
               interp.color = colorAt(a.color, b.color, t);
           }
 
-          // Interpolate Points if applicable
+          // Interpolate Points if applicable (positions only when POS is on;
+          // colors only when COLOR is on; everything else — extra per-point
+          // fields like blanking/curve — is preserved by cloning p1)
           if (a.points && b.points && a.points.length === b.points.length) {
               interp.points = a.points.map((p1, pIdx) => {
                   const p2 = b.points[pIdx];
-
-                  let resX = p1.x;
-                  let resY = p1.y;
-                  let resZ = (p1.z || 0);
-                  let resCol = p1.color || a.color;
-
+                  const res = { ...p1, color: p1.color || a.color };
                   if (tweenPosition) {
-                      resX = p1.x + (p2.x - p1.x) * t;
-                      resY = p1.y + (p2.y - p1.y) * t;
-                      resZ = (p1.z || 0) + ((p2.z || 0) - (p1.z || 0)) * t;
+                      res.x = p1.x + (p2.x - p1.x) * t;
+                      res.y = p1.y + (p2.y - p1.y) * t;
+                      res.z = (p1.z || 0) + ((p2.z || 0) - (p1.z || 0)) * t;
                   }
-
                   if (tweenColor) {
-                      resCol = colorAt(p1.color || a.color, p2.color || b.color, t);
+                      res.color = colorAt(p1.color || a.color, p2.color || b.color, t);
                   }
-
-                  return { x: resX, y: resY, z: resZ, color: resCol };
+                  return res;
               });
           }
 
           return interp;
       };
 
+      // Color-only regrade: clone `shape` VERBATIM (its own geometry stays),
+      // but re-grade its color toward the [s1 -> s2] gradient at t. Never
+      // touches points/x/y/width/height/scale/rotation — a COLOR-only tween
+      // must preserve every frame's existing position data.
+      const recolorShape = (shape, s1, s2, t) => {
+          const interp = JSON.parse(JSON.stringify(shape));
+          if (shape.type === 'group' && s1.type === 'group' && s2.type === 'group') {
+              interp.shapes = (shape.shapes || []).map((child, i) => {
+                  const c1 = s1.shapes && s1.shapes[i];
+                  const c2 = s2.shapes && s2.shapes[i];
+                  if (!c1 || !c2) return JSON.parse(JSON.stringify(child));
+                  return recolorShape(child, c1, c2, t);
+              });
+          }
+          if (s1.color && s2.color) interp.color = colorAt(s1.color, s2.color, t);
+          if (shape.points && s1.points && s2.points && s1.points.length === s2.points.length) {
+              interp.points = shape.points.map((p1, pIdx) => ({
+                  ...p1,
+                  color: colorAt(p1.color || s1.color, s2.points[pIdx].color || s2.color, t),
+              }));
+          }
+          return interp;
+      };
+
       for (let i = 1; i < totalSteps; i++) {
           const t = i / totalSteps;
           const frameIdx = tweenStartFrame + i;
+
+          if (!tweenPosition) {
+              // COLOR-only (or nothing selected): never rebuild geometry.
+              // Intermediate frames that already contain shapes keep them
+              // exactly as they are — positions included — and only get their
+              // colors re-graded. Empty intermediate frames are seeded from the
+              // start frame so a plain color tween still fills the range.
+              const existing = frames[frameIdx] || [];
+              if (existing.length > 0) {
+                  if (!tweenColor) continue; // nothing selected -> untouched
+                  newFrames[frameIdx] = existing.map((s, sIdx) => {
+                      const s1 = startShapes[sIdx];
+                      const s2 = endShapes[sIdx];
+                      if (!s1 || !s2) return s; // no gradient endpoints -> keep as-is
+                      return recolorShape(s, s1, s2, t);
+                  });
+              } else if (tweenColor) {
+                  newFrames[frameIdx] = startShapes.map((s1, sIdx) => {
+                      const s2 = endShapes[sIdx];
+                      if (!s2) return JSON.parse(JSON.stringify(s1));
+                      return recolorShape(s1, s1, s2, t);
+                  });
+              }
+              continue;
+          }
+
+          // POS tween: blend geometry start -> end by index.
           const interpolatedShapes = [];
 
           // Try to match shapes by index
@@ -1696,9 +1785,10 @@ const ShapeBuilder = ({ onBack }) => {
               if (!loadedFrames || !Array.isArray(loadedFrames) || loadedFrames.length === 0) {
                   throw new Error('Invalid shape clip file');
               }
-              setFrames(loadedFrames);
-              recordHistory(loadedFrames);
-              setFrameCount(loadedFrames.length); setCurrentFrameIndex(0);
+              const cleanFrames = loadedFrames.map(sanitizeShapes);
+              setFrames(cleanFrames);
+              recordHistory(cleanFrames);
+              setFrameCount(cleanFrames.length); setCurrentFrameIndex(0);
               if (clipData.effect && clipData.effect.type) setShapeEffect(clipData.effect);
               if (typeof clipData.bakeEffects === 'boolean') setBakeEffects(clipData.bakeEffects);
               return;
@@ -1737,9 +1827,10 @@ const ShapeBuilder = ({ onBack }) => {
                   }
                   return shapesInFrame;
               });
-              setFrames(newFrames);
-              recordHistory(newFrames);
-              setFrameCount(newFrames.length); setCurrentFrameIndex(0);
+              const cleanFrames = parsedFrames.map(f => sanitizeShapes(f));
+              setFrames(cleanFrames);
+              recordHistory(cleanFrames);
+              setFrameCount(cleanFrames.length); setCurrentFrameIndex(0);
           }
       } catch (e) { console.error(e); } finally { setIsLoading(false); }
   };
@@ -3189,15 +3280,15 @@ const ShapeBuilder = ({ onBack }) => {
           }
           if (onionSkin && currentFrameIndex > 0 && !isPlaying && frames[currentFrameIndex - 1]) { 
               ctx.globalAlpha = 0.15; 
-              frames[currentFrameIndex - 1].forEach(s => drawShape(ctx, s, false, true)); 
+              frames[currentFrameIndex - 1].forEach(s => { if (!s) return; drawShape(ctx, s, false, true); }); 
               ctx.globalAlpha = 1.0; 
           }
         }
         if (backgroundImage) { ctx.globalAlpha = 0.3; ctx.drawImage(backgroundImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE); ctx.globalAlpha = 1.0; }
         if (previewMode === 'off') {
-            if (!(shapeEffect && shapeEffect.type) && shapes.length > 0) shapes.forEach((s, i) => drawShape(ctx, s, selectedShapeIndexes.includes(i)));
+            if (!(shapeEffect && shapeEffect.type) && shapes.length > 0) shapes.forEach((s, i) => { if (!s) return; drawShape(ctx, s, selectedShapeIndexes.includes(i)); });
         } else {
-            if (shapes.length > 0) shapes.forEach(s => drawPreview(ctx, s, previewMode));
+            if (shapes.length > 0) shapes.forEach(s => { if (!s) return; drawPreview(ctx, s, previewMode); });
         }
         if (shapeEffect && shapeEffect.type) {
             const effectPos = frameCount > 1 ? currentFrameIndex / (frameCount - 1) : 0;
@@ -3215,7 +3306,7 @@ const ShapeBuilder = ({ onBack }) => {
             // shapes as-is. Otherwise draw ONLY the modulated layer - no full
             // shape underlay, so blanked gaps/chase jumps read as jumps.
             if (strengthAt < 0.02 && shapes.length > 0) {
-                shapes.forEach((s, i) => previewMode === 'cone' ? drawPreview(ctx, s, 'cone') : drawShape(ctx, s, selectedShapeIndexes.includes(i)));
+                shapes.forEach((s, i) => { if (!s) return; previewMode === 'cone' ? drawPreview(ctx, s, 'cone') : drawShape(ctx, s, selectedShapeIndexes.includes(i)); });
             } else {
                 shapes.forEach(s => {
                     if (!s || s.hidden) return;
@@ -3343,13 +3434,19 @@ const ShapeBuilder = ({ onBack }) => {
       return () => window.removeEventListener('click', h); 
   }, [isDrawing, activeShape]);
 
+  // Was-playing latch so deselect only happens on the real play→stop edge.
+  // (The old `[currentFrameIndex, isPlaying]` version wiped the shape
+  // selection every time the frame index ticked while playback was off, which
+  // made every shape-property number field a no-op after the first play.)
+  const wasPlayingRef = useRef(false);
   useEffect(() => {
-    if (!isPlaying) {
+    if (wasPlayingRef.current && !isPlaying) {
         setSelectedShapeIndexes([]);
         setSelectedPointIndexes([]);
         setSelectedSegmentIndexes([]);
     }
-  }, [currentFrameIndex, isPlaying]);
+    wasPlayingRef.current = isPlaying;
+  }, [isPlaying]);
   
   useEffect(() => {
     const h = (e) => {
@@ -3725,7 +3822,7 @@ const ShapeBuilder = ({ onBack }) => {
                       >
                           <div style={{ width: '10px', height: '10px', background: s.color, marginRight: '8px', borderRadius: '2px' }}></div>
                           <span style={{ fontSize: '0.8rem', color: '#ccc', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {s.type.toUpperCase()} {i}
+                              {s && s.type ? s.type.toUpperCase() : 'SHAPE'} {i}
                           </span>
                           <button 
                               onClick={(e) => { 
@@ -3869,10 +3966,10 @@ const ShapeBuilder = ({ onBack }) => {
                                                   <div style={{ flex: 1 }}>
                                                       <label style={{ fontSize: '0.6rem', color: '#888' }}>START FRAME</label>
                                                       <NonPassiveWheel onWheel={handleTweenStartWheel}>
-                                                      <input 
-                                                        type="number" 
+                                                      <NumField 
                                                         value={tweenStartFrame + 1} 
-                                                        onChange={e => setTweenStartFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} 
+                                                        min={1} 
+                                                        onCommit={v => setTweenStartFrame(Math.max(1, Math.round(v) || 1) - 1)} 
                                                         style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
                                                       />
                                                       </NonPassiveWheel>
@@ -3880,10 +3977,10 @@ const ShapeBuilder = ({ onBack }) => {
                                                   <div style={{ flex: 1 }}>
                                                       <label style={{ fontSize: '0.6rem', color: '#888' }}>END FRAME</label>
                                                       <NonPassiveWheel onWheel={handleTweenEndWheel}>
-                                                      <input 
-                                                        type="number" 
+                                                      <NumField 
                                                         value={tweenEndFrame + 1} 
-                                                        onChange={e => setTweenEndFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} 
+                                                        min={1} 
+                                                        onCommit={v => setTweenEndFrame(Math.max(1, Math.round(v) || 1) - 1)} 
                                                         style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
                                                       />
                                                       </NonPassiveWheel>
@@ -3920,20 +4017,20 @@ const ShapeBuilder = ({ onBack }) => {
                               <div className="property-group">
                                   <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>POSITION (X / Y)</label>
                                   <div style={{ display: 'flex', gap: '5px' }}>
-                                      <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].start?.x || 0)} onChange={(e) => {
+                                      <NumField value={Math.round(shapes[selectedShapeIndexes[0]].start?.x || 0)} onCommit={(v) => {
                                           const s = shapes[selectedShapeIndexes[0]];
                                           if (!s || !s.start) return;
-                                          const dx = (parseInt(e.target.value) || 0) - s.start.x;
+                                          const dx = v - s.start.x;
                                           setFrames(prev => {
                                               const nf = [...prev], ns = [...nf[currentFrameIndex]];
                                               ns[selectedShapeIndexes[0]] = moveShape({...ns[selectedShapeIndexes[0]]}, dx, 0);
                                               nf[currentFrameIndex] = ns; return nf;
                                           });
                                       }} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
-                                      <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].start?.y || 0)} onChange={(e) => {
+                                      <NumField value={Math.round(shapes[selectedShapeIndexes[0]].start?.y || 0)} onCommit={(v) => {
                                           const s = shapes[selectedShapeIndexes[0]];
                                           if (!s || !s.start) return;
-                                          const dy = (parseInt(e.target.value) || 0) - s.start.y;
+                                          const dy = v - s.start.y;
                                           setFrames(prev => {
                                               const nf = [...prev], ns = [...nf[currentFrameIndex]];
                                               ns[selectedShapeIndexes[0]] = moveShape({...ns[selectedShapeIndexes[0]]}, 0, dy);
@@ -3946,8 +4043,8 @@ const ShapeBuilder = ({ onBack }) => {
                                   <div className="property-group">
                                       <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>SIZE (W / H)</label>
                                       <div style={{ display: 'flex', gap: '5px' }}>
-                                          <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].width || 0)} onChange={(e) => updateSelectedShape({ width: parseInt(e.target.value) || 0 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
-                                          <input type="number" value={Math.round(shapes[selectedShapeIndexes[0]].height || 0)} onChange={(e) => updateSelectedShape({ height: parseInt(e.target.value) || 0 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                          <NumField value={Math.round(shapes[selectedShapeIndexes[0]].width || 0)} onCommit={(v) => updateSelectedShape({ width: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
+                                          <NumField value={Math.round(shapes[selectedShapeIndexes[0]].height || 0)} onCommit={(v) => updateSelectedShape({ height: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
                                       </div>
                                   </div>
                               )}
@@ -3955,14 +4052,14 @@ const ShapeBuilder = ({ onBack }) => {
                                   <div className="property-group">
                                       <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>RADIUS (X / Y)</label>
                                       <div style={{ display: 'flex', gap: '5px' }}>
-                                          <input type="number" value={Math.round(Math.abs((shapes[selectedShapeIndexes[0]].end?.x || 0) - (shapes[selectedShapeIndexes[0]].start?.x || 0)))} onChange={(e) => {
-                                              const r = parseInt(e.target.value) || 0;
+                                          <NumField value={Math.round(Math.abs((shapes[selectedShapeIndexes[0]].end?.x || 0) - (shapes[selectedShapeIndexes[0]].start?.x || 0)))} onCommit={(v) => {
+                                              const r = v || 0;
                                               const s = shapes[selectedShapeIndexes[0]];
                                               if (!s || !s.start || !s.end) return;
                                               updateSelectedShape({ end: { ...s.end, x: s.start.x + r } });
                                           }} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
-                                          <input type="number" value={Math.round(Math.abs((shapes[selectedShapeIndexes[0]].end?.y || 0) - (shapes[selectedShapeIndexes[0]].start?.y || 0)))} onChange={(e) => {
-                                              const r = parseInt(e.target.value) || 0;
+                                          <NumField value={Math.round(Math.abs((shapes[selectedShapeIndexes[0]].end?.y || 0) - (shapes[selectedShapeIndexes[0]].start?.y || 0)))} onCommit={(v) => {
+                                              const r = v || 0;
                                               const s = shapes[selectedShapeIndexes[0]];
                                               if (!s || !s.start || !s.end) return;
                                               updateSelectedShape({ end: { ...s.end, y: s.start.y + r } });
@@ -3976,8 +4073,8 @@ const ShapeBuilder = ({ onBack }) => {
                       <div className="property-group">
                           <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>SCALE X / Y</label>
                           <div style={{ display: 'flex', gap: '5px' }}>
-                              <input type="number" step="0.1" value={shapes[selectedShapeIndexes[0]]?.scaleX || 1} onChange={(e) => updateSelectedShape({ scaleX: parseFloat(e.target.value) || 1 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
-                              <input type="number" step="0.1" value={shapes[selectedShapeIndexes[0]]?.scaleY || 1} onChange={(e) => updateSelectedShape({ scaleY: parseFloat(e.target.value) || 1 })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
+                              <NumField value={shapes[selectedShapeIndexes[0]]?.scaleX || 1} step="0.1" onCommit={(v) => updateSelectedShape({ scaleX: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
+                              <NumField value={shapes[selectedShapeIndexes[0]]?.scaleY || 1} step="0.1" onCommit={(v) => updateSelectedShape({ scaleY: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
                           </div>
                       </div>
 
@@ -3999,10 +4096,9 @@ const ShapeBuilder = ({ onBack }) => {
                                             onChange={(e) => updateSelectedShape({ [axis]: parseFloat(e.target.value) * Math.PI / 180 })} 
                                             style={{ flex: 1 }} 
                                         />
-                                        <input 
-                                            type="number" 
+                                        <NumField 
                                             value={valDeg} 
-                                            onChange={(e) => updateSelectedShape({ [axis]: (parseFloat(e.target.value) || 0) * Math.PI / 180 })}
+                                            onCommit={(v) => updateSelectedShape({ [axis]: v * Math.PI / 180 })}
                                             style={{ width: '50px', background: '#111', border: '1px solid #444', color: 'white', padding: '2px', fontSize: '0.7rem' }}
                                         />
                                     </div>
@@ -4093,13 +4189,13 @@ const ShapeBuilder = ({ onBack }) => {
                             <div style={{ flex: 1 }}>
                                 <label style={{ fontSize: '0.7rem', color: '#888' }}>BPM</label>
                                 <NonPassiveWheel onWheel={handleBpmWheel}>
-                                <input type="number" value={bpm} onChange={e => handleSetBpm(parseInt(e.target.value) || 0)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
+                                <NumField value={bpm} min={0} onCommit={v => handleSetBpm(Math.round(v) || 0)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
                                 </NonPassiveWheel>
                             </div>
                             <div style={{ flex: 1 }}>
                                 <label style={{ fontSize: '0.7rem', color: '#888' }}>BEATS</label>
                                 <NonPassiveWheel onWheel={handleBeatsWheel}>
-                                <input type="number" value={beats} onChange={e => handleSetBeats(parseInt(e.target.value) || 1)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
+                                <NumField value={beats} min={1} onCommit={v => handleSetBeats(Math.max(1, Math.round(v) || 1))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
                                 </NonPassiveWheel>
                             </div>
                         </div>
@@ -4108,7 +4204,7 @@ const ShapeBuilder = ({ onBack }) => {
                         <label style={{ fontSize: '0.7rem', color: '#888' }}>
                             DURATION (S): {duration}
                             <NonPassiveWheel onWheel={handleDurationWheel}>
-                            <input type="number" step="0.1" value={duration} onChange={e => handleSetDuration(parseFloat(e.target.value) || 0)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
+                            <NumField value={duration} step="0.1" min={0} onCommit={v => handleSetDuration(v || 0)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
                             </NonPassiveWheel>
                         </label>
                     )}
@@ -4141,7 +4237,7 @@ const ShapeBuilder = ({ onBack }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <label style={{ fontSize: '0.8rem', color: '#888' }}>START:</label>
                     <NonPassiveWheel onWheel={handleTimelineStartWheel}>
-                    <input type="number" min="1" max={frameCount} value={timelineStartFrame + 1} onChange={e => setTimelineStartFrame(Math.max(1, parseInt(e.target.value) || 1) - 1)} style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} />
+                    <NumField value={timelineStartFrame + 1} min={1} max={frameCount} onCommit={v => setTimelineStartFrame(Math.max(1, Math.round(v) || 1) - 1)} style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} />
                     </NonPassiveWheel>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>

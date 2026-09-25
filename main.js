@@ -8,15 +8,18 @@ import psTree from 'ps-tree';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
 import getSystemFonts from 'get-system-fonts';
+import { execFile } from 'child_process';
+import dgram from 'dgram';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+const { decodeProlinkPacket } = require('./src/utils/prodjBeats.js');
 
 // ES module equivalent of __dirname and __filename
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 import dacCommunication from './main/dac-communication.cjs';
-const { discoverDacs, sendFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
+const { discoverDacs, sendFrame, sendIdleFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
 
 // Setup DAC Status Listener
 setDacStatusCallback((ip, status) => {
@@ -56,6 +59,38 @@ app.commandLine.appendSwitch('disable-http-cache');
 app.commandLine.appendSwitch('disable-autofill');
 
 const isDev = process.env.NODE_ENV === 'development';
+
+// Persistent main-process log. Packaged Electron apps have no visible console,
+// so on a silent crash everything is lost. Mirror console output to
+// %APPDATA%/TrueLazer/logs/main.log to make future crashes diagnosable.
+const startFileLog = () => {
+  const logDir = path.join(app.getPath('userData'), 'logs');
+  fs.promises.mkdir(logDir, { recursive: true })
+    .then(() => {
+      const logPath = path.join(logDir, 'main.log');
+      const stamp = () => new Date().toISOString();
+      ['error', 'warn', 'log', 'info', 'debug'].forEach(level => {
+        const original = console[level];
+        console[level] = (...args) => {
+          original(...args);
+          try {
+            const line = args.map(a => {
+              if (a instanceof Error) return a.stack || a.message;
+              try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
+            }).join(' ');
+            fs.appendFile(logPath, `[${stamp()}] [${level.toUpperCase()}] ${line}\n`, () => {});
+          } catch { /* logging must never crash the app */ }
+        };
+      });
+    });
+};
+
+// Defensive safety net: async errors from third-party/legacy modules (e.g.
+// pidusage/ps-tree spawning a removed wmic.exe) would otherwise kill the whole
+// app. Log them instead of crashing.
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+});
 
 let mainWindow; // Global variable to store the main window instance
 let currentThumbnailRenderMode = 'still'; // Global variable to store the current thumbnail render mode
@@ -120,6 +155,36 @@ const schema = {
     ],
     default: null
   },
+  prolinkSettings: {
+    type: 'object',
+    properties: {
+      enabled: { type: 'boolean', default: false },
+      deviceId: { type: 'string', default: '' },
+      selectedDevice: { type: 'string', default: '' },
+      bpmSource: { type: 'string', default: 'prolink' },
+    },
+    default: {
+      enabled: false,
+      deviceId: '',
+      selectedDevice: '',
+      bpmSource: 'prolink',
+    }
+  },
+  stagelinqSettings: {
+    type: 'object',
+    properties: {
+      enabled: { type: 'boolean', default: false },
+      deviceId: { type: 'string', default: '' },
+      selectedDevice: { type: 'string', default: '' },
+      bpmSource: { type: 'string', default: 'stagelinq' },
+    },
+    default: {
+      enabled: false,
+      deviceId: '',
+      selectedDevice: '',
+      bpmSource: 'stagelinq',
+    }
+  },
 };
 
 // Initialize electron-store
@@ -127,6 +192,9 @@ const store = new Store({ schema });
 // store.clear(); // Uncomment to clear store on startup for debugging
 
 let shortcutsState = store.get('shortcutsState');
+
+let prolinkSettings = store.get('prolinkSettings') || { enabled: false, deviceId: '', selectedDevice: '', bpmSource: 'prolink' };
+let stagelinqSettings = store.get('stagelinqSettings') || { enabled: false, deviceId: '', selectedDevice: '', bpmSource: 'stagelinq' };
 
 // Global variables for ArtNet and OSC
 let artnetInstance = null;
@@ -506,9 +574,40 @@ ipcMain.handle('get-default-project-path', async () => {
   return await getDefaultProjectPath();
 });
 
+// Latest ILD directory listing per directory, so the renderer never waits on a
+// fs.readdir round-trip again for the same folder (tab re-opens, re-mounts).
+// TTL keeps it fresh if the user drops files into the folder while running.
+const ildFileListCache = new Map(); // directoryPath -> { ts, files }
+const ILD_LIST_TTL_MS = 10000;
+let ildDefaultPath = null;
+
+async function listIldFiles(directoryPath) {
+  const cached = ildFileListCache.get(directoryPath);
+  if (cached && Date.now() - cached.ts < ILD_LIST_TTL_MS) {
+    return cached.files;
+  }
+  let files = [];
+  try {
+    const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
+    const entries = await fs.promises.readdir(fullPath);
+    files = entries.filter(f => f.toLowerCase().endsWith('.ild')).map(f => path.join(directoryPath, f));
+  } catch (error) {
+    files = [];
+  }
+  ildFileListCache.set(directoryPath, { ts: Date.now(), files });
+  return files;
+}
+
 ipcMain.handle('get-user-ilda-path', async () => {
-  const documentsPath = app.getPath('documents');
-  return path.join(documentsPath, 'TrueLazer', 'ILDA-FILES');
+  if (!ildDefaultPath) ildDefaultPath = path.join(app.getPath('documents'), 'TrueLazer', 'ILDA-FILES');
+  return ildDefaultPath;
+});
+
+// Single round-trip for the default directory's path + listing (LCP fast path).
+ipcMain.handle('get-default-ild-files', async () => {
+  if (!ildDefaultPath) ildDefaultPath = path.join(app.getPath('documents'), 'TrueLazer', 'ILDA-FILES');
+  const files = await listIldFiles(ildDefaultPath);
+  return { path: ildDefaultPath, files };
 });
 
 ipcMain.handle('get-user-mappings-path', async () => {
@@ -632,6 +731,7 @@ function buildApplicationMenu(mode) {
       label: 'Settings',
       submenu: [
         { label: 'General Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
+        { label: 'Link/Sync Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'link-sync-settings'); } },
         {
           label: 'Audio Settings',
           submenu: [
@@ -770,6 +870,8 @@ function buildApplicationMenu(mode) {
       label: 'View',
       submenu: [
         { label: 'Predefined Layouts', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'view-layouts'); } },
+        { type: 'separator' },
+        { label: 'Toggle Developer Tools', accelerator: 'CommandOrControl+Shift+I', click: () => { if (mainWindow) mainWindow.webContents.toggleDevTools(); } },
         {
           label: 'Color Theme',
           submenu: [
@@ -821,6 +923,9 @@ function buildApplicationMenu(mode) {
   Menu.setApplicationMenu(menu);
 }
 
+let prolinkAutoStarted = false;
+let stagelinqAutoStarted = false;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1920,
@@ -835,7 +940,9 @@ function createWindow() {
     frame: true,
   });
 
-  win.webContents.openDevTools();
+  if (isDev) {
+    win.webContents.openDevTools();
+  }
 
   if (isDev) {
     win.loadURL('http://localhost:5173');
@@ -884,9 +991,20 @@ function createWindow() {
   let dacFrameAccumulator = {};
   let dacSendLoopTimer = null;
   let stoppedDacIps = new Set(); // DACs whose output was explicitly stopped (stale renderer frames are dropped)
+  // Always-fed endpoints (Showbridge): fed a continuous 30fps datagram stream —
+  // a real frame when the renderer has one, a dark idle frame otherwise — so the
+  // SDK's DMA never goes quiet. Mirrors EtherDream/Truwave, whose continuous
+  // blank/clear loop keeps DACs responsive the instant a clip becomes active.
+  let dacTargets = [];
   const DAC_SEND_INTERVAL = 1000 / 30; // 30 fps per channel (Truwave default)
   const MAX_MISSED = 5; // ~167ms without a new frame before blanking
   const SILENT_TTL_MS = 3000; // feed laser-off blank/clear frames this long, then retire the channel
+
+  ipcMain.on('dac-set-targets', (event, targets) => {
+    dacTargets = Array.isArray(targets)
+      ? targets.filter((t) => t && t.ip && t.channel != null).map((t) => ({ ip: t.ip, channel: t.channel, type: t.type || 'Showbridge' }))
+      : [];
+  });
 
   ipcMain.on('dac-frame-update', (event, frames) => {
     const now = Date.now();
@@ -921,7 +1039,35 @@ function createWindow() {
     if (dacSendLoopTimer) return;
     dacSendLoopTimer = setInterval(() => {
       const now = Date.now();
+      const targetIds = new Set(dacTargets.map((t) => `${t.ip}:${t.channel}`));
+
+      // Always-fed endpoints first: each tick sends a real frame when one is
+      // waiting, else a dark idle frame so the Showbridge DMA is never starved.
+      // This replaces the old "start sending once there is frame data" model —
+      // the loop runs from laser-on and swaps the idle stream for the compiled
+      // frame buffer the moment a clip is active.
+      for (const t of dacTargets) {
+        // Never reopen a DAC the user just stopped (laser-off window).
+        if (stoppedDacIps.has(t.ip)) continue;
+        const id = `${t.ip}:${t.channel}`;
+        const acc = dacFrameAccumulator[id];
+        if (acc && acc.frame) {
+          acc.missed = 0;
+          acc.blanked = false;
+          acc.blank = null;
+          acc.lastActivity = now;
+          acc.sent = acc.frame;
+          sendFrame(t.ip, t.channel, acc.frame, acc.fps || 30, t.type, acc.options);
+          acc.frame = null;
+        } else {
+          sendIdleFrame(t.ip, t.channel, t.type, acc ? acc.options : undefined);
+        }
+      }
+
       for (const id of Object.keys(dacFrameAccumulator)) {
+        // Target channels are fed above; don't double-handle them in the
+        // legacy silence path (which would blank right after a real frame).
+        if (targetIds.has(id)) continue;
         const acc = dacFrameAccumulator[id];
         if (!acc.frame) {
           acc.missed++;
@@ -1175,9 +1321,7 @@ function createWindow() {
 
   ipcMain.handle('read-ild-files', async (event, directoryPath) => {
     try {
-      const fullPath = path.isAbsolute(directoryPath) ? directoryPath : path.join(__dirname, directoryPath);
-      const files = await fs.promises.readdir(fullPath);
-      return files.filter(file => file.toLowerCase().endsWith('.ild')).map(file => path.join(directoryPath, file));
+      return await listIldFiles(directoryPath);
     } catch (error) {
       console.error('Failed to read directory:', error);
       return [];
@@ -1352,6 +1496,1390 @@ function createWindow() {
     } catch (error) { return { success: true }; }
   });
 
+  // Timeline project files (Ctrl+S / Ctrl+O in the Timeline window)
+  let currentTimelineProjectPath = null;
+  ipcMain.handle('save-timeline-project', async (event, projectData, defaultName = null, forceDialog = false) => {
+    // A saved/open project remembers its file: Ctrl+S then overwrites it
+    // silently like any normal editor. A brand-new project (opened from the
+    // timeline's local storage, never saved-as) falls through to the Save As
+    // dialog automatically — never a null-path crash.
+    if (!forceDialog && currentTimelineProjectPath) {
+      try {
+        await fs.promises.writeFile(currentTimelineProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+        return { success: true, filePath: currentTimelineProjectPath };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+    const name = (typeof defaultName === 'string' && defaultName.trim().length > 0)
+      ? defaultName
+      : 'timeline-project.json';
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Timeline Project',
+      defaultPath: path.join(app.getPath('documents'), 'TrueLazer', name),
+      filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }]
+    });
+    if (canceled || !filePath) return { success: false, canceled: true };
+    try {
+      await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
+      currentTimelineProjectPath = filePath;
+      return { success: true, filePath };
+    } catch (error) { return { success: false, error: error.message }; }
+  });
+
+  ipcMain.handle('open-timeline-project', async (event) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Open Timeline Project',
+      defaultPath: path.join(app.getPath('documents'), 'TrueLazer'),
+      filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+    if (canceled || !filePaths.length) return null;
+    try {
+      const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
+      currentTimelineProjectPath = filePaths[0];
+      return data;
+    } catch (error) {
+      return null;
+    }
+  });
+
+  // Art-Net TimeCode (ArtTimeCode opcode 0x9700) listener. dmxnet already owns
+  // UDP 6454 for DMX; a lone Art-Net TimeCode source is uncommon on that same
+  // port, so this is best-effort: if the bind fails we log and continue.
+  let artnetTcSocket = null;
+  const startArtnetTimecodeListener = () => {
+    if (artnetTcSocket) return;
+    try {
+      const dgram = require('dgram');
+      artnetTcSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      artnetTcSocket.on('message', (msg) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (msg.length < 19) return;
+        if (msg.toString('latin1', 0, 7) !== 'Art-Net') return;
+        const opcode = msg.readUInt16LE(8);
+        if (opcode !== 0x9700) return; // ArtTimeCode
+        const frames = msg[14];
+        const seconds = msg[15];
+        const minutes = msg[16];
+        const hours = msg[17];
+        const type = msg[18];
+        mainWindow.webContents.send('artnet-timecode', { hours, minutes, seconds, frames, type });
+      });
+      artnetTcSocket.bind(6454, () => {
+        console.log('ArtNet TimeCode: listening on UDP 6454 (best-effort)');
+      });
+      artnetTcSocket.on('error', (err) => {
+        console.warn('ArtNet TimeCode listener error:', err.message);
+        artnetTcSocket = null;
+      });
+    } catch (e) {
+      console.warn('ArtNet TimeCode listener unavailable:', e.message);
+      artnetTcSocket = null;
+    }
+  };
+
+  ipcMain.handle('start-artnet-timecode-listener', () => {
+    startArtnetTimecodeListener();
+    return { success: true };
+  });
+  ipcMain.on('stop-artnet-timecode-listener', () => {
+    if (artnetTcSocket) {
+      try { artnetTcSocket.close(); } catch (_) {}
+      artnetTcSocket = null;
+    }
+  });
+
+  // TCNet — TMB TCNet LINK Time Packet listener (UDP 60001 broadcast).
+  // Mirrors the ArtNet TimeCode path so the Timeline Editor keeps its master/
+  // slave semantics identical. Every master broadcasts a "Time Packet"
+  // (Message Type 254) carrying both the layer-1 SMPTE timecode (BCD, for the
+  // playhead) and per-layer 1-4 beat markers (for the BPM trigger-sync in
+  // ShowControl). We only need to LISTEN — the timeline is always a slave.
+  let tcnetTimeSocket = null;
+  const startTcnetTimecodeListener = () => {
+    if (tcnetTimeSocket) return;
+    try {
+      const dgram = require('dgram');
+      // TcnetBpmTracker is a class from timecodeSync — reconstruct lazily so
+      // the UDP listener stays isolated from the renderer's sync hook.
+      const { TcnetBpmTracker } = require('./src/utils/timecodeSync.js');
+      const bpmTracker = new TcnetBpmTracker();
+      tcnetTimeSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      tcnetTimeSocket.on('message', (msg) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const { parseTcnetTimePacket, isTcnetTimePacket } = require('./src/utils/timecodeSync.js');
+        if (!isTcnetTimePacket(msg)) return;
+        const tc = parseTcnetTimePacket(msg);
+        if (!tc) return;
+        // Feed the beat tracker with the L1 beat marker so ShowControl can lock
+        // its BPM trigger-sync to the TCNet grid (marker transitions → tempo).
+        if (tc.beats && tc.beats.L1) bpmTracker.push({ beats: { L1: tc.beats.L1 }, timeMs: (tc.layerTimes && tc.layerTimes.L1) || 0 });
+        const grid = bpmTracker.get();
+        mainWindow.webContents.send('tcnet-timecode', {
+          hours: tc.hours,
+          minutes: tc.minutes,
+          seconds: tc.seconds,
+          frames: tc.frames,
+          rate: tc.rate,
+          beats: tc.beats || {},
+          bpm: grid.bpm,
+          beat: grid.beat,
+          running: grid.running,
+        });
+      });
+      tcnetTimeSocket.bind(60001, () => {
+        console.log('TCNet: listening for Time Packet on UDP 60001');
+        if (bpmTracker) bpmTracker.reset();
+      });
+      tcnetTimeSocket.on('error', (err) => {
+        console.warn('TCNet Time Packet listener error:', err.message);
+        tcnetTimeSocket = null;
+      });
+    } catch (e) {
+      console.warn('TCNet Time Packet listener unavailable:', e.message);
+      tcnetTimeSocket = null;
+    }
+  };
+
+  ipcMain.handle('start-tcnet-timecode-listener', () => {
+    startTcnetTimecodeListener();
+    return { success: true };
+  });
+  ipcMain.on('stop-tcnet-timecode-listener', () => {
+    if (tcnetTimeSocket) {
+      try { tcnetTimeSocket.close(); } catch (_) {}
+      tcnetTimeSocket = null;
+    }
+  });
+
+  // PRO DJ LINK — prolink-connect CDJ deviceState listener. This bypasses
+  // LinkBridge entirely: prolink-connect announces a virtual CDJ onto the
+  // network, connects, and subscribes to every player's status stream
+  // (`statusEmitter.status`). The live deck's state — `beatInMeasure` (1-4,
+  // the same beat-marker cadence TCNet's L1 layer carries) — is fed through
+  // the TcnetBpmTracker-style interval math and broadcast on the same
+  // IPC/timecode bus as TCNet/ArtNet/MTC, on the `prolink-status` channel.
+  let prolinkStarted = false;
+  let prolinkNetwork = null;
+  let prolinkTracker = null;
+  let prolinkActiveDeviceId = null;
+  const prolinkStatusLogged = new Set(); // deviceIds we've already logged a first status for
+  // Serialized lifecycle queue: every start()/stop() request runs back-to-back,
+  // so a stop issued while a start is still binding/autoconfiguring (which used
+  // to leak the UDP sockets and poison port 50000) always runs after it, and a
+  // start re-binds only after the previous stop's sockets have fully closed.
+  let prolinkOp = Promise.resolve();
+  const prolinkEnqueue = (op) => {
+    const run = async () => {
+      try { return await op(); }
+      catch (err) { console.warn('Prolink: lifecycle error:', err && err.message); }
+    };
+    const p = prolinkOp.then(run);
+    prolinkOp = p.catch(() => {});
+    return p;
+  };
+  const prolinkDeviceStates = new Map();
+  const PLAYING_PLAYSTATES = [3, 4]; // prolink CDJStatus.PlayState.Playing / Looping
+  // Continuous beat-derived clock. Status packets only carry the integer beat
+  // index, so snapping seconds to `beat * 60/bpm` sawtoothed the playhead
+  // (0.47 s steps at 128 bpm). Instead we track the wall-clock instant each beat
+  // is seen and ramp seconds 1:1 while beats keep flowing; when they stop the
+  // ramp flatlines half a beat later, so pause parks near the true stop and a
+  // jog/scrub that crosses beats still advances the timeline.
+  let prolinkClock = { lastBeat: -1, lastBeatAt: 0 };
+
+  // Raw Pro DJ Link packet decoding lives in src/utils/prodjBeats.js (unit
+  // tested) — here we only keep the per-device latest packet state and the
+  // analyzed beat grid cache for the followed deck.
+  // Latest decoded packet per device: { beat: {at,nextBeatMs0}, abs: {at,playheadMs,trackLenSec} }
+  const prolinkPackets = new Map();
+  // First-decoded-packet diagnostics (one log per type per session so the
+  // precision paths are plainly visible in the main log).
+  let prolinkBeatPacketLogged = false;
+  let prolinkAbsPacketLogged = false;
+  const prolinkPosSourceLogged = { abs: false, grid: false };
+  // Last absolute playhead per device, so "moving vs parked" can be detected
+  // even when no beats are flowing (CDJ-3000 scratch / pause).
+  const prolinkLastAbsMs = new Map();
+  // Motion direction of the followed deck (+1 forward, -1 backward, seeded
+  // forward). Only single-beat steps flip it — larger deltas are track
+  // reloads / bar wraps, not reverse play. The grid/ramp fallbacks mirror
+  // their ramps off this so backward playback and reverse scrubs walk the
+  // timeline backward instead of sawtoothing between beat lines. The absolute
+  // playhead path ignores this entirely (it is direction-exact).
+  let prolinkDirection = 1;
+  // Smoothed playback pitch (%) for the clock + reported BPM. The CDJ's
+  // effectivePitch is slider-quantized and jitters a little; passing raw steps
+  // into the grid ramp and the BPM readout makes the playhead twitch when the
+  // slider moves. A short EMA over a few status packets kills the jitter but
+  // still tracks a real tempo change within ~100-150 ms.
+  let prolinkSmoothPitch = null;
+  // Which tempo estimate drives the position math right now ('eff' = pitch-
+  // scaled analyzer BPM, 'grid' = measured beat cadence). Switching sources is
+  // debounced so beat-to-beat tracker jitter can't flap it (flapping makes both
+  // the BPM readout and the ramp deadband jump).
+  let prolinkBpmSource = 'eff';
+  let prolinkBpmSourceChangedAt = 0;
+  // Devices that have proven they broadcast Pro DJ Link Absolute Position
+  // packets (CDJ-3000+). Those decks hand us exact millisecond playheads, so
+  // the analyzed beat-grid DB round-trip per track load is pure overhead — skip
+  // it for them once proven.
+  const prolinkAbsCapable = new Set();
+
+  // Analyzed beat grid + duration for the followed deck's loaded track. Grid
+  // entries are { offset: ms-at-0%-pitch, bpm, count-within-bar } per beat,
+  // fetched once per track load via prolink-connect's db service.
+  let prolinkGrid = null;
+  let prolinkGridDurationMs = null;
+  let prolinkTrackKey = null;
+  let prolinkGridLoading = false;
+
+  // Fetch the analyzed beat grid + duration for a loaded track so the playhead
+  // can anchor to true track milliseconds. Falls back to the beat-derived ramp
+  // whenever the database strategy is unavailable (unanalyzed tracks, non-CDJ
+  // sources), retrying only on the next track load.
+  const queueProlinkGridFetch = (status) => {
+    if (prolinkGridLoading) return;
+    if (!prolinkNetwork || !prolinkNetwork.isConnected || !prolinkNetwork.isConnected()) return;
+    if (!prolinkNetwork.db || !prolinkNetwork.statusEmitter) return;
+    prolinkGridLoading = true;
+    const trackKey = prolinkTrackKey;
+    const opts = {
+      deviceId: status.trackDeviceId || status.deviceId,
+      trackType: status.trackType,
+      trackSlot: status.trackSlot,
+      trackId: status.trackId,
+    };
+    Promise.resolve()
+      .then(() => prolinkNetwork.db.getMetadata(opts))
+      .then((track) => {
+        prolinkGridLoading = false;
+        if (prolinkTrackKey !== trackKey) return;
+        if (track && Array.isArray(track.beatGrid) && track.beatGrid.length > 0) {
+          prolinkGrid = track.beatGrid;
+          const grid = prolinkGrid;
+          // prolink-connect reads the pdb Duration column raw — a 16-bit value
+          // in SECONDS (a 5 min track reads back as 300). Convert to ms here so
+          // it matches the grid offsets (ms) and the trackDuration payload.
+          const pdbDurationMs =
+            typeof track.duration === 'number' && track.duration > 0
+              ? track.duration * 1000
+              : null;
+          // Grid-derived cross-check/fallback: last beat offset plus one beat
+          // interval covers tails the analysis grid may not reach.
+          const first = grid[0] ? grid[0].offset : null;
+          const last = grid[grid.length - 1] ? grid[grid.length - 1].offset : null;
+          const secondLast = grid[grid.length - 2] ? grid[grid.length - 2].offset : null;
+          let durationMs = pdbDurationMs;
+          if (last != null) {
+            const gridEndMs =
+              last +
+              (secondLast != null && last > secondLast ? last - secondLast : 0);
+            if (durationMs == null || gridEndMs > durationMs) durationMs = gridEndMs;
+          }
+          prolinkGridDurationMs = durationMs;
+          console.log(
+            'Prolink: loaded beat grid for track', status.trackId,
+            `(${grid.length} beats, ${durationMs != null ? (durationMs / 1000).toFixed(1) : '?'}s, ` +
+            `${first != null ? (first / 1000).toFixed(1) : 0}s → ${last != null ? (last / 1000).toFixed(1) : '?'}s)`
+          );
+        } else {
+          console.warn('Prolink: no analyzed beat grid for track', status.trackId, '— sub-beat position falls back to tempo ramp');
+        }
+      })
+      .catch((err) => {
+        prolinkGridLoading = false;
+        console.warn('Prolink: beat grid unavailable (sub-beat position falls back to tempo ramp):', err && err.message);
+      });
+  };
+
+  // Best-guess default Pro DJ Link interface (first non-internal IPv4 adapter).
+  // Passing a config into bringOnline() guarantees the network is never left
+  // unconfigured — prolink-connect's disconnect() THROWS while unconfigured,
+  // which leaked the bound sockets and caused EADDRINUSE on every restart.
+  const pickDefaultNetworkIface = () => {
+    try {
+      const ifaces = require('os').networkInterfaces();
+      for (const list of Object.values(ifaces)) {
+        for (const iface of list || []) {
+          if (iface && iface.family === 'IPv4' && !iface.internal && iface.address) {
+            return { address: iface.address, netmask: iface.netmask, family: 'IPv4', mac: iface.mac, internal: false, cidr: iface.cidr };
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  };
+
+  const broadcastProlinkStatus = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('prolink-manager-status', {
+      started: prolinkStarted,
+      activeDeviceId: prolinkActiveDeviceId,
+      deviceCount: prolinkDeviceStates.size,
+      networkConnected: prolinkNetwork != null,
+    });
+  };
+
+  // Coalesce the `prolink-status` IPC broadcast. CDJs broadcast status packets
+  // continuously, and every packet would otherwise trigger renderer work (BPM
+  // dispatch + timeline re-render). Latest-wins on a short timer, so a flood of
+  // players collapses to ~30 Hz max instead of one IPC per UDP packet.
+  let prolinkStatusTimer = null;
+  let prolinkStatusLatest = null;
+  const flushProlinkStatus = () => {
+    prolinkStatusTimer = null;
+    if (!prolinkStatusLatest) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const payload = prolinkStatusLatest;
+    prolinkStatusLatest = null;
+    mainWindow.webContents.send('prolink-status', payload);
+  };
+  const enqueueProlinkStatus = (payload) => {
+    prolinkStatusLatest = payload;
+    if (prolinkStatusTimer) return;
+    prolinkStatusTimer = setTimeout(flushProlinkStatus, 33);
+  };
+
+  // Best-effort: identify which process holds a UDP port (Windows netstat + tasklist).
+  const getPortOwner = (port) =>
+    new Promise((resolve) => {
+      execFile('netstat', ['-ano'], { windowsHide: true }, (err, stdout) => {
+        if (err) return resolve(null);
+        const line = String(stdout)
+          .split(/\r?\n/)
+          .find((l) => l.includes('UDP') && l.includes(`:${port}`) && l.includes('0.0.0.0'));
+        if (!line) return resolve(null);
+        const pid = line.trim().split(/\s+/).pop();
+        if (!pid || !/^\d+$/.test(pid)) return resolve(null);
+        execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true }, (err2, out2) => {
+          if (err2) return resolve(String(pid));
+          const m = String(out2).match(/"([^"]+)","(\d+)"/);
+          resolve(m ? `${m[1]} (PID ${m[2]})` : String(pid));
+        });
+      });
+    });
+
+  // Try to bind a UDP port briefly; resolves true if it's currently free.
+  const probePortFree = (port) =>
+    new Promise((resolve) => {
+      const sock = dgram.createSocket('udp4');
+      let done = false;
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        try { sock.close(); } catch {}
+        resolve(ok);
+      };
+      sock.once('error', () => finish(false));
+      sock.bind(port, '0.0.0.0', () => finish(true));
+      setTimeout(() => finish(false), 1500);
+    });
+
+  // Pro DJ Link uses FIXED UDP ports 50000-50002. If any is already taken,
+  // bringOnline() throws mid-bind and LEAKS the sockets it already opened —
+  // which ties up 50000 forever. So verify the ports are free first and report
+  // precisely instead of failing blind (the usual culprit is AnyDesk on 50001).
+  const bindProlinkPorts = async (iface) => {
+    const { bringOnline } = require('prolink-connect');
+    const busy = [];
+    for (const port of [50000, 50001, 50002]) {
+      if (!(await probePortFree(port))) busy.push(port);
+    }
+    if (busy.length) {
+      const detail = (
+        await Promise.all(busy.map(async (p) => {
+          const owner = await getPortOwner(p);
+          return `${p} in use by ${owner || 'another program'}`;
+        }))
+      ).join(', ');
+      throw new Error(
+        `Pro DJ Link needs UDP ports 50000-50002, but ${detail}. Close that program ` +
+        `(e.g. AnyDesk or Rekordbox) and try again.`
+      );
+    }
+    return iface ? await bringOnline({ iface, vcdjId: 5 }) : await bringOnline();
+  };
+
+  const startProlinkStateListenerOp = async () => {
+    if (prolinkStarted) {
+      console.log('Prolink: start skipped — listener is already running');
+      return;
+    }
+    prolinkStarted = true;
+    console.log('Prolink: starting listener…');
+    try {
+      const { TcnetBpmTracker } = require('./src/utils/timecodeSync.js');
+      prolinkTracker = new TcnetBpmTracker();
+
+      // bringOnline() binds sockets on ports 50000/50001/50002 immediately.
+      // Register the network right away so a stop() issued mid-autoconfig can
+      // still disconnect it — otherwise those sockets leak and every later
+      // start fails with "port 50000 already in use".
+      const chosenIface = pickDefaultNetworkIface();
+      console.log(`Prolink: verifying UDP ports 50000-50002 are free (iface ${chosenIface ? chosenIface.address : 'auto'})…`);
+      const network = await bindProlinkPorts(chosenIface);
+      prolinkNetwork = network;
+      console.log('Prolink: UDP sockets bound');
+
+      // autoconfigFromPeers() waits for a CDJ/Rekordbox announce to learn the
+      // real interface. Bounded with a timeout so a missing peer fails cleanly
+      // instead of hanging (and never reaching disconnect()).
+      console.log('Prolink: waiting for a Pro DJ Link peer to auto-configure (10s timeout)…');
+      // If a CDJ already announced between bind and autoconfig, its 'connected'
+      // event may have fired before we attached a listener — skip the wait then.
+      const autoconfig =
+        network.deviceManager.devices.size > 0
+          ? Promise.resolve()
+          : network.autoconfigFromPeers();
+      await Promise.race([
+        autoconfig,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timed out waiting for a Pro DJ Link peer (CDJ or Rekordbox)')), 10000)
+        ),
+      ]);
+      if (!network.isConfigured) {
+        throw new Error('could not auto-configure the network (is Rekordbox running on this machine?)');
+      }
+      console.log('Prolink: peer found — network configured');
+      network.connect();
+      console.log('Prolink: network connected');
+      if (!network.statusEmitter) {
+        throw new Error('status service unavailable');
+      }
+
+      // Decode the port-50001 packets prolink-connect otherwise discards, so
+      // the clock can anchor to the CDJ's own beat timing / playhead. The
+      // watcher hook is provided by a small patch to prolink-connect (see
+      // lib/index.js bringOnline + watchBeatPackets) — without it, everything
+      // keeps working on the status beat index alone.
+      if (typeof network.watchBeatPackets === 'function') {
+        console.log('Prolink: raw UDP-50001 packet watcher armed (patched prolink-connect)');
+        network.watchBeatPackets((buf) => {
+          const decoded = decodeProlinkPacket(buf);
+          if (!decoded) return;
+          if (decoded.kind === 'beat' && !prolinkBeatPacketLogged) {
+            prolinkBeatPacketLogged = true;
+            console.log(
+              'Prolink: decoding beat packets — device', decoded.deviceId,
+              `next beat ${decoded.nextBeatMs0}ms (0% pitch), ${decoded.bpm} bpm`
+            );
+          }
+          if (decoded.kind === 'abs' && !prolinkAbsPacketLogged) {
+            prolinkAbsPacketLogged = true;
+            console.log('Prolink: absolute-position packets seen (CDJ-3000) — device', decoded.deviceId);
+          }
+          if (decoded.kind === 'abs') prolinkAbsCapable.add(decoded.deviceId);
+          const entry = prolinkPackets.get(decoded.deviceId) || { beat: null, abs: null };
+          const now = Date.now();
+          if (decoded.kind === 'beat') {
+            entry.beat = { at: now, nextBeatMs0: decoded.nextBeatMs0 };
+          } else {
+            entry.abs = { at: now, playheadMs: decoded.playheadMs, trackLenSec: decoded.trackLenSec };
+          }
+          prolinkPackets.set(decoded.deviceId, entry);
+        });
+      }
+
+      // Pick the deck whose beat grid drives the show: prefer the master,
+      // else the most recently reported live (playing / on-air) player.
+      const pickActive = () => {
+        const states = [...prolinkDeviceStates.values()];
+        const master = states.find((s) => s.isMaster);
+        if (master) return master;
+        return (
+          states
+            .sort((a, b) => b.packetNum - a.packetNum)
+            .find((s) => PLAYING_PLAYSTATES.includes(s.playState) || s.isOnAir) || null
+        );
+      };
+
+      network.statusEmitter.on('status', (state) => {
+        prolinkDeviceStates.set(state.deviceId, state);
+        if (!prolinkStatusLogged.has(state.deviceId)) {
+          prolinkStatusLogged.add(state.deviceId);
+          console.log(
+            'Prolink: first status packet from CDJ', state.deviceId,
+            '— playState', state.playState,
+            'trackBPM', state.trackBPM,
+            'beatInMeasure', state.beatInMeasure
+          );
+        }
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const prevActiveId = prolinkActiveDeviceId;
+        const active = pickActive();
+        if (!active) return;
+        // Switching decks mid-set starts a fresh beat grid — reset the
+        // interval tracker and beat clock so old inter-beat intervals never
+        // poison the BPM or the playhead ramp.
+        if (prevActiveId !== null && prevActiveId !== active.deviceId) {
+          prolinkTracker.reset();
+          prolinkClock = { lastBeat: -1, lastBeatAt: 0 };
+          prolinkDirection = 1;
+          prolinkSmoothPitch = null;
+          prolinkBpmSource = 'eff';
+          prolinkBpmSourceChangedAt = 0;
+        }
+        prolinkActiveDeviceId = active.deviceId;
+
+        // Lightweight path: a status from a deck that is NOT the show clock
+        // carries no timing — only the device map above needed refreshing. Skip
+        // the playhead/BPM math for it; the active deck's own next event re-
+        // derives everything. (If this event just made its deck the master,
+        // active.deviceId === state.deviceId and we proceed.)
+        if (state.deviceId !== active.deviceId) return;
+
+        const playing = PLAYING_PLAYSTATES.includes(active.playState);
+        const nowMs = Date.now();
+        const rawPitch = active.effectivePitch || 0; // prolink-connect reports % (6 = +6%)
+        prolinkSmoothPitch =
+          prolinkSmoothPitch == null
+            ? rawPitch
+            : prolinkSmoothPitch + (rawPitch - prolinkSmoothPitch) * 0.35;
+        const pitchPct = prolinkSmoothPitch;
+        const speed = 1 + pitchPct / 100; // track-ms consumed per real-ms
+        // effectivePitch is a PERCENTAGE (+6% → 6.00) — scaling by (1 + pitch)
+        // reported 3-7× the real BPM; it must be (1 + pitch/100).
+        const effectiveBpm =
+          active.trackBPM && active.trackBPM > 0
+            ? active.trackBPM * (1 + pitchPct / 100)
+            : null;
+
+        // TcnetBpmTracker-style beat math: beatInMeasure transitions (1→2→3→4)
+        // are exact TCNet L1-style markers, so the same interval tracker locks
+        // the real-time BPM from the CDJ's own beat cadence.
+        let grid = { bpm: null, beat: 0, running: false };
+        if (active.beatInMeasure > 0) {
+          grid = prolinkTracker.push({ beats: { L1: active.beatInMeasure } });
+        }
+
+        // TEMPO — two estimates serve two jobs:
+        //  reportedBpm is the pitch-scaled analyzer BPM rounded to one decimal,
+        //    exactly what the CDJ's own readout shows (so our number matches the
+        //    deck, and smoothing the pitch keeps it from jittering on the slider).
+        //  physicalBpm is the tempo the POSITION math actually runs at. Prefer
+        //    the measured beat cadence when it disagrees with the pitch-scaled
+        //    value by >2% (deck-wide sync / Master Tempo / stale analysis),
+        //    debounced so the tracker's beat-to-beat averaging can't flap it.
+        const reportedBpm = effectiveBpm || grid.bpm;
+        const wantGridBpm = !!(
+          grid.bpm && (!effectiveBpm || Math.abs(grid.bpm - effectiveBpm) / effectiveBpm > 0.02)
+        );
+        const wantedSource = wantGridBpm ? 'grid' : 'eff';
+        if (
+          wantedSource !== prolinkBpmSource &&
+          nowMs - prolinkBpmSourceChangedAt >= 1500
+        ) {
+          prolinkBpmSource = wantedSource;
+          prolinkBpmSourceChangedAt = nowMs;
+        }
+        const physicalBpm =
+          prolinkBpmSource === 'grid' ? grid.bpm : effectiveBpm || grid.bpm;
+
+        // Sub-beat playhead: ramp seconds off the wall-clock instant each beat
+        // was last seen so status updates don't snap the head to beat
+        // boundaries. The ramp runs while beats keep arriving (playing,
+        // cue-button playback, jog scrubs that cross beats) and flatlines half a
+        // beat past the last beat once they stop, so pause parks within the
+        // current beat and a jogwheel position change still moves the timeline.
+        const secPerBeat = physicalBpm && physicalBpm > 0 ? 60 / physicalBpm : null;
+        // If the measured tempo diverges from the pitch-scaled value (the same
+        // >2% override above), run the grid ramp at the MEASURED tempo so the
+        // playhead never drifts from the deck's real position; normally the
+        // pitch math already is the physical rate and this is just `speed`.
+        const adaptiveSpeed =
+          physicalBpm && effectiveBpm && physicalBpm !== effectiveBpm
+            ? speed * (physicalBpm / effectiveBpm)
+            : speed;
+
+        // Track identity → fetch the analyzed beat grid / duration once per load
+        // so the playhead can anchor to true track milliseconds.
+        const trackKey =
+          active.trackId > 0
+            ? `${active.deviceId}:${active.trackSlot}:${active.trackId}`
+            : null;
+        if (trackKey !== prolinkTrackKey) {
+          prolinkTrackKey = trackKey;
+          prolinkGrid = null;
+          prolinkGridDurationMs = null;
+          prolinkGridLoading = false;
+          // Skip the beat-grid DB fetch for decks that already proved they send
+          // Absolute Position packets — that path needs no grid at all.
+          if (trackKey && !prolinkAbsCapable.has(active.deviceId)) {
+            queueProlinkGridFetch(active);
+          }
+        }
+
+        if (active.beat != null && active.beat !== prolinkClock.lastBeat) {
+          if (prolinkClock.lastBeat >= 0) {
+            const delta = active.beat - prolinkClock.lastBeat;
+            if (Math.abs(delta) === 1) prolinkDirection = delta < 0 ? -1 : 1;
+          }
+          prolinkClock.lastBeat = active.beat;
+          prolinkClock.lastBeatAt = nowMs;
+        }
+        // "Beats flowing now" = a beat landed recently (within ~1.6 beats of the
+        // current tempo). TcnetBpmTracker._running goes sticky after two beats
+        // and never times out, so it can't gate the ramp — beat recency can.
+        const beatElapsed =
+          prolinkClock.lastBeat >= 0
+            ? Math.max(0, (nowMs - prolinkClock.lastBeatAt) / 1000)
+            : Number.POSITIVE_INFINITY;
+        const beatsFlowing = secPerBeat
+          ? beatElapsed <= Math.max(0.3, secPerBeat * 1.6)
+          : false;
+
+        // Precise playhead. Precedence:
+        //  1. CDJ-3000+ absolute-position packet — exact ms, scrubbing included.
+        //  2. Analyzed beat grid — anchor the last beat to its true track ms and
+        //     interpolate to the next grid beat (pitch-scaled), preferring the
+        //     CDJ's own next-beat countdown when a beat packet is fresh.
+        //  3. Beat-derived ramp — previous fallback.
+        const pkt = prolinkPackets.get(active.deviceId) || { beat: null, abs: null };
+        const abs = pkt.abs && nowMs - pkt.abs.at < 1500 ? pkt.abs : null;
+        const prevAbsMs = prolinkLastAbsMs.get(active.deviceId);
+        const absMoving = !!abs && abs.playheadMs !== prevAbsMs && Math.abs(abs.playheadMs - (prevAbsMs ?? abs.playheadMs)) > 2;
+        if (abs) prolinkLastAbsMs.set(active.deviceId, abs.playheadMs);
+
+        const positionSource = abs ? 'abs' : prolinkGrid ? 'grid' : 'ramp';
+        if (positionSource !== 'ramp' && !prolinkPosSourceLogged[positionSource]) {
+          prolinkPosSourceLogged[positionSource] = true;
+          console.log(
+            'Prolink: playhead now anchored by', positionSource,
+            `(device ${active.deviceId}, beat ${active.beat})`
+          );
+        }
+        let seconds = null;
+        if (abs) {
+          seconds = abs.playheadMs / 1000;
+        } else if (prolinkClock.lastBeat >= 0) {
+          const gridIdx = prolinkClock.lastBeat - 1; // grid[0] is beat 1
+          const hasGridBeat =
+            prolinkGrid && gridIdx >= 0 && gridIdx < prolinkGrid.length && prolinkGrid[gridIdx];
+          const backward = prolinkDirection < 0;
+          if (hasGridBeat && secPerBeat) {
+            const curOff = prolinkGrid[gridIdx].offset; // ms at 0% pitch
+            if (backward && gridIdx === 0) {
+              // Dead-zone at the very first beat — nothing further back to ramp.
+              seconds = curOff / 1000;
+            } else if (backward) {
+              // Backward play: the head walks from the just-crossed beat line
+              // back toward the previous grid beat, across that real-time
+              // segment. Mirror the forward ramp so reverse playback and jog
+              // scrubs glide backward instead of jumping to the next beat's
+              // interval each time the counter steps down.
+              const prev = prolinkGrid[gridIdx - 1];
+              const prevOff = prev ? prev.offset : null;
+              if (prevOff != null) {
+                const intervalSec = (curOff - prevOff) / 1000 / adaptiveSpeed;
+                const frac = beatsFlowing ? Math.min(beatElapsed / intervalSec, 1.2) : 0;
+                seconds =
+                  curOff / 1000 -
+                  Math.max(0, intervalSec) * Math.min(Math.max(0, frac), 1);
+              } else {
+                const ramp = beatsFlowing ? beatElapsed : Math.min(beatElapsed, secPerBeat * 0.5);
+                seconds = curOff / 1000 - ramp;
+              }
+            } else {
+              const next = prolinkGrid[gridIdx + 1];
+              const nextOff = next ? next.offset : null;
+              if (nextOff != null) {
+                // Real-time interval to the next grid beat, pitch-scaled. Prefer
+                // the CDJ's own next-beat countdown (ms until next beat, at 0%
+                // pitch) when a beat packet is fresh — that's the real device
+                // timing instead of our interval math.
+                const pktNextMs =
+                  pkt.beat && nowMs - pkt.beat.at < 10000 ? pkt.beat.nextBeatMs0 : null;
+                const intervalSec =
+                  pktNextMs != null
+                    ? pktNextMs / 1000 / adaptiveSpeed
+                    : (nextOff - curOff) / 1000 / adaptiveSpeed;
+                const frac = beatsFlowing ? Math.min(beatElapsed / intervalSec, 1.2) : 0;
+                seconds =
+                  curOff / 1000 +
+                  Math.max(0, intervalSec) * Math.min(Math.max(0, frac), 1);
+              } else {
+                const ramp = beatsFlowing ? beatElapsed : Math.min(beatElapsed, secPerBeat * 0.5);
+                seconds = curOff / 1000 + ramp;
+              }
+            }
+          } else if (secPerBeat) {
+            const ramp = beatsFlowing ? beatElapsed : Math.min(beatElapsed, secPerBeat * 0.5);
+            seconds =
+              backward && prolinkClock.lastBeat > 1
+                ? prolinkClock.lastBeat * secPerBeat - ramp
+                : prolinkClock.lastBeat * secPerBeat + ramp;
+          }
+        } else if (secPerBeat && Number.isFinite(active.beat) && active.beat > 0) {
+          seconds = active.beat * secPerBeat;
+        }
+        const fps = 30;
+        const totalSec = seconds == null ? 0 : Math.floor(seconds);
+        const frames = seconds == null ? 0 : Math.floor((seconds % 1) * fps);
+
+        enqueueProlinkStatus({
+          deviceId: active.deviceId,
+          trackId: active.trackId,
+          trackLoaded: active.trackId > 0,
+          playState: active.playState,
+          playing,
+          isMaster: active.isMaster,
+          isOnAir: active.isOnAir,
+          isSync: active.isSync,
+          isEmergencyMode: active.isEmergencyMode,
+          trackBPM: active.trackBPM,
+          sliderPitch: active.sliderPitch,
+          effectivePitch: active.effectivePitch,
+          effectiveBpm,
+          beatInMeasure: active.beatInMeasure,
+          beat: active.beat,
+          beatsUntilCue: active.beatsUntilCue ?? null,
+          packetNum: active.packetNum,
+          seconds,
+          timecode: {
+            hours: Math.floor(totalSec / 3600),
+            minutes: Math.floor((totalSec % 3600) / 60),
+            seconds: totalSec % 60,
+            frames,
+          },
+          rate: fps,
+          bpm: reportedBpm != null ? Math.round(reportedBpm * 10) / 10 : null,
+          beat: grid.beat,
+          running: beatsFlowing || absMoving,
+          positionSource,
+          trackDuration: prolinkGridDurationMs,
+        });
+      });
+      // Runtime error safety net: UDP sockets can emit unhandled errors
+      // (e.g. network interface drops) which would otherwise crash the process.
+      if (network.deviceManager) {
+        network.deviceManager.on('error', (err) => {
+          console.warn('Prolink: deviceManager error:', err && err.message);
+        });
+        const onDeviceChange = () => broadcastProlinkStatus();
+        network.deviceManager.on('connect', (dev) => {
+          console.log('Prolink: device connected —', dev && dev.name, `(id ${dev && dev.id})`, dev && dev.ip && dev.ip.address);
+          onDeviceChange();
+        });
+        network.deviceManager.on('disconnect', (dev) => {
+          console.log('Prolink: device disconnected —', dev && dev.name, `(id ${dev && dev.id})`);
+          onDeviceChange();
+        });
+      }
+      if (network.statusEmitter) {
+        network.statusEmitter.on('error', (err) => {
+          console.warn('Prolink: statusEmitter error:', err && err.message);
+        });
+      }
+      console.log('Prolink: listening for CDJ deviceState (Pro DJ Link)');
+      broadcastProlinkStatus();
+    } catch (e) {
+      const isAddrInUse = e && e.code === 'EADDRINUSE';
+      if (isAddrInUse) {
+        console.warn(
+          'Prolink: port 50000 is already in use — another prolink-connect instance, ' +
+          'Rekordbox, or a previous Pro DJ Link session may still be running. ' +
+          'Stop the other process and retry.'
+        );
+      } else if (e && /timed out waiting for a Pro DJ Link peer/.test(e.message)) {
+        console.warn(
+          'Prolink: no Pro DJ Link peer (CDJ/Rekordbox) announced within 10s — listener stopped. ' +
+          'Check the CDJ is on this subnet and exporting to Pro DJ Link.'
+        );
+      } else {
+        console.warn('Prolink: listener unavailable:', e && e.message);
+      }
+      // Always release the UDP sockets on failure — skipping this previously
+      // kept ports 50000-50002 bound and poisoned every later restart attempt.
+      if (prolinkNetwork) {
+        try {
+          const p = prolinkNetwork.disconnect();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        } catch (err) {
+          console.warn('Prolink: cleanup error:', err && err.message);
+        }
+      }
+      prolinkNetwork = null;
+      prolinkStarted = false;
+      prolinkTracker = null;
+      prolinkGrid = null;
+      prolinkGridDurationMs = null;
+      prolinkTrackKey = null;
+      prolinkGridLoading = false;
+      prolinkPackets.clear();
+      prolinkLastAbsMs.clear();
+      broadcastProlinkStatus();
+    }
+  };
+  const startProlinkStateListener = () => prolinkEnqueue(startProlinkStateListenerOp);
+
+  ipcMain.handle('start-prolink-state-listener', () => {
+    console.log('Prolink: start IPC received');
+    startProlinkStateListener();
+    return { success: true };
+  });
+  const stopProlinkStateListenerOp = async () => {
+    console.log('Prolink: stopping listener…');
+    prolinkStarted = false;
+    prolinkTracker = null;
+    // Drop any in-flight coalesced status update.
+    if (prolinkStatusTimer) {
+      clearTimeout(prolinkStatusTimer);
+      prolinkStatusTimer = null;
+      prolinkStatusLatest = null;
+    }
+    if (prolinkNetwork) {
+      let closing = null;
+      try {
+        const p = prolinkNetwork.disconnect();
+        if (p && typeof p.catch === 'function') closing = p.catch(() => {});
+      } catch (err) {
+        console.warn('Prolink: stop error:', err && err.message);
+      }
+      prolinkNetwork = null;
+      // Wait for the sockets (50000-50002) to actually close so the next
+      // queued start() can bind without "port 50000 already in use".
+      if (closing) await closing;
+      console.log('Prolink: stopped — UDP sockets released');
+    }
+    prolinkDeviceStates.clear();
+    prolinkActiveDeviceId = null;
+    prolinkStatusLogged.clear();
+    prolinkGrid = null;
+    prolinkGridDurationMs = null;
+    prolinkTrackKey = null;
+    prolinkGridLoading = false;
+    prolinkPackets.clear();
+    prolinkLastAbsMs.clear();
+    prolinkBeatPacketLogged = false;
+    prolinkAbsPacketLogged = false;
+    prolinkPosSourceLogged.abs = false;
+    prolinkPosSourceLogged.grid = false;
+    broadcastProlinkStatus();
+  };
+  ipcMain.on('stop-prolink-state-listener', () => {
+    console.log('Prolink: stop IPC received');
+    prolinkEnqueue(stopProlinkStateListenerOp);
+  });
+
+  // If the user left the listener "enabled" in settings, bring it back up on
+  // launch so the UI's "Stop Listener" state matches the actual runtime state.
+  if (!prolinkAutoStarted) {
+    prolinkAutoStarted = true;
+    const saved = store.get('prolinkSettings');
+    if (saved && saved.enabled) {
+      console.log('Prolink: auto-starting listener on launch (enabled=true in saved settings)');
+      startProlinkStateListener();
+    }
+  }
+
+  ipcMain.handle('get-prolink-settings', () => {
+    return store.get('prolinkSettings') || { enabled: false, deviceId: '', selectedDevice: '', bpmSource: 'prolink' };
+  });
+
+  ipcMain.handle('set-prolink-settings', (event, settings) => {
+    if (settings.enabled !== undefined) store.set('prolinkSettings.enabled', settings.enabled);
+    if (settings.deviceId !== undefined) store.set('prolinkSettings.deviceId', settings.deviceId);
+    if (settings.selectedDevice !== undefined) store.set('prolinkSettings.selectedDevice', settings.selectedDevice);
+    if (settings.bpmSource !== undefined) store.set('prolinkSettings.bpmSource', settings.bpmSource);
+    return { success: true };
+  });
+
+  ipcMain.handle('get-prolink-status', () => {
+    return {
+      started: prolinkStarted,
+      activeDeviceId: prolinkActiveDeviceId,
+      deviceCount: prolinkDeviceStates.size,
+      networkConnected: prolinkNetwork != null,
+    };
+  });
+
+  // ==========================================================================
+  // STAGELINQ — Denon DJ StageLinq network listener (the DJ-Link alternative to
+  // Pro DJ Link). Uses the `stagelinq` npm library (chrisle/StageLinq) to talk
+  // to Denon players (SC5000/SC6000, Prime 4/2/Go, LC6000):
+  //
+  //   * StateMap service  -> per-deck transport + track state. TrueLazer
+  //                         vendored patches subscribe SampleRate (samples->s)
+  //                         and DeckIsMaster and forward both on PlayerStatus.
+  //   * BeatInfo service  -> real-time beat stream. Each message carries the
+  //                         deck's current beat (fractional, counts up), total
+  //                         beats, BPM and the playhead's absolute position in
+  //                         audio samples ("samples" — the scrolling-waveform
+  //                         position). This is the Denon analogue of a CDJ-3000
+  //                         Absolute Position packet: no beat grid needed.
+  //
+  //   Position precedence per active deck:
+  //     1. samples / sampleRate (beats moving)  -> exact playhead in track sec.
+  //     2. beat-ramp (bpm * Δbeats)             -> integration fallback when a
+  //                                                device omits samples.
+  //   The master deck is auto-picked: the deck with DeckIsMaster while playing,
+  //   else the first playing deck, else a master deck, else the newest loaded.
+  //
+  //   The whole StageLinq database/album-art path is intentionally unavailable:
+  //   `stagelinq` eagerly requires better-sqlite3-multiple-ciphers, which is
+  //   NOT loadable under Electron's ABI. A vended stub replaces it (see
+  //   node_modules/stagelinq/dist/sqlite-stub.js); downloadDbSources and
+  //   enableFileTranfer stay false so the stub is never invoked.
+  //
+  //   VENDORED PATCHES — applied automatically. They live in
+  //   patches/stagelinq+3.5.5.patch and are re-applied by `npm run patches`,
+  //   which `postinstall` runs on every `npm install` / `npm ci`, so a normal
+  //   install never leaves the library unpatched. If a patch is ever missing
+  //   (e.g. an install with --ignore-scripts), verifyStagelinqPatches() below
+  //   names the exact cause on startup instead of surfacing as an opaque
+  //   "Failed to requestServices" timeout.
+  //     1. network/NetworkDevice.js  — require better-sqlite3 -> ../sqlite-stub
+  //     2. Databases/DbConnection.js — require better-sqlite3 -> ../sqlite-stub
+  //     3. services/StateMap.js      — allowlist /Engine/Deck[1-4]/Track/SampleRate
+  //     4. devices/Player.js         — forward SampleRate + DeckIsMaster
+  //     5. network/announce.js       — DO NOT skip 169.254.x.x interfaces.
+  //        Upstream drops link-local NICs when choosing broadcast targets, so on
+  //        a direct-Ethernet rack (no DHCP, both ends 169.254.x.x) the Login
+  //        announce never leaves this PC; the player still answers discovery,
+  //        then RSTs our TCP connect and the log shows
+  //        "Failed to requestServices". Including link-local targets fixes it.
+  //   patches/prolink-connect+0.11.0.patch carries the Pro DJ Link
+  //   watchBeatPackets patch under the same mechanism.
+  // ==========================================================================
+  let stagelinqStarted = false;
+  let stagelinqClient = null;             // StageLinqInstance
+  let stagelinqActiveDeckId = null;       // "<address>|<layer>" of the followed deck
+  let stagelinqDirection = 1;             // +1 forward / -1 backward (from samples Δ)
+  let stagelinqSmoothBpm = null;          // EMA over the deck's reported BPM
+  let stagelinqOp = Promise.resolve();
+  const stagelinqEnqueue = (op) => {
+    const run = async () => {
+      try {
+        await op();
+      } catch (err) {
+        console.warn('StageLinq: lifecycle error:', err && err.message);
+      }
+    };
+    const p = stagelinqOp.then(run);
+    stagelinqOp = p.catch(() => {});
+  };
+  // Per-deck state keyed by "<address>|<layer>". Kept for the whole session so
+  // deck switches never lose the follow target's playhead.
+  const stagelinqDeckStates = new Map(); // key -> { address, layer, player, deck, playState, play, currentBpm, sampleRate, trackLength, title, artist, trackNetworkPath, songLoaded, deckIsMaster, masterStatus, masterTempo, seconds }
+  const stagelinqSamples = new Map();    // key -> { samples, at } absolute playhead tracking
+  const stagelinqBeats = new Map();      // key -> { beat, seconds, at } beat-ramp integration
+  const stagelinqStatusLogged = new Set(); // deck keys we've logged a first status for
+  const stagelinqPosSourceLogged = { samples: false, beat: false };
+  const stageLinqDeckKey = (address, layer) => `${address}|${layer}`;
+  const stageLinqDeckId = (d) => `${d.player}${d.layer}`; // matches PlayerStatus.deck
+
+  // Manager status (settings-panel Connection row) broadcaster.
+  const broadcastStagelinqStatus = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('stagelinq-manager-status', {
+      started: stagelinqStarted,
+      activeDeckId: stagelinqActiveDeckId,
+      deckCount: stagelinqDeckStates.size,
+      networkConnected: stagelinqClient != null,
+    });
+  };
+
+  // Coalesce the `stagelinq-status` IPC broadcast (beats land at musical rate).
+  let stagelinqStatusTimer = null;
+  let stagelinqStatusLatest = null;
+  const flushStagelinqStatus = () => {
+    stagelinqStatusTimer = null;
+    if (!stagelinqStatusLatest) return;
+    const payload = stagelinqStatusLatest;
+    stagelinqStatusLatest = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('stagelinq-status', payload);
+    }
+  };
+  const enqueueStagelinqStatus = (payload) => {
+    stagelinqStatusLatest = payload;
+    if (stagelinqStatusTimer) return;
+    stagelinqStatusTimer = setTimeout(flushStagelinqStatus, 33);
+  };
+
+  // Pick the deck the show clock follows (the prolink pickActive equivalent).
+  const pickStageLinqActive = () => {
+    const decks = [...stagelinqDeckStates.values()].filter(
+      (d) => d.songLoaded || d.trackNetworkPath
+    );
+    if (decks.length === 0) return null;
+    const sel = stagelinqSettings.selectedDevice;
+    if (sel) {
+      const picked =
+        decks.find((d) => stageLinqDeckId(d) === sel || stageLinqDeckKey(d.address, d.layer) === sel);
+      if (picked) return picked;
+    }
+    const masterPlaying = decks.find((d) => d.deckIsMaster && d.playState);
+    if (masterPlaying) return masterPlaying;
+    const playing = decks.filter((d) => d.playState);
+    if (playing.length > 0) return playing[0];
+    const anyMaster = decks.find((d) => d.deckIsMaster);
+    if (anyMaster) return anyMaster;
+    return decks[0];
+  };
+
+  // StateMap -> PlayerStatus. Stores the deck and re-picks / re-emits the show
+  // clock. Transport flips (play/pause) re-emit the frozen playhead so pause
+  // stops advancing the timeline fast, before the beat watchdog times out.
+  const handleStageLinqState = (status) => {
+    if (!status || !status.address || !status.layer) return;
+    const key = stageLinqDeckKey(status.address, status.layer);
+    const prev = stagelinqDeckStates.get(key) || {};
+    const deck = { ...prev, ...status, key };
+    stagelinqDeckStates.set(key, deck);
+    if (!stagelinqStatusLogged.has(key)) {
+      stagelinqStatusLogged.add(key);
+      console.log(
+        'StageLinq: deck', stageLinqDeckId(deck),
+        `(${deck.layer} @ ${deck.address})`,
+        '— playState', !!deck.playState,
+        'currentBpm', deck.currentBpm,
+        'songLoaded', !!deck.songLoaded,
+        'isMaster', !!deck.deckIsMaster
+      );
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const prevActiveId = stagelinqActiveDeckId;
+    const active = pickStageLinqActive();
+    if (!active) return;
+    if (prevActiveId !== null && prevActiveId !== active.key) {
+      // New follow target — start a fresh BPM/phase baseline.
+      stagelinqDirection = 1;
+      stagelinqSmoothBpm = null;
+      console.log('StageLinq: following deck', stageLinqDeckId(active), `(${active.key})`);
+    }
+    stagelinqActiveDeckId = active.key;
+    // Lightweight path: non-active decks only need the map refresh above.
+    if (key !== active.key) return;
+
+    const playing = !!active.playState;
+    // Default sample rate if the deck's SampleRate state hasn't landed yet.
+    const sr = active.sampleRate || 44100;
+    const nowMs = Date.now();
+    let seconds = typeof active.seconds === 'number' ? active.seconds : null;
+    const bp = active.currentBpm || null;
+    if (bp && bp !== stagelinqSmoothBpm) {
+      stagelinqSmoothBpm = stagelinqSmoothBpm == null ? bp : stagelinqSmoothBpm + (bp - stagelinqSmoothBpm) * 0.35;
+    }
+    const effectiveBpm = stagelinqSmoothBpm || bp;
+    const reportedBpm = effectiveBpm != null ? Math.round(effectiveBpm * 10) / 10 : null;
+    // Pause: flatline the playhead at the last known position.
+    if (!playing) enqueueStageLinqReport(active, seconds, false, effectiveBpm, reportedBpm, sr, active.positionSource || 'beat');
+  };
+
+  // BeatInfo -> per-deck beat/sample stream. Only the active deck drives the
+  // playhead; everything else just keeps its own beat/sample trackers fresh.
+  const handleStageLinqBeat = (connInfo, data) => {
+    if (!connInfo || !data || !Array.isArray(data.decks) || !mainWindow || mainWindow.isDestroyed()) return;
+    const active = stagelinqDeckStates.get(stagelinqActiveDeckId);
+    if (!active) return;
+    for (let i = 0; i < data.decks.length; i++) {
+      const layer = 'ABCD'[i];
+      const key = stageLinqDeckKey(connInfo.address, layer);
+      const dk = data.decks[i];
+      if (!dk) continue;
+      const nowMs = Date.now();
+      // Snapshot the previous trackers BEFORE overwriting them. Reading an entry
+      // back after writing the current value into it compares the value against
+      // itself: the sample delta and dBeats both come out 0, so `running` stays
+      // false forever and the renderer treats every update as a pause — gliding
+      // the playhead toward the target instead of hard-seeking on a jump.
+      const prevSmp = stagelinqSamples.get(key) || null;
+      const prevBeat = stagelinqBeats.get(key) || null;
+      // Fresh sample position — 0 on these devices means "not reported".
+      if (typeof dk.samples === 'number' && dk.samples > 0) {
+        stagelinqSamples.set(key, { samples: dk.samples, at: nowMs });
+      }
+      if (typeof dk.beat === 'number') {
+        stagelinqBeats.set(key, { beat: dk.beat, at: nowMs, seconds: prevBeat ? prevBeat.seconds : null });
+        const rec = stagelinqDeckStates.get(key);
+        if (rec) {
+          rec.beat = dk.beat;
+          stagelinqDeckStates.set(key, rec);
+        }
+      }
+      if (key !== stagelinqActiveDeckId) continue;
+
+      // ----- ACTIVE DECK -> rebuild the show-clock playhead -----
+      const deck = stagelinqDeckStates.get(key);
+      const sr = deck.sampleRate || 44100;
+      const bp = dk.bpm > 0 ? dk.bpm : deck.currentBpm;
+      if (bp && bp !== stagelinqSmoothBpm) {
+        stagelinqSmoothBpm = stagelinqSmoothBpm == null ? bp : stagelinqSmoothBpm + (bp - stagelinqSmoothBpm) * 0.35;
+      }
+      const effectiveBpm = stagelinqSmoothBpm || bp;
+      const reportedBpm = effectiveBpm != null ? Math.round(effectiveBpm * 10) / 10 : null;
+
+      let seconds = null;
+      let running = false;
+      let positionSource = 'ramp';
+      const hasSamples = typeof dk.samples === 'number' && dk.samples > 0;
+      if (hasSamples) {
+        // Absolute playhead in samples (the "scrolling waveform" position).
+        // The deck's own PlayState is the authoritative "is it rolling" signal
+        // here: we already have an absolute position, so change detection is
+        // unnecessary, and a beat jump / cue return has to register as a real
+        // discontinuity so the renderer hard-seeks instead of gliding.
+        if (prevSmp && typeof prevSmp.samples === 'number' && prevSmp.samples !== dk.samples) {
+          stagelinqDirection = dk.samples > prevSmp.samples ? 1 : -1;
+        }
+        seconds = dk.samples / sr;
+        running = !!deck.playState;
+        positionSource = 'samples';
+        if (!stagelinqPosSourceLogged.samples) {
+          stagelinqPosSourceLogged.samples = true;
+          console.log('StageLinq: playhead anchored by absolute sample position — device', connInfo.address, `@ ${sr} Hz`);
+        }
+      } else {
+        // Beat-ramp integration fallback for devices that omit samples.
+        const secPerBeat = bp && bp > 0 ? 60 / bp : null;
+        if (secPerBeat && prevBeat && typeof prevBeat.seconds === 'number') {
+          const dBeats = dk.beat - prevBeat.beat;
+          if (Math.abs(dBeats) > 0) stagelinqDirection = dBeats < 0 ? -1 : 1;
+          seconds = prevBeat.seconds + dBeats * secPerBeat;
+          running = Math.abs(dBeats) > 1e-9 && !!deck.playState;
+        } else if (secPerBeat && typeof dk.beat === 'number' && dk.beat > 0) {
+          // No reliable origin yet — start integration at the current beat.
+          seconds = 0;
+        }
+        positionSource = 'beat';
+        if (!stagelinqPosSourceLogged.beat) {
+          stagelinqPosSourceLogged.beat = true;
+          console.log('StageLinq: no absolute sample position from device', connInfo.address, '— playhead uses beat-integration');
+        }
+        // Beat recency gate mirrors prolink's beats-flowing ramp: once beats
+        // stop arriving (pause/cue park), flatline inside the current beat.
+        const beatAt = prevBeat ? prevBeat.at : 0;
+        const elapsed = nowMs - beatAt;
+        running = running && secPerBeat ? elapsed <= Math.max(0.3, secPerBeat * 1.6) : false;
+      }
+      // Persist the frozen playhead so a later stateChanged (pause etc.) re-emits it.
+      if (seconds != null && deck) {
+        deck.seconds = seconds;
+        deck.positionSource = positionSource;
+        stagelinqDeckStates.set(key, deck);
+        // Seed the beat-ramp anchor with the computed playhead so the next beat
+        // integrates from here (not from a null anchor).
+        const anchor = stagelinqBeats.get(key);
+        if (anchor) stagelinqBeats.set(key, { beat: anchor.beat, at: anchor.at, seconds });
+      }
+      enqueueStageLinqReport(deck, seconds, running, effectiveBpm, reportedBpm, sr, positionSource);
+    }
+  };
+
+  const enqueueStageLinqReport = (deck, seconds, running, effectiveBpm, reportedBpm, sampleRate, positionSource) => {
+    if (!deck) return;
+    const fps = 30;
+    const totalSec = seconds == null ? 0 : Math.floor(seconds);
+    const frames = seconds == null ? 0 : Math.floor((seconds % 1) * fps);
+    enqueueStagelinqStatus({
+      deviceId: deck.key,
+      trackId: deck.trackNetworkPath || null,
+      trackLoaded: !!(deck.songLoaded || deck.trackNetworkPath),
+      playState: deck.playState ? 3 : 1,
+      playing: !!deck.playState && running,
+      isMaster: !!deck.deckIsMaster,
+      isOnAir: false,
+      isSync: false,
+      isEmergencyMode: false,
+      trackBPM: deck.currentBpm || effectiveBpm || null,
+      sliderPitch: null,
+      effectivePitch: null,
+      effectiveBpm: effectiveBpm != null ? Math.round(effectiveBpm * 10) / 10 : null,
+      beatInMeasure: 0,
+      beat: typeof deck.beat === 'number' ? Math.floor(deck.beat) : 0,
+      beatsUntilCue: null,
+      packetNum: 0,
+      seconds,
+      timecode: {
+        hours: Math.floor(totalSec / 3600),
+        minutes: Math.floor((totalSec % 3600) / 60),
+        seconds: totalSec % 60,
+        frames,
+      },
+      rate: fps,
+      bpm: reportedBpm,
+      running: !!running,
+      positionSource,
+      trackDuration: deck.trackLength || null,
+      sampleRate,
+    });
+  };
+
+  // The library is patched in place (see patches/stagelinq+3.5.5.patch, applied
+  // by `npm run patches` on every install). If that ever got skipped -- e.g.
+  // `npm ci --ignore-scripts` -- the failure modes are opaque: the unpatched
+  // sqlite require throws an ABI error, and the unpatched announce drops
+  // link-local NICs so a direct-Ethernet player RSTs the TCP connect and the
+  // log only ever says "Failed to requestServices". Name the real cause here.
+  const verifyStagelinqPatches = () => {
+    const problems = [];
+    let pkgDir = null;
+    try {
+      pkgDir = path.dirname(require.resolve('stagelinq/package.json'));
+    } catch (e) {
+      problems.push('the `stagelinq` package is not installed');
+      return problems;
+    }
+    if (!fs.existsSync(path.join(pkgDir, 'dist', 'sqlite-stub.js'))) {
+      problems.push('dist/sqlite-stub.js is missing (better-sqlite3 ABI patch)');
+    }
+    try {
+      const announce = fs.readFileSync(path.join(pkgDir, 'dist', 'network', 'announce.js'), 'utf8');
+      if (announce.includes("startsWith('169.254.')")) {
+        problems.push('dist/network/announce.js still skips 169.254.x.x interfaces (link-local Login announce patch)');
+      }
+    } catch (e) {
+      problems.push('dist/network/announce.js could not be read');
+    }
+    try {
+      const stateMap = fs.readFileSync(path.join(pkgDir, 'dist', 'services', 'StateMap.js'), 'utf8');
+      if (!/EngineDeck[1-4]TrackSampleRate/.test(stateMap)) {
+        problems.push('dist/services/StateMap.js is missing the SampleRate allowlist entries');
+      }
+    } catch (e) {
+      problems.push('dist/services/StateMap.js could not be read');
+    }
+    return problems;
+  };
+
+  const startStagelinqListenerOp = async () => {
+    if (stagelinqStarted) {
+      console.log('StageLinq: start skipped — listener is already running');
+      return;
+    }
+    const patchProblems = verifyStagelinqPatches();
+    if (patchProblems.length > 0) {
+      console.error('StageLinq: the installed library is missing TrueLazer patches:');
+      for (const p of patchProblems) console.error('  - ' + p);
+      console.error('StageLinq: run `npm run patches` (or a normal `npm install`) to re-apply patches/stagelinq+3.5.5.patch');
+    }
+    stagelinqStarted = true;
+    console.log('StageLinq: starting listener (UDP 51337 discovery)…');
+    try {
+      const { StageLinqInstance } = require('stagelinq');
+      // Database download + file transfer need better-sqlite3-multiple-ciphers,
+      // which cannot load under Electron's ABI — the vended sqlite-stub throws
+      // only if that disabled path is ever touched.
+      const slLogger = {
+        trace: () => {}, debug: () => {}, info: (...a) => console.log('StageLinq:', ...a),
+        warn: (...a) => console.warn('StageLinq:', ...a), error: (...a) => console.error('StageLinq:', ...a),
+      };
+      const client = new StageLinqInstance({
+        downloadDbSources: false,
+        enableFileTranfer: false,
+        maxRetries: 2,
+        logger: slLogger,
+      });
+      const devices = client.devices;
+      devices.on('connected', (info) => {
+        console.log('StageLinq: device connected —', info && info.source, '@', info && info.address, ':', info && info.port);
+        broadcastStagelinqStatus();
+      });
+      devices.on('ready', () => {
+        console.log('StageLinq: devices ready');
+        broadcastStagelinqStatus();
+      });
+      devices.on('stateChanged', handleStageLinqState);
+      devices.on('beatMessage', handleStageLinqBeat);
+      devices.on('error', (err) => {
+        console.warn('StageLinq: device error:', err && err.message);
+      });
+      stagelinqClient = client;
+      await client.connect();
+      console.log('StageLinq: listening for Denon players (StateMap + BeatInfo)');
+      broadcastStagelinqStatus();
+    } catch (e) {
+      console.warn('StageLinq: listener unavailable:', e && e.message);
+      if (stagelinqClient) {
+        try {
+          await stagelinqClient.disconnect();
+        } catch (err) {
+          console.warn('StageLinq: cleanup error:', err && err.message);
+        }
+      }
+      stagelinqClient = null;
+      stagelinqStarted = false;
+      stagelinqDeckStates.clear();
+      stagelinqActiveDeckId = null;
+      stagelinqSamples.clear();
+      stagelinqBeats.clear();
+      stagelinqDirection = 1;
+      stagelinqSmoothBpm = null;
+      broadcastStagelinqStatus();
+    }
+  };
+  const startStagelinqListener = () => stagelinqEnqueue(startStagelinqListenerOp);
+
+  ipcMain.handle('start-stagelinq-listener', () => {
+    console.log('StageLinq: start IPC received');
+    startStagelinqListener();
+    return { success: true };
+  });
+  const stopStagelinqListenerOp = async () => {
+    console.log('StageLinq: stopping listener…');
+    stagelinqStarted = false;
+    if (stagelinqStatusTimer) {
+      clearTimeout(stagelinqStatusTimer);
+      stagelinqStatusTimer = null;
+      stagelinqStatusLatest = null;
+    }
+    if (stagelinqClient) {
+      try {
+        await stagelinqClient.disconnect();
+      } catch (err) {
+        console.warn('StageLinq: stop error:', err && err.message);
+      }
+      stagelinqClient = null;
+      console.log('StageLinq: stopped — UDP/TCP sockets released');
+    }
+    stagelinqDeckStates.clear();
+    stagelinqActiveDeckId = null;
+    stagelinqSamples.clear();
+    stagelinqBeats.clear();
+    stagelinqDirection = 1;
+    stagelinqSmoothBpm = null;
+    stagelinqStatusLogged.clear();
+    stagelinqPosSourceLogged.samples = false;
+    stagelinqPosSourceLogged.beat = false;
+    broadcastStagelinqStatus();
+  };
+  ipcMain.on('stop-stagelinq-listener', () => {
+    console.log('StageLinq: stop IPC received');
+    stagelinqEnqueue(stopStagelinqListenerOp);
+  });
+
+  // Restore the listener if the user left it enabled in settings.
+  if (!stagelinqAutoStarted) {
+    stagelinqAutoStarted = true;
+    const saved = store.get('stagelinqSettings');
+    if (saved && saved.enabled) {
+      console.log('StageLinq: auto-starting listener on launch (enabled=true in saved settings)');
+      startStagelinqListener();
+    }
+  }
+
+  ipcMain.handle('get-stagelinq-settings', () => {
+    return store.get('stagelinqSettings') || { enabled: false, deviceId: '', selectedDevice: '', bpmSource: 'stagelinq' };
+  });
+
+  ipcMain.handle('set-stagelinq-settings', (event, settings) => {
+    if (settings.enabled !== undefined) store.set('stagelinqSettings.enabled', settings.enabled);
+    if (settings.deviceId !== undefined) store.set('stagelinqSettings.deviceId', settings.deviceId);
+    if (settings.selectedDevice !== undefined) store.set('stagelinqSettings.selectedDevice', settings.selectedDevice);
+    if (settings.bpmSource !== undefined) store.set('stagelinqSettings.bpmSource', settings.bpmSource);
+    return { success: true };
+  });
+
+  ipcMain.handle('get-stagelinq-status', () => {
+    return {
+      started: stagelinqStarted,
+      activeDeckId: stagelinqActiveDeckId,
+      deckCount: stagelinqDeckStates.size,
+      networkConnected: stagelinqClient != null,
+    };
+  });
+
   // NDI IPC Handlers
   let ndiCaptureSettings = { width: 480, height: 480 };
   let ndiPerformanceData = { totalTime: 0, count: 0, lastReport: Date.now() };
@@ -1450,32 +2978,91 @@ function createWindow() {
   });
 
   // Background System Stats Loop
-  const sendSystemStats = async () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
+  // pidusage and ps-tree both spawn `wmic.exe` on Windows. On machines where
+  // WMIC has been removed (compact/newer Windows builds) those spawns emit an
+  // asynchronous ENOENT error: ps-tree attaches no 'error' listener, and
+  // pidusage's availability probe throws from a callback its try/catch cannot
+  // catch — either can surface as an "Uncaught Exception: Error Spawn
+  // wmic.exe ENOENT" right after startup. Probe once and pick a wmic-free path.
+  let wmicAvailable = process.platform !== 'win32' ? true : null; // null = probe pending
+  const checkWmic = async () => {
+    if (wmicAvailable === null) {
+      wmicAvailable = await new Promise(resolve => {
+        execFile('where', ['wmic.exe'], { windowsHide: true }, err => resolve(!err));
+      });
+      if (!wmicAvailable) console.warn('WMIC not found; using fallback for system stats.');
+    }
+    return wmicAvailable;
+  };
+
+  const collectSystemStats = (pids, wmicOk) => {
+    const collect = (stats) => {
+      if (!stats) return;
+      let totalCpu = 0;
+      let totalMemKB = 0;
+      const numCores = os.cpus().length || 1;
+      Object.values(stats).forEach(s => {
+        totalCpu += s.cpu;
+        totalMemKB += s.memory;
+      });
+      const normalizedCpu = totalCpu / numCores;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('system-stats', {
+          cpu: normalizedCpu.toFixed(1),
+          ram: (totalMemKB / (1024 * 1024)).toFixed(0)
+        });
+      }
+    };
+    const onError = (e) => console.warn('Error collecting system stats:', e && e.message ? e.message : e);
+
+    if (wmicOk) {
+      pidusage(pids, (err, stats) => {
+        if (err || !stats) return onError(err);
+        collect(stats);
+      });
+    } else {
+      // wmic is missing: use pidusage's bundled gwmi (PowerShell) backend,
+      // which never spawns wmic.
       try {
+        const gwmi = require('pidusage/lib/gwmi');
+        gwmi(pids, { maxage: 60000 }, (err, stats) => err ? onError(err) : collect(stats));
+      } catch (e) {
+        onError(e);
+      }
+    }
+  };
+
+  let mainCpuLast = null;
+  let mainCpuLastTime = 0;
+  const sendSystemStats = async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      const wmicOk = await checkWmic();
+      if (wmicOk) {
         psTree(process.pid, (err, children) => {
           const pids = [process.pid, ...(err ? [] : children.map(p => parseInt(p.PID)).filter(pid => !isNaN(pid)))];
-          pidusage(pids, (err, stats) => {
-            if (err || !stats) return;
-            let totalCpu = 0;
-            let totalMemKB = 0;
-            const numCores = os.cpus().length || 1;
-            Object.values(stats).forEach(s => {
-              totalCpu += s.cpu;
-              totalMemKB += s.memory;
-            });
-            const normalizedCpu = totalCpu / numCores;
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('system-stats', {
-                cpu: normalizedCpu.toFixed(1),
-                ram: (totalMemKB / (1024 * 1024)).toFixed(0)
-              });
-            }
-          });
+          collectSystemStats(pids, true);
         });
-      } catch (e) {
-        console.error("Error in system stats:", e);
+      } else {
+        // Cannot enumerate the process tree without wmic; measure the main
+        // process directly (no external spawn, guaranteed to work).
+        const now = Date.now();
+        const usage = process.cpuUsage();
+        let cpu = 0;
+        if (mainCpuLast) {
+          const dtMs = Math.max(1, now - mainCpuLastTime);
+          const usedMs = (usage.user - mainCpuLast.user + usage.system - mainCpuLast.system) / 1000;
+          cpu = Math.min(100, (usedMs / dtMs) * 100);
+        }
+        mainCpuLast = usage;
+        mainCpuLastTime = now;
+        const ramMB = (process.memoryUsage().rss / (1024 * 1024)).toFixed(0);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('system-stats', { cpu: cpu.toFixed(1), ram: ramMB });
+        }
       }
+    } catch (e) {
+      console.error("Error in system stats:", e);
     }
   };
   setInterval(sendSystemStats, 4000);
@@ -1512,6 +3099,8 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  startFileLog();
+  console.log(`[Init] App started (v${app.getVersion()}) on ${os.platform()}-${os.arch()}`);
   // Web MIDI in Electron is gated behind a main-process permission grant. Without
   // these handlers, navigator.requestMIDIAccess() (awaited by webmidi's
   // WebMidi.enable()) never resolves and the renderer stays on "Initializing

@@ -8,13 +8,16 @@ function animateRenderer(id, lastFrameTime = 0) {
     if (!state) return;
 
     const currentTime = performance.now();
-    // The animation loop should run as fast as possible, point drawing speed is simulated in WebGLRenderer
-    // if (currentTime - lastFrameTime > state.data.drawSpeed) {
+    // Re-arm the rAF BEFORE rendering so a frame that throws in render() cannot
+    // kill the animation loop permanently (a dead rAF chain froze previews mid
+    // playback forever). A single bad frame should drop out, not stop the show.
+    state.animationFrameId = requestAnimationFrame(() => animateRenderer(id, lastFrameTime));
+    try {
         state.renderer.render(state.data);
         lastFrameTime = currentTime;
-    // }
-
-    state.animationFrameId = requestAnimationFrame(() => animateRenderer(id, lastFrameTime));
+    } catch (err) {
+        console.error('[rendering.worker] render error for', id, err);
+    }
 }
 
 self.onmessage = (e) => {

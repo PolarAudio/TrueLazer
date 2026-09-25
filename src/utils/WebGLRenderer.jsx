@@ -1,4 +1,4 @@
-import { applyEffects, applyOutputProcessing } from './effects.js';
+import { applyEffects } from './effects.js';
 import { effectDefinitions } from './effectDefinitions';
 import { optimizePoints } from './optimizer.js';
 
@@ -235,6 +235,9 @@ export class WebGLRenderer {
     this.drawFadeQuad();
 
     if (!ildaFrames || ildaFrames.length === 0) {
+      // Nothing to render — fully clear so a deactivated/deleted clip doesn't leave
+      // its last frame ghosting on the preview.
+      this.clearCanvas();
       return;
     }
 
@@ -259,12 +262,20 @@ export class WebGLRenderer {
     // Instead of full clear, draw a semi-transparent black quad for fade effect
     this.drawFadeQuad();
 
+    // No active clips left — fully clear so the world preview doesn't stay stuck on
+    // the last deactivated clip's frame.
+    if (!worldData || worldData.length === 0) {
+      this.clearCanvas();
+      return;
+    }
+
     const time = previewTime !== null ? previewTime : performance.now();
 
     worldData.forEach((clip) => {
       if (clip && clip.frames && clip.frames.length > 0) {
         const frame = clip.frames[0]; // Get the first and only frame
         if (frame) {
+            try {
             const layerIndex = clip.layerIndex || 0;
             const syncSettings = clip.syncSettings || {};
             const bpm = clip.bpm || 120; // Assuming clip object might carry bpm or use global if passed
@@ -291,7 +302,10 @@ export class WebGLRenderer {
                 
                 let frameToDraw = frame;
                 if (dacSettings) {
-                    // Apply Dimmer if present in settings
+                    // Apply Dimmer only. The world preview is a raw combined view of
+                    // every active clip — position/scaling (outputArea transform,
+                    // safety zones) belong to the final per-output pipeline and are
+                    // intentionally NOT applied here.
                     let processedFrame = frame;
                     if (dacSettings.dimmer !== undefined && dacSettings.dimmer < 1) {
                          const pts = frame.points;
@@ -311,11 +325,16 @@ export class WebGLRenderer {
                          }
                          processedFrame = { ...frame, points: newPts, isTypedArray: isT };
                     }
-                    frameToDraw = applyOutputProcessing(processedFrame, dacSettings);
+                    frameToDraw = processedFrame;
                 }
 
-                // Pass layerIndex, progress and time to draw
+                // Pass layerIndex, progress and time to draw. A single clip throwing
+                // must not veto the rest of the world preview (it was aborting the
+                // whole forEach and leaving the other layers frozen).
                 this.draw(frameToDraw, clip.effects, this.showBeamEffect, this.beamAlpha, previewScanRate, this.beamRenderMode, finalIntensity, layerIndex, progress, time, syncSettings, bpm, clipDuration, fftLevels, effectStates, optimizationEnabled, playbackDirection, playbackStyle);
+            }
+            } catch (err) {
+                console.error('[WebGLRenderer] renderWorld clip error (skipped):', err);
             }
         }
       }

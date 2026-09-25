@@ -21,7 +21,17 @@ const Clip = ({
   onDropDac, // New prop for handling DAC drops
   thumbnailRenderMode,
   liveFrame,
+  liveProgress,
   stillFrame,
+  liveWorkerId,
+  liveFramesRef,
+  progressRef,
+  thumbBpm,
+  thumbClipDuration,
+  fftLevels,
+  cycleFrames,
+  cycleInterval,
+  cycleEnabled,
   onClipHover,
   onThumbnailError
 }) => {
@@ -223,7 +233,7 @@ const Clip = ({
               {/* Render Mode Logic */}
               {shouldShowLive && hasActualContent && hasLiveFrame ? (
                 /* Live/Hover Render Mode: Use liveFrame (or stillFrame if not playing/available) with IldaThumbnail */
-                <IldaThumbnail frame={liveFrame || stillFrame} frames={clipContent?.frames} effects={clipContent?.effects} ildaParserWorker={ildaParserWorker} workerId={clipContent?.workerId} />
+                <IldaThumbnail frame={liveFrame || stillFrame} frames={clipContent?.frames} effects={clipContent?.effects} progress={clipContent?.type === 'generator' ? liveProgress : 0} syncSettings={clipContent?.syncSettings || {}} clipDuration={thumbClipDuration} bpm={thumbBpm || 120} fftLevels={fftLevels} ildaParserWorker={ildaParserWorker} workerId={liveWorkerId} liveFramesRef={liveFramesRef} progressRef={progressRef} cycleFrames={cycleFrames} cycleInterval={cycleInterval} cycleEnabled={cycleEnabled} liveEnabled={thumbnailRenderMode === 'active'} />
               ) : (
                 /* Still Frame Mode */
                 /* If we have a generated thumbnail path, use it for efficiency */
@@ -231,7 +241,18 @@ const Clip = ({
                   <img
                     src={`file://${clipContent.thumbnailPath}?t=${clipContent.thumbnailVersion || Date.now()}`} // Add version timestamp to force reload if updated
                     alt="thumbnail"
-                    onError={() => { setThumbnailError(true); onThumbnailError && onThumbnailError(layerIndex, colIndex); }}
+                    onError={() => {
+                        // Older projects or cleared cache: the cached thumbnail file no
+                        // longer exists on disk. Log it clearly, then ask the parent to
+                        // regenerate it from the clip's frames.
+                        console.warn(`Clip.jsx: Thumbnail not found for ${pageId}-${layerIndex}-${colIndex}: ${clipContent?.thumbnailPath} - triggering new generation`);
+                        try {
+                            setThumbnailError(true);
+                            if (onThumbnailError) onThumbnailError(layerIndex, colIndex);
+                        } catch (e) {
+                            console.error('Clip.jsx: Thumbnail onError handler failed:', e);
+                        }
+                    }}
                     style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
                   />
                 ) : (

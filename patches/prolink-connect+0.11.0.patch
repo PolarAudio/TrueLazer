@@ -1,0 +1,16 @@
+diff --git a/node_modules/prolink-connect/lib/index.js b/node_modules/prolink-connect/lib/index.js
+index cbda556..d9f9403 100644
+--- a/node_modules/prolink-connect/lib/index.js
++++ b/node_modules/prolink-connect/lib/index.js
+@@ -4938,6 +4938,11 @@ async function bringOnline(config) {
+         deviceManager,
+         statusEmitter,
+     });
++    // TRUELAZER PATCH: prolink-connect binds UDP 50001 (beat timing) but never
++    // reads what arrives on it. Expose the raw packets (beat sync / absolute
++    // position) so the host can decode precise sub-beat timing. Re-apply if
++    // this package is ever reinstalled.
++    network.watchBeatPackets = (listener) => beatSocket.addListener('message', listener);
+     return network;
+ }
+ exports.bringOnline = bringOnline;

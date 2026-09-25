@@ -217,6 +217,11 @@ function sendFrame(ip, channel, points, fps) {
         const blanking = activePoints[pOffset + 6] > 0.5;
 
         if (blanking) { r = 0; g = 0; b = 0; }
+        // Color bytes must land in 0..255. Automation boosts (e.g. a brightness
+        // lane) can push channels past the top of the range; round + clamp here
+        // so writeUInt8 never throws ERR_OUT_OF_RANGE.
+        const c255 = (c) => Math.max(0, Math.min(255, Math.round(c)));
+        r = c255(r); g = c255(g); b = c255(b);
         packet.writeInt16BE(Math.max(-32767, Math.min(32767, Math.round(x * 32767))), offset);
         offset += 2;
         packet.writeInt16BE(Math.max(-32767, Math.min(32767, Math.round(y * 32767))), offset);

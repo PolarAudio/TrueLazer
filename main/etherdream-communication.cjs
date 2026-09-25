@@ -229,21 +229,29 @@ function sendFrame(ip, channel, points, fps, options = {}) {
         }
         
         // PPS CALCULATION: default keeps the old stable behavior (fit ~30fps),
-        // but a per-channel target PPS from options.pps/targetPps takes priority
-        // (Area 2 — Variable FPS -> Fixed PPS / Variable PPS -> Fixed FPS).
+        // but a per-channel target PPS from options.pps/targetPps takes priority,
+        // and in Variable PPS -> Fixed FPS mode the per-frame rate is derived
+        // from this frame's ACTUAL point count so it still completes in one
+        // 1/fps window (the DAC plays `rate` points/sec; a frame must fit its
+        // share of the frame interval or the buffer starves between frames).
+        const effFps = (fps && fps > 0) ? fps : 30;
         let targetPPS;
-        if (options && options.pps && options.pps > 0) {
+        if (options && options.targetMode === 'varPpsFixedFps') {
+            // Pad to a whole frame: rate = points in this frame * fps, so the
+            // frame's play time is exactly 1/fps. Preserves the point budget.
+            targetPPS = Math.max(5000, Math.min(120000, Math.round(optimized.length * effFps)));
+        } else if (options && options.pps && options.pps > 0) {
             targetPPS = Math.max(5000, Math.min(120000, options.pps));
         } else if (options && options.targetPps && options.targetPps > 0) {
             targetPPS = Math.max(5000, Math.min(120000, options.targetPps));
         } else {
             targetPPS = Math.max(10000, Math.min(30000, optimized.length * 30));
         }
-        instance.frameQueue.push({ points: optimized, rate: targetPPS });
+        instance.frameQueue.push({ points: optimized, rate: targetPPS, fps: effFps });
         if (instance.frameQueue.length > 30) instance.frameQueue.shift();
         instance.lastFrameTime = Date.now();
     } else {
-        instance.frameQueue.push({ points: createBlankFrame(200), rate: 12000 });
+        instance.frameQueue.push({ points: createBlankFrame(200), rate: 12000, fps: (fps && fps > 0) ? fps : 30 });
         if (instance.frameQueue.length > 30) instance.frameQueue.shift();
         instance.lastFrameTime = Date.now();
     }
@@ -265,6 +273,7 @@ async function startOutput(ip) {
                 let localPointBuffer = [];
                 let currentPPS = 30000;
                 let lastValidFrame = null;
+                let lastFrameFps = 30;
                 let lastStatusTime = Date.now();
                 let lastLoopRun = Date.now();
                 let beginSentManual = false;
@@ -356,12 +365,13 @@ async function startOutput(ip) {
                             if (instance.frameQueue.length > 0) {
                                 const frame = instance.frameQueue.shift();
                                 lastValidFrame = frame;
+                                lastFrameFps = frame.fps || 30;
                                 // PAD with blanking at the last position ONLY to preserve animation timing
-                                localPointBuffer = padPoints(frame.points, Math.ceil(frame.rate / 60));
+                                localPointBuffer = padPoints(frame.points, Math.ceil(frame.rate / lastFrameFps));
                                 currentPPS = frame.rate;
                             } else if (lastValidFrame) {
                                 // Repeat last valid frame if renderer is slow
-                                localPointBuffer = padPoints(lastValidFrame.points, Math.ceil(currentPPS / 60));
+                                localPointBuffer = padPoints(lastValidFrame.points, Math.ceil(currentPPS / lastFrameFps));
                             } else {
                                 localPointBuffer = createBlankFrame(100);
                                 currentPPS = 12000;

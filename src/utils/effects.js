@@ -397,7 +397,12 @@ function hsvToRgb(h, s, v) {
         case 4: r = t; g = p; b = v; break;
         case 5: r = v; g = p; b = q; break;
     }
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+    // Continuous 0–255 floats, NOT rounded to bytes: rounding here would snap
+    // low-brightness channels to 0 before the slider reaches the real end of
+    // range (perceptually "turns off early"), and it corrupts channel ratios
+    // (one byte can drop a step before its neighbors, shifting hue at dim
+    // levels). The final byte conversion happens downstream on the DAC path.
+    return [r * 255, g * 255, b * 255];
 }
 
 function rgbToHsv(r, g, b) {
@@ -1398,18 +1403,38 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
 }
 
 export function applyChase(points, numPoints, params, time, context = {}) {
-    const { mode = 'segment', steps: paramSteps, decay, speed, overlap, emptyStep, direction, useCustomOrder, customOrder, playstyle = 'loop' } = params;
-    const { progress = 0, clipDuration = 1, syncSettings = {} } = context;
+    const { mode = 'segment', steps: paramSteps, decay, speed, overlap, emptyStep, direction, useCustomOrder, customOrder, playstyle = 'loop', clock: chaseClock = 'time' } = params;
+    const { progress, clipDuration, syncSettings = {}, fps = 30, bpm = 120 } = context;
 
     // Check if THIS specific parameter ('speed') is synced
     const instancePrefix = params.instanceId ? `${params.instanceId}.` : 'chase.';
     const isSpeedSynced = !!syncSettings[instancePrefix + 'speed'];
-    const useSync = (progress !== undefined && clipDuration > 0) || isSpeedSynced;
+    // A caller that renders a clip (Showeditor, preview, WebGL) provides a frame
+    // clock through progress + clipDuration. Without one the chase must advance on
+    // the free-running clock instead of being pinned to step 0 — the timeline
+    // editor's compile has no clip-render context, so `progress` stays undefined
+    // there (applyEffects' `progress = 0` default must not count as a clock).
+    const useSync = (progress !== undefined && progress !== null && (clipDuration === undefined || clipDuration > 0)) || isSpeedSynced;
+
+    // Driving clock: how many steps the chase advances per second. Mirrors the
+    // Showeditor "clip playback" speed pick (which the timeline editor lacks), so
+    // users choose the clock directly on the effect. 'time' = 1 step per second
+    // (historical default), 'fps' = 1 step per rendered frame at the timeline
+    // framerate, 'bpm' = 1 step per musical beat.
+    const clockRate =
+        chaseClock === 'fps' ? Math.max(1, fps)
+        : chaseClock === 'bpm' ? Math.max(0, bpm) / 60
+        : 1;
 
     if (mode === 'segment') {
-        const steps = paramSteps;
-        // If synced, map 0..1 progress to 0..steps. If free, map 1s to 1 step.
-        let t = (useSync ? (progress * steps) : (time * 0.001)) * speed;
+        // 1 step = the chase's floor: a single step over the whole segment maps
+        // every point to step 0 and the t-clock always lands on it, so the effect
+        // is a no-op. Curves that dip below 1 clamp here instead of producing
+        // negative/ghost step indices, keeping the slider minimum authoritative.
+        const steps = Math.max(1, paramSteps);
+        // Synced maps 0..1 progress to 0..steps; free time advances `clockRate`
+        // steps per second.
+        let t = (useSync ? (progress * steps) : (time * 0.001 * clockRate)) * speed;
 
         if (playstyle === 'bounce') {
             const range = steps;
@@ -1488,8 +1513,9 @@ export function applyChase(points, numPoints, params, time, context = {}) {
             }
         }
         const cycleLength = numChannels;
-        // If synced, map 0..1 progress to 0..numChannels. If free, map 1s to 1 step.
-        let t = (useSync ? (progress * cycleLength) : (time * 0.001)) * speed;
+        // Synced maps 0..1 progress to 0..numChannels; free time advances
+        // `clockRate` steps per second.
+        let t = (useSync ? (progress * cycleLength) : (time * 0.001 * clockRate)) * speed;
 
         if (playstyle === 'bounce') {
             const range = cycleLength;

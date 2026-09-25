@@ -9,6 +9,7 @@ import { IldaParserWorkerProvider } from './contexts/IldaParserWorkerContext.jsx
 import { GeneratorWorkerProvider } from './contexts/GeneratorWorkerContext.jsx'; // Import GeneratorWorkerProvider
 import { ThumbnailWorkerProvider } from './contexts/ThumbnailWorkerContext.jsx';
 import { AudioProvider } from './contexts/AudioContext.jsx';
+import { TimelineProvider } from './contexts/TimelineContext.jsx';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <SharedWorkerProvider>
@@ -16,7 +17,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <GeneratorWorkerProvider> {/* Wrap App with GeneratorWorkerProvider */}
           <ThumbnailWorkerProvider>
             <AudioProvider>
-              <App />
+              <TimelineProvider>
+                <App />
+              </TimelineProvider>
             </AudioProvider>
           </ThumbnailWorkerProvider>
         </GeneratorWorkerProvider>

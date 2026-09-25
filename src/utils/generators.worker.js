@@ -72,7 +72,13 @@ self.onmessage = async (event) => {
           colIndex,
           frames,
           generatorDefinition: generator, // Send back the original definition
-          currentParams: currentParams, // Send back the params used for generation
+          // Send back the params used for generation — but never echo the raw audio
+          // buffer back: it is only needed inside the worker, and cloning it on every
+          // regeneration hammers the main-thread GC (the UI framerate degrades over time).
+          currentParams: (() => {
+            const { audioData: _audioData, ...paramsToReturn } = currentParams;
+            return paramsToReturn;
+          })(),
           isLive: event.data.isLive, // Pass through the live flag
           isNdi: event.data.isNdi, // Pass through NDI flag
           isAutoUpdate: event.data.isAutoUpdate, // Pass through auto update flag

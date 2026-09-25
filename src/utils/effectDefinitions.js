@@ -178,6 +178,7 @@ export const effectDefinitions = [
     defaultParams: {
       mode: 'segment',
       playstyle: 'repeat',
+      clock: 'time', // 'time', 'fps' or 'bpm' — driving playback clock
       steps: 4,
       decay: 0.8,
       speed: 1.0,
@@ -191,8 +192,9 @@ export const effectDefinitions = [
     paramControls: [
       { id: 'mode', label: 'Mode', type: 'select', options: ['segment', 'channel'] },
       { id: 'playstyle', label: 'Playstyle', type: 'select', options: ['once', 'repeat', 'bounce'] },
+      { id: 'clock', label: 'Clock', type: 'select', options: ['time', 'fps', 'bpm'] },
       { id: 'emptyStep', label: 'Empty Step', type: 'checkbox', showIf: { mode: 'channel' } },
-      { id: 'steps', label: 'Steps', type: 'range', min: 2, max: 16, step: 1, showIf: { mode: 'segment' } },
+      { id: 'steps', label: 'Steps', type: 'range', min: 1, max: 16, step: 1, showIf: { mode: 'segment' } },
       { id: 'decay', label: 'Decay', type: 'range', min: 0, max: 1, step: 0.01 },
       { id: 'speed', label: 'Speed', type: 'range', min: 0.1, max: 5.0, step: 0.1 },
       { id: 'overlap', label: 'Overlap', type: 'range', min: 1, max: 4, step: 1 },

@@ -1,15 +1,19 @@
 {
   "name": "truelazer",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "development build",
   "main": "main.js",
   "scripts": {
     "start-renderer": "vite",
     "start": "concurrently --kill-others \"npm run start-renderer\" \"cross-env NODE_ENV=development electron .\"",
     "build-native": "node-gyp rebuild --directory native",
-    "postinstall": "npm run build-native",
+    "patches": "patch-package",
+    "postinstall": "npm run patches && npm run build-native",
     "build": "vite build && electron-builder --publish never",
     "test": "vitest run"
+  },
+  "overrides": {
+    "better-sqlite3": "12.4.1"
   },
   "build": {
     "appId": "com.truelazer.app",
@@ -74,6 +78,7 @@
     "cross-env": "^10.1.0",
     "electron": "^38.0.0",
     "electron-builder": "^26.0.12",
+    "patch-package": "^8.0.1",
     "vite": "^7.1.4",
     "vitest": "^4.0.18"
   },
@@ -93,9 +98,11 @@
     "opentype.js": "^1.3.4",
     "osc": "^2.4.5",
     "pidusage": "^4.0.1",
+    "prolink-connect": "^0.11.0",
     "ps-tree": "^1.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "stagelinq": "^3.5.5",
     "webmidi": "^3.1.14"
   }
 }
