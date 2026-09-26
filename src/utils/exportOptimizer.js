@@ -177,6 +177,23 @@ export function padToTarget(pts, keptIndices, target) {
 export function optimizeShapePoints(pts, opts = {}) {
   if (!pts || pts.length < 2) return { points: pts || [], indexes: pts ? pts.map((_, i) => i) : [] };
 
+  // keepAll: the caller explicitly asked for this exact point set (a user-chosen
+  // point density, or a resample needed to give a per-point beam style something
+  // to draw). Decimating here would undo that request: the resampled points are
+  // collinear within each segment, so RDP collapses them right back to the
+  // original sparse outline. Keep the whole set, and only thin it evenly to the
+  // frame budget when it genuinely cannot fit.
+  if (opts.keepAll) {
+    let kept = pts.map((_, i) => i);
+    if (opts.targetCount && kept.length > opts.targetCount) {
+      kept = thinToTarget(pts, new Set(), opts.targetCount);
+    }
+    if (opts.minCount && kept.length < opts.minCount) {
+      kept = padToTarget(pts, kept, opts.minCount);
+    }
+    return { points: kept.map(i => pts[i]), indexes: kept };
+  }
+
   let protectedIndices = new Set(opts.preserve || []);
   if (opts.detectCorners !== false) {
     const corners = detectCornerAnchors(pts);

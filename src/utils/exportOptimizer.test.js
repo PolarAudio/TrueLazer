@@ -126,3 +126,52 @@ describe('createPointBudgetOptimizer', () => {
     expect(opt.remaining).toBeLessThan(Math.floor(120 / 2) - 2);
   });
 });
+
+describe('optimizeShapePoints keepAll', () => {
+  // A resampled outline is dense but collinear within each segment, so normal
+  // decimation collapses it straight back to the sparse anchors — which undid an
+  // explicit point-density request and left only the first segment exported.
+  const densePolyline = (() => {
+    const pts = [];
+    const anchors = [[0, 0], [100, 200], [200, 0], [300, 200], [400, 0]];
+    for (let s = 0; s < anchors.length - 1; s++) {
+      const [ax, ay] = anchors[s];
+      const [bx, by] = anchors[s + 1];
+      const steps = 10;
+      for (let i = 0; i < steps; i++) {
+        pts.push(pt(ax + ((bx - ax) * i) / steps, ay + ((by - ay) * i) / steps));
+      }
+    }
+    pts.push(pt(400, 0));
+    return pts;
+  })();
+
+  it('keeps every resampled point instead of decimating back to the anchors', () => {
+    const decimated = optimizeShapePoints(densePolyline, { detectCorners: true });
+    expect(decimated.points.length).toBeLessThan(densePolyline.length);
+
+    const kept = optimizeShapePoints(densePolyline, { keepAll: true });
+    expect(kept.points.length).toBe(densePolyline.length);
+    expect(kept.points[kept.points.length - 1]).toEqual(pt(400, 0));
+  });
+
+  it('survives the budget optimizer without losing the whole outline', () => {
+    const opt = createPointBudgetOptimizer({ budget: 1200 });
+    const res = opt.processShape(densePolyline, { keepAll: true, minPoints: 4 });
+    expect(res.points.length).toBe(densePolyline.length);
+    // The tail of the shape must still be present, not truncated to the head.
+    const lastX = res.points[res.points.length - 1].x;
+    expect(lastX).toBe(400);
+  });
+
+  it('thins evenly to the budget allowance while keeping both endpoints', () => {
+    const opt = createPointBudgetOptimizer({ budget: 100 });
+    const res = opt.processShape(densePolyline, { keepAll: true, minPoints: 4 });
+    expect(res.points.length).toBeLessThanOrEqual(Math.floor(100 / 2) - 2);
+    expect(res.points[0]).toEqual(pt(0, 0));
+    expect(res.points[res.points.length - 1]).toEqual(pt(400, 0));
+    // Even thinning spreads the kept points across the full extent.
+    const xs = res.points.map(p => p.x);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(400, 5);
+  });
+});

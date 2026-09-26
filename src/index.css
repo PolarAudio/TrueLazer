@@ -277,7 +277,7 @@ body {
 .layer-preview-thumbnail {
   display: grid;
   justify-content: center;
-  align-items: center;
+  align-content: center;
   margin-left: 2px;
   outline: solid 1px var(--theme-color);
   height: 99%;
@@ -595,6 +595,7 @@ h3 {
   z-index: 2;
   margin: 0;
   margin-bottom: 0.5rem;
+  height: 30px;
 }
 
 

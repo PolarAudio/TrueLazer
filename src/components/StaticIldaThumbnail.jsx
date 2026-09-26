@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 
-const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
+const StaticIldaThumbnail = ({ frame, bitmap, width = 100, height = 100 }) => {
     const canvasRef = useRef(null);
 
     useEffect(() => {
@@ -25,7 +25,7 @@ const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
 
         ctx.lineWidth = 1.5;
         ctx.lineCap = 'round';
-        
+
         let lastX = null;
         let lastY = null;
         let lastWasBlanked = true;
@@ -33,12 +33,12 @@ const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
         for (let i = 0; i < numPoints; i++) {
             let x, y, r, g, b, blanking;
             if (isTyped) {
-                x = points[i*8];
-                y = points[i*8+1];
-                r = points[i*8+3];
-                g = points[i*8+4];
-                b = points[i*8+5];
-                blanking = points[i*8+6] > 0.5;
+                x = points[i * 8];
+                y = points[i * 8 + 1];
+                r = points[i * 8 + 3];
+                g = points[i * 8 + 4];
+                b = points[i * 8 + 5];
+                blanking = points[i * 8 + 6] > 0.5;
             } else {
                 const p = points[i];
                 x = p.x;
@@ -58,11 +58,11 @@ const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
                 ctx.beginPath();
                 ctx.moveTo(lastX, lastY);
                 ctx.lineTo(screenX, screenY);
-                
+
                 const ir = Math.floor(Math.max(0, Math.min(255, r)));
                 const ig = Math.floor(Math.max(0, Math.min(255, g)));
                 const ib = Math.floor(Math.max(0, Math.min(255, b)));
-                
+
                 ctx.strokeStyle = `rgb(${ir},${ig},${ib})`;
                 ctx.stroke();
             }
@@ -76,10 +76,10 @@ const StaticIldaThumbnail = ({ frame, bitmap, width = 50, height = 50 }) => {
     }, [frame, width, height]);
 
     return (
-        <canvas 
-            ref={canvasRef} 
-            width={width} 
-            height={height} 
+        <canvas
+            ref={canvasRef}
+            width={width}
+            height={height}
             style={{ width: '50px', height: '50px', backgroundColor: 'black', display: 'block', borderRadius: '5px' }}
         />
     );
