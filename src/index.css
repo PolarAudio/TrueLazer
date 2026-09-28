@@ -43,9 +43,6 @@ body {
   height: 100vh;
 }
 
-.bi {
-  /* height: -webkit-fill-available; */
-}
 
 @media only screen and (min-height: 691px) {
   .clip-label {
@@ -343,6 +340,15 @@ body {
   justify-items: center;
 }
 
+/* A song is being dragged over this clip. Distinct from .dragging (a file /
+   effect / DAC drop) because the outcome is different: the clip keeps its
+   content and only gains a binding. */
+.clip.link-target {
+  outline: 2px dashed var(--theme-color);
+  outline-offset: -2px;
+  background-color: #454b55;
+}
+
 .canvas {
   width: 100%;
 }
@@ -486,6 +492,7 @@ body {
   width: 100%;
   height: 4px;
   -webkit-appearance: none;
+  appearance: none;
   background: #333;
   border-radius: 2px;
   outline: none;
@@ -493,6 +500,7 @@ body {
 
 .slider_hor::-webkit-slider-thumb {
   -webkit-appearance: none;
+  appearance: none;
   width: 14px;
   height: 14px;
   background: var(--theme-color);
@@ -653,6 +661,7 @@ h3 {
   flex: 1;
   height: 4px;
   -webkit-appearance: none;
+  appearance: none;
   background: #444;
   outline: none;
   border-radius: 2px;
@@ -1147,8 +1156,6 @@ input[type="checkbox"].laser-toggle:checked:before {
   color: white !important;
 }
 
-.clip.selected-clip {}
-
 .clip.active-clip {
   outline: 1px solid var(--theme-color);
   /* Red outline for active clip */
@@ -1161,6 +1168,7 @@ input[type="checkbox"].laser-toggle:checked:before {
 #layer-intensity-slider {
   -webkit-appearance: none;
   /* Remove default browser styling for WebKit */
+  appearance: none;
   background: #3c3c3c;
   outline: solid 1px var(--theme-color);
   outline-offset: -1px;
@@ -1192,6 +1200,7 @@ input[type="checkbox"].laser-toggle:checked:before {
 /*master-intensity-slider*/
 #masterIntensityRange {
   -webkit-appearance: none;
+  appearance: none;
   /* Remove default browser styling for WebKit */
   background: #3c3c3c;
   outline: solid 1px var(--theme-color);
@@ -1225,6 +1234,7 @@ input[type="checkbox"].laser-toggle:checked:before {
 /*master-speed-slider*/
 #masterSpeedRange {
   -webkit-appearance: none;
+  appearance: none;
   /* Remove default browser styling for WebKit */
   background: #3c3c3c;
   outline: solid 1px var(--theme-color);
@@ -1552,6 +1562,7 @@ input[type="checkbox"].laser-toggle:checked:before {
   flex: 1;
   height: 3px;
   -webkit-appearance: none;
+  appearance: none;
   background: #333;
   outline: none;
   border-radius: 2px;
@@ -1732,9 +1743,266 @@ input[type="checkbox"].laser-toggle:checked:before {
   text-align: center;
 }
 
+/* ---------------------------------------------------------------------------
+   DJ-Link Clip Transport
+   --------------------------------------------------------------------------- */
+.djlink-empty {
+  font-size: 10px;
+  color: #888;
+  line-height: 1.55;
+  padding: 2px 0;
+}
+
+.djlink-empty strong {
+  color: #ccc;
+}
+
+.djlink-empty ol {
+  margin: 4px 0 2px;
+  padding-left: 16px;
+}
+
+.djlink-empty li {
+  margin-bottom: 3px;
+}
+
+.djlink-empty em {
+  color: var(--theme-color);
+  font-style: normal;
+  font-weight: bold;
+}
+
+/* Linked-track chip at the top of the panel. */
+.djlink-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  margin-bottom: 8px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+}
+
+.djlink-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #444;
+  flex: none;
+}
+
+.djlink-dot.live {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.djlink-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.djlink-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.djlink-sub {
+  font-size: 9px;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.djlink-unlink {
+  flex: none;
+}
+
+.djlink-warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: #ffd400;
+  background: rgba(255, 212, 0, 0.08);
+  border: 1px solid rgba(255, 212, 0, 0.35);
+  border-radius: 3px;
+  padding: 4px 6px;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.djlink-hint {
+  font-size: 9px;
+  color: #777;
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.djlink-window {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.djlink-dash {
+  font-size: 10px;
+  color: #777;
+}
+
+.djlink-time-input {
+  flex: 1;
+  min-width: 0;
+  background: #0a0a0a;
+  border: 1px solid #333;
+  color: #ddd;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 4px;
+  border-radius: 2px;
+  outline: none;
+}
+
+.djlink-time-input:focus {
+  border-color: var(--theme-color);
+}
+
+/* Live readout: proof the deck is actually driving this clip. */
+.djlink-readout {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.djlink-readout-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+
+.djlink-readout-label {
+  color: #777;
+  flex: none;
+}
+
+.djlink-readout-value {
+  color: #ddd;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.djlink-arrow {
+  color: var(--theme-color);
+}
+
+.djlink-dir-label {
+  font-size: 9px;
+  color: #999;
+}
+
+.djlink-progress {
+  height: 4px;
+  margin-top: 5px;
+  background: #000;
+  border: 1px solid #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.djlink-progress-fill {
+  height: 100%;
+  width: 0;
+  background: #444;
+  transition: width 0.12s linear;
+}
+
+/* Deck list in Link/Sync Settings. */
+.djlink-deck-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.djlink-deck-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+}
+
+.djlink-deck-row.blocked {
+  opacity: 0.45;
+}
+
+.djlink-deck-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #444;
+  flex: none;
+}
+
+.djlink-deck-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.djlink-deck-title {
+  font-size: 11px;
+  color: #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.djlink-deck-sub {
+  font-size: 9px;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.djlink-deck-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+}
+
+.djlink-deck-count {
+  font-size: 9px;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+.small-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* DAC Mirror Controls */
 .dac-mirror-controls {
   display: flex;
+  ;
   gap: 2px;
 }
 
@@ -2011,10 +2279,82 @@ input[type="checkbox"].laser-toggle:checked:before {
   line-height: 1;
 }
 
-.link-title {
+/* The song information field: the drag handle for linking a clip to this song.
+   It occupies the same grid cell the title/artist used to sit in directly, so
+   the layout is unchanged — it just gains a hit area and a cursor. */
+.link-track-info {
+  position: relative;
   grid-column-start: 3;
   grid-column-end: 4;
   grid-row-start: 1;
+  grid-row-end: 3;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  cursor: default;
+}
+
+/* Draggable only when a deck is actually reporting a loaded track — JSX also
+   sets draggable={false} so there is no ghost drag from an empty readout. */
+.link-track-info.linkable {
+  cursor: grab;
+  outline: 1px solid rgba(255, 255, 255, 0.06);
+  outline-offset: -1px;
+}
+
+.link-track-info.linkable:hover {
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px var(--theme-color);
+  border-radius: 2px;
+}
+
+/* Not linkable: dimmed and explicitly not-allowed, so it is obvious the field
+   is inert rather than mysteriously swallowing a drag. */
+.link-track-info.not-linkable {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.link-track-info:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--theme-color);
+  border-radius: 2px;
+}
+
+.link-display.dragging .link-track-info {
+  cursor: grabbing;
+  opacity: 0.6;
+  box-shadow: inset 0 0 0 1px var(--theme-color);
+}
+
+/* Marks that this field links a deck OTHER than the BPM source, so the operator
+   is never surprised about which player will fire the clip. */
+.link-track-info.link-other-source {
+  box-shadow: inset 0 0 0 1px rgba(255, 212, 0, 0.5);
+}
+
+.link-source-badge {
+  position: absolute;
+  right: 3px;
+  top: 2px;
+  font-size: 7px;
+  font-weight: bold;
+  letter-spacing: 0.4px;
+  color: var(--theme-color);
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 2px;
+  padding: 0 3px;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.link-title {
   width: 100%;
   font-size: 12px;
   font-weight: bold;
@@ -2025,11 +2365,6 @@ input[type="checkbox"].laser-toggle:checked:before {
 }
 
 .link-artist {
-  grid-column-start: 3;
-  grid-column-end: 4;
-  grid-row-start: 2;
-  position: relative;
-  bottom: 0;
   width: 100%;
   font-size: 12px;
   font-weight: bold;
@@ -2584,6 +2919,41 @@ div[data-mappable-id^='quick_btn_'].unassigned:hover {
   margin-block: 0;
 }
 
+/* DJ-Link song binding badge: top-left corner, deck-coloured dot + the follow
+   mode (POS = the deck's playhead scrubs the clip, LOOP = it cycles with the
+   beat). Corner-anchored so it cannot collide with the trigger-style icons,
+   which sit at their natural flow position. Dimmed when the link is off,
+   outlined when the deck is driving it right now. */
+.clip_link_badge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  font-size: 8px;
+  font-weight: bold;
+  letter-spacing: 0.4px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.clip_link_badge.disabled {
+  opacity: 0.4;
+}
+
+.clip_link_badge.live {
+  box-shadow: 0 0 0 1px var(--theme-color);
+}
+
+.clip_link_dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #666;
+  flex: none;
+}
+
 .ndi-item {
   background-color: #004a99 !important;
   color: white;
@@ -2926,8 +3296,6 @@ input[type="checkbox"].tl-checkbox:after {
   border-right: 1px solid #33373f;
   z-index: 20;
 }
-
-.timeline-channel {}
 
 .timeline-corner-label {
   display: flex;

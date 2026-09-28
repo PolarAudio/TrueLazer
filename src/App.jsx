@@ -50,6 +50,8 @@ import { THEME_COLORS } from './utils/midiColors';
 import { sendNote } from './utils/midi';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText, generateSinewave } from './utils/generators'; // Import generator functions
 import { throttle, debounce } from './utils/throttle';
+import { advanceDjProgress, linkedClipDurationSec, makeLinkFromDeck } from './utils/djLinkTracks';
+import { useDjLinkClipTransport } from './hooks/useDjLinkClipTransport';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -526,7 +528,13 @@ function reducer(state, action) {
         case 'SET_ACTIVE_CLIP': {
             const newActiveClipIndexes = [...state.activeClipIndexes];
             newActiveClipIndexes[action.payload.layerIndex] = {
-                pageId: state.activePageId,
+                // Honour an explicit page: DJ-Link clip transport activates a
+                // linked clip from whichever page it lives on, which is often
+                // not the page the operator is looking at. Falling back to the
+                // active page here would put a different pageId in state than
+                // the one written to activeClipIndexesRef, desyncing the grid
+                // highlight from what is actually on the DAC.
+                pageId: action.payload.pageId ?? state.activePageId,
                 colIndex: action.payload.colIndex
             };
             return { ...state, activeClipIndexes: newActiveClipIndexes };
@@ -787,6 +795,24 @@ function reducer(state, action) {
                 updatedClipContents[pageIdx][action.payload.layerIndex][action.payload.colIndex] = clipToUpdate;
             }
             return { ...state, clipContents: updatedClipContents };
+        }
+        case 'SET_CLIP_DJ_LINK': {
+            // Write (or clear, with link: null) a clip's DJ-Link song binding.
+            // Honours an explicit page so a drop can target a non-active page.
+            const { layerIndex, colIndex, link } = action.payload;
+            if (layerIndex === undefined || colIndex === undefined) return state;
+            const pageIdx = action.payload.pageId ?? state.activePageId;
+            const updated = [...state.clipContents];
+            if (!updated[pageIdx] || !updated[pageIdx][layerIndex]) return state;
+            updated[pageIdx] = [...updated[pageIdx]];
+            updated[pageIdx][layerIndex] = [...updated[pageIdx][layerIndex]];
+            const clip = updated[pageIdx][layerIndex][colIndex];
+            if (!clip) return state;
+            const next = { ...clip };
+            if (link) next.djLink = link;
+            else delete next.djLink;
+            updated[pageIdx][layerIndex][colIndex] = next;
+            return { ...state, clipContents: updated };
         }
         case 'SET_CLIP_PARAM_SYNC': {
             const { layerIndex, colIndex, paramId, syncMode } = action.payload;
@@ -2192,6 +2218,16 @@ function App() {
     const tapTempoTimesRef = useRef([]); // Timestamps for tap tempo (shared by TAP button + mappings)
     const lastTapMidiValueRef = useRef(0); // Rising-edge guard for mapped tap triggers
 
+    // DJ-Link Clip Transport clock: workerId -> { active, progress, bpm, deck, ... }.
+    // Written by useDjLinkClipTransport at ~30 Hz and read by processClip as the
+    // highest-priority timebase for a linked clip. A ref, never state — it is
+    // consumed inside the render loop and must not trigger a re-render.
+    const djLinkClockRef = useRef({});
+// Rolling probe of the DJ-driven output path, reported once per 180 frames. Kept
+// in a ref so it never triggers a render, and capped at a fixed sample count so
+// the cost is bounded while diagnosing playback stepping.
+const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false });
+
     const [initialSettings, setInitialSettings] = useState(null);
     const [initialSettingsLoaded, setInitialSettingsLoaded] = useState(false);
     const [currentPage, setCurrentPage] = useState('main'); // 'main', 'shapeBuilder', 'timeline'
@@ -3140,7 +3176,14 @@ function App() {
                             const playbackSettings = liveClip ? liveClip.playbackSettings : (clip.playbackSettings || {});
                             let clipDuration = 1;
 
-                            if (playbackSettings.mode === 'timeline') {
+                            // A deck-driven clip is measured by its link, and its
+                            // speedMultiplier is deliberately not applied — the deck
+                            // dictates the rate, so dividing here would put the
+                            // effect animations out of step with the frames.
+                            const djClock = djLinkClockRef.current[clip.workerId];
+                            if (djClock && djClock.active) {
+                                clipDuration = linkedClipDurationSec(djClock.link, djClock.deck);
+                            } else if (playbackSettings.mode === 'timeline') {
                                 clipDuration = playbackSettings.duration || 1;
                             } else if (playbackSettings.mode === 'bpm') {
                                 const currentBpm = bpmRef.current || 120;
@@ -3154,15 +3197,15 @@ function App() {
                             }
                             // Adjust for speed multiplier if needed, but usually resolveParam handles speed separately?
                             // resolveParam uses clipDuration to map progress (0..1) to Time.
-                            // If speedMultiplier affects playback speed (how fast progress moves 0..1), 
+                            // If speedMultiplier affects playback speed (how fast progress moves 0..1),
                             // then clipDuration (Real Time duration of 0..1) changes.
                             // So yes, we should probably account for speedMultiplier.
                             // BUT, frameFetcherLoop handles the progress advancement speed using speedMultiplier.
                             // So 'progress' is already speed-adjusted.
-                            // If we want 'clipTime' to be "Real World Time elapsed within the clip", 
+                            // If we want 'clipTime' to be "Real World Time elapsed within the clip",
                             // we should use the "Nominal Duration" / Speed.
                             const speedMult = playbackSettings.speedMultiplier || 1;
-                            if (speedMult !== 0) clipDuration /= speedMult;
+                            if (speedMult !== 0 && !(djClock && djClock.active)) clipDuration /= speedMult;
 
                             const effectContext = {
                                 progress: clipProgress,
@@ -3616,7 +3659,81 @@ function App() {
                     const totalFrames = clip.totalFrames || 1;
                     const pSettings = clip.playbackSettings || { mode: 'fps', duration: totalFrames / 30, beats: 8, speedMultiplier: 1 };
 
-                    if (audioInfo && isPlayingRef.current && !audioInfo.paused) {
+                    // DJ-Link Clip Transport — HIGHEST priority, above the clip's
+                    // own audio. A linked clip's timebase is the DJ deck: its
+                    // position (or its beat phase, in loop mode) IS the clip
+                    // position, so scrubbing the jogwheel scrubs the animation
+                    // and a paused deck holds the frame. The clip's own audio
+                    // element is deliberately ignored here — the deck is already
+                    // playing the track through the PA.
+                    const djClock = djLinkClockRef.current[workerId];
+                    const isDjDriven = !!(djClock && djClock.active);
+
+                    if (isDjDriven) {
+                        // Advanced from the clock's anchor by the time since the
+                        // transport tick that produced it. The transport ticks at
+                        // 30Hz while this loop runs on every animation frame, so
+                        // reading djClock.progress raw leaves the clip on the same
+                        // frame for two refreshes on a 60Hz display — visible
+                        // judder during normal playback, and invisible while
+                        // jogging (where each update moves a long way). The helper
+                        // converts elapsed wall time into progress and wraps, so a
+                        // paused deck (direction 0) still holds its frame.
+                        currentProgress = advanceDjProgress(djClock, ts);
+                        targetIndex = Math.floor(currentProgress * totalFrames);
+                        // One-time measurement of what the OUTPUT actually receives,
+                        // which is the last stage before the laser. Everything
+                        // upstream has already been logged and is monotonic, so this
+                        // is what distinguishes the two remaining causes:
+                        //   - uneven `dp` means the playhead is still stepping;
+                        //   - even `dp` with uneven `df` means the playhead is fine
+                        //     and the jitter is frame quantisation, i.e.
+                        //     floor(progress * totalFrames) is simply coarser than
+                        //     the clip's frame rate.
+                        // Both are needed: `df` on its own cannot show a uniform
+                        // 2-frames-per-step climb as a problem.
+                        //
+                        // Wrapped in try/catch on purpose: this is diagnostics, and a
+                        // diagnostic that throws here aborts the rest of processClip
+                        // and stops the frame being fetched — i.e. it breaks the very
+                        // thing it is measuring. It must never be able to do that.
+                        try {
+                            const probe = djJitterProbe.current;
+                            if (probe.broken) throw new Error('probe disabled');
+                            probe.samples.push({
+                                dp: (currentProgress - probe.lastP) * 1000,
+                                df: targetIndex - probe.lastF,
+                            });
+                            probe.lastP = currentProgress;
+                            probe.lastF = targetIndex;
+                            if (probe.samples.length >= 600) {
+                                // Reports every ~10 s rather than once, so behaviour
+                                // over a set is visible and forward/reverse can be
+                                // compared within one session.
+                                const s = probe.samples;
+                                probe.samples = [];
+                                const stat = (key) => {
+                                    const v = s.map((x) => x[key]).sort((a, b) => a - b);
+                                    const mean = v.reduce((a, b) => a + b, 0) / v.length;
+                                    return { mean, min: v[0], max: v[v.length - 1] };
+                                };
+                                const p = stat('dp');
+                                const f = stat('df');
+                                const backDp = s.filter((x) => x.dp < -1e-6).length;
+                                const backDf = s.filter((x) => x.df < 0).length;
+                                console.log(
+                                    `[DJ-Link] output jitter — worker ${workerId}`,
+                                    `progress/frame: mean +${p.mean.toFixed(2)}ms spread ${(p.max - p.min).toFixed(2)}ms backward ${backDp}`,
+                                    `| frames/frame: mean +${f.mean.toFixed(2)} spread ${(f.max - f.min).toFixed(1)} backward ${backDf}`
+                                );
+                            }
+                        } catch (probeErr) {
+                            // A broken probe must never keep throwing on the output
+                            // path, so latch it off. The try/catch is what keeps that
+                            // from ever reaching the frame fetch.
+                            djJitterProbe.current.broken = true;
+                        }
+                    } else if (audioInfo && isPlayingRef.current && !audioInfo.paused) {
                         currentProgress = audioInfo.duration > 0 ? (audioInfo.currentTime / audioInfo.duration) : 0;
                         targetIndex = Math.floor(currentProgress * totalFrames);
                     } else if (pSettings.mode === 'timeline') {
@@ -3676,16 +3793,22 @@ function App() {
                         }
                     }
 
-                    // For non-FPS modes, we update lastFrameFetchTimeRef every loop to keep dt correct
-                    if (pSettings.mode !== 'fps') {
+                    // For non-FPS modes, we update lastFrameFetchTimeRef every loop to keep dt correct.
+                    // A deck-driven clip is timebase-free for the same reason, and letting its dt
+                    // accumulate would make the first frame after a hand-off a huge jump.
+                    if (pSettings.mode !== 'fps' || isDjDriven) {
                         lastFrameFetchTimeRef.current[workerId] = ts;
                     }
 
                     if (isNaN(targetIndex)) targetIndex = 0;
                     if (isNaN(currentProgress)) currentProgress = 0;
 
-                    // Apply playback direction and style for ILDA clips (not generators)
-                    if (clip.type === 'ilda' && clip.playbackSettings) {
+                    // Apply playback direction and style for ILDA clips (not generators).
+                    // Skipped for a deck-driven clip: the deck already supplies the
+                    // direction (a backward jog lowers the playhead, and loop mode
+                    // integrates it signed), so re-applying the experimental
+                    // forward/backward remap here would reverse it a second time.
+                    if (clip.type === 'ilda' && clip.playbackSettings && !isDjDriven) {
                         const playbackSettings = clip.playbackSettings;
                         const direction = playbackSettings.direction || 'forward';
                         const style = playbackSettings.style || 'loop';
@@ -3739,9 +3862,15 @@ function App() {
                         }
                     }
 
-                    // Calculate clip duration for sync
+                    // Calculate clip duration for sync. A deck-driven clip is
+                    // measured by its LINK, not by its own playbackSettings: one
+                    // pass of a looped link is loopBeats at the LIVE deck tempo,
+                    // so a parameter animation on it runs in step with the frames
+                    // and retimes with the track.
                     let clipDuration = 1;
-                    if (pSettings.mode === 'timeline') {
+                    if (isDjDriven) {
+                        clipDuration = linkedClipDurationSec(djClock.link, djClock.deck);
+                    } else if (pSettings.mode === 'timeline') {
                         clipDuration = pSettings.duration || 1;
                     } else if (pSettings.mode === 'bpm') {
                         clipDuration = ((pSettings.beats || 8) * 60) / currentBpm;
@@ -5594,8 +5723,11 @@ function App() {
         dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex: hasContent ? stickyCol : null } });
     }, [dispatch]);
 
-    const handleActivateClick = useCallback((layerIndex, colIndex, isPress = true) => {
-        const pageIdx = stateRef.current.activePageId;
+    const handleActivateClick = useCallback((layerIndex, colIndex, isPress = true, opts = {}) => {
+        // A deck link can target a clip on any page (the show is driven by the
+        // DJ, not by whichever page the operator happens to be looking at), so
+        // the target page is part of the request rather than implicit.
+        const pageIdx = opts.pageId !== undefined ? opts.pageId : stateRef.current.activePageId;
         const clip = clipContentsRef.current[pageIdx]?.[layerIndex]?.[colIndex];
         const hasActualContent = clip && (clip.type === 'ilda' || clip.type === 'generator');
 
@@ -5605,19 +5737,29 @@ function App() {
             }
             return;
         }
+        const fromDjLink = !!opts.fromDjLink;
         const style = clip.triggerStyle || 'normal';
         const activeInfo = activeClipIndexesRef.current[layerIndex];
         const isCurrentActive = activeInfo && activeInfo.pageId === pageIdx && activeInfo.colIndex === colIndex;
         const clipWorkerId = clip.workerId || (clip.type === 'generator' ? `generator-${pageIdx}-${layerIndex}-${colIndex}` : null);
 
+        // A deck-driven activation is not a pad hit, so the clip's trigger style
+        // does not apply: 'flash' must not need a release, 'temp' must not stop,
+        // and 'toggle' must not latch. The deck owns this layer until it lets go.
+        if (fromDjLink) {
+            if (isCurrentActive) return; // already driving this layer
         // Handle keyboard auto-repeat: don't retrigger if already active and receiving another press.
         // NOTE: 'toggle' is intentionally excluded so a second press on an active toggle clip reaches
         // the deactivate branch below (otherwise the toggle can never be turned off).
-        if (isPress && isCurrentActive && (style === 'flash' || style === 'normal' || style === 'temp')) {
+        } else if (isPress && isCurrentActive && (style === 'flash' || style === 'normal' || style === 'temp')) {
             return; // Already active, ignore auto-repeat
         }
 
-        if (style === 'normal') {
+        if (fromDjLink) {
+            // Hand the frame index over to the deck rather than restarting: a clip
+            // linked mid-track must appear at the position the track is already at,
+            // not snap to frame 0 and then catch up.
+        } else if (style === 'normal') {
             if (!isPress) return;
             // Proceed to activate - reset frame index only on NEW activation
             if (clipWorkerId) {
@@ -5724,8 +5866,10 @@ function App() {
             // frameIndexesRef already set above per trigger style
         }
 
-        // Manage associated audio
-        if (clip && clip.audioFile) {
+        // Manage associated audio. A deck-driven clip stays silent: its track is
+        // already coming out of the DJ deck through the PA, and a second copy
+        // here would double it and fight the operator's mix.
+        if (clip && clip.audioFile && !fromDjLink) {
             playAudio(layerIndex, clip.audioFile.path, clip.audioVolume ?? 1.0, isPlayingRef.current).catch(err => {
                 console.warn(`Failed to play audio for clip ${pageIdx}-${layerIndex}-${colIndex}:`, err);
                 setMissingFiles(prev => {
@@ -5750,7 +5894,7 @@ function App() {
         if (activeClipIndexesRef.current) activeClipIndexesRef.current[layerIndex] = { pageId: pageIdx, colIndex };
         // Deferred render: output/audio start from the refs above on the next rAF, so
         // wrapping the UI update in a transition keeps key/midi trigger latency low.
-        startTransition(() => dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex } }));
+        startTransition(() => dispatch({ type: 'SET_ACTIVE_CLIP', payload: { layerIndex, colIndex, pageId: pageIdx } }));
 
         // Capture still frame for thumbnail
         // NOTE: skipped for FLASH triggers — flash is a momentary action that repeats
@@ -5770,6 +5914,175 @@ function App() {
             }
         }
     }, [handleDeactivateLayerClips, playAudio, stopAudio, handleClipPreview]);
+
+    // -------------------------------------------------------------------------
+    // DJ-Link Clip Transport
+    //
+    // Master arm, persisted in the main-process store rather than the project:
+    // whether deck playback drives the lasers is a property of the rig, not of
+    // the show file. Default OFF - a linked clip must never start moving lasers
+    // on a saved project without the operator saying so on this machine.
+    //
+    // DECLARED FIRST on purpose: linkClipToDeck below reads `enabled` for its
+    // notification, and a useCallback dependency array is evaluated at the call
+    // site, so this state has to be initialised before it.
+    // -------------------------------------------------------------------------
+    const [djLinkTransport, setDjLinkTransport] = useState({ enabled: false, blockedDecks: [] });
+    useEffect(() => {
+        const api = window.electronAPI;
+        if (!api || !api.getDjLinkTransportSettings) return;
+        let cancelled = false;
+        api.getDjLinkTransportSettings().then((s) => {
+            if (cancelled || !s) return;
+            setDjLinkTransport({ enabled: !!s.enabled, blockedDecks: Array.isArray(s.blockedDecks) ? s.blockedDecks : [] });
+        }).catch(() => { });
+        return () => { cancelled = true; };
+    }, []);
+
+    const handleDjLinkTransportChange = useCallback((patch) => {
+        setDjLinkTransport((prev) => {
+            const next = { ...prev, ...patch };
+            const api = window.electronAPI;
+            if (api && api.setDjLinkTransportSettings) {
+                api.setDjLinkTransportSettings(next).catch(() => { });
+            }
+            return next;
+        });
+    }, []);
+
+    const handleArmDjLinkTransport = useCallback(() => {
+        handleDjLinkTransportChange({ enabled: true });
+        showNotification('DJ-Link Clip Transport armed - linked clips will fire from the deck.');
+    }, [handleDjLinkTransportChange, showNotification]);
+    // Bind a clip to a song a DJ deck has loaded. Shared by both entry points —
+    // dropping the song onto a clip, and clicking the song with a clip already
+    // selected — so they behave identically. Returns true when the clip was
+    // actually linked.
+    const linkClipToDeck = useCallback((layerIndex, colIndex, pageId, deck) => {
+        const pIdx = pageId !== undefined ? pageId : stateRef.current.activePageId;
+        const link = makeLinkFromDeck(deck);
+        if (!link) {
+            showNotification('That deck has no track loaded to link.');
+            return false;
+        }
+        const clip = clipContentsRef.current[pIdx]?.[layerIndex]?.[colIndex];
+        if (!clip || (clip.type !== 'ilda' && clip.type !== 'generator')) {
+            // A link is a property OF a clip, so an empty cell has nothing to
+            // attach to. Say so plainly rather than dropping silently.
+            showNotification('Link a song to a clip that already has an .ild file or a generator.');
+            return false;
+        }
+        // Selecting the clip opens the Clip Settings panel on its new DJ-Link
+        // Transport section, so the operator can immediately choose Position vs
+        // Loop instead of having to hunt for the clip again.
+        dispatch({ type: 'SET_CLIP_DJ_LINK', payload: { layerIndex, colIndex, link, pageId: pIdx } });
+        dispatch({ type: 'SET_SELECTED_CLIP', payload: { layerIndex, colIndex } });
+        const where = `${link.source === 'stagelinq' ? 'StageLinq' : 'Pro DJ Link'} deck ${deck.deckId}`;
+        console.log(`[DJ-Link] linked page ${pIdx} layer ${layerIndex} col ${colIndex} -> "${link.title || link.trackId}" (${where})`);
+        // Say so when the link is inert, otherwise a link that looks successful
+        // but never fires is the most confusing possible outcome.
+        const armedNote = djLinkTransport.enabled
+            ? ''
+            : ' — arm Clip Transport in Link/Sync Settings to make it fire';
+        showNotification(
+            `Linked "${link.title || link.trackId}" to ${layerIndex + 1}-${colIndex + 1} — ${link.follow === 'loop' ? 'loops with the track' : 'follows deck position'}${armedNote}`
+        );
+        return true;
+    }, [showNotification, djLinkTransport.enabled]);
+
+    // Drop route. The descriptor is a snapshot taken at drag start, so a deck
+    // that moved on mid-drag cannot link the clip to the wrong track.
+    const handleLinkDjTrack = useCallback((layerIndex, colIndex, deck) => {
+        linkClipToDeck(layerIndex, colIndex, stateRef.current.activePageId, deck);
+    }, [linkClipToDeck]);
+
+    // Click route: with a clip selected, clicking the song in the DJ-Link display
+    // links the two. A drag is the fast path for building a show, but a click is
+    // the path that always works — and it works when the cursor cannot manage a
+    // drag, which is the situation that makes this feature unusable otherwise.
+    const handleLinkSongToSelection = useCallback((deck) => {
+        const lIdx = stateRef.current.selectedLayerIndex;
+        const cIdx = stateRef.current.selectedColIndex;
+        if (lIdx == null || cIdx == null) {
+            showNotification('Click a clip first, then click the song to link them.');
+            return false;
+        }
+        return linkClipToDeck(lIdx, cIdx, stateRef.current.activePageId, deck);
+    }, [linkClipToDeck, showNotification]);
+
+    // Clear / re-point a clip's link from the settings panel.
+    const handleUpdateDjLink = useCallback((layerIndex, colIndex, link) => {
+        const pageIdx = stateRef.current.activePageId;
+        dispatch({ type: 'SET_CLIP_DJ_LINK', payload: { layerIndex, colIndex, link, pageId: pageIdx } });
+    }, []);
+
+
+
+    // Deck-driven activation bypasses the clip's trigger style and stays silent.
+    const handleDjLinkActivate = useCallback((layerIndex, colIndex, pageId) => {
+        handleActivateClick(layerIndex, colIndex, true, { fromDjLink: true, pageId });
+    }, [handleActivateClick]);
+
+    // Per-deck disarm: a blocked deck's linked clips are treated as unlinked by
+    // the engine, without touching the clips themselves.
+    const djLinkBlockedRef = useRef(djLinkTransport.blockedDecks);
+    djLinkBlockedRef.current = djLinkTransport.blockedDecks;
+
+    const handleIsDeckArmed = useCallback((deck) => {
+        if (!deck || !deck.deckKey) return false;
+        return !djLinkBlockedRef.current.includes(deck.deckKey);
+    }, []);
+
+    const djLinkClipTransport = useDjLinkClipTransport({
+        enabled: djLinkTransport.enabled,
+        getClipContents: () => liveClipContentsRef.current || clipContentsRef.current,
+        getActiveClips: (layerIndex) => activeClipIndexesRef.current[layerIndex],
+        onActivate: handleDjLinkActivate,
+        onDeactivate: handleDeactivateLayerClips,
+        isDeckArmed: handleIsDeckArmed,
+        clockRef: djLinkClockRef,
+    });
+
+    // Throttled mirror of the deck clock for the Clip Settings readout. The
+    // real clock is a 30 Hz ref with no re-render; a settings panel that never
+    // updates is useless for checking a link, so this republishes just the
+    // SELECTED clip's clock at 4 Hz — and only while that clip is deck-driven,
+    // so an idle panel costs nothing.
+    const [djLinkClockMirror, setDjLinkClockMirror] = useState(null);
+    useEffect(() => {
+        const id = setInterval(() => {
+            const lIdx = stateRef.current.selectedLayerIndex;
+            const cIdx = stateRef.current.selectedColIndex;
+            if (lIdx == null || cIdx == null) {
+                setDjLinkClockMirror((prev) => (prev ? null : prev));
+                return;
+            }
+            const clip = liveClipContentsRef.current?.[stateRef.current.activePageId]?.[lIdx]?.[cIdx];
+            const workerId = !clip ? null
+                : (clip.type === 'ilda' ? clip.workerId
+                    : clip.type === 'generator' ? `generator-${stateRef.current.activePageId}-${lIdx}-${cIdx}` : null);
+            const clock = workerId ? djLinkClockRef.current[workerId] : null;
+            // `reason` is what turns "not driven" from a dead end into a
+            // diagnosis. Without it an unarmed transport, a deck that has not
+            // loaded the track, and a link waiting for PLAY all look identical.
+            const reason = !djLinkTransport.enabled ? 'transport-disarmed'
+                : !clip || !clip.djLink ? 'no-link'
+                    : clip.djLink.enabled === false ? 'link-disabled'
+                        : (djLinkClipTransport.decks.length === 0 ? 'no-decks'
+                            : (djLinkClipTransport.decks.some((d) => d.trackId === clip.djLink.trackId)
+                                ? (clip.djLink.trigger === 'play' ? 'waiting-for-play' : 'not-matching')
+                                : 'track-not-loaded'));
+            setDjLinkClockMirror(clock && clock.active ? {
+                active: true,
+                progress: clock.progress,
+                positionSec: clock.positionSec,
+                bpm: clock.bpm,
+                direction: clock.direction,
+                deck: clock.deck,
+            } : { active: false, reason });
+        }, 250);
+        return () => clearInterval(id);
+    }, [djLinkTransport.enabled, djLinkClipTransport.decks]);
 
     const handleDropEffectOnClip = useCallback((layerIndex, colIndex, effectData) => {
         const pageIdx = state.activePageId;
@@ -7114,6 +7427,10 @@ function App() {
                             onReorderEffects={handleReorderEffects}
                             onAddEffect={handleAddEffect}
                             onUpdateClipUiState={(layerIndex, colIndex, uiState) => dispatch({ type: 'UPDATE_CLIP_UI_STATE', payload: { layerIndex, colIndex, uiState } })}
+                            onUpdateDjLink={handleUpdateDjLink}
+                            djLinkClock={djLinkClockMirror}
+                            djLinkTransportArmed={djLinkTransport.enabled}
+                            onArmDjLinkTransport={handleArmDjLinkTransport}
                             onParameterChange={handleEffectParameterChange}
                             onGeneratorParameterChange={handleGeneratorParameterChangeRef.current}
                             progressRef={progressRef}
@@ -7242,7 +7559,8 @@ function App() {
                 </div>
             </div>
             <div className="middle-bar-right-area">
-                <DJLink source={bpmSource} />
+                    <DJLink source={bpmSource} onLinkSong={handleLinkSongToSelection} />
+
             </div>
         </div>
     ), [bpm, dispatch, numPages, activePageId, pageNames, handleTapTempo, bpmSource, handleBpmSourceChange]);
@@ -7297,6 +7615,10 @@ function App() {
                                     onUpdateSettings={() => { }}
                                     bpmSource={bpmSource}
                                     onBpmSourceChange={handleBpmSourceChange}
+                                    djLinkTransport={djLinkTransport}
+                                    onDjLinkTransportChange={handleDjLinkTransportChange}
+                                    djLinkDecks={djLinkClipTransport.decks}
+                                    djLinkLinkedCountForDeck={djLinkClipTransport.linkedCountForDeck}
                                 />
                                 <OutputProcessingWindow
                                     show={showOutputProcessingWindow}
@@ -7498,6 +7820,12 @@ function App() {
                                                                 onDropEffect={handleDropEffectOnClip}
                                                                 onDropGenerator={handleDropGenerator}
                                                                 onDropDac={handleDropDac}
+                                                                onLinkDjTrack={handleLinkDjTrack}
+                                                                // Read straight from the clock ref. It mutates at 30 Hz
+                                                                // with no re-render, but its `active` flag only ever flips
+                                                                // alongside SET_ACTIVE_CLIP / DEACTIVATE_LAYER_CLIPS,
+                                                                // which do re-render — so the badge is never stale.
+                                                                isDjDriven={djLinkClockRef.current[clipWorkerId]?.active === true}
                                                                 onLabelClick={handleClipPreview}
                                                                 isSelected={selectedLayerIndex === layerIndex && selectedColIndex === colIndex}
                                                                 ildaParserWorker={ildaParserWorker}

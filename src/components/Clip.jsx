@@ -2,6 +2,27 @@ import React, { useState, useEffect, useMemo } from 'react';
 import IldaThumbnail from './IldaThumbnail';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
+import { DJLINK_TRACK_MIME, isSongLinkDrag } from '../utils/djLinkTracks';
+
+// Denon reports the assigned deck colour as "#AARRGGBB"; Pro DJ Link as
+// "#RRGGBB". CSS wants the 6-digit form, so drop a leading alpha pair if present
+// and reject anything unrecognised rather than emit an invalid colour.
+const deckColorToCss = (raw) => {
+  if (typeof raw !== 'string') return null;
+  const hex = raw.trim().replace(/^#/, '');
+  if (/^[0-9a-f]{8}$/i.test(hex)) return `#${hex.slice(2)}`;
+  if (/^[0-9a-f]{6}$/i.test(hex)) return `#${hex}`;
+  return null;
+};
+
+const formatClock = (sec) => {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return '--:--';
+  const s = Math.floor(sec % 60);
+  const m = Math.floor((sec / 60) % 60);
+  const h = Math.floor(sec / 3600);
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+  return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
+};
 
 const Clip = ({
   clipName,
@@ -19,6 +40,8 @@ const Clip = ({
   isActive,
   ildaParserWorker,
   onDropDac, // New prop for handling DAC drops
+  onLinkDjTrack, // Bind this clip to a song loaded on a DJ deck
+  isDjDriven,   // The deck is currently driving this clip (parent's word, not derived)
   thumbnailRenderMode,
   liveFrame,
   liveProgress,
@@ -37,6 +60,7 @@ const Clip = ({
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isLinkTarget, setIsLinkTarget] = useState(false);
   const [thumbnailError, setThumbnailError] = useState(false);
 
   // If the thumbnail path or version changes (e.g. a regenerated thumbnail), clear
@@ -53,11 +77,35 @@ const Clip = ({
   const hasActualContent = clipContent && (clipContent.type === 'ilda' || clipContent.type === 'generator');
   const hasLiveFrame = shouldShowLive && (liveFrame || stillFrame);
 
+  // DJ-Link binding badge. `isDjDriven` is the parent's word for "the deck is
+  // currently driving this clip" — it is passed in rather than derived here so
+  // the badge cannot disagree with the engine about who owns the layer.
+  const djLink = hasActualContent && clipContent?.djLink ? clipContent.djLink : null;
+  const djLinkActive = !!isDjDriven;
+  const djLinkDot = djLink ? deckColorToCss(djLink.deckColor) : null;
+  const djLinkTitle = !djLink
+    ? ''
+    : [
+      djLink.title || djLink.trackId,
+      djLink.artist,
+      djLink.enabled ? null : 'link disabled',
+      djLink.follow === 'position'
+        ? `follows deck position (${formatClock(djLink.startSec || 0)} - ${formatClock(djLink.endSec || 0)})`
+        : `loops every ${djLink.loopBeats || 8} beats`,
+      djLink.trigger === 'play' ? 'fires on play' : 'fires on load',
+      djLinkActive ? 'deck is driving this clip' : null,
+    ].filter(Boolean).join(' — ');
+
   const handleDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
-    e.dataTransfer.dropEffect = 'copy';
+    // A song being dragged in offers a LINK, not a copy — the clip's content is
+    // untouched, it just gains a binding to the track. See isSongLinkDrag for
+    // why this cannot simply test for our own MIME.
+    const isSongLink = isSongLinkDrag(e.dataTransfer.types);
+    setIsLinkTarget(isSongLink);
+    e.dataTransfer.dropEffect = isSongLink ? 'link' : 'copy';
   };
 
   const handleDragLeave = (e) => {
@@ -65,6 +113,7 @@ const Clip = ({
     e.stopPropagation();
     if (!e.currentTarget.contains(e.relatedTarget)) {
       setIsDragging(false);
+      setIsLinkTarget(false);
     }
   };
 
@@ -153,6 +202,24 @@ const Clip = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    setIsLinkTarget(false);
+
+    // Song link first: it is a distinct MIME, and the payload must never be
+    // mistaken for an effect / DAC / generator descriptor.
+    const types = Array.from(e.dataTransfer.types || []);
+    const linkData = e.dataTransfer.getData(DJLINK_TRACK_MIME);
+    if (linkData) {
+      try {
+        const deck = JSON.parse(linkData);
+        console.log(`[DJ-Link] drop on ${layerIndex}-${colIndex}: "${deck.title || deck.trackId}" from ${deck.source} deck ${deck.deckId}`);
+        if (onLinkDjTrack) onLinkDjTrack(layerIndex, colIndex, deck);
+        else onUnsupportedFile('Song linking is not available here.');
+      } catch (error) {
+        console.error('Error parsing dropped DJ-Link track:', error);
+        onUnsupportedFile('Could not read that song link.');
+      }
+      return;
+    }
 
     const effectData = e.dataTransfer.getData('application/json');
     if (effectData) {
@@ -193,8 +260,11 @@ const Clip = ({
       return;
     }
 
-    console.log('No recognized data format found in drop');
-    onUnsupportedFile("No valid ILD file, effect, or generator dropped.");
+    // Nothing matched. The drag types are logged because this is where an
+    // unrecognised payload lands, and the message names every accepted kind so
+    // the operator is not left guessing.
+    console.log('[Clip.jsx] unrecognised drop — types:', JSON.stringify(types));
+    onUnsupportedFile('Nothing usable in that drop. Clips accept a .ild file, an effect, a generator, a DAC, or a song dragged from the DJ-Link display.');
   };
 
   const handleDragEnter = (e) => {
@@ -211,7 +281,7 @@ const Clip = ({
 
   return (
     <div
-      className={`clip ${isDragging ? 'dragging' : ''} ${isActive ? 'active-clip' : ''} `} onDragEnter={handleDragEnter}
+      className={`clip ${isDragging ? 'dragging' : ''} ${isLinkTarget ? 'link-target' : ''} ${isActive ? 'active-clip' : ''} `} onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -277,6 +347,22 @@ const Clip = ({
                       <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM7.5 3.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-3zM8 11a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1z"/>
                     </svg>
                   )}
+                </p>
+              )}
+
+              {/* DJ-Link song binding. Tinted with the source deck's assigned
+                  colour, dimmed when the link is switched off, and marked while
+                  the deck is actually driving this clip. */}
+              {djLink && (
+                <p
+                  className={`clip_icons clip_link_badge ${djLink.enabled ? '' : 'disabled'} ${djLinkActive ? 'live' : ''}`}
+                  title={djLinkTitle}
+                >
+                  <span
+                    className="clip_link_dot"
+                    style={djLinkDot ? { background: djLinkDot, boxShadow: `0 0 5px ${djLinkDot}` } : undefined}
+                  />
+                  {djLink.follow === 'position' ? 'POS' : 'LOOP'}
                 </p>
               )}
             </>

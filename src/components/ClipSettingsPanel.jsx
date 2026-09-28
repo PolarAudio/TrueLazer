@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import EffectEditor from './EffectEditor';
 import GeneratorSettingsPanel from './GeneratorSettingsPanel';
 import ClipPlaybackSettings from './ClipPlaybackSettings';
+import ClipDjLinkSettings from './ClipDjLinkSettings';
 import CollapsiblePanel from './CollapsiblePanel';
 import Mappable from './Mappable';
 import WavePlayer from './WavePlayer';
@@ -36,7 +37,11 @@ const ClipSettingsPanel = ({
   onRegisterPreset,
   liveFramesRef,
   activePageId,
-  playbackSettingsOverride
+  playbackSettingsOverride,
+  onUpdateDjLink,
+  djLinkClock = null,
+  djLinkTransportArmed = true,
+  onArmDjLinkTransport
 }) => {
   const [dacStatuses, setDacStatuses] = useState({});
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
@@ -164,6 +169,10 @@ const ClipSettingsPanel = ({
   const hasGenerator = type === 'generator' && !!generatorDefinition;
   const hasAssignedDacs = assignedDacs.length > 0;
 
+  // The song binding, read from the clip object the parent hands in. Committed
+  // state (not a live ref) so the panel always shows what is actually stored.
+  const djLink = clip?.djLink || null;
+
   // Correctly calculate clip duration based on mode
   let clipDuration = 1;
   if (playbackSettings.mode === 'timeline') {
@@ -230,6 +239,20 @@ const ClipSettingsPanel = ({
       <ClipPlaybackSettings 
         settings={playbackSettings} 
         onUpdate={(settings) => onUpdatePlaybackSettings(selectedLayerIndex, selectedColIndex, settings)} 
+        uiState={uiState}
+        onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
+      />
+
+      {/* DJ-Link Transport sits directly under Clip Playback because a linked
+          clip's real timebase is the deck — the playback panel above is then
+          only consulted for the clip's own effects and thumbnails. */}
+      <ClipDjLinkSettings
+        link={djLink}
+        clock={djLinkClock}
+        transportArmed={djLinkTransportArmed}
+        onArmTransport={onArmDjLinkTransport}
+        onUpdate={(patch) => onUpdateDjLink(selectedLayerIndex, selectedColIndex, { ...(djLink || {}), ...patch })}
+        onUnlink={() => onUpdateDjLink(selectedLayerIndex, selectedColIndex, null)}
         uiState={uiState}
         onUpdateUiState={(newUi) => onUpdateClipUiState(selectedLayerIndex, selectedColIndex, newUi)}
       />

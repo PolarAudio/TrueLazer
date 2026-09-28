@@ -3,8 +3,6 @@ import url, { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import fs from 'fs';
 import os from 'os';
-import pidusage from 'pidusage';
-import psTree from 'ps-tree';
 import Store from 'electron-store'; // No .default needed for ESM
 import https from 'https';
 import getSystemFonts from 'get-system-fonts';
@@ -78,15 +76,15 @@ const startFileLog = () => {
               if (a instanceof Error) return a.stack || a.message;
               try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
             }).join(' ');
-            fs.appendFile(logPath, `[${stamp()}] [${level.toUpperCase()}] ${line}\n`, () => {});
+            fs.appendFile(logPath, `[${stamp()}] [${level.toUpperCase()}] ${line}\n`, () => { });
           } catch { /* logging must never crash the app */ }
         };
       });
     });
 };
 
-// Defensive safety net: async errors from third-party/legacy modules (e.g.
-// pidusage/ps-tree spawning a removed wmic.exe) would otherwise kill the whole
+// Defensive safety net: async errors from third-party/legacy modules (e.g. a
+// native addon whose entry point goes missing) would otherwise kill the whole
 // app. Log them instead of crashing.
 process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
@@ -185,6 +183,20 @@ const schema = {
       bpmSource: 'stagelinq',
     }
   },
+  // DJ-Link Clip Transport — the master arm for deck-driven clip playback.
+  // `blockedDecks` holds deckKeys the operator has individually disarmed, so a
+  // link can be muted for one player without unlinking the clips.
+  djLinkTransportSettings: {
+    type: 'object',
+    properties: {
+      enabled: { type: 'boolean', default: false },
+      blockedDecks: { type: 'array', items: { type: 'string' }, default: [] },
+    },
+    default: {
+      enabled: false,
+      blockedDecks: [],
+    }
+  },
 };
 
 // Initialize electron-store
@@ -195,6 +207,7 @@ let shortcutsState = store.get('shortcutsState');
 
 let prolinkSettings = store.get('prolinkSettings') || { enabled: false, deviceId: '', selectedDevice: '', bpmSource: 'prolink' };
 let stagelinqSettings = store.get('stagelinqSettings') || { enabled: false, deviceId: '', selectedDevice: '', bpmSource: 'stagelinq' };
+let djLinkTransportSettings = store.get('djLinkTransportSettings') || { enabled: false, blockedDecks: [] };
 
 // Global variables for ArtNet and OSC
 let artnetInstance = null;
@@ -936,6 +949,7 @@ function createWindow() {
       contextIsolation: true,
       webSecurity: false,
       backgroundThrottling: false,
+      sandbox: false,
     },
     frame: true,
   });
@@ -1583,7 +1597,7 @@ function createWindow() {
   });
   ipcMain.on('stop-artnet-timecode-listener', () => {
     if (artnetTcSocket) {
-      try { artnetTcSocket.close(); } catch (_) {}
+      try { artnetTcSocket.close(); } catch (_) { }
       artnetTcSocket = null;
     }
   });
@@ -1646,7 +1660,7 @@ function createWindow() {
   });
   ipcMain.on('stop-tcnet-timecode-listener', () => {
     if (tcnetTimeSocket) {
-      try { tcnetTimeSocket.close(); } catch (_) {}
+      try { tcnetTimeSocket.close(); } catch (_) { }
       tcnetTimeSocket = null;
     }
   });
@@ -1674,7 +1688,7 @@ function createWindow() {
       catch (err) { console.warn('Prolink: lifecycle error:', err && err.message); }
     };
     const p = prolinkOp.then(run);
-    prolinkOp = p.catch(() => {});
+    prolinkOp = p.catch(() => { });
     return p;
   };
   const prolinkDeviceStates = new Map();
@@ -1730,6 +1744,26 @@ function createWindow() {
   // the analyzed beat-grid DB round-trip per track load is pure overhead — skip
   // it for them once proven.
   const prolinkAbsCapable = new Set();
+  // deviceId -> { n, first, logged }: observed arrival rate of that deck's
+  // absolute-position packets, logged once per deck. The playhead extrapolates
+  // from the most recent one, so this rate is the smoothness ceiling.
+  const prolinkAbsRate = new Map();
+  // deviceId -> { n, first, logged }: observed rate of that deck's StatusPacket
+  // stream, which is what gates how often the playhead is recomputed.
+  const prolinkStatusRate = new Map();
+  // deviceId -> { prev, deltas, backwards, logged }: quality of the published
+  // playhead sequence, reported once. Plus the last value published, so the next
+  // sample's delta can be measured.
+  const prolinkReportQuality = new Map();
+  // deviceId -> { prev, deltas, logged }: quality of the CDJ's OWN position
+  // stream, sampled at the packet rate. Establishes the best smoothness the
+  // playhead can possibly achieve, independent of our own sampling.
+  const prolinkAbsQuality = new Map();
+  let prolinkRepSec = null;
+  // The most recent payload the status handler published, so the ~30 Hz playhead
+  // timer can republish just the position from it without duplicating the whole
+  // BPM/beat/metadata computation.
+  let prolinkLastStatusPayload = null;
 
   // Analyzed beat grid + duration for the followed deck's loaded track. Grid
   // entries are { offset: ms-at-0%-pitch, bpm, count-within-bar } per beat,
@@ -1737,11 +1771,19 @@ function createWindow() {
   let prolinkGrid = null;
   let prolinkGridDurationMs = null;
   let prolinkTrackKey = null;
-  let prolinkGridLoading = false;
   // Now-playing text for the middle-bar DJ-Link display. Populated by the same
   // db.getMetadata round-trip that fetches the beat grid, so no extra query.
   let prolinkTrackTitle = null;
   let prolinkTrackArtist = null;
+  // Per-DEVICE copy of the same metadata. The singletons above only ever track
+  // the followed (show-clock) deck, but song linking has to recognise a track
+  // loaded in ANY deck — you cue it in one player and play it in another — so the
+  // roster is built from this map instead. Entries are
+  // { trackKey, title, artist, durationMs, loading }.
+  const prolinkDeckMeta = new Map();
+  // Analyzed beat grids, kept apart from prolinkDeckMeta so the roster payload
+  // (which crosses IPC ~20x/s) can never pick up a few thousand beat rows.
+  const prolinkDeckGrids = new Map(); // deviceId -> beatGrid
   // Source colour per player. Pro DJ Link puts this in the CDJ "media slot"
   // announcement — the byte the player uses to tint its USB slot and that linked
   // players adopt in the top-left display, so an operator can see at a glance
@@ -1842,12 +1884,27 @@ function createWindow() {
   // can anchor to true track milliseconds. Falls back to the beat-derived ramp
   // whenever the database strategy is unavailable (unanalyzed tracks, non-CDJ
   // sources), retrying only on the next track load.
-  const queueProlinkGridFetch = (status) => {
-    if (prolinkGridLoading) return;
+  const queueProlinkGridFetch = (status, deviceId) => {
+    const ownerId = deviceId != null ? deviceId : (status.trackDeviceId || status.deviceId);
+    // Per-device single-flight. The followed deck used to be the only caller, so
+    // one global flag was enough; the roster needs one lookup per loaded deck.
+    const entry = prolinkDeckMeta.get(ownerId) || { loading: false };
+    if (entry.loading) return;
     if (!prolinkNetwork || !prolinkNetwork.isConnected || !prolinkNetwork.isConnected()) return;
     if (!prolinkNetwork.db || !prolinkNetwork.statusEmitter) return;
-    prolinkGridLoading = true;
-    const trackKey = prolinkTrackKey;
+    entry.loading = true;
+    prolinkDeckMeta.set(ownerId, entry);
+    const deckTrackKey = `${ownerId}:${status.trackSlot}:${status.trackId}`;
+    // Whether this lookup is for the deck the show clock follows RIGHT NOW *and*
+    // for the track that deck is currently showing. The active singletons below
+    // must only ever be written by that exact deck/track pair — a second
+    // player's slower lookup resolving later would otherwise replace the
+    // followed deck's grid/title with the wrong track's. (Comparing against this
+    // deck's own key, rather than a copy of the global, is what makes the second
+    // half of the test meaningful: previously it compared the global to a
+    // snapshot of itself and so was always true.)
+    const isFollowedDeck = () =>
+      prolinkActiveDeviceId === ownerId && prolinkTrackKey === deckTrackKey;
     const opts = {
       deviceId: status.trackDeviceId || status.deviceId,
       trackType: status.trackType,
@@ -1857,24 +1914,46 @@ function createWindow() {
     Promise.resolve()
       .then(() => prolinkNetwork.db.getMetadata(opts))
       .then((track) => {
-        prolinkGridLoading = false;
-        if (prolinkTrackKey !== trackKey) return;
+        entry.loading = false;
         if (track) {
           // Now-playing text for the DJ-Link display. The pdb track row carries
           // `title` directly; the artist is only an `artistId` there, so accept
           // whichever artist shape this lookup path actually produced and leave
           // it null (placeholder in the UI) when it is only an id.
-          prolinkTrackTitle = typeof track.title === 'string' ? track.title : null;
+          const title = typeof track.title === 'string' ? track.title : null;
           const artist = track.artist;
-          prolinkTrackArtist =
+          const artistName =
             typeof artist === 'string' ? artist
               : (artist && typeof artist.name === 'string') ? artist.name
                 : (typeof track.artistName === 'string' ? track.artistName : null);
-          if (!prolinkArtwork.has(trackKey)) queueProlinkArtworkFetch(opts, trackKey, track);
+          if (isFollowedDeck()) {
+            prolinkTrackTitle = title;
+            prolinkTrackArtist = artistName;
+          }
+          // Artwork is cached and delivered per deck+track, so it must NOT be
+          // gated on the followed-deck test above. It used to be, and that is why
+          // a track cued before its deck ever became the show clock showed no
+          // cover art for the whole set: this lookup had already completed by the
+          // time the DJ pressed play, and nothing re-ran it, so the art was never
+          // requested. Keying on this deck's own trackKey also stops a slow
+          // second player's art landing under the active deck's key.
+          if (!prolinkArtwork.has(deckTrackKey)) {
+            queueProlinkArtworkFetch(opts, deckTrackKey, track);
+          }
+          // Feed the roster for this deck. Guarded on this deck's own track key
+          // so a lookup that lost the race to a new track load is discarded.
+          const meta = prolinkDeckMeta.get(ownerId) || {};
+          if (meta.trackKey === deckTrackKey) {
+            meta.title = title;
+            meta.artist = artistName;
+            prolinkDeckMeta.set(ownerId, meta);
+            // The roster only becomes useful once it can NAME the track, and
+            // that arrives here — after the deck already reported the load.
+            enqueueDjlinkDecks();
+          }
         }
         if (track && Array.isArray(track.beatGrid) && track.beatGrid.length > 0) {
-          prolinkGrid = track.beatGrid;
-          const grid = prolinkGrid;
+          const grid = track.beatGrid;
           // prolink-connect reads the pdb Duration column raw — a 16-bit value
           // in SECONDS (a 5 min track reads back as 300). Convert to ms here so
           // it matches the grid offsets (ms) and the trackDuration payload.
@@ -1894,18 +1973,28 @@ function createWindow() {
               (secondLast != null && last > secondLast ? last - secondLast : 0);
             if (durationMs == null || gridEndMs > durationMs) durationMs = gridEndMs;
           }
-          prolinkGridDurationMs = durationMs;
+          if (isFollowedDeck()) {
+            prolinkGrid = grid;
+            prolinkGridDurationMs = durationMs;
+          }
+          prolinkDeckGrids.set(ownerId, grid);
+          const meta = prolinkDeckMeta.get(ownerId) || {};
+          if (meta.trackKey === deckTrackKey) {
+            meta.durationMs = durationMs;
+            prolinkDeckMeta.set(ownerId, meta);
+            enqueueDjlinkDecks();
+          }
           console.log(
             'Prolink: loaded beat grid for track', status.trackId,
             `(${grid.length} beats, ${durationMs != null ? (durationMs / 1000).toFixed(1) : '?'}s, ` +
             `${first != null ? (first / 1000).toFixed(1) : 0}s → ${last != null ? (last / 1000).toFixed(1) : '?'}s)`
           );
-        } else {
+        } else if (isFollowedDeck()) {
           console.warn('Prolink: no analyzed beat grid for track', status.trackId, '— sub-beat position falls back to tempo ramp');
         }
       })
       .catch((err) => {
-        prolinkGridLoading = false;
+        entry.loading = false;
         console.warn('Prolink: beat grid unavailable (sub-beat position falls back to tempo ramp):', err && err.message);
       });
   };
@@ -1924,7 +2013,7 @@ function createWindow() {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
     return null;
   };
 
@@ -1958,6 +2047,89 @@ function createWindow() {
     prolinkStatusTimer = setTimeout(flushProlinkStatus, 33);
   };
 
+  // ---------------------------------------------------------------------------
+  // Deck roster — every deck that currently has a track loaded, not just the one
+  // the show clock follows. `prolink-status` / `stagelinq-status` are the
+  // followed-deck view used for BPM + the middle-bar readout; song linking has to
+  // recognise a track cued in ANY player, because the normal DJ workflow is to
+  // cue the next track in one deck and play it from the other.
+  //
+  // Coalesced latest-wins on a 50 ms timer. A 4-deck setup sends ~4x the packet
+  // rate of the single-deck view, and the renderer only needs this to resolve
+  // clip links — never at frame rate.
+  // ---------------------------------------------------------------------------
+  let djlinkDecksTimer = null;
+  let djlinkDecksPending = false;
+
+  // Playhead for a deck that is not the show clock. The full position maths in
+  // the status handler only runs for the followed deck, so this reads what is
+  // already being tracked per device: the raw absolute-position packet when the
+  // player sends one (CDJ-3000+, exact ms including scrubs), else the beat index
+  // projected at the reported tempo. Null when neither is available yet.
+  const prolinkDeckSeconds = (deviceId, state) => {
+    const abs = prolinkPackets.get(deviceId);
+    if (abs && abs.abs && typeof abs.abs.playheadMs === 'number') {
+      return abs.abs.playheadMs / 1000;
+    }
+    // The raw prolink-connect state carries trackBPM (effectiveBpm is derived in
+    // the followed-deck handler and is not on the stored state), so this is the
+    // track's analysed tempo, pitch not yet applied. Good enough to place a clip
+    // linked to a non-followed deck; the followed deck still gets the exact
+    // playhead through the normal `prolink-status` path.
+    const bpm = state.trackBPM;
+    if (bpm > 0 && Number.isFinite(state.beat) && state.beat > 0) {
+      return (state.beat * 60) / bpm;
+    }
+    return null;
+  };
+
+  const buildProlinkDeckRoster = () => {
+    const out = [];
+    for (const [deviceId, state] of prolinkDeviceStates) {
+      if (!state) continue;
+      const meta = prolinkDeckMeta.get(deviceId);
+      const loaded = state.trackId > 0;
+      out.push({
+        source: 'prolink',
+        deckId: String(deviceId),
+        deckKey: `prolink|${deviceId}`,
+        deckColor: prolinkSourceColors.get(deviceId) || null,
+        isMaster: !!state.isMaster,
+        playing: PLAYING_PLAYSTATES.includes(state.playState),
+        playState: state.playState,
+        loaded,
+        trackId: loaded ? String(state.trackId) : null,
+        trackKey: meta ? meta.trackKey : null,
+        title: meta ? meta.title : null,
+        artist: meta ? meta.artist : null,
+        trackDurationMs: meta ? meta.durationMs : null,
+        trackBPM: state.trackBPM || null,
+        seconds: prolinkDeckSeconds(deviceId, state),
+        bpm: state.trackBPM || null,
+        beat: Number.isFinite(state.beat) ? state.beat : null,
+      });
+    }
+    return out;
+  };
+
+  const flushDjlinkDecks = () => {
+    djlinkDecksTimer = null;
+    if (!djlinkDecksPending) return;
+    djlinkDecksPending = false;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('djlink-decks', {
+      prolink: buildProlinkDeckRoster(),
+      stagelinq: buildStagelinqDeckRoster(),
+      ts: Date.now(),
+    });
+  };
+
+  const enqueueDjlinkDecks = () => {
+    djlinkDecksPending = true;
+    if (djlinkDecksTimer) return;
+    djlinkDecksTimer = setTimeout(flushDjlinkDecks, 50);
+  };
+
   // Best-effort: identify which process holds a UDP port (Windows netstat + tasklist).
   const getPortOwner = (port) =>
     new Promise((resolve) => {
@@ -1985,7 +2157,7 @@ function createWindow() {
       const finish = (ok) => {
         if (done) return;
         done = true;
-        try { sock.close(); } catch {}
+        try { sock.close(); } catch { }
         resolve(ok);
       };
       sock.once('error', () => finish(false));
@@ -2093,9 +2265,49 @@ function createWindow() {
             prolinkAbsPacketLogged = true;
             console.log('Prolink: absolute-position packets seen (CDJ-3000) — device', decoded.deviceId);
           }
-          if (decoded.kind === 'abs') prolinkAbsCapable.add(decoded.deviceId);
           const entry = prolinkPackets.get(decoded.deviceId) || { beat: null, abs: null };
           const now = Date.now();
+          if (decoded.kind === 'abs') {
+            prolinkAbsCapable.add(decoded.deviceId);
+            // How often these actually arrive sets the smoothness ceiling for the
+            // playhead (it extrapolates from the last one), so measure it once
+            // instead of assuming the 60 Hz the beat port nominally uses.
+            const rate = prolinkAbsRate.get(decoded.deviceId) || { n: 0, first: now, logged: false };
+            rate.n += 1;
+            const span = now - rate.first;
+            if (!rate.logged && span >= 2000) {
+              rate.logged = true;
+              console.log(
+                'Prolink: absolute-position packet rate — device', decoded.deviceId,
+                `${(rate.n / (span / 1000)).toFixed(1)}/s over ${span}ms`
+              );
+            }
+            prolinkAbsRate.set(decoded.deviceId, rate);
+
+            // Is the PLAYER's own position stream smooth, or is the jitter already
+            // in the data? Measured at the packet rate, before any sampling by the
+            // slower status stream. A steady tempo must advance by the packet
+            // interval every time; the spread is therefore the floor on how smooth
+            // the playhead can ever be, and no amount of interpolation in this
+            // codebase can go below it.
+            const q = prolinkAbsQuality.get(decoded.deviceId)
+              || { prev: decoded.playheadMs, deltas: [], logged: false };
+            const deltaMs = decoded.playheadMs - q.prev;
+            if (q.deltas.length < 400) q.deltas.push(deltaMs);
+            q.prev = decoded.playheadMs;
+            if (!q.logged && q.deltas.length >= 30) {
+              q.logged = true;
+              const sorted = [...q.deltas].sort((a, b) => a - b);
+              const mean = q.deltas.reduce((a, b) => a + b, 0) / q.deltas.length;
+              console.log(
+                `Prolink: CDJ position stream — device ${decoded.deviceId}`,
+                `mean +${mean.toFixed(1)}ms min +${sorted[0].toFixed(1)}ms`,
+                `max +${sorted[sorted.length - 1].toFixed(1)}ms`,
+                `spread ${(sorted[sorted.length - 1] - sorted[0]).toFixed(1)}ms`
+              );
+            }
+            prolinkAbsQuality.set(decoded.deviceId, q);
+          }
           if (decoded.kind === 'beat') {
             entry.beat = { at: now, nextBeatMs0: decoded.nextBeatMs0 };
           } else {
@@ -2105,21 +2317,69 @@ function createWindow() {
         });
       }
 
-      // Pick the deck whose beat grid drives the show: prefer the master,
-      // else the most recently reported live (playing / on-air) player.
+      // Pick the deck whose beat grid drives the show: prefer the master, else
+      // the most recently reported live (playing / on-air) player, else — when
+      // nothing is playing — the most recently reported deck that merely has a
+      // track cued.
+      //
+      // That last fallback is what makes a loaded-but-not-yet-started track show
+      // up in the DJ-Link display immediately. It used to return null instead, so
+      // a cued track withheld its own metadata: the title/artist were only
+      // published for the followed deck, and pressing play is what made the deck
+      // become the follow target, which is exactly the reported symptom.
       const pickActive = () => {
         const states = [...prolinkDeviceStates.values()];
         const master = states.find((s) => s.isMaster);
         if (master) return master;
-        return (
-          states
-            .sort((a, b) => b.packetNum - a.packetNum)
-            .find((s) => PLAYING_PLAYSTATES.includes(s.playState) || s.isOnAir) || null
+        const byRecency = states.sort((a, b) => b.packetNum - a.packetNum);
+        const live = byRecency.find(
+          (s) => PLAYING_PLAYSTATES.includes(s.playState) || s.isOnAir
         );
+        if (live) return live;
+        return byRecency.find((s) => s.trackId > 0) || null;
+      };
+
+      // Keep the per-device metadata entry in step with what THIS deck currently
+      // has loaded, and kick off a db lookup the first time we see a track. Runs
+      // for every deck (not just the followed one) so the roster can name a track
+      // that is cued in a player nobody is currently following.
+      const syncProlinkDeckMeta = (state) => {
+        if (!state || state.deviceId == null) return;
+        const deviceId = state.deviceId;
+        const trackKey =
+          state.trackId > 0 ? `${deviceId}:${state.trackSlot}:${state.trackId}` : null;
+        const prev = prolinkDeckMeta.get(deviceId);
+        if (prev && prev.trackKey === trackKey) return;
+        if (!trackKey) {
+          prolinkDeckMeta.delete(deviceId);
+          return;
+        }
+        prolinkDeckMeta.set(deviceId, { trackKey, title: null, artist: null, durationMs: null, loading: false });
+        queueProlinkGridFetch(state, deviceId);
       };
 
       network.statusEmitter.on('status', (state) => {
         prolinkDeviceStates.set(state.deviceId, state);
+        // The playhead is recomputed here, so the StatusPacket rate is the real
+        // ceiling on how often the renderer can be told where the track is — no
+        // matter how fast absolute-position packets arrive. Log it once per deck
+        // so that ceiling is a measured number rather than an assumption.
+        if (state.deviceId != null) {
+          const sr = prolinkStatusRate.get(state.deviceId) || { n: 0, first: Date.now(), logged: false };
+          sr.n += 1;
+          const span = Date.now() - sr.first;
+          if (!sr.logged && span >= 2000) {
+            sr.logged = true;
+            const perSec = sr.n / (span / 1000);
+            console.log(
+              'Prolink: status packet rate — device', state.deviceId,
+              `${perSec.toFixed(1)}/s (playhead recomputed this often; renderer updates at ~30Hz)`
+            );
+          }
+          prolinkStatusRate.set(state.deviceId, sr);
+        }
+        syncProlinkDeckMeta(state);
+        enqueueDjlinkDecks();
         if (!prolinkStatusLogged.has(state.deviceId)) {
           prolinkStatusLogged.add(state.deviceId);
           console.log(
@@ -2241,16 +2501,20 @@ function createWindow() {
           prolinkTrackKey = trackKey;
           prolinkGrid = null;
           prolinkGridDurationMs = null;
-          prolinkGridLoading = false;
           prolinkTrackTitle = null;
           prolinkTrackArtist = null;
-          // Always fetch on a track change. It used to be skipped for decks that
-          // send Absolute Position packets, since the grid was then redundant for
-          // timing — but this same lookup is what supplies the now-playing title,
-          // artist and cover art for the DJ-Link display, so it is needed even
-          // when the position maths ignores the grid.
-          if (trackKey) {
-            queueProlinkGridFetch(active);
+          // The db lookup for this deck was already started by
+          // syncProlinkDeckMeta when the track was first seen there, so a deck
+          // that was loaded BEFORE it became the show clock (very common: cue
+          // player 2, then make it master) must reuse the roster's cached result
+          // instead of waiting for a fetch that will never be re-triggered.
+          const meta = trackKey ? prolinkDeckMeta.get(active.deviceId) : null;
+          if (meta && meta.trackKey === trackKey) {
+            prolinkTrackTitle = meta.title || null;
+            prolinkTrackArtist = meta.artist || null;
+            prolinkGridDurationMs = meta.durationMs != null ? meta.durationMs : null;
+            const cachedGrid = prolinkDeckGrids.get(active.deviceId);
+            if (cachedGrid) prolinkGrid = cachedGrid;
           }
         }
 
@@ -2295,7 +2559,75 @@ function createWindow() {
         }
         let seconds = null;
         if (abs) {
-          seconds = abs.playheadMs / 1000;
+          // Correct the packet's age, because the raw value is jittery: absolute
+          // position packets arrive at 33.8/s but the status stream that consumes
+          // them runs at only 9.2/s, so whichever packet is newest at a given
+          // status event has an age anywhere in 0..30 ms. Reported verbatim, the
+          // playhead therefore lags by a varying amount and every consecutive
+          // report differs by 89..118 ms instead of a steady 109 — a ~15 ms hop
+          // in each direction nine times a second, which is the residual judder.
+          //
+          // Advancing by the elapsed time since the packet was RECEIVED lands on
+          // P_true(now) minus the (near-constant, sub-millisecond) transit delay,
+          // so the reported value is monotonic and consistent. Each layer below
+          // then advances from the instant its input was true, so nothing is
+          // counted twice: the tick advances from the report time, the render
+          // loop from the tick's anchor.
+          //
+          // Gated on the deck actually rolling: a cued or paused deck's packet
+          // position does not advance, and extrapolating it would drift it.
+          const ageMs = Math.max(0, nowMs - abs.at);
+          // Correct ONLY the sampling phase, never predict. The player's position
+          // advances in ~31 ms steps and our status stream samples it in bursts
+          // 0..202 ms apart, so this correction exists to cancel the 0..31 ms of
+          // packet age — one packet interval is the most it can honestly know.
+          //
+          // It is deliberately NOT scaled by adaptiveSpeed, and capped at one
+          // packet interval rather than 200 ms. Both were measured to make a
+          // manual jog WORSE: a tempo model derived from the beat cadence and the
+          // pitch slider is meaningless while the operator is scrubbing, so a
+          // long lead times a wrong rate throws the playhead forwards and back.
+          // Deciding how fast the track is really moving is the transport's job,
+          // where it measures the rate instead of assuming one.
+          const leadMs = playing ? Math.min(ageMs, 40) : 0;
+          seconds = (abs.playheadMs + leadMs) / 1000;
+          // One-time quality report on the sequence we actually publish. This is
+          // the direct measurement of the judder: a deck playing at a steady tempo
+          // must advance by (report interval) every time, so the spread across
+          // samples is the jitter the renderer inherits, and any non-positive delta
+          // is a visible backward hop. Logs once per deck, then stops costing
+          // anything.
+          if (active.deviceId != null && playing && Number.isFinite(prolinkRepSec)) {
+            const q = prolinkReportQuality.get(active.deviceId)
+              || { prev: prolinkRepSec, prevAt: nowMs, deltas: [], gaps: [], backwards: 0, logged: false };
+            const deltaMs = (seconds - q.prev) * 1000;
+            const gapMs = nowMs - q.prevAt;
+            if (deltaMs <= 0) q.backwards += 1;
+            else if (q.deltas.length < 200) q.deltas.push(deltaMs);
+            if (q.gaps.length < 200) q.gaps.push(gapMs);
+            q.prev = seconds;
+            q.prevAt = nowMs;
+            if (!q.logged && q.deltas.length >= 20) {
+              q.logged = true;
+              const d = [...q.deltas].sort((a, b) => a - b);
+              const g = [...q.gaps].sort((a, b) => a - b);
+              const meanOf = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+              console.log(
+                `Prolink: playhead report quality — device ${active.deviceId}`,
+                `position delta mean +${meanOf(d).toFixed(1)}ms`,
+                `spread ${(d[d.length - 1] - d[0]).toFixed(1)}ms`,
+                `backward hops ${q.backwards}`
+              );
+              console.log(
+                `Prolink: report interval — device ${active.deviceId}`,
+                `mean +${meanOf(g).toFixed(1)}ms min +${g[0].toFixed(1)}ms`,
+                `max +${g[g.length - 1].toFixed(1)}ms`,
+                `spread ${(g[g.length - 1] - g[0]).toFixed(1)}ms`
+              );
+            }
+            prolinkReportQuality.set(active.deviceId, q);
+          }
+          prolinkRepSec = seconds;
         } else if (prolinkClock.lastBeat >= 0) {
           const gridIdx = prolinkClock.lastBeat - 1; // grid[0] is beat 1
           const hasGridBeat =
@@ -2361,7 +2693,7 @@ function createWindow() {
         const totalSec = seconds == null ? 0 : Math.floor(seconds);
         const frames = seconds == null ? 0 : Math.floor((seconds % 1) * fps);
 
-        enqueueProlinkStatus({
+        enqueueProlinkStatus((prolinkLastStatusPayload = {
           deviceId: active.deviceId,
           playerId: active.deviceId,
           trackKey: prolinkTrackKey,
@@ -2398,15 +2730,64 @@ function createWindow() {
           running: beatsFlowing || absMoving,
           positionSource,
           trackDuration: prolinkGridDurationMs,
-        });
+        }));
       });
+      // The Absolute Position packet is the deck's authoritative, high-rate
+      // position source and exists for exactly this purpose. Measured: it arrives
+      // at ~34/s (~30 ms) with a ~31 ms position quantum, while the StatusPacket
+      // stream that the handler above runs on is only ~8/s and bursts 0..225 ms
+      // apart. Computing the playhead inside the status handler therefore threw
+      // away three quarters of the available resolution and left the renderer
+      // extrapolating across gaps of up to 225 ms.
+      //
+      // So republish on our own ~30 Hz timer straight from the newest abs packet.
+      // Only `seconds` (and the timecode derived from it) changes between status
+      // packets — BPM, playState, beat, track metadata are all still published by
+      // the status handler, so this cannot disagree with the device about anything
+      // except position, which is precisely the field it reads directly.
+      const PROLINK_PLAYHEAD_INTERVAL_MS = 33;
+      const prolinkPlayheadTimer = setInterval(() => {
+        if (prolinkActiveDeviceId == null) return;
+        const pkt = prolinkPackets.get(prolinkActiveDeviceId);
+        const abs = pkt && pkt.abs ? pkt.abs : null;
+        const last = prolinkLastStatusPayload;
+        // Only take over while abs is the source the handler is using, so the
+        // grid/ramp fallbacks keep their own behaviour.
+        if (!abs || !last || last.positionSource !== 'abs') return;
+        if (!last.playing) return;
+        const nowMs = Date.now();
+        // Never extrapolate from a packet that has stopped arriving (deck
+        // disconnected, or the player went quiet): the age term below would then
+        // walk the playhead forward forever on its own.
+        if (nowMs - abs.at > 1000) return;
+        const ageMs = Math.max(0, nowMs - abs.at);
+        // Only the 0..one-packet-interval phase correction; see the note where
+        // the status handler computes the same value. How fast the track is really
+        // moving is the transport's job, measured rather than assumed.
+        const leadMs = Math.min(ageMs, 40);
+        const seconds = (abs.playheadMs + leadMs) / 1000;
+        if (Math.abs(seconds - (last.seconds ?? -1)) < 0.0005) return;
+        const totalSec = Math.floor(seconds);
+        prolinkLastStatusPayload = {
+          ...last,
+          seconds,
+          timecode: {
+            hours: Math.floor(totalSec / 3600),
+            minutes: Math.floor((totalSec % 3600) / 60),
+            seconds: totalSec % 60,
+            frames: Math.floor((seconds % 1) * 30),
+          },
+        };
+        enqueueProlinkStatus(prolinkLastStatusPayload);
+      }, PROLINK_PLAYHEAD_INTERVAL_MS);
+      if (typeof prolinkPlayheadTimer.unref === 'function') prolinkPlayheadTimer.unref();
       // Runtime error safety net: UDP sockets can emit unhandled errors
       // (e.g. network interface drops) which would otherwise crash the process.
       if (network.deviceManager) {
         network.deviceManager.on('error', (err) => {
           console.warn('Prolink: deviceManager error:', err && err.message);
         });
-        const onDeviceChange = () => broadcastProlinkStatus();
+        const onDeviceChange = () => { broadcastProlinkStatus(); enqueueDjlinkDecks(); };
         network.deviceManager.on('connect', (dev) => {
           console.log('Prolink: device connected —', dev && dev.name, `(id ${dev && dev.id})`, dev && dev.ip && dev.ip.address);
           onDeviceChange();
@@ -2444,7 +2825,7 @@ function createWindow() {
       if (prolinkNetwork) {
         try {
           const p = prolinkNetwork.disconnect();
-          if (p && typeof p.catch === 'function') p.catch(() => {});
+          if (p && typeof p.catch === 'function') p.catch(() => { });
         } catch (err) {
           console.warn('Prolink: cleanup error:', err && err.message);
         }
@@ -2455,10 +2836,13 @@ function createWindow() {
       prolinkGrid = null;
       prolinkGridDurationMs = null;
       prolinkTrackKey = null;
-      prolinkGridLoading = false;
       prolinkPackets.clear();
       prolinkLastAbsMs.clear();
+      prolinkDeckMeta.clear();
+    prolinkLastStatusPayload = null;
+      prolinkDeckGrids.clear();
       broadcastProlinkStatus();
+      enqueueDjlinkDecks();
     }
   };
   const startProlinkStateListener = () => prolinkEnqueue(startProlinkStateListenerOp);
@@ -2482,7 +2866,7 @@ function createWindow() {
       let closing = null;
       try {
         const p = prolinkNetwork.disconnect();
-        if (p && typeof p.catch === 'function') closing = p.catch(() => {});
+        if (p && typeof p.catch === 'function') closing = p.catch(() => { });
       } catch (err) {
         console.warn('Prolink: stop error:', err && err.message);
       }
@@ -2498,11 +2882,14 @@ function createWindow() {
     prolinkGrid = null;
     prolinkGridDurationMs = null;
     prolinkTrackKey = null;
-    prolinkGridLoading = false;
     prolinkWasPlaying = false;
     prolinkPackets.clear();
+    prolinkDeckMeta.clear();
+    prolinkLastStatusPayload = null;
+    prolinkDeckGrids.clear();
     prolinkSourceColors.clear();
     prolinkSourceNames.clear();
+
     prolinkMediaSlotLogged.clear();
     prolinkLastAbsMs.clear();
     prolinkBeatPacketLogged = false;
@@ -2611,7 +2998,7 @@ function createWindow() {
       }
     };
     const p = stagelinqOp.then(run);
-    stagelinqOp = p.catch(() => {});
+    stagelinqOp = p.catch(() => { });
   };
   // Per-deck state keyed by "<address>|<layer>". Kept for the whole session so
   // deck switches never lose the follow target's playhead.
@@ -2622,6 +3009,44 @@ function createWindow() {
   const stagelinqPosSourceLogged = { samples: false, beat: false };
   const stageLinqDeckKey = (address, layer) => `${address}|${layer}`;
   const stageLinqDeckId = (d) => `${d.player}${d.layer}`; // matches PlayerStatus.deck
+
+  // Denon reports everything a roster entry needs on the StateMap itself
+  // (SongName, ArtistName, TrackLength in samples, currentBpm, playState,
+  // jogColor), so this is a straight map over the per-deck state — no extra
+  // db/analysis round trip like the Pro DJ Link side needs.
+  const buildStagelinqDeckRoster = () => {
+    const out = [];
+    for (const [key, deck] of stagelinqDeckStates) {
+      if (!deck) continue;
+      const sampleRate = deck.sampleRate || 44100;
+      const lengthSamples = deck.trackLength;
+      const durationMs =
+        typeof lengthSamples === 'number' && lengthSamples > 0
+          ? (lengthSamples / sampleRate) * 1000
+          : null;
+      const loaded = !!(deck.songLoaded || deck.trackNetworkPath);
+      out.push({
+        source: 'stagelinq',
+        deckId: deck.deck || stageLinqDeckId(deck),
+        deckKey: `stagelinq|${key}`,
+        deckColor: deck.jogColor || null,
+        isMaster: !!deck.deckIsMaster,
+        playing: !!deck.playState,
+        playState: deck.playState ? 3 : 1,
+        loaded,
+        trackId: deck.trackNetworkPath || null,
+        trackKey: deck.trackNetworkPath ? `${deck.deviceId || ''}|${deck.trackNetworkPath}` : null,
+        title: deck.title || null,
+        artist: deck.artist || null,
+        trackDurationMs: durationMs,
+        trackBPM: deck.currentBpm || null,
+        seconds: typeof deck.seconds === 'number' ? deck.seconds : null,
+        bpm: deck.currentBpm || null,
+        beat: Number.isFinite(deck.beat) ? Math.floor(deck.beat) : null,
+      });
+    }
+    return out;
+  };
   // Embedded cover art per loaded track. Title/artist already arrive free on the
   // StateMap (/Track/SongName, /Track/ArtistName); only artwork needs the
   // FileTransfer service to read the file header. Cached per track so the header
@@ -2728,6 +3153,7 @@ function createWindow() {
     const prev = stagelinqDeckStates.get(key) || {};
     const deck = { ...prev, ...status, key };
     stagelinqDeckStates.set(key, deck);
+    enqueueDjlinkDecks();
     // New track on this deck -> pull its embedded cover once (cached by path).
     if (status.trackNetworkPath && status.trackNetworkPath !== prev.trackNetworkPath) {
       fetchStagelinqArtwork(status.deviceId, status.trackNetworkPath, status.trackPathAbsolute);
@@ -2983,7 +3409,7 @@ function createWindow() {
       // that needs no native module, and TrueLazer uses it to read the embedded
       // cover art out of the loaded file's header.
       const slLogger = {
-        trace: () => {}, debug: () => {}, info: (...a) => console.log('StageLinq:', ...a),
+        trace: () => { }, debug: () => { }, info: (...a) => console.log('StageLinq:', ...a),
         warn: (...a) => console.warn('StageLinq:', ...a), error: (...a) => console.error('StageLinq:', ...a),
       };
       const client = new StageLinqInstance({
@@ -3028,6 +3454,7 @@ function createWindow() {
       stagelinqDirection = 1;
       stagelinqSmoothBpm = null;
       broadcastStagelinqStatus();
+      enqueueDjlinkDecks();
     }
   };
   const startStagelinqListener = () => stagelinqEnqueue(startStagelinqListenerOp);
@@ -3066,6 +3493,7 @@ function createWindow() {
     stagelinqPosSourceLogged.samples = false;
     stagelinqPosSourceLogged.beat = false;
     broadcastStagelinqStatus();
+    enqueueDjlinkDecks();
   };
   ipcMain.on('stop-stagelinq-listener', () => {
     console.log('StageLinq: stop IPC received');
@@ -3092,6 +3520,25 @@ function createWindow() {
     if (settings.selectedDevice !== undefined) store.set('stagelinqSettings.selectedDevice', settings.selectedDevice);
     if (settings.bpmSource !== undefined) store.set('stagelinqSettings.bpmSource', settings.bpmSource);
     return { success: true };
+  });
+
+  // DJ-Link Clip Transport arming. The roster itself is pushed on 'djlink-decks';
+  // this is only the operator's on/off state for it.
+  ipcMain.handle('get-djlink-transport-settings', () => {
+    return djLinkTransportSettings;
+  });
+
+  ipcMain.handle('set-djlink-transport-settings', (event, settings) => {
+    if (settings && settings.enabled !== undefined) {
+      store.set('djLinkTransportSettings.enabled', !!settings.enabled);
+      djLinkTransportSettings.enabled = !!settings.enabled;
+    }
+    if (settings && Array.isArray(settings.blockedDecks)) {
+      const clean = settings.blockedDecks.filter((k) => typeof k === 'string');
+      store.set('djLinkTransportSettings.blockedDecks', clean);
+      djLinkTransportSettings.blockedDecks = clean;
+    }
+    return djLinkTransportSettings;
   });
 
   ipcMain.handle('get-stagelinq-status', () => {
@@ -3216,94 +3663,70 @@ function createWindow() {
   });
 
   // Background System Stats Loop
-  // pidusage and ps-tree both spawn `wmic.exe` on Windows. On machines where
-  // WMIC has been removed (compact/newer Windows builds) those spawns emit an
-  // asynchronous ENOENT error: ps-tree attaches no 'error' listener, and
-  // pidusage's availability probe throws from a callback its try/catch cannot
-  // catch — either can surface as an "Uncaught Exception: Error Spawn
-  // wmic.exe ENOENT" right after startup. Probe once and pick a wmic-free path.
-  let wmicAvailable = process.platform !== 'win32' ? true : null; // null = probe pending
-  const checkWmic = async () => {
-    if (wmicAvailable === null) {
-      wmicAvailable = await new Promise(resolve => {
-        execFile('where', ['wmic.exe'], { windowsHide: true }, err => resolve(!err));
-      });
-      if (!wmicAvailable) console.warn('WMIC not found; using fallback for system stats.');
-    }
-    return wmicAvailable;
-  };
-
-  const collectSystemStats = (pids, wmicOk) => {
-    const collect = (stats) => {
-      if (!stats) return;
-      let totalCpu = 0;
-      let totalMemKB = 0;
-      const numCores = os.cpus().length || 1;
-      Object.values(stats).forEach(s => {
-        totalCpu += s.cpu;
-        totalMemKB += s.memory;
-      });
-      const normalizedCpu = totalCpu / numCores;
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('system-stats', {
-          cpu: normalizedCpu.toFixed(1),
-          ram: (totalMemKB / (1024 * 1024)).toFixed(0)
-        });
-      }
-    };
-    const onError = (e) => console.warn('Error collecting system stats:', e && e.message ? e.message : e);
-
-    if (wmicOk) {
-      pidusage(pids, (err, stats) => {
-        if (err || !stats) return onError(err);
-        collect(stats);
-      });
-    } else {
-      // wmic is missing: use pidusage's bundled gwmi (PowerShell) backend,
-      // which never spawns wmic.
-      try {
-        const gwmi = require('pidusage/lib/gwmi');
-        gwmi(pids, { maxage: 60000 }, (err, stats) => err ? onError(err) : collect(stats));
-      } catch (e) {
-        onError(e);
-      }
-    }
-  };
-
-  let mainCpuLast = null;
-  let mainCpuLastTime = 0;
-  const sendSystemStats = async () => {
+  //
+  // Uses app.getAppMetrics(), the same source Chromium's own Task Manager
+  // reads: per-process CPU and memory for every process this app owns (Browser,
+  // GPU, Tab/renderer, Utility). Nothing is spawned to collect it.
+  //
+  // The previous implementation walked the process tree with ps-tree and
+  // queried each PID through wmic. That was wrong in two ways:
+  //   - It spawned wmic on every tick, and wmic is removed on newer Windows
+  //     (which is why it had a PowerShell fallback behind a probe).
+  //   - It summed the *working set* of every Chromium process. Working set
+  //     includes pages shared between the Browser, GPU and renderer processes,
+  //     so each shared page was counted once per process: measured on this
+  //     build that read 662 MB for an app whose real footprint was 153 MB.
+  //
+  // Semantics, measured on this build rather than assumed:
+  //   - cpu.percentCPUUsage is ALREADY a percentage of whole-machine capacity
+  //     (four saturated cores on an eight-core host read ~45%, not ~400%), so
+  //     it must NOT be divided by the core count.
+  //   - Per-process values can come back slightly negative; clamp at zero.
+  //   - The first call after startup always returns 0, so prime once and skip
+  //     it rather than showing a misleading 0.0%.
+  //   - memory.workingSetSize and memory.privateBytes are KILOBYTES.
+  //   - privateBytes is memory not shared with other processes (Chromium's
+  //     "memory footprint"), so it is the honest figure to display. Fall back
+  //     to workingSetSize if a platform does not report it.
+  const SYSTEM_STATS_INTERVAL_MS = 2000;
+  let systemStatsPrimed = false;
+  const sendSystemStats = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
+    let metrics;
     try {
-      const wmicOk = await checkWmic();
-      if (wmicOk) {
-        psTree(process.pid, (err, children) => {
-          const pids = [process.pid, ...(err ? [] : children.map(p => parseInt(p.PID)).filter(pid => !isNaN(pid)))];
-          collectSystemStats(pids, true);
-        });
-      } else {
-        // Cannot enumerate the process tree without wmic; measure the main
-        // process directly (no external spawn, guaranteed to work).
-        const now = Date.now();
-        const usage = process.cpuUsage();
-        let cpu = 0;
-        if (mainCpuLast) {
-          const dtMs = Math.max(1, now - mainCpuLastTime);
-          const usedMs = (usage.user - mainCpuLast.user + usage.system - mainCpuLast.system) / 1000;
-          cpu = Math.min(100, (usedMs / dtMs) * 100);
-        }
-        mainCpuLast = usage;
-        mainCpuLastTime = now;
-        const ramMB = (process.memoryUsage().rss / (1024 * 1024)).toFixed(0);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('system-stats', { cpu: cpu.toFixed(1), ram: ramMB });
-        }
-      }
+      metrics = app.getAppMetrics();
     } catch (e) {
-      console.error("Error in system stats:", e);
+      console.warn('Error collecting system stats:', e && e.message ? e.message : e);
+      return;
     }
+    if (!Array.isArray(metrics) || metrics.length === 0) return;
+
+    // Chromium only fills in the CPU delta from the second call onwards.
+    if (!systemStatsPrimed) {
+      systemStatsPrimed = true;
+      return;
+    }
+
+    let cpuPercent = 0;
+    let everyProcessHasPrivateBytes = true;
+    let privateKB = 0;
+    let workingSetKB = 0;
+    for (const metric of metrics) {
+      const cpu = metric.cpu && metric.cpu.percentCPUUsage;
+      if (typeof cpu === 'number' && cpu > 0) cpuPercent += cpu;
+      const memory = metric.memory || {};
+      if (typeof memory.privateBytes === 'number') privateKB += memory.privateBytes;
+      else everyProcessHasPrivateBytes = false;
+      if (typeof memory.workingSetSize === 'number') workingSetKB += memory.workingSetSize;
+    }
+
+    const ramKB = everyProcessHasPrivateBytes ? privateKB : workingSetKB;
+    mainWindow.webContents.send('system-stats', {
+      cpu: Math.min(100, cpuPercent).toFixed(1),
+      ram: (ramKB / 1024).toFixed(0)
+    });
   };
-  setInterval(sendSystemStats, 4000);
+  setInterval(sendSystemStats, SYSTEM_STATS_INTERVAL_MS);
 
   let ndiFlowControlTimeout = null;
 
