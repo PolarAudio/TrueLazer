@@ -146,6 +146,26 @@ export function resolveTargetPps({ preset = DEFAULT_PRESET, ppsOverride = null }
     return getPreset(preset).targetPps;
 }
 
+/**
+ * Points a single output may carry per frame, derived from its resolved PPS
+ * and the frame rate it will actually be played at (targetPps / targetFps).
+ *
+ * This is the TIMING budget only. Hardware-specific wire caps (e.g. the
+ * Showbridge single-chunk PTS_FULL) stay in the main process, which enforces
+ * them blank-aware in dac-budget.cjs — the renderer deliberately does not
+ * duplicate those constants.
+ *
+ * @param {object|null} settings  per-output settings (ppsPreset / ppsOverride / targetFps)
+ * @param {number} frameRate      the fps this frame is being produced at
+ */
+export function resolvePointBudget(settings, frameRate) {
+    const s = settings || {};
+    const pps = resolveTargetPps({ preset: s.ppsPreset, ppsOverride: s.ppsOverride });
+    const fps = (s.targetFps && s.targetFps > 0) ? s.targetFps : (frameRate || 30);
+    if (!pps || pps <= 0 || fps <= 0) return 0;
+    return Math.max(1, Math.round(pps / fps));
+}
+
 export default {
     OPT_DEFAULTS,
     INTERP_SCALE,
@@ -155,6 +175,7 @@ export default {
     getPreset,
     getOptimizerSettings,
     resolveTargetPps,
+    resolvePointBudget,
     interpToDisplayUnits,
     cornerDegreesToCos,
 };

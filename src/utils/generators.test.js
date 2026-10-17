@@ -244,3 +244,68 @@ describe('generateTimer', () => {
     expect(result.points).toBeDefined();
   });
 });
+
+// --- Regression: an unrecognised Beam Style must not blank the shape -------
+//
+// applyRenderingStyle returned whatever the styled pass produced, with no
+// fallback. Any value outside the four known styles therefore produced an EMPTY
+// frame, which on the laser is indistinguishable from "the generator is broken".
+// `undefined` could also reach it and clobber the 'normal' default, because the
+// defaults merge was a plain spread.
+describe('generators beam style robustness', () => {
+    it('treats an unknown style as normal instead of emitting nothing', () => {
+        for (const style of ['default', 'DEFAULT', 'simple', 'solid', 'none', '', 'weird']) {
+            const f = generateCircle({ numPoints: 30, renderingStyle: style });
+            expect(f.points.length, `style "${style}"`).toBeGreaterThan(0);
+        }
+    });
+
+it('treats an explicitly undefined style as normal', () => {
+        // generateCircle appends a closing duplicate, so numPoints+1 in total.
+        const f = generateCircle({ numPoints: 30, renderingStyle: undefined });
+        const n = generateCircle({ numPoints: 30, renderingStyle: 'normal' }).points.length;
+        expect(f.points.length).toBe(n);
+    });
+
+    it('treats a missing style as normal', () => {
+        const a = generateCircle({ numPoints: 30 });
+        const b = generateCircle({ numPoints: 30, renderingStyle: 'normal' });
+        expect(a.points.length).toBe(b.points.length);
+    });
+
+it('produces a continuous trace for normal, not discrete dots', () => {
+        const f = generateCircle({ numPoints: 50, renderingStyle: 'normal' });
+        let litRuns = 0;
+        let wasLit = false;
+        for (const p of f.points) {
+            const lit = !p.blanking && (p.r || p.g || p.b);
+            if (lit && !wasLit) litRuns++;
+            wasLit = !!lit;
+        }
+        // A single unbroken run: the source polyline is continuous, so any
+        // "dots only" appearance must come from the sampling step downstream,
+        // not from the generator splitting the stroke.
+        expect(litRuns).toBe(1);
+    });
+
+    it('still honours the four real styles distinctly', () => {
+        const n = 50;
+        const base = generateCircle({ numPoints: n, renderingStyle: 'normal' }).points.length;
+        const dotted = generateCircle({ numPoints: n, renderingStyle: 'dotted' }).points.length;
+        const blanked = generateCircle({ numPoints: n, renderingStyle: 'blanked', blankingSize: 5 }).points.length;
+        const dots = generateCircle({ numPoints: n, renderingStyle: 'dots' }).points.length;
+        expect(base).toBe(n + 1);                 // source stroke + closing duplicate
+        expect(dotted).toBeGreaterThan(base);    // dotted dwells each sample
+        expect(blanked).toBeGreaterThanOrEqual(1); // blanked still yields points
+        expect(dots).toBeGreaterThan(base * 5);  // dots = 1 approach + 8 lit + 1 tail per sample
+    });
+
+    it('never returns an empty frame for any style', () => {
+        for (const s of ['normal', 'dotted', 'blanked', 'dots', 'default', undefined]) {
+            const c = generateCircle({ numPoints: 40, renderingStyle: s });
+            const t = generateTriangle({ numPoints: 40, renderingStyle: s });
+            expect(c.points.length).toBeGreaterThan(0);
+            expect(t.points.length).toBeGreaterThan(0);
+        }
+    });
+});

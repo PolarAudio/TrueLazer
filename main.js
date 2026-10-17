@@ -1140,11 +1140,21 @@ function createWindow() {
     // flight from the renderer (an animate() tick that fired right at the toggle)
     // cannot recreate the accumulator entry behind our back and reopen the wires.
     stoppedDacIps.add(ip);
-    // Remove this DAC's frames from the accumulator
+    // Blank every channel that was actually carrying output, BEFORE the accumulator
+    // entries go away. Two reasons this has to happen here:
+    //   - Once an IP is in stoppedDacIps the send loop skips it entirely, so it can
+    //     never feed the idle frame.
+    //   - stopSending()'s IDN path only emits a zero-point frame on channel 0, so a
+    //     channel 1..N would keep replaying its last real frame and stay lit.
+    // A single blank packet is enough for IDN because each packet is a complete
+    // frame with a duration: the player then holds a blank rather than live output.
     for (const id of Object.keys(dacFrameAccumulator)) {
-      if (dacFrameAccumulator[id].ip === ip) {
-        delete dacFrameAccumulator[id];
-      }
+      const acc = dacFrameAccumulator[id];
+      if (acc.ip !== ip) continue;
+      const blank = new Float32Array(8);
+      blank[6] = 1;
+      sendFrame(ip, acc.channel, blank, acc.fps || 30, acc.type, acc.options);
+      delete dacFrameAccumulator[id];
     }
     stopSending(ip, type);
   });

@@ -1586,6 +1586,123 @@ export function applyChase(points, numPoints, params, time, context = {}) {
     }
 }
 
+/**
+ * Insert settle samples at every lit <-> blanked transition in an already
+ * processed frame.
+ *
+ * The optimizer performs the same job, but it runs BEFORE safety-zone blanking
+ * (and before output-area crop), so it never observes the zone boundary as a
+ * beam toggle. Without this pass the beam stays lit from the last point outside
+ * a zone until the scanner physically reaches the first point inside it, so the
+ * whole crossing segment is painted — and because that segment's length is
+ * whatever the generator happened to sample, a safety area calibrated against a
+ * densely sampled test line does not line up with animation content whose
+ * segments are a different length.
+ *
+ * Cutting the beam at the last point OUTSIDE the boundary (rather than at the
+ * first point inside it) makes the overshoot independent of segment length,
+ * which is what keeps the zone consistent between test lines and animation.
+ *
+ * Returns a NEW frame; the input is never mutated. The `lastPoint`
+ * end-of-frame marker stays on the final emitted point.
+ *
+ * @param {{points:any, isTypedArray?:boolean}} frame
+ * @param {number} dwell  settle samples to insert on each side of a toggle
+ */
+export function applyBoundaryDwell(frame, dwell) {
+    if (!frame || !frame.points) return frame;
+    const n = Math.floor(dwell);
+    if (!(n > 0)) return frame;
+
+    const src = frame.points;
+    const isTyped = frame.isTypedArray || src instanceof Float32Array;
+    const numPoints = isTyped ? (src.length / 8) : src.length;
+    if (numPoints === 0) return frame;
+
+    // Rebuilding the array changes the point count, which would invalidate the
+    // byte offsets in a per-DAC slice map. In practice the grid and timeline
+    // paths both resolve their per-DAC slices before this runs (and mergeFrames
+    // already rebuilds the buffer without the map), so this is a guard: refuse
+    // rather than hand downstream offsets that now point at the wrong points.
+    if (src._channelDistributions) return frame;
+
+    const readBlank = (i) => (isTyped ? src[i * 8 + 6] > 0.5 : !!src[i].blanking);
+    const isLit = (i) => {
+        if (isTyped) return src[i * 8 + 3] > 0 || src[i * 8 + 4] > 0 || src[i * 8 + 5] > 0;
+        const p = src[i];
+        return (p.r || 0) > 0 || (p.g || 0) > 0 || (p.b || 0) > 0;
+    };
+
+    // A transition only counts where the beam actually toggles. Points that are
+    // blanked but unlit (a genuine pen-up travel) are not toggles.
+    const blankAt = new Array(numPoints);
+    for (let i = 0; i < numPoints; i++) blankAt[i] = readBlank(i);
+
+    const out = [];
+    const emitBlankSettle = (i) => {
+        // Copy the neighbour point but force the beam off: this is the settle
+        // window, so the galvo is told to hold while the scanner catches up.
+        for (let d = 0; d < n; d++) {
+            if (isTyped) {
+                out.push(src[i * 8], src[i * 8 + 1], src[i * 8 + 2], 0, 0, 0, 1, 0);
+            } else {
+                const p = src[i];
+                out.push({ x: p.x, y: p.y, z: p.z || 0, r: 0, g: 0, b: 0, blanking: true, lastPoint: false });
+            }
+        }
+    };
+
+    for (let i = 0; i < numPoints; i++) {
+        if (i > 0) {
+            const prevLit = isLit(i - 1);
+            const currLit = isLit(i);
+            if (prevLit && !currLit) {
+                // Beam goes dark here: settle at the last lit position BEFORE
+                // stepping onto the blanked point, so the travel is dark.
+                emitBlankSettle(i - 1);
+            } else if (!prevLit && currLit) {
+                // Beam comes up here: arrive dark and settle at the new
+                // position before letting any light out.
+                emitBlankSettle(i);
+            }
+        }
+        if (isTyped) {
+            for (let k = 0; k < 8; k++) out.push(src[i * 8 + k]);
+        } else {
+            const p = src[i];
+            out.push({ ...p });
+        }
+    }
+
+    // Preserve the end-of-frame marker on whatever is now the last point.
+    if (isTyped) {
+        const res = new Float32Array(out.length);
+        for (let i = 0; i < out.length; i++) res[i] = out[i];
+        res[res.length - 1] = 1;
+        return { ...frame, points: res, isTypedArray: true };
+    }
+    const last = out[out.length - 1];
+    out[out.length - 1] = { ...last, lastPoint: true };
+    return { ...frame, points: out, isTypedArray: false };
+}
+
+/**
+ * Apply per-output processing (output-area transform + safety-zone blanking)
+ * and then cut the beam at every zone boundary.
+ *
+ * The boundary dwell MUST run after the zone blanking: it exists precisely
+ * because the optimizer ran earlier and could not see these transitions.
+ */
+export function applyOutputProcessingWithDwell(frame, settings, dwell = 2) {
+    const processed = applyOutputProcessing(frame, settings, false);
+    if (!processed) return processed;
+    const zones = settings && settings.safetyZones;
+    const cropped = settings && settings.transformationEnabled && settings.outputArea;
+    // Only needed when blanking was actually introduced here.
+    if ((!zones || zones.length === 0) && !cropped) return processed;
+    return applyBoundaryDwell(processed, dwell);
+}
+
 export function applyOutputProcessing(frame, settings, inPlace = false) {
     if (!settings || !frame || !frame.points) return frame;
     const { safetyZones, outputArea, transformationEnabled, transformationMode } = settings;

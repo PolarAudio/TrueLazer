@@ -3,8 +3,9 @@ import { useTimeline, getTimelineDuration, getChannelOutputs, isChannelAudible }
 import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
 import { useAudio } from '../contexts/AudioContext.jsx';
 import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides, applyCueEffectOverrides } from '../utils/timelineAutomation';
-import { applyEffects, applyOutputProcessing } from '../utils/effects';
-import { getPreset, DEFAULT_PRESET } from '../utils/hardwarePresets';
+import { applyEffects, applyOutputProcessingWithDwell } from '../utils/effects';
+import { optimizePoints } from '../utils/optimizer';
+import { getPreset, DEFAULT_PRESET, resolvePointBudget } from '../utils/hardwarePresets';
 import { selectActiveCue, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
 import { useTimelineSync } from './useTimelineSync';
 
@@ -581,6 +582,7 @@ export function useTimelinePlayback() {
         const s = store.settings;
         const frames = {};
         const order = [...new Set(store.channelOrder || [])];
+        const optimizeOnPlayback = !!s.optimizeOnPlayback;
 
         for (const chId of order) {
             const frame = compileChannelFrame(chId, t);
@@ -622,36 +624,62 @@ export function useTimelinePlayback() {
                     : chanFrame;
                 const settings = dacOutputSettingsRef.current ? dacOutputSettingsRef.current[`${out.ip}:${out.channel}`] : null;
 
-                if (settings) {
-                    if (settings.dimmer !== undefined && settings.dimmer < 1) {
-                        outFrame = scaleRgb(outFrame, Math.max(0, settings.dimmer));
-                    }
-                    if (settings.transformationEnabled || (settings.safetyZones && settings.safetyZones.length > 0)) {
-                        const processed = applyOutputProcessing(
-                            { points: outFrame, isTypedArray: !Array.isArray(outFrame) },
-                            settings,
-                            false
-                        );
-                        if (processed && processed.points) outFrame = processed.points;
-                    }
-                }
-
+                // Preset / PPS resolution first — the optimizer needs the point
+                // budget, and the budget is per output (each wing of a zone can
+                // sit on a different preset).
                 const preset = settings?.ppsPreset && getPreset(settings.ppsPreset)
                     ? getPreset(settings.ppsPreset)
                     : getPreset(DEFAULT_PRESET);
                 const targetPpsValue = settings?.ppsOverride && settings.ppsOverride > 0
                     ? settings.ppsOverride
                     : (preset && preset.targetPps ? preset.targetPps : 30000);
+                const targetFpsValue = (settings?.targetFps && settings.targetFps > 0)
+                    ? settings.targetFps
+                    : (s.fps || 30);
+
+                // Optional point optimization. Off by default so existing
+                // Timeline playback is unchanged; when enabled this mirrors the
+                // Grid path (interpolation + corner dwell + budget) so a safety
+                // area calibrated there behaves the same here. It must run
+                // BEFORE output processing so the zone boundaries it creates
+                // get their boundary dwell below.
+                if (optimizeOnPlayback && outFrame && (outFrame.length || 0) > 0) {
+                    const budget = resolvePointBudget(settings, targetFpsValue) || 1000;
+                    try {
+                        outFrame = optimizePoints(outFrame, {
+                            maxDist: 0.02,
+                            pathDwell: 2,
+                            maxPoints: budget,
+                        });
+                    } catch (e) {
+                        // Never let an optimizer fault silence a live output.
+                        console.warn('[TimelinePlayback] optimizePoints failed, sending raw frame', e);
+                    }
+                }
+
+                if (settings) {
+                    if (settings.dimmer !== undefined && settings.dimmer < 1) {
+                        outFrame = scaleRgb(outFrame, Math.max(0, settings.dimmer));
+                    }
+                    if (settings.transformationEnabled || (settings.safetyZones && settings.safetyZones.length > 0)) {
+                        const processed = applyOutputProcessingWithDwell(
+                            { points: outFrame, isTypedArray: !Array.isArray(outFrame) },
+                            settings,
+                            2
+                        );
+                        if (processed && processed.points) outFrame = processed.points;
+                    }
+                }
+
                 const options = {
                     skipOptimization: false,
                     flipX: false,
                     flipY: false,
                     pps: targetPpsValue,
                     targetPps: targetPpsValue,
-                    targetFps: s.fps || 30,
+                    targetFps: targetFpsValue,
                     targetMode: 'varFpsFixedPps',
                 };
-                if (settings?.targetFps && settings.targetFps > 0) options.targetFps = settings.targetFps;
                 if (settings?.targetMode) options.targetMode = settings.targetMode;
 
                 frames[`${out.ip}:${out.channel}`] = {

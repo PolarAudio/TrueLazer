@@ -69,6 +69,12 @@ export const DEFAULT_TIMELINE_SETTINGS = Object.freeze({
     // true = "Trim" (resizing clamps to the neighbouring cue so clips can
     // never be dragged over one another).
     clipEditTrim: false,
+    // Run the point optimizer on timeline cue frames before they reach the DAC.
+    // Off by default so existing Timeline behaviour is byte-for-byte unchanged;
+    // turn on to make the Timeline page match the Grid page (which always
+    // optimizes), including interpolation, corner dwell and safety-zone
+    // boundary dwell.
+    optimizeOnPlayback: false,
 });
 
 export function createInitialTimelineState() {
@@ -135,7 +141,10 @@ export function getChannelDisplayName(channel, dacOutputSettings) {
         outputs.length === 1 && dacOutputSettings
             ? dacOutputSettings[`${outputs[0].ip}:${outputs[0].channel}`]?.name
             : null;
-    const isAutoSeeded = /^Channel \d+:/.test(channel.name || '');
+    // Accept both the auto-seeded form ("Channel 1: <label>") and the plain
+    // "Channel N" form minted by the Add Channel button / empty-state button,
+    // so a hand-added track also picks up the Output Settings name.
+    const isAutoSeeded = /^Channel \d+\b/.test(channel.name || '');
     if (custom && String(custom).trim() && isAutoSeeded) return String(custom).trim();
     return channel.name || 'Channel';
 }

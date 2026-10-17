@@ -16,7 +16,20 @@ const IDNVAL_SMOD_LPGRF_DISCRETE = 0x02;
 
 let dataSocket = null;
 let generalSequence = 0;
-let rtSequence = 0;
+// Per-channel realtime sequence counters.
+//
+// These were a single shared counter, so with N channels interleaved on the wire
+// every channel observed its own sequence advance by N per packet. A receiver
+// validating a per-channel stream sees that as a discontinuity, which the IDN
+// Toolbox reports as "Sequence Type 1 Error - Last Seq: x, Current: y" — and with
+// more than one channel active, as one such warning per channel. A counter per
+// channel makes each channel's stream contiguous, which is what the field means.
+const rtSequences = new Map();
+const nextRtSequence = (channel) => {
+    const next = ((rtSequences.get(channel) || 0) + 1) & 0xFFFF;
+    rtSequences.set(channel, next);
+    return next;
+};
 let isScanning = false;
 
 function getSocket() {
@@ -36,18 +49,30 @@ function closeAll() {
     }
 }
 
+// Loopback is offered because helper software running on this same machine may
+// only be reachable on 127.0.0.1 — no external adapter will reach it.
+//
+// It is sorted LAST deliberately. Both consumers (DacPanel and TimelineContext)
+// default to `interfaces[0]` and then bind the discovery socket to that address
+// and broadcast on it, so a loopback entry in first position would make DAC
+// discovery bind to loopback, where broadcast does not exist, and silently find
+// no hardware. Loopback has to be an explicit choice, never a default.
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1']);
+
 function getNetworkInterfaces() {
     const interfaces = os.networkInterfaces();
-    const addresses = [];
+    const external = [];
+    const loopback = [];
     for (const k in interfaces) {
         for (const k2 in interfaces[k]) {
             const address = interfaces[k][k2];
-            if (address.family === 'IPv4' && !address.internal) {
-                addresses.push({ name: k, address: address.address });
-            }
+            if (!address || address.family !== 'IPv4' || !address.address) continue;
+            const isLoopback = address.internal || LOOPBACK_ADDRESSES.has(address.address);
+            const entry = { name: k, address: address.address, loopback: isLoopback };
+            (isLoopback ? loopback : external).push(entry);
         }
     }
-    return addresses;
+    return external.concat(loopback);
 }
 
 function discoverDacs(timeout = 2000, networkInterfaceIp) {
@@ -59,6 +84,8 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
     const discoverySocket = dgram.createSocket('udp4');
     let scanInterval = null;
     let resolveTimeout = null;
+    // Broadcast discovery is meaningless on loopback; see the bind callback.
+    const scanInterfaceIsLoopback = !!(networkInterfaceIp && LOOPBACK_ADDRESSES.has(networkInterfaceIp));
 
     const cleanup = () => {
         if (scanInterval) clearInterval(scanInterval);
@@ -92,10 +119,13 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
     });
     
     const sendScanRequest = () => {
+        if (scanInterfaceIsLoopback) return;
         const packet = Buffer.alloc(4);
         packet.writeUInt8(IDNCMD_SCAN_REQUEST, 0);
         packet.writeUInt8(0, 1);
         packet.writeUInt16BE(generalSequence++, 2);
+        // No error callback on purpose: discoverySocket has an 'error' handler
+        // above, and a broadcast this socket cannot make is not exceptional.
         discoverySocket.send(packet, 0, packet.length, IDN_HELLO_UDP_PORT, BROADCAST_ADDRESS);
     };
 
@@ -103,6 +133,15 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
     if (networkInterfaceIp) bindOptions.address = networkInterfaceIp;
 
     discoverySocket.bind(bindOptions, () => {
+        // There is no broadcast on loopback, so scanning through it can only ever
+        // time out. Skip it rather than emit a burst of send errors, and let the
+        // caller get an empty result quickly. A loopback service is addressed
+        // directly, not discovered.
+        if (scanInterfaceIsLoopback) {
+            cleanup();
+            resolve([]);
+            return;
+        }
         discoverySocket.setBroadcast(true);
         // Initial burst for fast discovery
         for (let i = 0; i < 10; i++) {
@@ -151,6 +190,25 @@ function sendCloseChannel(ip) {
     sendFrame(ip, 0, new Float32Array(0), 30);
 }
 
+// IDN's equivalent of the Showbridge continuous idle stream.
+//
+// Without this the always-fed send loop had nothing at all to send while a target
+// was idle: dac-communication's sendIdleFrame only knew about Showbridge and
+// returned null for every other type. So the IDN/StageLinq stream simply went
+// silent, the player kept playing the last frame it was given, and the beam stayed
+// on until the player's own idle timeout — a few seconds of light after the app had
+// already stopped asking for output.
+//
+// A single blanked point is a complete, valid IDN frame that reads as "off" (the
+// encoder writes r=g=b=0 and the blank byte as 0 for a blanking point), and sending
+// one every tick keeps the stream alive exactly like the Showbridge path does.
+function sendIdleFrame(ip, channel, options) {
+    const blank = new Float32Array(8);
+    blank[6] = 1; // blanking
+    const fps = (options && options.fps > 0) ? options.fps : 30;
+    return sendFrame(ip, channel, blank, fps);
+}
+
 function sendFrame(ip, channel, points, fps) {
     if (!points) return;
     
@@ -186,10 +244,9 @@ function sendFrame(ip, channel, points, fps) {
     const totalSize = headerSize + channelMessageHeaderSize + channelConfigSize + frameChunkHeaderSize + frameDataSize;
     const packet = Buffer.alloc(totalSize);
     let offset = 0;
-    rtSequence = (rtSequence + 1) & 0xFFFF;
     packet.writeUInt8(IDNCMD_RT_CNLMSG, offset++);
     packet.writeUInt8(0, offset++);
-    packet.writeUInt16BE(rtSequence, offset);
+    packet.writeUInt16BE(nextRtSequence(channel), offset);
     offset += 2;
     packet.writeUInt16LE(channelMessageHeaderSize + channelConfigSize + frameChunkHeaderSize + frameDataSize, offset);
     offset += 2;
@@ -285,4 +342,4 @@ function parseServiceMapResponse(msg) {
   }
 }
 
-module.exports = { discoverDacs, sendFrame, getDacServices, closeAll, getNetworkInterfaces, sendCloseChannel };
+module.exports = { discoverDacs, sendFrame, sendIdleFrame, getDacServices, closeAll, getNetworkInterfaces, sendCloseChannel };

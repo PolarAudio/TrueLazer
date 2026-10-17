@@ -42,9 +42,9 @@ import { ArtnetProvider, useArtnet } from './contexts/ArtnetContext'; // Add thi
 import { KeyboardProvider, useKeyboard } from './contexts/KeyboardContext'; // Add this
 import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
-import { applyEffects, applyOutputProcessing, resolveParam, calculateAnimPhase } from './utils/effects';
+import { applyEffects, applyOutputProcessing, applyOutputProcessingWithDwell, resolveParam, calculateAnimPhase } from './utils/effects';
 import { optimizePoints } from './utils/optimizer';
-import { DEFAULT_PRESET, getPreset, OPT_DEFAULTS } from './utils/hardwarePresets';
+import { DEFAULT_PRESET, getPreset, OPT_DEFAULTS, resolvePointBudget } from './utils/hardwarePresets';
 import { effectDefinitions } from './utils/effectDefinitions';
 import { THEME_COLORS } from './utils/midiColors';
 import { sendNote } from './utils/midi';
@@ -3246,12 +3246,32 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                             // Optimization AFTER effects ensures all transitions (Mirror, Delay, Blanking) are handled.
                             // The optimizer is now budget-aware (maxPoints) and handles corner dwell and interpolation
                             // within the point budget, so the post-hoc subsample below is only a safety net.
+                            // Budget the optimizer against the real per-frame point allowance
+                            // (resolved PPS / frame rate) instead of a fixed 1000. The frame is
+                            // fanned out to every DAC in `dacList` below, so the binding
+                            // constraint is the TIGHTEST budget among them; anything looser
+                            // would overflow the slowest channel's frame window. Hardware wire
+                            // caps (Showbridge PTS_FULL) are still enforced in the main process,
+                            // now blank-aware, so they are intentionally not applied here.
+                            let budgetPoints = 0;
+                            for (const targetDac of dacList) {
+                                const ch = targetDac.channel !== undefined
+                                    ? targetDac.channel
+                                    : (targetDac.channels && targetDac.channels.length > 0 ? targetDac.channels[0].serviceID : 0);
+                                const outSettings = (liveDacOutputSettingsRef.current
+                                    ? liveDacOutputSettingsRef.current[`${targetDac.ip}:${ch}`]
+                                    : null) || dacOutputSettingsRef.current[`${targetDac.ip}:${ch}`];
+                                const b = resolvePointBudget(outSettings, playbackFpsRef.current || 30);
+                                if (b > 0 && (budgetPoints === 0 || b < budgetPoints)) budgetPoints = b;
+                            }
+                            if (budgetPoints <= 0) budgetPoints = 1000;
+
                             if (optimizationEnabledRef.current) {
                                 const optimizedPts = optimizePoints(modifiedFrame.points, {
                                     ...(optimizationSettingsRef.current || {}),
                                     maxDist: Number(optimizationMaxDistRef.current || 0.02),
                                     pathDwell: Number(optimizationPathDwellRef.current || 2),
-                                    maxPoints: 1000,
+                                    maxPoints: budgetPoints,
                                     isClosed: modifiedFrame.isClosed
                                 });
                                 modifiedFrame.points = optimizedPts;
@@ -3276,8 +3296,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                     modifiedFrame.isTypedArray = true;
                                 }
 
-                                // Safety cap when optimizer is off
-                                const MAX_PTS_PER_FRAME = 1000;
+                                // Safety cap when optimizer is off — same per-frame budget the
+                                // optimizer would have targeted.
+                                const MAX_PTS_PER_FRAME = budgetPoints;
                                 const pts = modifiedFrame.points;
                                 if (pts) {
                                     const isT = modifiedFrame.isTypedArray || pts instanceof Float32Array;
@@ -3475,7 +3496,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                 }
                             }
 
-                            mergedFrame = applyOutputProcessing(mergedFrame, settings, false);
+                            mergedFrame = applyOutputProcessingWithDwell(mergedFrame, settings, Number(optimizationPathDwellRef.current || 2));
 
                             // Project safety-zone outlines into the frame data when enabled:
                             // a lit rectangle around each zone drawn in the same post-transform
