@@ -31,6 +31,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ShapeBuilder from './components/ShapeBuilder';
 import TimelineEditor from './components/TimelineEditor';
 import { timelineBridge } from './contexts/TimelineContext';
+import { resolveProjectCommand } from './utils/projectRouting';
 import AboutWindow from './components/aboutWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
@@ -2231,6 +2232,20 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     const [initialSettings, setInitialSettings] = useState(null);
     const [initialSettingsLoaded, setInitialSettingsLoaded] = useState(false);
     const [currentPage, setCurrentPage] = useState('main'); // 'main', 'shapeBuilder', 'timeline'
+    // Mirrors currentPage for the mount-once menu/project listeners, and tells
+    // the main process which page is showing so it can strip the application
+    // menu down to what applies here.
+    const currentPageRef = useRef(currentPage);
+    useEffect(() => {
+        currentPageRef.current = currentPage;
+        if (window.electronAPI && window.electronAPI.setCurrentPage) {
+            window.electronAPI.setCurrentPage(currentPage);
+        }
+    }, [currentPage]);
+    // Imperative handle on the Shape Builder so its document can be saved and
+    // restored. The component owns ~50 pieces of local state, so it is the only
+    // thing that knows what constitutes its working document.
+    const shapeBuilderRef = useRef(null);
     const [showAboutWindow, setShowAboutWindow] = useState(false);
     const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
     const [enabledShortcuts, setEnabledShortcuts] = useState({ midi: false, artnet: false, osc: false, keyboard: false });
@@ -4730,16 +4745,43 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     useEffect(() => {
         let unlistenNew, unlistenOpen, unlistenSave, unlistenSaveAs, unlistenLoad;
 
+        // Each page owns its own project file. The menu accelerators are
+        // application-level, so they fire regardless of which page is showing;
+        // route them here instead of always operating on the show project.
+        const routeProject = (command) => {
+            const decision = resolveProjectCommand(currentPageRef.current, command, {
+                timeline: timelineBridge.actionsRef?.current,
+                shapeBuilder: shapeBuilderRef.current,
+            });
+            if (!decision.handled) {
+                if (decision.reason === 'unavailable') {
+                    console.warn(`Project "${command}" ignored: the ${decision.owner} page is not ready.`);
+                }
+                return false;
+            }
+            decision.run();
+            return true;
+        };
+
         if (window.electronAPI) {
-            unlistenNew = window.electronAPI.on('new-project', () => dispatch({ type: 'RESET_STATE' }));
-            unlistenOpen = window.electronAPI.on('open-project', () => { /* This is handled in main.js */ });
+            unlistenNew = window.electronAPI.on('new-project', () => {
+                if (routeProject('new')) return;
+                dispatch({ type: 'RESET_STATE' });
+            });
+            unlistenOpen = window.electronAPI.on('open-project', () => {
+                // Show Projects are opened by main.js, which owns the .tlp path
+                // and the window title; it replies with 'load-project-data'.
+                if (routeProject('open')) return;
+            });
 
             // Use ref to access latest state without re-binding listeners
             unlistenSave = window.electronAPI.on('save-project', () => {
+                if (routeProject('save')) return;
                 console.log("Saving project with state:", stateRef.current);
                 window.electronAPI.send('save-project', stateRef.current);
             });
             unlistenSaveAs = window.electronAPI.on('save-project-as', () => {
+                if (routeProject('saveAs')) return;
                 console.log("Saving project AS with state:", stateRef.current);
                 window.electronAPI.send('save-project-as', stateRef.current);
             });
@@ -7603,86 +7645,95 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         quickAssigns={quickAssigns}
                         activePageId={activePageId}
                         theme={theme}
-                    />    <MidiMappingOverlay />
+                    />
+                    <MidiMappingOverlay />
+
+                    {/* Modals are mounted ABOVE the page switch so they overlay the
+                        Timeline and Shape Builder exactly as they overlay Show
+                        Control. They were previously nested inside the
+                        `currentPage === 'main'` branch, which made every menu
+                        action that opens one a silent no-op on the other two
+                        pages - the state flag was set, but nothing rendered. */}
+                    <NotificationPopup message={notification.message} visible={notification.visible} />
+                    <AboutWindow
+                        show={showAboutWindow}
+                        onClose={() => setShowAboutWindow(false)}
+                    />
+                    <OutputSettingsWindow
+                        show={showOutputSettingsWindow}
+                        onClose={() => setShowOutputSettingsWindow(false)}
+                        dacs={dacs}
+                        dacSettings={dacOutputSettings}
+                        onUpdateDacSettings={handleUpdateDacSettings}
+                        sentFramesRef={dacSentFramesRef}
+                    />
+                    <AudioSettingsWindow
+                        show={showAudioSettingsWindow || showFftSettingsWindow}
+                        onClose={() => { setShowAudioSettingsWindow(false); setShowFftSettingsWindow(false); }}
+                        initialTab={showFftSettingsWindow ? 'fft' : 'output'}
+                    />
+                    <GeneralSettingsWindow
+                        show={showGeneralSettingsWindow}
+                        onClose={() => setShowGeneralSettingsWindow(false)}
+                        masterSpeed={<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />}
+                    />
+                    <LinkSyncSettingsWindow
+                        show={showLinkSyncSettingsWindow}
+                        onClose={() => setShowLinkSyncSettingsWindow(false)}
+                        onUpdateSettings={() => { }}
+                        bpmSource={bpmSource}
+                        onBpmSourceChange={handleBpmSourceChange}
+                        djLinkTransport={djLinkTransport}
+                        onDjLinkTransportChange={handleDjLinkTransportChange}
+                        djLinkDecks={djLinkClipTransport.decks}
+                        djLinkLinkedCountForDeck={djLinkClipTransport.linkedCountForDeck}
+                    />
+                    <OutputProcessingWindow
+                        show={showOutputProcessingWindow}
+                        onClose={() => setShowOutputProcessingWindow(false)}
+                        renderSettings={{
+                            optimizationEnabled: optimizationEnabled,
+                            optimizationSettings: optimizationSettings,
+                            layerMergeMode: layerMergeMode
+                        }}
+                        onSetRenderSetting={(setting, value) => {
+                            if (setting === 'optimizationEnabled' || setting === 'optimizationMaxDist' || setting === 'optimizationPathDwell') {
+                                const actionType = `SET_${setting.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
+                                dispatch({ type: actionType, payload: Number(value) });
+                            } else {
+                                dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } });
+                            }
+                        }}
+                    />
+                    <RenameModal
+                        show={showRenameModal}
+                        title={renameModalConfig.title}
+                        initialValue={renameModalConfig.initialValue}
+                        onSave={renameModalConfig.onSave}
+                        onClose={() => setShowShortcutsWindow(false) || setShowRenameModal(false)}
+                    />
+                    <RelocateModal
+                        missingFiles={missingFiles}
+                        onRelocate={handleRelocate}
+                        onClose={() => setMissingFiles([])}
+                    />
+                    <ClipExportWarningModal
+                        show={!!exportTimingWarning}
+                        mismatchCount={exportTimingWarning?.mismatchCount || 0}
+                        clipSyncMode={exportTimingWarning?.clipSyncMode || 'fps'}
+                        onCancel={exportTimingWarning?.onCancel || (() => { })}
+                        onExportAnyway={exportTimingWarning?.onExportAnyway || (() => { })}
+                        onAutoCorrect={exportTimingWarning?.onAutoCorrect || (() => { })}
+                    />
+                    <ShortcutsWindow
+                        show={showShortcutsWindow}
+                        onClose={() => setShowShortcutsWindow(false)}
+                        enabledShortcuts={enabledShortcuts}
+                    />
+
                     {currentPage === 'main' ? (
-                        <div className="app">
+<div className="app">
                             <ErrorBoundary>
-                                <NotificationPopup message={notification.message} visible={notification.visible} />
-                                <AboutWindow
-                                    show={showAboutWindow}
-                                    onClose={() => setShowAboutWindow(false)}
-                                />
-                                <OutputSettingsWindow
-                                    show={showOutputSettingsWindow}
-                                    onClose={() => setShowOutputSettingsWindow(false)}
-                                    dacs={dacs}
-                                    dacSettings={dacOutputSettings}
-                                    onUpdateDacSettings={handleUpdateDacSettings}
-                                    sentFramesRef={dacSentFramesRef}
-                                />
-                                <AudioSettingsWindow
-                                    show={showAudioSettingsWindow || showFftSettingsWindow}
-                                    onClose={() => { setShowAudioSettingsWindow(false); setShowFftSettingsWindow(false); }}
-                                    initialTab={showFftSettingsWindow ? 'fft' : 'output'}
-                                />
-                                <GeneralSettingsWindow
-                                    show={showGeneralSettingsWindow}
-                                    onClose={() => setShowGeneralSettingsWindow(false)}
-                                    masterSpeed={<MasterSpeedSlider playbackFps={playbackFps} onSpeedChange={handlePlaybackFpsChange} />}
-                                />
-                                <LinkSyncSettingsWindow
-                                    show={showLinkSyncSettingsWindow}
-                                    onClose={() => setShowLinkSyncSettingsWindow(false)}
-                                    onUpdateSettings={() => { }}
-                                    bpmSource={bpmSource}
-                                    onBpmSourceChange={handleBpmSourceChange}
-                                    djLinkTransport={djLinkTransport}
-                                    onDjLinkTransportChange={handleDjLinkTransportChange}
-                                    djLinkDecks={djLinkClipTransport.decks}
-                                    djLinkLinkedCountForDeck={djLinkClipTransport.linkedCountForDeck}
-                                />
-                                <OutputProcessingWindow
-                                    show={showOutputProcessingWindow}
-                                    onClose={() => setShowOutputProcessingWindow(false)}
-                                    renderSettings={{
-                                        optimizationEnabled: optimizationEnabled,
-                                        optimizationSettings: optimizationSettings,
-                                        layerMergeMode: layerMergeMode
-                                    }}
-                                    onSetRenderSetting={(setting, value) => {
-                                        if (setting === 'optimizationEnabled' || setting === 'optimizationMaxDist' || setting === 'optimizationPathDwell') {
-                                            const actionType = `SET_${setting.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
-                                            dispatch({ type: actionType, payload: Number(value) });
-                                        } else {
-                                            dispatch({ type: 'SET_RENDER_SETTING', payload: { setting, value } });
-                                        }
-                                    }}
-                                />
-                                <RenameModal
-                                    show={showRenameModal}
-                                    title={renameModalConfig.title}
-                                    initialValue={renameModalConfig.initialValue}
-                                    onSave={renameModalConfig.onSave}
-                                    onClose={() => setShowShortcutsWindow(false) || setShowRenameModal(false)}
-                                />
-                                <RelocateModal
-                                    missingFiles={missingFiles}
-                                    onRelocate={handleRelocate}
-                                    onClose={() => setMissingFiles([])}
-                                />
-                                <ClipExportWarningModal
-                                    show={!!exportTimingWarning}
-                                    mismatchCount={exportTimingWarning?.mismatchCount || 0}
-                                    clipSyncMode={exportTimingWarning?.clipSyncMode || 'fps'}
-                                    onCancel={exportTimingWarning?.onCancel || (() => { })}
-                                    onExportAnyway={exportTimingWarning?.onExportAnyway || (() => { })}
-                                    onAutoCorrect={exportTimingWarning?.onAutoCorrect || (() => { })}
-                                />
-                                <ShortcutsWindow
-                                    show={showShortcutsWindow}
-                                    onClose={() => setShowShortcutsWindow(false)}
-                                    enabledShortcuts={enabledShortcuts}
-                                />
                                 <div className="main-content">
                                     <div className="top-bar-left-area">
                                         <CompositionControls
@@ -7908,15 +7959,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                             </ErrorBoundary>
                         </div>
                     ) : currentPage === 'shapeBuilder' ? (
-                        <>
-                            <ShapeBuilder onBack={() => setCurrentPage('main')} />
-                            <RelocateModal missingFiles={missingFiles} onRelocate={handleRelocate} onClose={() => setMissingFiles([])} />
-                        </>
+                        <ShapeBuilder onBack={() => setCurrentPage('main')} ref={shapeBuilderRef} />
                     ) : (
-                        <>
-                            <TimelineEditor onBack={() => setCurrentPage('main')} />
-                            <RelocateModal missingFiles={missingFiles} onRelocate={handleRelocate} onClose={() => setMissingFiles([])} />
-                        </>
+                        <TimelineEditor onBack={() => setCurrentPage('main')} />
                     )}
                 </KeyboardProvider>
             </ArtnetProvider>

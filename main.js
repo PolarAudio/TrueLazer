@@ -630,6 +630,105 @@ ipcMain.handle('get-user-mappings-path', async () => {
 
 let currentProjectpath = null;
 
+// Which page the renderer is showing: 'main' | 'timeline' | 'shapeBuilder'.
+// The renderer reports changes over `ui-current-page`. The application menu is
+// rebuilt from this so entries that only make sense on a specific page (the
+// clip-deck Layer/Column/Clip menus) are not offered where they do nothing, and
+// so Open/Save/New target the right project file.
+let currentAppPage = 'main';
+const APP_PAGES = ['main', 'timeline', 'shapeBuilder'];
+
+function setAppPage(page) {
+  if (!APP_PAGES.includes(page) || page === currentAppPage) return;
+  currentAppPage = page;
+  buildApplicationMenu(currentThumbnailRenderMode);
+}
+
+ipcMain.on('ui-current-page', (_event, page) => setAppPage(page));
+
+// Shape Builder project files. The Shape Builder keeps its working document in
+// local component state, so this is the only place it can be persisted - leaving
+// the page discards it. Uses its own extension so a shape document is never
+// mistaken for a timeline project or a show project.
+//
+// Registered at module scope, not inside createWindow(): ipcMain.handle throws
+// if a channel is registered twice, and createWindow runs again whenever the app
+// is re-activated with no windows open.
+let currentShapeProjectPath = null;
+ipcMain.handle('save-shape-project', async (event, projectData, defaultName = null, forceDialog = false) => {
+  if (!forceDialog && currentShapeProjectPath) {
+    try {
+      await fs.promises.writeFile(currentShapeProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+      return { success: true, filePath: currentShapeProjectPath };
+    } catch (error) { return { success: false, error: error.message }; }
+  }
+  const name = (typeof defaultName === 'string' && defaultName.trim().length > 0)
+    ? defaultName
+    : 'shape-project.tls';
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Shape Project',
+    defaultPath: path.join(app.getPath('documents'), 'TrueLazer', name),
+    filters: [{ name: 'TrueLazer Shape Project', extensions: ['tls'] }]
+  });
+  if (canceled || !filePath) return { success: false, canceled: true };
+  try {
+    await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
+    currentShapeProjectPath = filePath;
+    return { success: true, filePath };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('open-shape-project', async (event) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open Shape Project',
+    defaultPath: path.join(app.getPath('documents'), 'TrueLazer'),
+    filters: [{ name: 'TrueLazer Shape Project', extensions: ['tls', 'json'] }],
+    properties: ['openFile']
+  });
+  if (canceled || !filePaths.length) return null;
+  try {
+    const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
+    currentShapeProjectPath = filePaths[0];
+    return data;
+  } catch (error) {
+    return null;
+  }
+});
+
+// Facts for the About window. Resolved here rather than in the renderer so the
+// renderer stays a consumer of the preload bridge instead of reading Electron
+// and filesystem internals directly.
+ipcMain.handle('get-app-info', async () => {
+  let appVersion = '';
+  let appName = 'TrueLazer';
+  let author = '';
+  let license = '';
+  try {
+    const pkgPath = path.join(__dirname, 'package.json');
+    const pkg = JSON.parse(await fs.promises.readFile(pkgPath, 'utf8'));
+    appVersion = pkg.version || '';
+    appName = pkg.productName || pkg.name || appName;
+    author = typeof pkg.author === 'string' ? pkg.author : (pkg.author?.name || '');
+    license = pkg.license || '';
+  } catch (error) {
+    console.error('Failed to read package.json for about info:', error);
+  }
+  return {
+    name: appName,
+    version: appVersion,
+    author,
+    license,
+    electron: process.versions.electron || '',
+    chrome: process.versions.chrome || '',
+    node: process.versions.node || '',
+    v8: process.versions.v8 || '',
+    platform: process.platform,
+    arch: process.arch,
+    documentsPath: app.getPath('documents'),
+    userDataPath: app.getPath('userData'),
+  };
+});
+
 function updateWindowTitle() {
   if (!mainWindow) return;
   const baseTitle = 'TrueLazer';
@@ -643,8 +742,13 @@ function updateWindowTitle() {
 
 // IPC handlers for project management
 ipcMain.on('new-project', (event) => {
-  currentProjectpath = null;
-  updateWindowTitle();
+  // Only the show editor's file path is owned here. The renderer routes the
+  // command to whichever page is active, so do not clear the show project's
+  // path when starting a new Timeline or Shape project.
+  if (currentAppPage === 'main') {
+    currentProjectpath = null;
+    updateWindowTitle();
+  }
   if (mainWindow) mainWindow.webContents.send('new-project');
 });
 
@@ -722,20 +826,46 @@ function sendThumbnailModeToRenderer(mode) {
 }
 
 function buildApplicationMenu(mode) {
+  // Everything below is rebuilt whenever the active page changes so entries
+  // that only make sense on a specific page are not offered where they do
+  // nothing, and Open/Save/New target the right project file.
+  const isShowEditor = currentAppPage === 'main';
+  const PAGE_NOUN = {
+    main: 'Show Project',
+    timeline: 'Timeline Project',
+    shapeBuilder: 'Shape Project',
+  };
+  const noun = PAGE_NOUN[currentAppPage] || PAGE_NOUN.main;
+
+  const send = (channel, ...args) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args);
+  };
+  const act = (action) => send('menu-action', action);
+
+  // Show Projects (.tlp) are owned by this process - the path and the window
+  // title live here. The other pages own their own file dialogs and formats, so
+  // they are routed to the renderer, which delegates to the active page.
+  const projectOpen = () => {
+    if (isShowEditor) ipcMain.emit('open-project');
+    else send('open-project');
+  };
+  const projectSave = (asNewFile) => send(asNewFile ? 'save-project-as' : 'save-project');
+  const projectNew = () => send('new-project');
+
   const menuTemplate = [
     {
       label: 'TrueLazer',
       submenu: [
-        { label: 'About', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'about'); } },
+        { label: 'About', click: () => act('about') },
         { type: 'separator' },
-        { label: 'Shape Builder', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'shapeBuilder'); } },
+        { label: 'Shape Builder', click: () => act('shapeBuilder') },
         { type: 'separator' },
-        { label: 'Timeline Editor', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'timeline'); } },
+        { label: 'Timeline Editor', click: () => act('timeline') },
         { type: 'separator' },
-        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => { if (mainWindow) mainWindow.webContents.send('new-project'); } },
-        { label: 'Open Project', accelerator: 'CmdOrCtrl+O', click: () => { ipcMain.emit('open-project'); } },
-        { label: 'Save Project', accelerator: 'CmdOrCtrl+S', click: () => { if (mainWindow) mainWindow.webContents.send('save-project'); } },
-        { label: 'Save Project As...', accelerator: 'CmdOrCtrl+Shift+S', click: () => { if (mainWindow) mainWindow.webContents.send('save-project-as'); } },
+        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: projectNew },
+        { label: `Open ${noun}`, accelerator: 'CmdOrCtrl+O', click: projectOpen },
+        { label: `Save ${noun}`, accelerator: 'CmdOrCtrl+S', click: () => projectSave(false) },
+        { label: `Save ${noun} As...`, accelerator: 'CmdOrCtrl+Shift+S', click: () => projectSave(true) },
         { type: 'separator' },
         { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => { app.quit(); } },
       ],
@@ -773,33 +903,38 @@ function buildApplicationMenu(mode) {
         { label: 'Clear Thumbnail Cache', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clear-thumbnail-cache'); } }
       ],
     },
-    {
-      label: 'Layer',
-      submenu: [
-        { label: 'Rename', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'layer-rename'); } },
-        { label: 'Clear Clips', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'layer-clear-clips'); } },
-      ],
-    },
-    {
-      label: 'Column',
-      submenu: [
-        { label: 'Duplicate', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'column-duplicate'); } },
-        { label: 'Rename', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'column-rename'); } },
-        { label: 'Clear Clips', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'column-clear-clips'); } },
-      ],
-    },
-    {
-      label: 'Clip',
-      submenu: [
-        { label: 'Trigger Style', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clip-trigger-style'); } },
-        { label: 'Thumbnail', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clip-thumbnail'); } },
-        { label: 'Cut', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clip-cut'); } },
-        { label: 'Copy', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clip-copy'); } },
-        { label: 'Paste', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clip-paste'); } },
-        { label: 'Rename', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clip-rename'); } },
-        { label: 'Clear', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clip-clear'); } },
-      ],
-    },
+    // Layer / Column / Clip operate on the show editor's clip deck. The
+    // Timeline and Shape Builder have neither, so these menus are omitted there
+    // rather than shown as dead entries.
+    ...(isShowEditor ? [
+      {
+        label: 'Layer',
+        submenu: [
+          { label: 'Rename', click: () => act('layer-rename') },
+          { label: 'Clear Clips', click: () => act('layer-clear-clips') },
+        ],
+      },
+      {
+        label: 'Column',
+        submenu: [
+          { label: 'Duplicate', click: () => act('column-duplicate') },
+          { label: 'Rename', click: () => act('column-rename') },
+          { label: 'Clear Clips', click: () => act('column-clear-clips') },
+        ],
+      },
+      {
+        label: 'Clip',
+        submenu: [
+          { label: 'Trigger Style', click: () => act('clip-trigger-style') },
+          { label: 'Thumbnail', click: () => act('clip-thumbnail') },
+          { label: 'Cut', click: () => act('clip-cut') },
+          { label: 'Copy', click: () => act('clip-copy') },
+          { label: 'Paste', click: () => act('clip-paste') },
+          { label: 'Rename', click: () => act('clip-rename') },
+          { label: 'Clear', click: () => act('clip-clear') },
+        ],
+      },
+    ] : []),
     {
       label: 'Output',
       submenu: [
@@ -882,8 +1017,12 @@ function buildApplicationMenu(mode) {
     {
       label: 'View',
       submenu: [
-        { label: 'Predefined Layouts', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'view-layouts'); } },
-        { type: 'separator' },
+        // Predefined layouts and the thumbnail render mode describe the show
+        // editor's clip deck only.
+        ...(isShowEditor ? [
+          { label: 'Predefined Layouts', click: () => act('view-layouts') },
+          { type: 'separator' },
+        ] : []),
         { label: 'Toggle Developer Tools', accelerator: 'CommandOrControl+Shift+I', click: () => { if (mainWindow) mainWindow.webContents.toggleDevTools(); } },
         {
           label: 'Color Theme',
@@ -899,6 +1038,9 @@ function buildApplicationMenu(mode) {
             { label: 'White', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-white'); } },
           ]
         },
+        // Thumbnail render mode + beam display describe how the show editor
+        // draws its clip-deck thumbnails and preview, not the other pages.
+        ...(isShowEditor ? [
         {
           label: 'Render Mode',
           submenu: [
@@ -906,28 +1048,29 @@ function buildApplicationMenu(mode) {
             { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
             { label: 'Thumbnail Hover Render', type: 'radio', checked: mode === 'hover', click: () => { sendThumbnailModeToRenderer('hover'); } },
             { type: 'separator' },
-            { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
+            { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
             { type: 'separator' },
             {
               label: 'Display Mode',
               submenu: [
-                { label: 'Points', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
-                { label: 'Lines', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
-                { label: 'Points & Lines', type: 'radio', checked: true, click: () => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
+                { label: 'Points', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
+                { label: 'Lines', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
+                { label: 'Points & Lines', type: 'radio', checked: true, click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
               ]
             },
             { type: 'separator' },
             {
               label: 'Beam Alpha',
               submenu: [
-                { label: '0.1', type: 'radio', checked: true, click: () => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
-                { label: '0.2', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
-                { label: '0.5', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 0.5 }); } },
-                { label: '1.0', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('render-settings-command', { setting: 'beamAlpha', value: 1.0 }); } },
+                { label: '0.1', type: 'radio', checked: true, click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
+                { label: '0.2', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
+                { label: '0.5', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.5 }); } },
+                { label: '1.0', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 1.0 }); } },
               ]
             },
           ]
         },
+        ] : []),
       ],
     },
   ];

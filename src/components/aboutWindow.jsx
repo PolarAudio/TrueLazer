@@ -1,30 +1,106 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
-const AboutWindow = ({ show, onClose, initialTab = 'output' }) => {
-    const [activeTab, setActiveTab] = useState(initialTab);
+// The DAC protocols the app can drive. Kept here as plain data so the About
+// window stays a description of the app rather than a second source of truth
+// about what the comms layer actually supports.
+const DAC_BACKENDS = [
+    { name: 'Showbridge', detail: 'UDP, native frame protocol + ILDA over TCP' },
+    { name: 'EtherDream', detail: 'TCP, EtherDream protocol' },
+    { name: 'IDN', detail: 'UDP, IDN show network protocol' },
+];
 
-    // Update active tab when opening if initialTab changes
-    React.useEffect(() => {
-        if (show) {
-            setActiveTab(initialTab);
-        }
-    }, [show, initialTab]);
+// Each window keeps its own project document and file format.
+const PROJECT_FORMATS = [
+    { label: 'Show Project', ext: '.tlp', where: 'Show Control' },
+    { label: 'Timeline Project', ext: '.json', where: 'Timeline Editor' },
+    { label: 'Shape Project', ext: '.tls', where: 'Shape Builder' },
+];
+
+const Row = ({ label, value, mono }) => (
+    <div style={{ display: 'flex', gap: '12px', padding: '3px 0', alignItems: 'baseline' }}>
+        <div style={{ color: '#9aa0a6', minWidth: '132px', flexShrink: 0 }}>{label}</div>
+        <div style={{ color: '#e8eaed', wordBreak: 'break-all', fontFamily: mono ? 'monospace' : undefined }}>
+            {value}
+        </div>
+    </div>
+);
+
+const Section = ({ title, children }) => (
+    <div style={{ marginBottom: '18px' }}>
+        <div style={{
+            fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em',
+            color: '#80868b', marginBottom: '6px', borderBottom: '1px solid #3a3a3a', paddingBottom: '4px',
+        }}>
+            {title}
+        </div>
+        {children}
+    </div>
+);
+
+const AboutWindow = ({ show, onClose }) => {
+    const [info, setInfo] = useState(null);
+
+    useEffect(() => {
+        if (!show) return;
+        let cancelled = false;
+        // Fetched on open rather than at mount so the About dialog is accurate
+        // even if the app was updated underneath a long-lived window.
+        window.electronAPI?.getAppInfo?.()
+            .then((data) => { if (!cancelled) setInfo(data); })
+            .catch(() => { if (!cancelled) setInfo(null); });
+        return () => { cancelled = true; };
+    }, [show]);
 
     if (!show) return null;
 
     return (
         <div className="modal-overlay">
-            <div className="modal-content audio-settings-window" style={{ minWidth: '400px' }}>
+            <div className="modal-content audio-settings-window" style={{ minWidth: '460px', maxWidth: '620px' }}>
                 <div className="modal-header">
-                    <h3>About</h3>
+                    <h3 style={{ margin: 0, fontSize: '15px' }}>
+                        About {info?.name || 'TrueLazer'}
+                        {info?.version ? <span style={{ color: '#9aa0a6', fontWeight: 'normal' }}> {info.version}</span> : null}
+                    </h3>
                     <button className="close-btn" onClick={onClose}>×</button>
                 </div>
-                <div className="tab-header" style={{ display: 'flex', gap: '10px', marginBottom: '15px', borderBottom: '1px solid #444' }}>
-				
-                </div>
-                <div className="modal-body">
-                    <div className="audio-output-settings">
-                    </div>
+                <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+
+                    <Section title="Application">
+                        <Row label="Name" value={info?.name || 'TrueLazer'} />
+                        <Row label="Version" value={info?.version || '—'} />
+                        {info?.author ? <Row label="Author" value={info.author} /> : null}
+                        {info?.license ? <Row label="License" value={info.license} /> : null}
+                    </Section>
+
+                    <Section title="Runtime">
+                        <Row label="Electron" value={info?.electron || '—'} mono />
+                        <Row label="Chromium" value={info?.chrome || '—'} mono />
+                        <Row label="Node.js" value={info?.node || '—'} mono />
+                        <Row label="V8" value={info?.v8 || '—'} mono />
+                        <Row label="Platform" value={[info?.platform, info?.arch].filter(Boolean).join(' · ') || '—'} mono />
+                    </Section>
+
+                    <Section title="Project Formats">
+                        {PROJECT_FORMATS.map((f) => (
+                            <Row
+                                key={f.ext}
+                                label={f.label}
+                                value={<><code style={{ color: '#8ab4f8' }}>{f.ext}</code>{'  — '}{f.where}</>}
+                            />
+                        ))}
+                    </Section>
+
+                    <Section title="DAC Backends">
+                        {DAC_BACKENDS.map((d) => (
+                            <Row key={d.name} label={d.name} value={d.detail} />
+                        ))}
+                    </Section>
+
+                    <Section title="Locations">
+                        <Row label="Documents" value={info?.documentsPath || '—'} mono />
+                        <Row label="App data" value={info?.userDataPath || '—'} mono />
+                    </Section>
+
                 </div>
             </div>
             <style>{`

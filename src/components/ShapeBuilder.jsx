@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle } from 'react';
 import { parseIldaFile } from '../utils/ilda-parser';
 import { calculateSmoothHandles } from '../utils/geometry';
 import EnvelopeEditor from './EnvelopeEditor';
@@ -82,7 +82,7 @@ const NumField = ({ value, onCommit, min, max, step, style, commitOnChange = fal
     );
 };
 
-const ShapeBuilder = ({ onBack }) => {
+const ShapeBuilder = ({ onBack, ref }) => {
   // --- STATE ---
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState('#00ff00');
@@ -101,6 +101,9 @@ const ShapeBuilder = ({ onBack }) => {
   const [selectedPointIndexes, setSelectedPointIndexes] = useState([]); 
   const [selectedSegmentIndexes, setSelectedSegmentIndexes] = useState([]); 
   const [backgroundImage, setBackgroundImage] = useState(null);
+  // The <img> element itself cannot be serialized, so the file it came from is
+  // tracked separately and reloaded when the project is reopened.
+  const backgroundImagePathRef = useRef(null);
   const [shapeClipboard, setShapeClipboard] = useState(null);
   const [zoom, setZoom] = useState(0.6); 
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -1360,6 +1363,154 @@ const ShapeBuilder = ({ onBack }) => {
       setSelectedPointIndexes(newSelection);
   };
 
+  // --- SHAPE BUILDER PROJECT DOCUMENT ---
+  // The working document lives in ~50 pieces of local state, so this component
+  // is the only place that knows what belongs in a saved project. App.jsx calls
+  // getProjectState()/loadProjectState() through a ref to implement the
+  // application menu's Open/Save/New.
+  //
+  // View state (tool, zoom, pan, selections, panel collapse) is deliberately
+  // NOT persisted - it describes how the editor is looking at the document, not
+  // the document itself. Undo history is likewise not persisted.
+  const getProjectState = useCallback(() => ({
+      format: 'truelazer-shape',
+      version: 1,
+      // The artwork.
+      frames,
+      frameCount: tempFrameCount,
+      // Document-level drawing defaults.
+      color,
+      renderMode,
+      pointSpacing,
+      // Animation / sync - this is what makes a shape document reproducible.
+      tweenStartFrame,
+      tweenEndFrame,
+      tweenPosition,
+      tweenColor,
+      timelineStartFrame,
+      syncMode,
+      playbackSpeed,
+      bpm,
+      duration,
+      fps,
+      beats,
+      // Effects.
+      shapeEffect,
+      bakeEffects,
+      // The background image is an <img> element bound to a local file, so it
+      // cannot be serialized directly; the path is stored and reloaded.
+      backgroundPath: backgroundImagePathRef.current || null,
+  }), [
+      frames, tempFrameCount, color, renderMode, pointSpacing,
+      tweenStartFrame, tweenEndFrame, tweenPosition, tweenColor,
+      timelineStartFrame, syncMode, playbackSpeed, bpm, duration, fps, beats,
+      shapeEffect, bakeEffects,
+  ]);
+
+  const loadProjectState = useCallback((data) => {
+      if (!data) return;
+      // Accept either the wrapped envelope or a bare state object.
+      const d = (data.frames || data.format) ? data : (data.state || data);
+      if (Array.isArray(d.frames) && d.frames.length > 0) setFrames(d.frames);
+
+      const n = Number(d.frameCount);
+      if (Number.isFinite(n) && n >= 1) setTempFrameCount(Math.floor(n));
+
+      if (typeof d.color === 'string') setColor(d.color);
+      if (typeof d.renderMode === 'string') setRenderMode(d.renderMode);
+      if (Number.isFinite(Number(d.pointSpacing))) setPointSpacing(Number(d.pointSpacing));
+
+      const num = (key, setter, min) => {
+          const v = Number(d[key]);
+          if (Number.isFinite(v)) setter(Math.max(min, v));
+      };
+      num('tweenStartFrame', setTweenStartFrame, 0);
+      num('tweenEndFrame', setTweenEndFrame, 0);
+      num('timelineStartFrame', setTimelineStartFrame, 0);
+      num('playbackSpeed', setPlaybackSpeed, 0.01);
+      num('bpm', setBpm, 1);
+      num('duration', setDuration, 0);
+      num('fps', setFps, 1);
+      num('beats', setBeats, 1);
+
+      if (typeof d.tweenPosition === 'boolean') setTweenPosition(d.tweenPosition);
+      if (typeof d.tweenColor === 'boolean') setTweenColor(d.tweenColor);
+      if (typeof d.bakeEffects === 'boolean') setBakeEffects(d.bakeEffects);
+      if (['fps', 'bpm', 'time'].includes(d.syncMode)) setSyncMode(d.syncMode);
+      if (d.shapeEffect === null || typeof d.shapeEffect === 'object') setShapeEffect(d.shapeEffect);
+
+      // History holds references to the old frames; drop it so undo cannot
+      // rewind into the previous document.
+      setHistory([[d.frames || []]]);
+      setHistoryStep(0);
+
+      if (d.backgroundPath && typeof window !== 'undefined') {
+          backgroundImagePathRef.current = d.backgroundPath;
+          const img = new Image();
+          img.onload = () => setBackgroundImage(img);
+          img.src = `file://${d.backgroundPath}`;
+      } else {
+          backgroundImagePathRef.current = null;
+          setBackgroundImage(null);
+      }
+  }, []);
+
+  const resetProject = useCallback(() => {
+      setFrames([[]]);
+      setTempFrameCount(1);
+      setCurrentFrameIndex(0);
+      setActiveShape(null);
+      setShapeEffect(null);
+      setHistory([[[]]]);
+      setHistoryStep(0);
+      setSelectedShapeIndexes([]);
+      setSelectedPointIndexes([]);
+      setSelectedSegmentIndexes([]);
+      setShapeClipboard(null);
+      backgroundImagePathRef.current = null;
+      setBackgroundImage(null);
+  }, []);
+
+  // Let App.jsx drive save/open/new for this page through the same interface the
+  // Timeline uses (newProject / openProject / saveProject / saveProjectAs), so
+  // the application menu can dispatch to either page without special cases.
+  const projectPathRef = useRef(null);
+
+  const saveProject = useCallback(async (forceDialog) => {
+      const project = getProjectState();
+      const base = projectPathRef.current
+          ? projectPathRef.current.split(/[\\/]/).pop().replace(/\.tls$/i, '')
+          : 'shape-project';
+      const result = await window.electronAPI?.saveShapeProject?.(
+          project,
+          `${base}.tls`,
+          !!forceDialog
+      );
+      if (result && result.success) projectPathRef.current = result.filePath;
+      return result;
+  }, [getProjectState]);
+
+  const openProject = useCallback(async () => {
+      const data = await window.electronAPI?.openShapeProject?.();
+      if (data) loadProjectState(data);
+      return data;
+  }, [loadProjectState]);
+
+  useImperativeHandle(ref, () => ({
+      newProject: resetProject,
+      openProject,
+      saveProject: () => saveProject(false),
+      saveProjectAs: () => saveProject(true),
+      // Exposed for diagnostics and tests.
+      getProjectState: () => ({
+          ...getProjectState(),
+          defaultName: `${projectPathRef.current
+              ? projectPathRef.current.split(/[\\/]/).pop().replace(/\.tls$/i, '')
+              : 'shape-project'}.tls`,
+      }),
+      loadProjectState,
+  }), [saveProject, openProject, getProjectState, loadProjectState, resetProject]);
+
   const handleImportImage = async () => {
       if (!window.electronAPI) return;
       const path = await window.electronAPI.showOpenDialog({ 
@@ -1368,7 +1519,8 @@ const ShapeBuilder = ({ onBack }) => {
           properties: ['openFile'] 
       });
       if (!path) return;
-      
+
+      backgroundImagePathRef.current = path;
       const img = new Image();
       img.onload = () => {
           setBackgroundImage(img);

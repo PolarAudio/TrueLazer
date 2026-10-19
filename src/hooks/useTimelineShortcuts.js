@@ -434,23 +434,13 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 }
                 return;
             }
-            if (key === 's') {
-                e.preventDefault();
-                actionsRef.current.saveProject();
-                return;
-            }
-            if (key === 'n') {
-                e.preventDefault();
-                if (window.confirm('Start a new timeline project?')) {
-                    actionsRef.current.newProject();
-                }
-                return;
-            }
-            if (key === 'o') {
-                e.preventDefault();
-                actionsRef.current.openProject();
-                return;
-            }
+            // NOTE: Ctrl+N / Ctrl+S / Ctrl+Shift+S / Ctrl+O are deliberately NOT handled
+            // here. They are application-menu accelerators, so they fire on every
+            // page regardless of what the renderer calls preventDefault() on.
+            // main.js routes them to whichever page is active and App.jsx
+            // dispatches them to that page's own save/open. Binding them here as
+            // well made Ctrl+S save the timeline twice while ALSO writing the
+            // show project to a .tlp file.
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);

@@ -25,8 +25,11 @@ contextBridge.exposeInMainWorld(
     return () => ipcRenderer.removeListener(channel, listener);
   },
   onMenuAction: (callback) => {
-    ipcRenderer.on('menu-action', (event, action) => callback(action));
-    return () => ipcRenderer.removeListener('menu-action', callback);
+    // Keep a reference to the wrapper so removeListener can actually match it —
+    // passing `callback` directly would never match and the listener would leak.
+    const listener = (event, action) => callback(action);
+    ipcRenderer.on('menu-action', listener);
+    return () => ipcRenderer.removeListener('menu-action', listener);
   },
   showLayerContextMenu: (index) => ipcRenderer.send('show-layer-context-menu', index),
   showLayerFullContextMenu: (index) => ipcRenderer.send('show-layer-full-context-menu', index),
@@ -139,6 +142,14 @@ contextBridge.exposeInMainWorld(
   importMappings: (type) => ipcRenderer.invoke('import-mappings', type),
   saveTimelineProject: (data, defaultName, forceDialog) => ipcRenderer.invoke('save-timeline-project', data, defaultName, forceDialog),
   openTimelineProject: () => ipcRenderer.invoke('open-timeline-project'),
+  saveShapeProject: (data, defaultName, forceDialog) => ipcRenderer.invoke('save-shape-project', data, defaultName, forceDialog),
+  openShapeProject: () => ipcRenderer.invoke('open-shape-project'),
+  // The active page drives the application menu: entries that only apply to one
+  // page are stripped, and Open/Save/New target that page's project file.
+  setCurrentPage: (page) => ipcRenderer.send('ui-current-page', page),
+  // Read-only facts for the About window. Sourced in main so the renderer does
+  // not have to reach into process/electron internals.
+  getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   startArtnetTimecodeListener: () => ipcRenderer.invoke('start-artnet-timecode-listener'),
   stopArtnetTimecodeListener: () => ipcRenderer.send('stop-artnet-timecode-listener'),
   onArtnetTimecode: (callback) => {
