@@ -1471,6 +1471,51 @@ const ShapeBuilder = ({ onBack, ref }) => {
       setBackgroundImage(null);
   }, []);
 
+  // --- UNSAVED-CHANGES TRACKING ---
+  // Unlike the Timeline, the Shape Builder keeps its document in component
+  // state and unmounts when the page is left, so unsaved work would be lost
+  // silently. App.jsx calls isDirty() before navigating away and warns.
+  //
+  // The baseline is the document as it was last saved, opened, or reset - not
+  // "has any state", so undoing back to the original is correctly reported as
+  // clean rather than dirty forever.
+  const docSnapshot = useCallback(() => JSON.stringify({
+      frames,
+      frameCount: tempFrameCount,
+      color,
+      renderMode,
+      pointSpacing,
+      tweenStartFrame,
+      tweenEndFrame,
+      tweenPosition,
+      tweenColor,
+      timelineStartFrame,
+      syncMode,
+      playbackSpeed,
+      bpm,
+      duration,
+      fps,
+      beats,
+      shapeEffect,
+      bakeEffects,
+      backgroundPath: backgroundImagePathRef.current || null,
+  }), [
+      frames, tempFrameCount, color, renderMode, pointSpacing,
+      tweenStartFrame, tweenEndFrame, tweenPosition, tweenColor,
+      timelineStartFrame, syncMode, playbackSpeed, bpm, duration, fps, beats,
+      shapeEffect, bakeEffects,
+  ]);
+
+  const baselineRef = useRef(null);
+  const markClean = useCallback(() => { baselineRef.current = docSnapshot(); }, [docSnapshot]);
+  // Seed the baseline on mount so a freshly opened empty builder is clean.
+  useEffect(() => { if (baselineRef.current === null) markClean(); }, [markClean]);
+
+  const isDirty = useCallback(() => {
+      if (baselineRef.current === null) return false;
+      return docSnapshot() !== baselineRef.current;
+  }, [docSnapshot]);
+
   // Let App.jsx drive save/open/new for this page through the same interface the
   // Timeline uses (newProject / openProject / saveProject / saveProjectAs), so
   // the application menu can dispatch to either page without special cases.
@@ -1486,21 +1531,34 @@ const ShapeBuilder = ({ onBack, ref }) => {
           `${base}.tls`,
           !!forceDialog
       );
-      if (result && result.success) projectPathRef.current = result.filePath;
+      // Only a completed write makes the document clean; a cancelled dialog
+      // must leave it dirty so the navigation guard still fires.
+      if (result && result.success) {
+          projectPathRef.current = result.filePath;
+          markClean();
+      }
       return result;
-  }, [getProjectState]);
+  }, [getProjectState, markClean]);
 
   const openProject = useCallback(async () => {
       const data = await window.electronAPI?.openShapeProject?.();
-      if (data) loadProjectState(data);
+      if (data) {
+          loadProjectState(data);
+          // Baseline after load so the freshly opened document is not dirty.
+          markClean();
+      }
       return data;
-  }, [loadProjectState]);
+  }, [loadProjectState, markClean]);
 
   useImperativeHandle(ref, () => ({
-      newProject: resetProject,
+      newProject: () => {
+          resetProject();
+          markClean();
+      },
       openProject,
       saveProject: () => saveProject(false),
       saveProjectAs: () => saveProject(true),
+      isDirty,
       // Exposed for diagnostics and tests.
       getProjectState: () => ({
           ...getProjectState(),
@@ -1509,7 +1567,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
               : 'shape-project'}.tls`,
       }),
       loadProjectState,
-  }), [saveProject, openProject, getProjectState, loadProjectState, resetProject]);
+  }), [saveProject, openProject, getProjectState, loadProjectState, resetProject, markClean, isDirty]);
 
   const handleImportImage = async () => {
       if (!window.electronAPI) return;

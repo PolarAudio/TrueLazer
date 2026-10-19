@@ -2,9 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     APP_PAGES,
     PAGE_LABELS,
+    PAGES_AT_RISK_ON_NAVIGATION,
     isShowEditorPage,
     normalizePage,
     resolveProjectCommand,
+    shouldWarnOnUnsavedChanges,
 } from './projectRouting';
 
 // The bug this guards: the application menu accelerators fire on every page, so
@@ -91,5 +93,34 @@ describe('page metadata', () => {
         for (const page of APP_PAGES) {
             expect(PAGE_LABELS[page]).toBeTruthy();
         }
+    });
+});
+// The Shape Builder unmounts when its page is left, so unsaved work is lost.
+// The Timeline persists to local storage and must NOT nag.
+describe('shouldWarnOnUnsavedChanges', () => {
+    it('warns when leaving a dirty Shape Builder', () => {
+        expect(shouldWarnOnUnsavedChanges('shapeBuilder', 'main', true)).toBe(true);
+        expect(shouldWarnOnUnsavedChanges('shapeBuilder', 'timeline', true)).toBe(true);
+    });
+
+    it('stays quiet when the Shape Builder is clean', () => {
+        expect(shouldWarnOnUnsavedChanges('shapeBuilder', 'main', false)).toBe(false);
+    });
+
+    it('does not warn when navigating to the page you are already on', () => {
+        expect(shouldWarnOnUnsavedChanges('shapeBuilder', 'shapeBuilder', true)).toBe(false);
+    });
+
+    it('does not warn leaving the Timeline, whose store is persisted', () => {
+        expect(shouldWarnOnUnsavedChanges('timeline', 'main', true)).toBe(false);
+        expect(shouldWarnOnUnsavedChanges('main', 'timeline', true)).toBe(false);
+    });
+
+    it('treats an unrecognised page as the show editor (persisted)', () => {
+        expect(shouldWarnOnUnsavedChanges('nonsense', 'main', true)).toBe(false);
+    });
+
+    it('lists only the page whose document is lost on navigation', () => {
+        expect(PAGES_AT_RISK_ON_NAVIGATION).toEqual(['shapeBuilder']);
     });
 });

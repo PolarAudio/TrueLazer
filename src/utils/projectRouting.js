@@ -28,6 +28,28 @@ export function normalizePage(page) {
 export const PROJECT_COMMANDS = ['new', 'open', 'save', 'saveAs'];
 
 /**
+ * Pages whose document would be LOST by navigating away.
+ *
+ * The Shape Builder holds its document in component state and unmounts when its
+ * page is left. The Timeline keeps its store above this component and persists
+ * it to local storage, so it survives navigation untouched.
+ */
+export const PAGES_AT_RISK_ON_NAVIGATION = ['shapeBuilder'];
+
+/**
+ * Whether leaving `fromPage` for `toPage` should warn about unsaved changes.
+ *
+ * @param {string} fromPage
+ * @param {string} toPage
+ * @param {boolean} isDirty  whether the page's document has unsaved changes
+ */
+export function shouldWarnOnUnsavedChanges(fromPage, toPage, isDirty) {
+    if (fromPage === toPage) return false;
+    if (!PAGES_AT_RISK_ON_NAVIGATION.includes(normalizePage(fromPage))) return false;
+    return !!isDirty;
+}
+
+/**
  * Decide who handles a project command.
  *
  * Returns `{ owner, handled }`:

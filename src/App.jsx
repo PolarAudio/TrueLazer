@@ -31,7 +31,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ShapeBuilder from './components/ShapeBuilder';
 import TimelineEditor from './components/TimelineEditor';
 import { timelineBridge } from './contexts/TimelineContext';
-import { resolveProjectCommand } from './utils/projectRouting';
+import { resolveProjectCommand, shouldWarnOnUnsavedChanges } from './utils/projectRouting';
 import AboutWindow from './components/aboutWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
@@ -2246,6 +2246,35 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     // restored. The component owns ~50 pieces of local state, so it is the only
     // thing that knows what constitutes its working document.
     const shapeBuilderRef = useRef(null);
+
+    // Page navigation with an unsaved-changes guard.
+    //
+    // The Shape Builder unmounts when its page is left, so leaving it discards
+    // any unsaved work. The Timeline is exempt: its store lives above this
+    // component and is persisted to local storage, so it survives navigation
+    // without warning.
+    const navigateTo = useCallback((page) => {
+        const from = currentPageRef.current;
+        if (page === from) return;
+        if (from === 'shapeBuilder') {
+            let dirty = false;
+            try {
+                dirty = !!shapeBuilderRef.current?.isDirty?.();
+            } catch (e) {
+                // Never let the guard itself block navigation.
+                console.warn('Unsaved-changes check failed; navigating anyway.', e);
+            }
+            if (shouldWarnOnUnsavedChanges(from, page, dirty)) {
+                const discard = window.confirm(
+                    'The Shape Builder has unsaved changes.\n\n' +
+                    'OK - discard them and continue\n' +
+                    'Cancel - stay here so you can save first'
+                );
+                if (!discard) return;
+            }
+        }
+        setCurrentPage(page);
+    }, []);
     const [showAboutWindow, setShowAboutWindow] = useState(false);
     const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
     const [enabledShortcuts, setEnabledShortcuts] = useState({ midi: false, artnet: false, osc: false, keyboard: false });
@@ -4825,10 +4854,10 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 if (action === 'output-settings') {
                     setShowOutputSettingsWindow(true);
                 } else if (action === 'shapeBuilder') {
-                    setCurrentPage('shapeBuilder');
+                    navigateTo('shapeBuilder');
                     dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: false });
                 } else if (action === 'timeline') {
-                    setCurrentPage('timeline');
+                    navigateTo('timeline');
                     dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: false });
                 } else if (action === 'about') {
                     setShowAboutWindow(true);
@@ -7959,9 +7988,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                             </ErrorBoundary>
                         </div>
                     ) : currentPage === 'shapeBuilder' ? (
-                        <ShapeBuilder onBack={() => setCurrentPage('main')} ref={shapeBuilderRef} />
+                        <ShapeBuilder onBack={() => navigateTo('main')} ref={shapeBuilderRef} />
                     ) : (
-                        <TimelineEditor onBack={() => setCurrentPage('main')} />
+                        <TimelineEditor onBack={() => navigateTo('main')} />
                     )}
                 </KeyboardProvider>
             </ArtnetProvider>

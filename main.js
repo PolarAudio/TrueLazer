@@ -646,6 +646,57 @@ function setAppPage(page) {
 
 ipcMain.on('ui-current-page', (_event, page) => setAppPage(page));
 
+// Timeline project files (Ctrl+S / Ctrl+O in the Timeline window).
+//
+// Like the Shape Builder handlers above these live at module scope rather than
+// inside createWindow(): ipcMain.handle throws when a channel is registered
+// twice, and createWindow runs again every time the app is re-activated with no
+// windows open (macOS 'activate', and the 'window-all-closed' -> recreate path).
+let currentTimelineProjectPath = null;
+ipcMain.handle('save-timeline-project', async (event, projectData, defaultName = null, forceDialog = false) => {
+  // A saved/open project remembers its file: Ctrl+S then overwrites it
+  // silently like any normal editor. A brand-new project (opened from the
+  // timeline's local storage, never saved-as) falls through to the Save As
+  // dialog automatically - never a null-path crash.
+  if (!forceDialog && currentTimelineProjectPath) {
+    try {
+      await fs.promises.writeFile(currentTimelineProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+      return { success: true, filePath: currentTimelineProjectPath };
+    } catch (error) { return { success: false, error: error.message }; }
+  }
+  const name = (typeof defaultName === 'string' && defaultName.trim().length > 0)
+    ? defaultName
+    : 'timeline-project.json';
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Timeline Project',
+    defaultPath: path.join(app.getPath('documents'), 'TrueLazer', name),
+    filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }]
+  });
+  if (canceled || !filePath) return { success: false, canceled: true };
+  try {
+    await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
+    currentTimelineProjectPath = filePath;
+    return { success: true, filePath };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('open-timeline-project', async (event) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open Timeline Project',
+    defaultPath: path.join(app.getPath('documents'), 'TrueLazer'),
+    filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }],
+    properties: ['openFile']
+  });
+  if (canceled || !filePaths.length) return null;
+  try {
+    const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
+    currentTimelineProjectPath = filePaths[0];
+    return data;
+  } catch (error) {
+    return null;
+  }
+});
+
 // Shape Builder project files. The Shape Builder keeps its working document in
 // local component state, so this is the only place it can be persisted - leaving
 // the page discards it. Uses its own extension so a shape document is never
@@ -1661,52 +1712,6 @@ function createWindow() {
       await fs.promises.unlink(filePath);
       return { success: true };
     } catch (error) { return { success: true }; }
-  });
-
-  // Timeline project files (Ctrl+S / Ctrl+O in the Timeline window)
-  let currentTimelineProjectPath = null;
-  ipcMain.handle('save-timeline-project', async (event, projectData, defaultName = null, forceDialog = false) => {
-    // A saved/open project remembers its file: Ctrl+S then overwrites it
-    // silently like any normal editor. A brand-new project (opened from the
-    // timeline's local storage, never saved-as) falls through to the Save As
-    // dialog automatically — never a null-path crash.
-    if (!forceDialog && currentTimelineProjectPath) {
-      try {
-        await fs.promises.writeFile(currentTimelineProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
-        return { success: true, filePath: currentTimelineProjectPath };
-      } catch (error) { return { success: false, error: error.message }; }
-    }
-    const name = (typeof defaultName === 'string' && defaultName.trim().length > 0)
-      ? defaultName
-      : 'timeline-project.json';
-    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-      title: 'Save Timeline Project',
-      defaultPath: path.join(app.getPath('documents'), 'TrueLazer', name),
-      filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }]
-    });
-    if (canceled || !filePath) return { success: false, canceled: true };
-    try {
-      await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
-      currentTimelineProjectPath = filePath;
-      return { success: true, filePath };
-    } catch (error) { return { success: false, error: error.message }; }
-  });
-
-  ipcMain.handle('open-timeline-project', async (event) => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'Open Timeline Project',
-      defaultPath: path.join(app.getPath('documents'), 'TrueLazer'),
-      filters: [{ name: 'TrueLazer Timeline Project', extensions: ['json'] }],
-      properties: ['openFile']
-    });
-    if (canceled || !filePaths.length) return null;
-    try {
-      const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
-      currentTimelineProjectPath = filePaths[0];
-      return data;
-    } catch (error) {
-      return null;
-    }
   });
 
   // Art-Net TimeCode (ArtTimeCode opcode 0x9700) listener. dmxnet already owns
