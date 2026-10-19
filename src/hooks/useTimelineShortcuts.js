@@ -20,9 +20,13 @@ import {
  *   Ctrl/Cmd+Arrow   jump to the previous/next clip start/end boundary
  *   Ctrl+C/X/V       copy / cut / paste the selected cue or automation clip
  *                    (paste at playhead, onto the currently selected track if any)
- *   Ctrl+S           save timeline project (save-as first time)
- *   Ctrl+N           new timeline project
  *   Ctrl+Z           undo   |   Ctrl+Shift+Z  redo
+ *
+ * Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S are deliberately ABSENT. They are
+ * application-menu accelerators owned by main.js, which fire on every page and
+ * are routed to the active page by src/utils/projectRouting.js. Binding them
+ * here as well made Ctrl+S save the timeline twice while also writing a stray
+ * .tlp show project.
  *   Alt+wheel        vertical zoom (block / automation row heights)
  *   Ctrl+wheel       horizontal zoom (px per second)
  *   Shift+wheel      over a cue → move it by one frame

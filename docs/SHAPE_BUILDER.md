@@ -41,11 +41,12 @@ this order**. The order matters; changing it changes the picture.
 | 4 | **Budget** | Caps the points in this frame, thinning collinear runs | The DAC has a points-per-second clock; overrunning it stutters |
 | 5 | **Effect bake** | Applies a shape effect (chase, strobe, audio…) if enabled | Keeps the effect non-destructive |
 | 6 | **Beam style** | Turns the outline into laser behaviour: solid / dashed / dotted / points | This is the actual "look" |
+| 7 | **Budget charge** | Charges the beam back to the budget **in sampled points** — the same unit the budget is denominated in | Charging the emitted program instead over-charges every dotted shape, because a dot expands into a dwell run |
 
 Then the resulting point list is mapped from editor pixels into ILDA's `-1..1`
 space and written to the `.ild`.
 
-**The single most important property:** steps 1–6 live in exactly one function,
+**The single most important property:** steps 1–7 live in exactly one function,
 `buildFrameProgram` in `src/utils/frameProgram.js`. The preview calls it and draws
 the answer. The export calls it and writes the answer. There is no second
 implementation to fall out of sync — which is the entire reason the editor can be
@@ -57,7 +58,9 @@ trusted to be WYSIWYG.
 
 Think of these as four different ways a pen can behave along one path:
 
-- **Solid** — draw the whole outline. The normal choice.
+- **Solid** — draw the whole outline. The normal choice. (Internal id `simple`; the
+  Properties panel button reads `simple`, which is why you may not find the word
+  "Solid" in the UI.)
 - **Dashed** — draw 16 px, lift, skip 10 px, repeat. Measured by *arc length*, so
   the dashes stay 16 px whether the shape is a coarse square or a dense curve.
 - **Dotted** — draw the whole outline *and* dwell on a dot every 8 px. The dots are
@@ -155,7 +158,69 @@ not a misunderstanding on your part. That is the bar this codebase now holds.
 | Editor, sampling, transforms, handles, timeline | `src/components/ShapeBuilder.jsx` |
 | Shape effects (chase, strobe, audio) | `src/utils/shapeEffects.js` |
 | ILDA file writing | `src/utils/ilda-writer.js` |
+| Project file (`.tls`) read/write + unsaved-changes tracking | `src/components/ShapeBuilder.jsx` (imperative handle) |
+| Project file IPC handlers | `main.js` (`save-shape-project`, `open-shape-project`) |
+| Which editor owns Open/Save/New | `src/utils/projectRouting.js` |
 
 When changing anything about how a shape *looks*, change it in `frameProgram.js` or
 `beamProgram.js` — not in the preview code. The preview deliberately has no
 independent styling logic left to disagree with.
+
+---
+
+## 10. Two different kinds of "save"
+
+The Shape Builder has two separate file operations. They are easy to confuse.
+
+| | What it is | Extension | Where it goes |
+|---|---|---|---|
+| **Project** | Your working document — frames, shapes, animation and sync settings | `.tls` | **TrueLazer ▸ Save Shape Project**, or `Ctrl+S` |
+| **Export** | Laser output for use in a clip | `.ild` (ILDA), `.clip` (Shape Builder clip) | The right-hand sidebar's save container |
+
+A `.tls` project reopens in the Shape Builder. An `.ild` does not — it is data for
+the clip deck. Saving the project does not replace exporting, and exporting does
+not save your work.
+
+### What a project contains
+
+`getProjectState()` writes ~20 fields: `frames`, `frameCount`, `color`,
+`renderMode`, `pointSpacing`, the tween and sync settings (`tweenStartFrame`,
+`tweenEndFrame`, `tweenPosition`, `tweenColor`, `timelineStartFrame`, `syncMode`,
+`playbackSpeed`, `bpm`, `duration`, `fps`, `beats`), `shapeEffect`, `bakeEffects`,
+and the background image's **file path**.
+
+What is deliberately *not* saved: tool, zoom, pan, current panel collapse state,
+selections, and **undo history**. Those describe how the editor is looking at the
+document, not the document itself. Consequence: after reopening a project there is
+nothing to undo back into.
+
+### Unsaved-changes guard
+
+Unlike the Timeline — whose store lives above the page switch and persists to
+local storage — the Shape Builder unmounts when you leave its page. Leaving with
+unsaved work would discard it silently, so `navigateTo()` in `src/App.jsx` asks
+first. "Dirty" is measured against the document as last saved, opened or reset
+rather than "does any state exist", so undoing back to where you started is
+correctly reported as clean.
+
+A cancelled Save As dialog leaves the document dirty, so the guard still fires.
+
+---
+
+## 11. Keyboard shortcuts
+
+Suppressed while you are typing in a text field.
+
+| Keys | Action |
+|---|---|
+| `Ctrl/Cmd+Z` | Undo |
+| `Ctrl/Cmd+Y` | Redo |
+| `Ctrl/Cmd+C` / `Ctrl/Cmd+V` | Copy / paste shape |
+| `Space` | Toggle play |
+| `←` / `→` | Previous / next frame (nothing selected) |
+| Arrows | Nudge selection 1 px; with `Shift`, 10 px |
+| `Delete` / `Backspace` | Delete selected shapes |
+
+`Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` are deliberately **not** bound
+here — they are application-menu accelerators owned by `main.js`, which fire on
+every page and are routed to the active editor by `src/utils/projectRouting.js`.

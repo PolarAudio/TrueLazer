@@ -4788,6 +4788,35 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 }
                 return false;
             }
+
+            // New Project is destructive and the underlying actions do not
+            // guard themselves: the Timeline dispatches a bare RESET and the
+            // Shape Builder discards its document. The Timeline's own Ctrl+N
+            // handler used to confirm before doing this; now that the command
+            // arrives via the application menu accelerator (which fires
+            // regardless of what the renderer preventDefaults, and regardless of
+            // whether a text field has focus) the guard has to live here.
+            if (command === 'new') {
+                let hasWork = false;
+                try {
+                    if (decision.owner === 'shapeBuilder') {
+                        hasWork = !!shapeBuilderRef.current?.isDirty?.();
+                    } else if (decision.owner === 'timeline') {
+                        const cues = timelineBridge.stateRef?.current?.cues;
+                        hasWork = !!(cues && Object.keys(cues).length > 0);
+                    }
+                } catch (e) {
+                    hasWork = false;
+                }
+                if (hasWork) {
+                    const label = decision.owner === 'shapeBuilder' ? 'Shape' : 'Timeline';
+                    const ok = window.confirm(
+                        `Start a new ${label} project?\n\nCurrent unsaved work will be lost.`
+                    );
+                    if (!ok) return false;
+                }
+            }
+
             decision.run();
             return true;
         };

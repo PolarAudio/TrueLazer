@@ -1,4 +1,27 @@
-	📋 Optimization Plan (Priority Order)
+	> **STATUS: HISTORICAL — REACT RENDER-PERFORMANCE PLAN. NOT A POINT-OPTIMIZER PLAN.**
+>
+> Despite the filename, this document is about **React re-render cost**, not the
+> laser point optimizer. It contains no reference to `interpDistance`, `maxDist`,
+> `pathDwell` or the point budget. For the laser-side optimizer, read
+> `src/utils/optimizer.js` directly (its header comment is the documentation) and
+> `src/utils/hardwarePresets.js`.
+>
+> **Line numbers and file sizes below were accurate when written and have since
+> drifted.** The recommendations that have since been implemented are:
+>
+> - **1.3 is done.** The 70 fps preview tick is now change-gated — `App.jsx` builds
+>   a preview signature and only calls `setTick` when it actually differs.
+> - **4.3 is obsolete.** The triple-nested thumbnail scan it describes no longer
+>   exists; thumbnails are now produced per-clip on demand and repaired
+>   reactively.
+> - The `LayerControls` `appliedEffects` prop-mirror state (1.5 / Phase 3.1) no
+>   longer exists either.
+> - rAF-aligned batching partly landed via `throttledDispatch` / `debouncedDispatch`.
+>
+> Everything below is retained as originally written so the reasoning survives.
+> Re-verify every path and line number before acting on it.
+
+ 	📋 Optimization Plan (Priority Order)
 
      Phase 1 — Immediate Wins (Low Risk, High Impact)
 
