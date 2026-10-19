@@ -913,10 +913,15 @@ function buildApplicationMenu(mode) {
         { type: 'separator' },
         { label: 'Timeline Editor', click: () => act('timeline') },
         { type: 'separator' },
-        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: projectNew },
-        { label: `Open ${noun}`, accelerator: 'CmdOrCtrl+O', click: projectOpen },
-        { label: `Save ${noun}`, accelerator: 'CmdOrCtrl+S', click: () => projectSave(false) },
-        { label: `Save ${noun} As...`, accelerator: 'CmdOrCtrl+Shift+S', click: () => projectSave(true) },
+        // The accelerators below are DISPLAY ONLY (registerAccelerator: false). The
+        // keys are handled by the renderer in App.jsx so that New/Open/Save
+        // behave identically no matter what currently has focus. Registering
+        // them here as well meant two handlers for one keypress, which is how
+        // Ctrl+S ended up saving twice and writing a stray .tlp.
+        { label: 'New Project', accelerator: 'CmdOrCtrl+N', registerAccelerator: false, click: projectNew },
+        { label: `Open ${noun}`, accelerator: 'CmdOrCtrl+O', registerAccelerator: false, click: projectOpen },
+        { label: `Save ${noun}`, accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => projectSave(false) },
+        { label: `Save ${noun} As...`, accelerator: 'CmdOrCtrl+Shift+S', registerAccelerator: false, click: () => projectSave(true) },
         { type: 'separator' },
         { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => { app.quit(); } },
       ],

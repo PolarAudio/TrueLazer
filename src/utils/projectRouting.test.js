@@ -7,6 +7,7 @@ import {
     normalizePage,
     resolveProjectCommand,
     shouldWarnOnUnsavedChanges,
+    commandForKeyEvent,
 } from './projectRouting';
 
 // The bug this guards: the application menu accelerators fire on every page, so
@@ -122,5 +123,57 @@ describe('shouldWarnOnUnsavedChanges', () => {
 
     it('lists only the page whose document is lost on navigation', () => {
         expect(PAGES_AT_RISK_ON_NAVIGATION).toEqual(['shapeBuilder']);
+    });
+});
+
+// The menu items carry registerAccelerator: false, so these keys are handled
+// in the renderer. Save and new previously did not fire reliably depending on
+// what had focus while open did, so the mapping is centralised and tested here.
+describe('commandForKeyEvent', () => {
+    const k = (key, extra = {}) => ({ key, ctrlKey: true, ...extra });
+
+    it('maps the four commands', () => {
+        expect(commandForKeyEvent(k('n'))).toBe('new');
+        expect(commandForKeyEvent(k('o'))).toBe('open');
+        expect(commandForKeyEvent(k('s'))).toBe('save');
+        expect(commandForKeyEvent(k('s', { shiftKey: true }))).toBe('saveAs');
+    });
+
+    it('is case insensitive', () => {
+        expect(commandForKeyEvent(k('S'))).toBe('save');
+        expect(commandForKeyEvent(k('N', { shiftKey: true }))).toBe('new');
+    });
+
+    it('accepts Cmd as well as Ctrl, for macOS', () => {
+        expect(commandForKeyEvent({ key: 's', metaKey: true })).toBe('save');
+    });
+
+it('ignores the keys without a modifier', () => {
+        expect(commandForKeyEvent({ key: 's' })).toBeNull();
+        expect(commandForKeyEvent({ key: 's', ctrlKey: false, metaKey: false })).toBeNull();
+        expect(commandForKeyEvent({ key: 'n' })).toBeNull();
+    });
+
+    it('ignores Alt combinations, which are used for AltGr characters', () => {
+        expect(commandForKeyEvent(k('s', { altKey: true }))).toBeNull();
+        expect(commandForKeyEvent(k('n', { altKey: true }))).toBeNull();
+    });
+
+    it('ignores unrelated modified keys', () => {
+        for (const key of ['c', 'v', 'z', 'p', 'q', 'ArrowLeft', 'Tab', ' ', 'F5']) {
+            expect(commandForKeyEvent(k(key)), key).toBeNull();
+        }
+    });
+
+    it('is safe with a malformed or empty event', () => {
+        expect(commandForKeyEvent(null)).toBeNull();
+        expect(commandForKeyEvent(undefined)).toBeNull();
+        expect(commandForKeyEvent({})).toBeNull();
+        expect(commandForKeyEvent({ key: undefined, ctrlKey: true })).toBeNull();
+        expect(commandForKeyEvent({ key: 123, ctrlKey: true })).toBeNull();
+    });
+
+    it('does not treat Shift+S as a plain save', () => {
+        expect(commandForKeyEvent(k('s', { shiftKey: true }))).not.toBe('save');
     });
 });

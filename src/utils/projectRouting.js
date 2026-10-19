@@ -50,6 +50,32 @@ export function shouldWarnOnUnsavedChanges(fromPage, toPage, isDirty) {
 }
 
 /**
+ * Map a keyboard event to a project command.
+ *
+ * The menu items carry `registerAccelerator: false`, so these keys are handled
+ * here in the renderer. That makes the mapping the single place where a
+ * keypress becomes an action, and keeps behaviour identical no matter which
+ * element has focus.
+ *
+ * Returns null for anything that is not one of the four commands, so the caller
+ * can ignore it without side effects.
+ *
+ * @param {{key?:string, ctrlKey?:boolean, metaKey?:boolean, shiftKey?:boolean, altKey?:boolean}} e
+ */
+export function commandForKeyEvent(e) {
+    if (!e) return null;
+    // Ctrl on Windows/Linux, Cmd on macOS.
+    if (!(e.ctrlKey || e.metaKey)) return null;
+    // Alt+key produces other characters (AltGr) - never ours.
+    if (e.altKey) return null;
+    const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+    if (key === 'n') return 'new';
+    if (key === 'o') return 'open';
+    if (key === 's') return e.shiftKey ? 'saveAs' : 'save';
+    return null;
+}
+
+/**
  * Decide who handles a project command.
  *
  * Returns `{ owner, handled }`:

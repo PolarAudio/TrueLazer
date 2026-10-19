@@ -31,7 +31,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ShapeBuilder from './components/ShapeBuilder';
 import TimelineEditor from './components/TimelineEditor';
 import { timelineBridge } from './contexts/TimelineContext';
-import { resolveProjectCommand, shouldWarnOnUnsavedChanges } from './utils/projectRouting';
+import { resolveProjectCommand, shouldWarnOnUnsavedChanges, commandForKeyEvent } from './utils/projectRouting';
 import AboutWindow from './components/aboutWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
@@ -4821,28 +4821,52 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             return true;
         };
 
-        if (window.electronAPI) {
-            unlistenNew = window.electronAPI.on('new-project', () => {
-                if (routeProject('new')) return;
+        // Run a project command for the active page, falling back to the show
+        // editor for the commands it owns. One entry point for both the
+        // application menu clicks and the keyboard shortcuts, so the two cannot
+        // drift apart or both fire for a single keypress.
+        const handleProjectCommand = (command) => {
+            if (routeProject(command)) return;
+            // Show editor fallbacks. 'open' is deliberately absent: main.js owns
+            // the .tlp dialog and replies with 'load-project-data'.
+            if (command === 'new') {
                 dispatch({ type: 'RESET_STATE' });
-            });
-            unlistenOpen = window.electronAPI.on('open-project', () => {
-                // Show Projects are opened by main.js, which owns the .tlp path
-                // and the window title; it replies with 'load-project-data'.
-                if (routeProject('open')) return;
-            });
-
-            // Use ref to access latest state without re-binding listeners
-            unlistenSave = window.electronAPI.on('save-project', () => {
-                if (routeProject('save')) return;
-                console.log("Saving project with state:", stateRef.current);
+            } else if (command === 'save') {
                 window.electronAPI.send('save-project', stateRef.current);
-            });
-            unlistenSaveAs = window.electronAPI.on('save-project-as', () => {
-                if (routeProject('saveAs')) return;
-                console.log("Saving project AS with state:", stateRef.current);
+            } else if (command === 'saveAs') {
                 window.electronAPI.send('save-project-as', stateRef.current);
-            });
+            }
+        };
+
+        // Keyboard shortcuts.
+        //
+        // Handled here rather than left to the application menu accelerators:
+        // accelerator dispatch proved unreliable for these commands - save and
+        // new did not fire consistently depending on what had focus, while open
+        // did. One handler here makes the behaviour identical on every page and
+        // in every focus state.
+        //
+        // The menu items keep `registerAccelerator: false`, so they still
+        // display Ctrl+S and friends without also binding the key. Binding in
+        // both places is what previously made Ctrl+S save twice and write a
+        // stray .tlp.
+        const onKeyDown = (e) => {
+            if (e.defaultPrevented) return;
+            const command = commandForKeyEvent(e);
+            if (!command) return;
+            // These combinations never produce a character, so acting on them
+            // while a text field has focus is safe and expected.
+            e.preventDefault();
+            e.stopPropagation();
+            handleProjectCommand(command);
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+
+        if (window.electronAPI) {
+            unlistenNew = window.electronAPI.on('new-project', () => handleProjectCommand('new'));
+            unlistenOpen = window.electronAPI.on('open-project', () => handleProjectCommand('open'));
+            unlistenSave = window.electronAPI.on('save-project', () => handleProjectCommand('save'));
+            unlistenSaveAs = window.electronAPI.on('save-project-as', () => handleProjectCommand('saveAs'));
 
             unlistenLoad = window.electronAPI.on('load-project-data', (data) => {
                 dispatch({ type: 'LOAD_PROJECT', payload: data });
@@ -4851,6 +4875,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
         // Cleanup
         return () => {
+            window.removeEventListener('keydown', onKeyDown, true);
             if (unlistenNew) unlistenNew();
             if (unlistenOpen) unlistenOpen();
             if (unlistenSave) unlistenSave();
