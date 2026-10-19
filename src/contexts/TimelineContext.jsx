@@ -368,6 +368,10 @@ function newCue(id, patch = {}) {
         startTime: patch.startTime ?? 0,
         duration: patch.duration ?? 5,
         isLooping: patch.isLooping ?? false,
+        // Optional per-clip colour. null/undefined means "use the default for
+        // this clip's type" (ILDA blue / generator amber), which is how every
+        // cue created before this field existed keeps its original look.
+        color: patch.color ?? null,
         layerPriority: patch.layerPriority ?? 0,
         effects: patch.effects || [],
         // Per-clip overrides for the channel's effect-lane toggle settings that

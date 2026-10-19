@@ -4,6 +4,7 @@ import getRelativePath from '../../utils/pathUtils';
 import { formatTimecode } from '../../utils/timelineTime';
 import { generatorDefinitions } from '../../utils/generatorDefinitions';
 import { effectDefinitions } from '../../utils/effectDefinitions';
+import { cueColorOrDefault } from '../../utils/timelineClipColor';
 import {
     getLaneParam,
     getLaneGenParam,
@@ -14,6 +15,48 @@ import {
     evaluateClipAt,
 } from '../../utils/timelineAutomation';
 import TimelinePreview from './TimelinePreview';
+
+/**
+ * Per-clip colour picker.
+ *
+ * `cues` drives the display; `onChange` receives the new hex string, or null to
+ * clear it back to the type default. Clearing is a distinct action rather than a
+ * swatch because "default" is a real state (cues saved before this field
+ * existed have no colour and rely on it).
+ */
+const ClipColorField = ({ cues, onChange }) => {
+    const list = Array.isArray(cues) ? cues.filter(Boolean) : [cues].filter(Boolean);
+    if (list.length === 0) return null;
+
+    const allSame = list.every((c) => (c.color || null) === (list[0].color || null));
+    // Mixed / unset selections fall back to the cue-type default so the
+    // <input type="color"> always has a valid value to show.
+    const shown = allSame ? cueColorOrDefault(list[0]) : cueColorOrDefault(list[0]);
+    const hasCustom = list.some((c) => !!c.color);
+
+    return (
+        <label className="timeline-field" title="Colour of this clip on the track. Does not change the laser's output colour.">
+            <span>Clip colour</span>
+            <div className="timeline-color-row">
+                <input
+                    type="color"
+                    value={shown}
+                    onChange={(e) => onChange(e.target.value)}
+                    aria-label="Clip colour"
+                />
+                {list.length > 1 && <span className="timeline-inspector-hint">{list.length} clips</span>}
+                <button
+                    className="timeline-btn"
+                    disabled={!hasCustom}
+                    onClick={() => onChange(null)}
+                    title="Clear the custom colour and fall back to the default for each clip's type"
+                >
+                    Default
+                </button>
+            </div>
+        </label>
+    );
+};
 
 const NumberField = ({ label, value, onCommit, step = 0.01, min = 0 }) => {
     const [draft, setDraft] = useState(String(value));
@@ -517,6 +560,10 @@ const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
                 >
                     ✂ Cut Overlaps
                 </button>
+                <ClipColorField
+                    cues={cues}
+                    onChange={(color) => { for (const id of selectedIds) actions.updateCue(id, { color }); }}
+                />
                 <button
                     className="timeline-btn danger"
                     onClick={() => { for (const id of selectedIds) actions.removeCue(id); }}
@@ -573,6 +620,11 @@ const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
                 onCommit={(v) => actions.updateCue(cue.id, { startTime: Math.max(0, v) })} />
             <NumberField label="Duration (s)" value={cue.duration} min={0.1}
                 onCommit={(v) => actions.updateCue(cue.id, { duration: Math.max(0.1, v) })} />
+
+            <ClipColorField
+                cues={cue}
+                onChange={(color) => actions.updateCue(cue.id, { color })}
+            />
 
             {cueOverlaps && (
                 <div className="timeline-inspector-hint timeline-overlap-hint">

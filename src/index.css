@@ -3541,14 +3541,59 @@ input[type="checkbox"].tl-checkbox:after {
   box-shadow: 0 0 0 2px var(--theme-color);
 }
 
-/* Overlapping clips shadow one another — only one plays at a time. */
+/* Overlapping clips shadow one another — only one plays at a time.
+
+   The stripes MUST NOT be set on the block's own `background-image`.
+   `.ilda` / `.generator` set the `background` SHORTHAND, and `background-image`
+   is that shorthand's image component, so assigning it here REPLACES the clip's
+   own gradient — overlapping clips lost their colour and rendered as nothing
+   but stripes. An overlay pseudo-element layers the marking on top of whatever
+   colour the clip has instead. */
 .timeline-block.overlap {
   border-color: #ff6b6b;
   outline: 1px dashed #ff6b6b;
   outline-offset: 2px;
+}
+
+/* Drawn on ::before, NOT ::after: `.timeline-block.looping::after` already
+   renders the loop badge on ::after, and a clip can be both looping and
+   overlapping - two rules on one pseudo-element means whichever comes later
+   silently wins and the other disappears.
+   Being absolutely positioned, this is taken out of the block's flex layout
+   (so it adds no flex item), paints above the static icon/label, and still
+   paints below the absolutely positioned resize handles. `pointer-events: none`
+   keeps dragging and resizing unaffected. */
+.timeline-block.overlap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
   background-image: repeating-linear-gradient(-45deg,
-      rgba(255, 107, 107, 0.16) 0 8px,
+      rgba(255, 107, 107, 0.22) 0 8px,
       transparent 8px 16px);
+}
+
+/* Per-clip colour row: a swatch picker plus a reset-to-default button.
+   The native colour input renders as a large opaque rectangle, so it is given
+   explicit sizing and padding rather than inheriting the field's text styling. */
+.timeline-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timeline-color-row input[type="color"] {
+  width: 40px;
+  height: 24px;
+  padding: 2px;
+  cursor: pointer;
+  background: #101216;
+}
+
+.timeline-color-row .timeline-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .timeline-overlap-hint {
@@ -3556,12 +3601,35 @@ input[type="checkbox"].tl-checkbox:after {
   font-weight: 600;
 }
 
+/* A looping clip reserves trailing space so the clip name truncates (ellipsis)
+   BEFORE the badge instead of running underneath it. Previously the block kept
+   its base `padding: 0 8px`, so the name flex item extended the full width and
+   the badge - absolutely positioned on top of it - collided with the text, most
+   visibly on short clips where the name is already clipped.
+
+   Badge geometry: the trailing resize handle occupies 0-8px from the right edge,
+   so the badge sits at `right: 14px` (clear of the handle) and spans roughly
+   14-27px. Reserving 32px of trailing padding puts the end of the name text at
+   32px from the edge, leaving a ~5px gap before the badge. */
+.timeline-block.looping {
+  padding-right: 32px;
+}
+
 .timeline-block.looping::after {
   content: "↻";
   position: absolute;
-  right: 22px;
+  right: 14px;
+  /* With `top` and `bottom` both auto an absolutely positioned flex child falls
+     to its static position, which `align-items: center` vertically centres -
+     the same line as the clip name. Pin it explicitly instead of relying on
+     that, so the badge cannot drift with the flex alignment. */
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 11px;
+  line-height: 1;
   opacity: 0.85;
+  /* Decoration only - must never intercept the pointer near the resize handle. */
+  pointer-events: none;
 }
 
 .timeline-block-icon {
