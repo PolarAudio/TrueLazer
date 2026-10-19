@@ -746,6 +746,57 @@ ipcMain.handle('open-shape-project', async (event) => {
   }
 });
 
+// DAC Output Settings as a standalone document (`.tlo`).
+//
+// These settings normally ride along inside the Show project, so starting a new
+// project clears them and they cannot be carried to another show. This lets a
+// configuration be written once and loaded into any project - or into a show on
+// a different machine.
+//
+// Registered at module scope: ipcMain.handle throws if a channel is registered
+// twice, and createWindow() runs again whenever the app is re-activated with no
+// windows open.
+ipcMain.handle('export-dac-output-settings', async (event, payload) => {
+  const defaultPath = path.join(
+    app.getPath('documents'),
+    'TrueLazer',
+    'Outputs',
+    'output-settings.tlo'
+  );
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Output Settings',
+    defaultPath,
+    filters: [{ name: 'TrueLazer Output Settings', extensions: ['tlo', 'json'] }]
+  });
+  if (canceled || !filePath) return { success: false, canceled: true };
+
+  try {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    return { success: true, filePath };
+  } catch (error) {
+    console.error('Failed to export output settings:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('import-dac-output-settings', async (event) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import Output Settings',
+    defaultPath: path.join(app.getPath('documents'), 'TrueLazer', 'Outputs'),
+    filters: [{ name: 'TrueLazer Output Settings', extensions: ['tlo', 'json'] }],
+    properties: ['openFile']
+  });
+  if (canceled || !filePaths.length) return { success: false, canceled: true };
+
+  try {
+    const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
+    return { success: true, data, filePath: filePaths[0] };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Facts for the About window. Resolved here rather than in the renderer so the
 // renderer stays a consumer of the preload bridge instead of reading Electron
 // and filesystem internals directly.

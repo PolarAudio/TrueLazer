@@ -9,11 +9,14 @@ const DAC_BACKENDS = [
     { name: 'IDN', detail: 'UDP, IDN show network protocol' },
 ];
 
-// Each window keeps its own project document and file format.
+// Each window keeps its own project document and file format. Output Settings
+// are additionally exportable as a standalone `.tlo` so one rig configuration
+// can be reused across projects.
 const PROJECT_FORMATS = [
     { label: 'Show Project', ext: '.tlp', where: 'Show Control' },
     { label: 'Timeline Project', ext: '.json', where: 'Timeline Editor' },
     { label: 'Shape Project', ext: '.tls', where: 'Shape Builder' },
+    { label: 'Output Settings', ext: '.tlo', where: 'Output Settings ▸ Export' },
 ];
 
 const Row = ({ label, value, mono }) => (

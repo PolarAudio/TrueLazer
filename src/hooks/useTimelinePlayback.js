@@ -957,6 +957,11 @@ export function useTimelinePlayback() {
             el.pause();
             try { el.currentTime = 0; } catch (_) {}
         }
+        // Clear delay/chase history and continuous-phase accumulators so the
+        // next play starts clean instead of replaying stale state. Without this,
+        // wave/rotate phases carried over from the previous run and the effect
+        // appeared frozen on the second playback. Mirrors the main app's stop().
+        effectStatesRef.current.clear();
         // Blank everything this engine has been feeding.
         if (window.electronAPI) window.electronAPI.send('dac-frame-update', {});
     }, []);

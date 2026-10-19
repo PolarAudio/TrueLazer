@@ -2445,6 +2445,20 @@ input[type="checkbox"].laser-toggle:checked:before {
   font-weight: bold;
 }
 
+/* Import/export feedback. Sits directly under the header because these results
+   can be several lines (unmatched output list), which will not fit beside the
+   header buttons. */
+.output-settings-file-status {
+  padding: 8px 16px;
+  margin: 0;
+  font-size: 0.85em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: #cfe3ff;
+  background: #1b2029;
+  border-bottom: 1px solid #333a46;
+}
+
 .save-btn {
   background: var(--theme-color);
   border: 1px solid var(--theme-color);

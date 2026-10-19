@@ -314,6 +314,16 @@ function getContinuousPhase(effectStates, key, time, speed, dirMult = 1) {
     if (!state) {
         state = { phase: 0, lastTime: time };
         effectStates.set(key, state);
+    } else if (time < state.lastTime) {
+        // Time went backwards: playback restarted (stop + play), the playhead
+        // wrapped around a loop, or an external clock jumped back. The accumulated
+        // phase and lastTime from the previous run are stale, so reset instead
+        // of freezing the effect (which is what `time >= state.lastTime` did
+        // when it silently skipped accumulation). Otherwise a wave/rotate
+        // effect animates on the first play and appears frozen on every
+        // subsequent one.
+        state.phase = 0;
+        state.lastTime = time;
     } else if (time >= state.lastTime) {
         state.phase += ((time - state.lastTime) * 0.001) * speed * dirMult;
         state.lastTime = time;

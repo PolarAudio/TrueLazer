@@ -144,6 +144,10 @@ contextBridge.exposeInMainWorld(
   openTimelineProject: () => ipcRenderer.invoke('open-timeline-project'),
   saveShapeProject: (data, defaultName, forceDialog) => ipcRenderer.invoke('save-shape-project', data, defaultName, forceDialog),
   openShapeProject: () => ipcRenderer.invoke('open-shape-project'),
+  // Output Settings as a standalone `.tlo` document, so one configuration can be
+  // reused across projects and machines instead of riding inside the .tlp.
+  exportDacOutputSettings: (payload) => ipcRenderer.invoke('export-dac-output-settings', payload),
+  importDacOutputSettings: () => ipcRenderer.invoke('import-dac-output-settings'),
   // The active page drives the application menu: entries that only apply to one
   // page are stripped, and Open/Save/New target that page's project file.
   setCurrentPage: (page) => ipcRenderer.send('ui-current-page', page),

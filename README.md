@@ -90,6 +90,13 @@ and no OS-level window per editor.
 | Timeline Editor | `timeline` | Multi-channel timeline with automation lanes, timecode sync and DJ-Link | `.json` |
 | Shape Builder | `shapeBuilder` | Vector shape editor with beam/frame programming; see `docs/SHAPE_BUILDER.md` | `.tls` |
 
+Output Settings are additionally exportable on their own as a `.tlo` file
+(**Output Settings ▸ Export… / Import…**). They otherwise ride inside the show
+project, so a new project clears them; a `.tlo` lets one rig configuration be
+reused across shows and machines. Import **merges** — only outputs whose
+`ip:channel` address matches a currently detected DAC are updated, and entries
+with no detected output are reported rather than silently applied.
+
 Because the editors share one window, they share one application menu and one set
 of modal dialogs:
 
