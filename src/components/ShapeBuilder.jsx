@@ -112,6 +112,9 @@ const ShapeBuilder = ({ onBack, ref }) => {
   const [gridSize, setGridSize] = useState(25);
   const [continuousDrawing, setContinuousDrawing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  // What the last export did with the frame budget: how much of it was used,
+  // and whether anything had to be left out.
+  const [exportNote, setExportNote] = useState(null);
   const [exportBudget, setExportBudget] = useState(DEFAULT_POINT_BUDGET);
   // Point density, as the target spacing in px between extra outline points.
   // 0 = off. A square is only 4 corner points, so the per-point beam styles
@@ -2648,6 +2651,9 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
   const exportIlda = async () => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
+      setExportNote(null);
+      let droppedShapes = 0;
+      let peakFramePoints = 0;
       try {
           const exportFrames = frames.slice(timelineStartFrame);
           // Non-destructive effect bake: while an effect is enabled, every
@@ -2658,35 +2664,55 @@ const ShapeBuilder = ({ onBack, ref }) => {
               : null;
 
           const ildaFramesData = exportFrames.map((frameShapes, frameIdx) => {
-              const effectPos = exportFrames.length > 1 ? frameIdx / (exportFrames.length - 1) : 0;
-              const frameShapeSet = effectSource ? effectSource : frameShapes;
+            const effectPos = exportFrames.length > 1 ? frameIdx / (exportFrames.length - 1) : 0;
+            const frameShapeSet = effectSource ? effectSource : frameShapes;
 
-              // One shared pipeline decides, for every shape in this frame, what
-              // the beam actually does: density, budget, effects, beam style and
-              // the lift between shapes. The preview renders the same decisions,
-              // so the editor cannot drift away from the file it produces.
-              const program = buildFrameProgram(frameShapeSet, {
-                  pointSpacing,
-                  budget: exportBudget,
-                  effect: shapeEffect,
-                  effectPos,
-                  bakeEffects,
-                  getSampledPoints,
-                  resampleShapeBySpacing,
-                  applyTransformations,
-                  applyEffectToPoints,
-              });
+            // One shared pipeline decides, for every shape in this frame, what
+            // the beam actually does: density, budget, effects, beam style and
+            // the lift between shapes. The preview renders the same decisions,
+            // so the editor cannot drift away from the file it produces.
+            const program = buildFrameProgram(frameShapeSet, {
+                pointSpacing,
+                budget: exportBudget,
+                effect: shapeEffect,
+                effectPos,
+                bakeEffects,
+                getSampledPoints,
+                resampleShapeBySpacing,
+                applyTransformations,
+                applyEffectToPoints,
+            });
 
-              const points = program.points.map((p) => {
-                  const c = hexToRgb(p.color || '#ffffff');
-                  const q = toIldaPoint(p);
-                  return { x: q.x, y: q.y, r: c.r, g: c.g, b: c.b, blanking: !!p.blanking };
-              });
+            // What the frame budget allowed, and what it had to leave out. A
+            // shape that does not fit is dropped rather than drawn as a
+            // handful of dots, and the user has to be told about it.
+            if (program.points.length > peakFramePoints) peakFramePoints = program.points.length;
+            const countDropped = (entries) => entries.forEach((entry) => {
+                if (!entry) { droppedShapes++; return; }
+                if (entry.children) countDropped(entry.children);
+            });
+            countDropped(program.entries);
 
-              return { points, frameName: 'SHAPE' };
-          });
-          const { framesToIlda } = await import('../utils/ilda-writer.js');
-          const buffer = framesToIlda(ildaFramesData); await window.electronAPI.saveIldaFile(buffer, 'built_shape.ild');
+            const points = program.points.map((p) => {
+                const c = hexToRgb(p.color || '#ffffff');
+                const q = toIldaPoint(p);
+                return { x: q.x, y: q.y, r: c.r, g: c.g, b: c.b, blanking: !!p.blanking };
+            });
+
+            return { points, frameName: 'SHAPE' };
+        });
+        const { framesToIlda } = await import('../utils/ilda-writer.js');
+        const buffer = framesToIlda(ildaFramesData); await window.electronAPI.saveIldaFile(buffer, 'built_shape.ild');
+        setExportNote(droppedShapes > 0
+            ? {
+                warn: true,
+                text: `${droppedShapes} shape${droppedShapes === 1 ? '' : 's'} did not fit in ${exportBudget} pts/frame and `
+                    + `were left out. Raise "Max pts/frame" or draw fewer shapes per frame.`,
+            }
+            : {
+                warn: false,
+                text: `Heaviest frame used ${peakFramePoints} of ${exportBudget} points.`,
+            });
       } catch (e) { console.error(e); } finally { setIsExporting(false); }
   };
 
@@ -4599,6 +4625,11 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                   <input id="exportBudget" type="number" min="100" max="5000" step="100" value={exportBudget} onChange={(e) => setExportBudget(Math.max(0, parseInt(e.target.value, 10) || 0))} style={{ width: '70px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.7rem' }} />
                   <div style={{ marginLeft: 'auto', color: '#555' }}>(1200 = 20k pts @ 30fps)</div>
               </div>
+              {exportNote ? (
+                  <div style={{ marginTop: '5px', fontSize: '0.65rem', lineHeight: '1.5', color: exportNote.warn ? '#ff7b72' : '#888' }}>
+                      {exportNote.text}
+                  </div>
+              ) : null}
               {/* Point density: a slider rather than a number, because the useful
                   question is "denser / sparser", and the effect is immediately
                   visible on the canvas for the per-point beam styles. Left at 0 it

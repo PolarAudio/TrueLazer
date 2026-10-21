@@ -140,8 +140,10 @@ export function dotStations(m, pitch = DEFAULT_DOT_PITCH) {
 // dashed shape would preview with 16px dashes and export with 40px ones.
 
 // Points the budget allows for a single shape before it starts stretching.
+// The budget is in ILDA points, so this is the whole budget minus the two
+// points the frame reserves for its own lift.
 export function defaultBeamPointAllowance(budget = DEFAULT_POINT_BUDGET) {
-  return Math.max(8, Math.floor(budget / 2) - 2);
+  return Math.max(8, Math.floor(budget) - 2);
 }
 
 function runPointCount(m, runs) {
@@ -170,19 +172,35 @@ export function resolveDashRuns(m, { dashLength = DEFAULT_DASH_LENGTH, gapLength
 
 // Dot stations fitted to the point budget. `outlineCount` is the number of
 // points a dotted line still has to draw underneath the dots.
+//
+// When the pattern will not fit, the pitch stretches first (fewer dots, each
+// burning the same time) and the dwell is the last thing to give. A dot that
+// burns more points than the frame can afford would overrun the DAC's point
+// clock, and a show that runs slow is worse than a dimmer dot.
 export function resolveDotStations(m, { pitch = DEFAULT_DOT_PITCH, dwell = DEFAULT_DWELL, drawsLine = false, outlineCount = 0, maxPoints = Infinity } = {}) {
-  const perDot = Math.max(1, Math.round(dwell)) + (drawsLine ? 0 : 1);
-  let usePitch = pitch > 0 ? pitch : DEFAULT_DOT_PITCH;
-  let stations = dotStations(m, usePitch);
-  const estimate = (st) => st.length * perDot + (drawsLine ? outlineCount : st.length);
-  let scaled = false;
-  for (let i = 0; i < 8 && estimate(stations) > maxPoints; i++) {
-    const est = estimate(stations);
-    usePitch *= Math.max(1.1, est / maxPoints);
-    stations = dotStations(m, usePitch);
-    scaled = true;
-  }
-  return { stations, pitch: usePitch, scaled };
+    let hold = Math.max(1, Math.round(dwell));
+    const perDot = () => hold + (drawsLine ? 0 : 1);
+    const estimate = (st) => st.length * perDot() + (drawsLine ? outlineCount : st.length);
+    let usePitch = pitch > 0 ? pitch : DEFAULT_DOT_PITCH;
+    let stations = dotStations(m, usePitch);
+    let scaled = false;
+    for (let i = 0; i < 8 && estimate(stations) > maxPoints; i++) {
+        const est = estimate(stations);
+        usePitch *= Math.max(1.1, est / maxPoints);
+        stations = dotStations(m, usePitch);
+        scaled = true;
+    }
+    // Stretching the pitch could not fit it: shorten the dwell.
+    while (hold > 1 && estimate(stations) > maxPoints) {
+        hold = Math.max(1, Math.floor(hold / 2));
+        scaled = true;
+    }
+    // Still too big even at the shortest dwell: drop dots rather than overrun.
+    while (stations.length > 1 && estimate(stations) > maxPoints) {
+        stations = stations.slice(0, stations.length - 1);
+        scaled = true;
+    }
+    return { stations, pitch: usePitch, dwell: hold, scaled };
 }
 
 function resolveColor(p, fallback) {
@@ -237,12 +255,12 @@ export function buildBeamProgram(pts, opts = {}) {
 
   if (mode === 'points' || mode === 'dotted') {
     const drawsLine = mode === 'dotted';
-    const { stations, pitch: usePitch, scaled } = resolveDotStations(m, {
+    const { stations, pitch: usePitch, dwell: useDwell, scaled } = resolveDotStations(m, {
       // A closed outline emits one extra vertex to close the loop, so the cost
       // estimate has to count it or the pattern stretches a step too early.
       pitch, dwell, drawsLine, outlineCount: closed ? m.count + 1 : m.count, maxPoints,
     });
-    const hold = Math.max(1, Math.round(dwell));
+    const hold = Math.max(1, Math.round(useDwell));
 
     if (drawsLine) {
       // The line, with the beam dwelling on each station as it passes. A closed
@@ -271,6 +289,7 @@ export function buildBeamProgram(pts, opts = {}) {
       });
     }
     stats.pitch = usePitch;
+    stats.dwell = hold;
     stats.dots = stations.length;
     stats.scaled = scaled;
     return { points: out, metrics: m, runs: [], stations, stats };

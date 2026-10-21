@@ -161,18 +161,38 @@ export function buildChannelEffects(lanes = [], time, channelId = '') {
         const clip = automationClipAt(lane, time);
         if (!clip || !clip.effectId) continue;
         const ctrl = getLaneParam(clip);
-        if (!ctrl) continue;
+        // A curve can only drive a continuous 'range' param. An effect whose
+        // params are all static (Invert's checkboxes) has no range param at
+        // all, so the clip drives it through its own stored values instead.
+        // Without this the effect was dropped on the floor: the Inspector
+        // showed working checkboxes that never reached the laser.
+        const def = getLaneEffectDef(clip);
+        const staticIds = ((def && def.paramControls) || [])
+            .filter((c) => c.type !== 'range')
+            .map((c) => c.id);
+        if (!ctrl) {
+            const carried = staticIds.filter((id) => clip.values && clip.values[id] !== undefined);
+            if (!carried.length) continue; // nothing static to apply
+        }
         let eff = byEffect.get(clip.effectId);
         if (!eff) {
-            const def = getLaneEffectDef(clip);
             eff = {
                 id: clip.effectId,
                 instanceId: `auto.${channelId || ''}.${clip.effectId}`,
                 params: { ...(def?.defaultParams || {}), ...(clip.values || {}) },
             };
             byEffect.set(clip.effectId, eff);
+        } else {
+            // A second clip for the same effect contributes its own static
+            // settings. Only the non-range params: a range param's stored
+            // value is the curve's business, not the clip's.
+            for (const id of staticIds) {
+                if (clip.values && clip.values[id] !== undefined) eff.params[id] = clip.values[id];
+            }
         }
-        eff.params[clip.paramId] = evaluateClipAt(clip, time, laneDefaultValue(clip));
+        if (ctrl) {
+            eff.params[clip.paramId] = evaluateClipAt(clip, time, laneDefaultValue(clip));
+        }
     }
     return [...byEffect.values()];
 }

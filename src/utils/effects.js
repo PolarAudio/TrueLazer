@@ -1016,12 +1016,21 @@ function applyInvert(points, numPoints, params) {
         if (invertY) points[offset + 1] = -points[offset + 1];
         if (invertZ) points[offset + 2] = -points[offset + 2];
         if (invertColor) {
+            // A pen-up move is not a colour - it is the beam being off. It
+            // must stay black: the boundary-dwell pass decides whether a
+            // point is lit from its COLOUR and ignores the blanking flag, so
+            // a blanked point that was "inverted" to white reads as lit and
+            // the settle samples the scanner needs at a beam toggle are
+            // dropped. That is a galvo overshoot, not a cosmetic issue.
+            if (points[offset + 6] === 1) continue;
             const r = points[offset + 3];
             const g = points[offset + 4];
             const b = points[offset + 5];
-            points[offset + 3] = 255 - r;
-            points[offset + 4] = 255 - g;
-            points[offset + 5] = 255 - b;
+            // Clamped: the frame is 0..255, and an out-of-range colour would
+            // travel all the way to the wire.
+            points[offset + 3] = Math.max(0, Math.min(255, 255 - r));
+            points[offset + 4] = Math.max(0, Math.min(255, 255 - g));
+            points[offset + 5] = Math.max(0, Math.min(255, 255 - b));
         }
     }
     return points;

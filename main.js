@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, session } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, session, shell, clipboard } from 'electron';
 import url, { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 import fs from 'fs';
@@ -8,6 +8,8 @@ import https from 'https';
 import getSystemFonts from 'get-system-fonts';
 import { execFile } from 'child_process';
 import dgram from 'dgram';
+import { redactPrivateInfo } from './src/utils/redact.js';
+import { isAllowedExternalUrl } from './src/utils/externalUrl.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { decodeProlinkPacket } = require('./src/utils/prodjBeats.js');
@@ -61,25 +63,56 @@ const isDev = process.env.NODE_ENV === 'development';
 // Persistent main-process log. Packaged Electron apps have no visible console,
 // so on a silent crash everything is lost. Mirror console output to
 // %APPDATA%/TrueLazer/logs/main.log to make future crashes diagnosable.
+//
+// The paths are resolved lazily: app.getPath() is not safe to call before
+// the ready event on every platform, and module scope runs long before that.
+let logDir = null;
+let logPath = null;
+const getLogPaths = () => {
+    if (!logPath) {
+        logDir = path.join(app.getPath('userData'), 'logs');
+        logPath = path.join(logDir, 'main.log');
+    }
+    return { logDir, logPath };
+};
+
+// Writes are chained rather than fired in parallel: concurrent appends to the
+// same file can land out of order, and a log whose entries are interleaved
+// incorrectly is worse than no log at all.
+let logWriteChain = Promise.resolve();
+let logDirReady = null;
+const ensureLogDir = () => {
+    if (!logDirReady) {
+        const { logDir: dir } = getLogPaths();
+        logDirReady = fs.promises.mkdir(dir, { recursive: true }).catch(() => { });
+    }
+    return logDirReady;
+};
+
+const appendToLog = (level, line) => {
+    const { logPath: target } = getLogPaths();
+    const entry = `[${new Date().toISOString()}] [${String(level).toUpperCase()}] ${line}\n`;
+    logWriteChain = logWriteChain
+        .then(() => ensureLogDir())
+        .then(() => fs.promises.appendFile(target, entry))
+        .catch(() => { /* logging must never crash the app */ });
+};
+
 const startFileLog = () => {
-  const logDir = path.join(app.getPath('userData'), 'logs');
-  fs.promises.mkdir(logDir, { recursive: true })
-    .then(() => {
-      const logPath = path.join(logDir, 'main.log');
-      const stamp = () => new Date().toISOString();
-      ['error', 'warn', 'log', 'info', 'debug'].forEach(level => {
-        const original = console[level];
-        console[level] = (...args) => {
-          original(...args);
-          try {
-            const line = args.map(a => {
-              if (a instanceof Error) return a.stack || a.message;
-              try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
-            }).join(' ');
-            fs.appendFile(logPath, `[${stamp()}] [${level.toUpperCase()}] ${line}\n`, () => { });
-          } catch { /* logging must never crash the app */ }
-        };
-      });
+    ensureLogDir().then(() => {
+        ['error', 'warn', 'log', 'info', 'debug'].forEach(level => {
+            const original = console[level];
+            console[level] = (...args) => {
+                original(...args);
+                try {
+                    const line = args.map(a => {
+                        if (a instanceof Error) return a.stack || a.message;
+                        try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); }
+                    }).join(' ');
+                    appendToLog(level, line);
+                } catch { /* logging must never crash the app */ }
+            };
+        });
     });
 };
 
@@ -800,7 +833,7 @@ ipcMain.handle('import-dac-output-settings', async (event) => {
 // Facts for the About window. Resolved here rather than in the renderer so the
 // renderer stays a consumer of the preload bridge instead of reading Electron
 // and filesystem internals directly.
-ipcMain.handle('get-app-info', async () => {
+const collectAppInfo = async () => {
   let appVersion = '';
   let appName = 'TrueLazer';
   let author = '';
@@ -829,6 +862,148 @@ ipcMain.handle('get-app-info', async () => {
     documentsPath: app.getPath('documents'),
     userDataPath: app.getPath('userData'),
   };
+};
+
+ipcMain.handle('get-app-info', async () => collectAppInfo());
+
+// ---------------------------------------------------------------------------
+// Report window support (bug reports / feature requests)
+// ---------------------------------------------------------------------------
+
+// Diagnostics are attached to a public GitHub issue, so anything that could
+// identify the person reporting has to go: the Windows account name inside
+// paths, e-mail addresses, and MAC addresses. IP addresses are deliberately
+// KEPT - DAC troubleshooting is impossible without knowing which address the
+// projector was on - and they are already visible to anyone on the LAN.
+const redact = (text) => {
+  let homeDir = '';
+  try { homeDir = os.homedir(); } catch { /* homedir can fail in exotic sandboxes */ }
+  return redactPrivateInfo(text, homeDir);
+};
+
+// The tail of main.log is the single most useful thing to attach to a bug
+// report: it holds the DAC handshake, the last frame that was sent, and any
+// exception that was thrown. Read only the last slice of the file so a long
+// running show does not pull megabytes across the IPC boundary.
+const readLogTail = async (maxLines = 200) => {
+  const maxBytes = 256 * 1024;
+  const { logPath: target } = getLogPaths();
+  try {
+    const stat = await fs.promises.stat(target);
+    const start = Math.max(0, stat.size - maxBytes);
+    const length = Math.min(stat.size - start, maxBytes);
+    if (length <= 0) return '';
+    const handle = await fs.promises.open(target, 'r');
+    try {
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, start);
+      const lines = buffer.toString('utf8').split(/\r?\n/).filter(line => line.trim().length > 0);
+      return lines.slice(-maxLines).join('\n');
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    console.error('Failed to read log tail:', error);
+    return '';
+  }
+};
+
+const appStartedAt = new Date();
+
+ipcMain.handle('get-diagnostics', async (_event, options = {}) => {
+  const includeLogs = options.includeLogs !== false;
+  const shouldRedact = options.redact !== false;
+  const info = await collectAppInfo();
+  const cpus = os.cpus() || [];
+  const { logDir: logsDir, logPath: logFile } = getLogPaths();
+
+  const diagnostics = {
+    app: {
+      name: info.name,
+      version: info.version,
+      electron: info.electron,
+      chrome: info.chrome,
+      node: info.node,
+      v8: info.v8,
+      packaged: app.isPackaged,
+      startedAt: appStartedAt.toISOString(),
+      uptimeSeconds: Math.round(process.uptime()),
+    },
+    system: {
+      platform: info.platform,
+      arch: info.arch,
+      osName: os.type(),
+      osRelease: os.release(),
+      osVersion: os.version(),
+      hostname: os.hostname(),
+      cpuModel: cpus.length ? cpus[0].model.trim() : '',
+      cpuCores: cpus.length,
+      totalMemoryMB: Math.round(os.totalmem() / (1024 * 1024)),
+      freeMemoryMB: Math.round(os.freemem() / (1024 * 1024)),
+    },
+    paths: {
+      userData: info.userDataPath,
+      documents: info.documentsPath,
+      logs: logsDir,
+      logFile,
+    },
+    logTail: '',
+  };
+
+  if (includeLogs) {
+    diagnostics.logTail = await readLogTail(200);
+  }
+
+  if (shouldRedact) {
+    diagnostics.paths.userData = redact(diagnostics.paths.userData);
+    diagnostics.paths.documents = redact(diagnostics.paths.documents);
+    diagnostics.paths.logFile = redact(diagnostics.paths.logFile);
+    diagnostics.system.hostname = redact(diagnostics.system.hostname);
+    diagnostics.logTail = redact(diagnostics.logTail);
+  }
+
+  return diagnostics;
+});
+
+// The Report window hands the user a link to a pre-filled GitHub issue.
+// The allowlist keeps a stray value from turning the app into a general
+// purpose URL opener, and `https:` is required so no local file or custom
+// scheme can be launched from renderer content.
+ipcMain.handle('open-external-url', async (_event, target) => {
+  try {
+    if (!isAllowedExternalUrl(target)) {
+      return { success: false, error: 'That link is not on the allowlist.' };
+    }
+    await shell.openExternal(new URL(String(target)).toString());
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to open external URL:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('copy-to-clipboard', async (_event, text) => {
+  try {
+    clipboard.writeText(String(text ?? ''));
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to write to clipboard:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Opens the folder that holds main.log. The existing "open-file-explorer"
+// handler is a directory PICKER - this one actually reveals the folder.
+ipcMain.handle('open-log-folder', async () => {
+  const { logDir: dir } = getLogPaths();
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+    const error = await shell.openPath(dir);
+    return error ? { success: false, error } : { success: true, path: dir };
+  } catch (err) {
+    console.error('Failed to open log folder:', err);
+    return { success: false, error: err.message };
+  }
 });
 
 function updateWindowTitle() {
@@ -1180,6 +1355,16 @@ function buildApplicationMenu(mode) {
         ] : []),
       ],
     },
+    {
+      label: 'Help',
+      submenu: [
+        { label: 'Report a Bug...', click: () => act('report-bug') },
+        { label: 'Request a Feature...', click: () => act('request-feature') },
+        { type: 'separator' },
+        { label: 'Open Logs Folder', click: () => act('open-logs-folder') },
+        { label: 'Project Page on GitHub', click: () => act('open-project-page') },
+      ],
+    },
   ];
 
   const menu = Menu.buildFromTemplate(menuTemplate);
@@ -1219,6 +1404,23 @@ function createWindow() {
   }
 
   mainWindow = win;
+
+  // The renderer is where almost all of the app lives, so its console output
+  // is the most useful thing to have when a user reports a crash. Only
+  // warnings and errors are captured - the renderer logs plenty of routine
+  // progress at info level, which would bury the failures in noise.
+  win.webContents.on('console-message', (_event, details) => {
+    if (!details || details.level < 2) return;
+    const level = details.level >= 3 ? 'error' : 'warn';
+    const where = details.sourceUrl ? ` (${details.sourceUrl}:${details.lineNumber})` : '';
+    appendToLog(level, `[renderer] ${details.message}${where}`);
+  });
+
+  // A renderer that dies takes the whole UI with it, and in a packaged build
+  // the crash reason is otherwise nowhere to be found.
+  win.webContents.on('render-process-gone', (_event, _webContents, details) => {
+    appendToLog('error', `[renderer] process gone: reason=${details?.reason} exitCode=${details?.exitCode}`);
+  });
 
   win.on('closed', () => {
     mainWindow = null;

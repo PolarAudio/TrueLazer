@@ -46,9 +46,15 @@ describe('AboutWindow', () => {
 
     it('labels every section it presents', () => {
         const html = render(true);
-        for (const section of ['Application', 'Runtime', 'Project Formats', 'DAC Backends', 'Locations']) {
+        for (const section of ['Application', 'Runtime', 'Project Formats', 'DAC Backends', 'Locations', 'Project']) {
             expect(html, `missing section ${section}`).toContain(section);
         }
+    });
+
+    it('points at the project page and the report window', () => {
+        const html = render(true);
+        expect(html).toContain('https://github.com/PolarAudio/TrueLazer');
+        expect(html).toContain('Report a Bug');
     });
 
     it('shows a placeholder rather than undefined when info is unavailable', () => {

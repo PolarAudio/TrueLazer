@@ -154,6 +154,13 @@ contextBridge.exposeInMainWorld(
   // Read-only facts for the About window. Sourced in main so the renderer does
   // not have to reach into process/electron internals.
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  // Report window (bug reports / feature requests). The diagnostics bundle is
+  // assembled in main so the renderer never touches the log file or the
+  // filesystem directly.
+  getDiagnostics: (options) => ipcRenderer.invoke('get-diagnostics', options),
+  openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
+  copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
+  openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
   startArtnetTimecodeListener: () => ipcRenderer.invoke('start-artnet-timecode-listener'),
   stopArtnetTimecodeListener: () => ipcRenderer.send('stop-artnet-timecode-listener'),
   onArtnetTimecode: (callback) => {

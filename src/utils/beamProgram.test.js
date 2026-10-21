@@ -244,9 +244,10 @@ describe('budget-aware pattern resolution', () => {
   const long = [pt(0, 0), pt(4000, 0)];
 
   it('defaultBeamPointAllowance mirrors the export budget', () => {
-    // exportOptimizer allows floor(budget/2) - 2 sampled points per shape.
-    expect(defaultBeamPointAllowance(1200)).toBe(598);
-    expect(defaultBeamPointAllowance(1200)).toBe(Math.max(8, Math.floor(1200 / 2) - 2));
+    // The budget is counted in ILDA points, so a single shape may use all of
+    // it except the two points the frame reserves for its own lift.
+    expect(defaultBeamPointAllowance(1200)).toBe(1198);
+    expect(defaultBeamPointAllowance(1200)).toBe(Math.max(8, Math.floor(1200) - 2));
   });
 
   it('leaves the pattern alone when it already fits', () => {

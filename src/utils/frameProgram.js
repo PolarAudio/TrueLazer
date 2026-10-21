@@ -28,6 +28,7 @@
 
 import { createPointBudgetOptimizer, DEFAULT_POINT_BUDGET } from './exportOptimizer';
 import { buildBeamProgram, isClosedType, DEFAULT_DOT_PITCH } from './beamProgram';
+import { resamplePolyline, DEFAULT_MAX_STEP_PX } from './pointResample';
 
 // Auto-density for the per-point beam styles. They need a dense outline to have
 // anything to draw, so a dotted/dashed/points shape gets this even when the user
@@ -80,15 +81,39 @@ export function buildFrameProgram(shapes, opts = {}) {
   const budgeter = createPointBudgetOptimizer({ budget });
   const points = [];
 
+  // How many shapes will actually be drawn. They share one frame budget -
+  // the DAC's point clock - so the budget is split evenly between them.
+  //
+  // Splitting it evenly is what stops the LAST shape in a frame from being
+  // squeezed down to a handful of points: a shape drawn with four points
+  // burns as a row of dots, which is the defect this whole change is about.
+  // A shape that needs less than its share leaves the rest for the others.
+  let shapesLeft = 0;
+  const countShapes = (list) => {
+    for (const shape of list) {
+      if (!shape || shape.hidden) continue;
+      if (shape.type === 'group') countShapes(shape.shapes || []);
+      else shapesLeft++;
+    }
+  };
+  countShapes(shapes || []);
+
   // Start a shape with the beam off so the laser lifts, travels to the new
   // shape, and drops back down. Without this the beam drags a live line from
   // the previous shape into this one.
   const append = (program) => {
-    if (!program || program.length < 2) return false;
+    if (!program || program.length < 2) return 0;
     const first = program[0];
-    if (points.length > 0 && !first.blanking) points.push({ ...first, blanking: true });
-    for (const p of program) points.push(p);
-    return true;
+    let added = 0;
+    if (points.length > 0 && !first.blanking) {
+      points.push({ ...first, blanking: true });
+      added++;
+    }
+    for (const p of program) {
+      points.push(p);
+      added++;
+    }
+    return added;
   };
 
   const processShape = (shape, group) => {
@@ -118,6 +143,15 @@ export function buildFrameProgram(shapes, opts = {}) {
     if (group && applyTransformations) sampled = applyTransformations(sampled, group);
     if (!sampled || sampled.length < 2) return null;
 
+    // This shape's share of what is left of the frame budget. A shape that
+    // cannot be afforded is dropped rather than drawn as a handful of dots:
+    // the frame budget IS the DAC's point clock, and a frame that overruns it
+    // makes the whole show run slow.
+    const minPoints = shape.type === 'line' ? 2 : 4;
+    const share = shapesLeft > 0 ? Math.floor(budgeter.remaining / shapesLeft) : 0;
+    shapesLeft--;
+    if (share < minPoints) return null;
+
     // Corner/anchor points the user pinned must survive decimation.
     const preserve = new Set();
     const passThrough = shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline';
@@ -125,38 +159,60 @@ export function buildFrameProgram(shapes, opts = {}) {
       dense.anchorIndexes.forEach((i) => preserve.add(i));
     }
 
+    const closed = isClosedType(shape.type);
     const optimized = budgeter.processShape(sampled, {
-      preserve,
-      // A resampled outline is an explicit request (chosen density, or the
-      // auto-density a beam style needs). Decimating it would collapse the
-      // resampled points straight back to the sparse outline.
-      keepAll: wasResampled,
-      minPoints: shape.type === 'line' ? 2 : 4,
+        preserve,
+        // A resampled outline is an explicit request (chosen density, or the
+        // auto-density a beam style needs). Decimating it would collapse the
+        // resampled points straight back to the sparse outline.
+        keepAll: wasResampled,
+        minPoints,
+        allowance: share,
     });
 
     let outline = optimized.points;
     if (effect && effect.type && bakeEffects && applyEffectToPoints) {
-      outline = applyEffectToPoints(outline, effect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
+        outline = applyEffectToPoints(outline, effect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
     }
 
-    const closed = isClosedType(shape.type);
+    // A solid shape is exported as its outline, and the editor keeps that
+    // outline sparse so it stays responsive to edit. But a DAC cannot draw a
+    // line between two points: the galvo flies from one sample to the next,
+    // so a long segment renders as a chain of discrete dots, and a very
+    // sparse shape is lit for only a handful of samples per frame - which
+    // reads as "the laser output is off". Resample the outline to a step the
+    // scanner can resolve, so the exported file burns as a line whatever the
+    // DAC-side point optimization happens to be set to.
+    //
+    // The per-point beam styles (dotted / dashed / points) are left alone:
+    // they already resample the outline to their own density, and their
+    // program emits far more points than the outline, so growing the outline
+    // further would break the frame budget.
+    if (mode === 'simple') {
+        outline = resamplePolyline(outline, {
+            maxStep: DEFAULT_MAX_STEP_PX,
+            maxPoints: share,
+            closed,
+        });
+    }
+
     const program = buildBeamProgram(outline, {
       closed,
       mode,
       pitch: spacing > 0 ? spacing : DEFAULT_DOT_PITCH,
       color: shape.color,
-      // Whatever is left of the frame budget, so a dense shape stretches its
+      // This shape's share of the frame budget, so a dense shape stretches its
       // pattern instead of overrunning the DAC's point clock.
-      maxPoints: Math.max(8, budgeter.remaining),
+      maxPoints: Math.max(8, share),
     });
 
-    if (!append(program.points)) return null;
+    const added = append(program.points);
+    if (!added) return null;
 
-    // Charge the budget in SAMPLED points. The allowance is denominated in
-    // sampled points (one sampled segment emits two ILDA points), so charging
-    // the emitted program length here over-charged every dotted shape — whose
-    // program is the outline PLUS a dwell per dot — and starved later shapes.
-    budgeter.accountFor(outline.length);
+    // Charge the budget in the points the shape really emitted, lift included.
+    // The budget is the DAC's point clock, so a shape has to be charged what
+    // it costs to draw, not an estimate of it.
+    budgeter.accountFor(added);
 
     return {
       type: shape.type,

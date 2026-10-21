@@ -33,6 +33,7 @@ import TimelineEditor from './components/TimelineEditor';
 import { timelineBridge } from './contexts/TimelineContext';
 import { resolveProjectCommand, shouldWarnOnUnsavedChanges, commandForKeyEvent } from './utils/projectRouting';
 import AboutWindow from './components/aboutWindow';
+import ReportWindow from './components/ReportWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
 import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
@@ -45,6 +46,7 @@ import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
 import { applyEffects, applyOutputProcessing, applyOutputProcessingWithDwell, resolveParam, calculateAnimPhase } from './utils/effects';
 import { optimizePoints } from './utils/optimizer';
+import { resampleFrameToStep, DEFAULT_MAX_STEP } from './utils/pointResample';
 import { DEFAULT_PRESET, getPreset, OPT_DEFAULTS, resolvePointBudget } from './utils/hardwarePresets';
 import { effectDefinitions } from './utils/effectDefinitions';
 import { THEME_COLORS } from './utils/midiColors';
@@ -2276,6 +2278,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         setCurrentPage(page);
     }, []);
     const [showAboutWindow, setShowAboutWindow] = useState(false);
+    // null = closed, otherwise 'bug' or 'feature'. The report window is one
+    // component with two shapes rather than two separate windows.
+    const [reportWindowMode, setReportWindowMode] = useState(null);
     const [showShortcutsWindow, setShowShortcutsWindow] = useState(false);
     const [enabledShortcuts, setEnabledShortcuts] = useState({ midi: false, artnet: false, osc: false, keyboard: false });
     const [showRenameModal, setShowRenameModal] = useState(false);
@@ -3309,6 +3314,33 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                 if (b > 0 && (budgetPoints === 0 || b < budgetPoints)) budgetPoints = b;
                             }
                             if (budgetPoints <= 0) budgetPoints = 1000;
+
+                            // A DAC physically cannot draw a line between two points:
+                            // the galvo flies from one sample to the next, so a path
+                            // with long segments renders as a chain of discrete dots,
+                            // and a very sparse path is lit for only a handful of
+                            // samples per frame - which reads as "the output is off".
+                            // Resampling to the scanner's step resolution is a
+                            // correctness requirement of the output, NOT an
+                            // optimization, so it runs whether or not point
+                            // optimization is enabled. The optimization toggle then
+                            // only controls the extras: dwell, anchors, corner
+                            // handling, padding and trimming.
+                            try {
+                                const resampledPts = resampleFrameToStep(modifiedFrame.points, {
+                                    maxStep: Number(optimizationMaxDistRef.current) > 0
+                                        ? Number(optimizationMaxDistRef.current)
+                                        : DEFAULT_MAX_STEP,
+                                    maxPoints: budgetPoints,
+                                });
+                                if (resampledPts && resampledPts.length > 0) {
+                                    modifiedFrame.points = resampledPts;
+                                    modifiedFrame.isTypedArray = true;
+                                }
+                            } catch (e) {
+                                // Never let a resampling fault silence a live output.
+                                console.warn('[DacSend] point resampling failed, sending raw frame', e);
+                            }
 
                             if (optimizationEnabledRef.current) {
                                 const optimizedPts = optimizePoints(modifiedFrame.points, {
@@ -4915,6 +4947,26 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: false });
                 } else if (action === 'about') {
                     setShowAboutWindow(true);
+                } else if (action === 'report-bug') {
+                    setReportWindowMode('bug');
+                } else if (action === 'request-feature') {
+                    setReportWindowMode('feature');
+                } else if (action === 'open-logs-folder') {
+                    window.electronAPI?.openLogFolder?.()
+                        .then(result => {
+                            if (result && !result.success) {
+                                showNotification(result.error || 'Could not open the logs folder.');
+                            }
+                        })
+                        .catch(() => showNotification('Could not open the logs folder.'));
+                } else if (action === 'open-project-page') {
+                    window.electronAPI?.openExternalUrl?.('https://github.com/PolarAudio/TrueLazer')
+                        .then(result => {
+                            if (result && !result.success) {
+                                showNotification(result.error || 'Could not open the browser.');
+                            }
+                        })
+                        .catch(() => showNotification('Could not open the browser.'));
                 } else if (action === 'settings-audio-output') {
                     setShowAudioSettingsWindow(true);
                 } else if (action === 'settings-audio-fft') {
@@ -7741,6 +7793,13 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     <AboutWindow
                         show={showAboutWindow}
                         onClose={() => setShowAboutWindow(false)}
+                    />
+                    <ReportWindow
+                        show={reportWindowMode !== null}
+                        mode={reportWindowMode || 'bug'}
+                        onClose={() => setReportWindowMode(null)}
+                        page={currentPage}
+                        dacs={dacs}
                     />
                     <OutputSettingsWindow
                         show={showOutputSettingsWindow}

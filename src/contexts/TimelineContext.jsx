@@ -643,8 +643,20 @@ export function reducer(state, action) {
             const { channelId, dac } = action.payload;
             const channel = state.channels[channelId];
             if (!channel) return state;
+            // Re-routing a track must not throw away the invert flags of an
+            // output that is still there. The dac that arrives from a
+            // drag-drop carries no flags at all, so an output that was
+            // already inverted came back un-inverted - the user had to set it
+            // up again after every re-route.
+            const existing = (channel.dacs || []).find(
+                (d) => d && dac && d.ip === dac.ip && d.channel === dac.channel
+            );
             const dacs = dac
-                ? [{ ...dac, flipX: !!dac.flipX, flipY: !!dac.flipY }]
+                ? [{
+                    ...dac,
+                    flipX: existing ? !!existing.flipX : !!dac.flipX,
+                    flipY: existing ? !!existing.flipY : !!dac.flipY,
+                }]
                 : [];
             return {
                 ...state,

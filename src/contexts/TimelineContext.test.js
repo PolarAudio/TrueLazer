@@ -346,6 +346,26 @@ describe('zones / multi-DAC routing', () => {
         s = run(s, { type: 'SET_OUTPUT_FLIP', payload: { channelId: 'zone', ip: '10.0.0.6', channel: 1, axis: 'x' } });
         expect(s.channels.zone.dacs[1].flipX).toBe(false); // toggled back
     });
+
+    it('SET_CHANNEL_DAC keeps the invert flags of an output that stays', () => {
+        // A plain drag-drop re-routes the track and collapses the zone, and
+        // the dac that arrives from the drop carries no flags at all - so an
+        // output that was already inverted came back un-inverted and the
+        // user had to set it up again after every re-route.
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'zone', name: 'Zone', dacs: [outA, outB] } });
+        s = run(s, { type: 'SET_OUTPUT_FLIP', payload: { channelId: 'zone', ip: '10.0.0.6', channel: 1, axis: 'x' } });
+        expect(s.channels.zone.dacs[1].flipX).toBe(true);
+
+        // Re-route to the SAME output. The flag must survive.
+        s = run(s, { type: 'SET_CHANNEL_DAC', payload: { channelId: 'zone', dac: { ip: '10.0.0.6', channel: 1 } } });
+        expect(s.channels.zone.dacs).toHaveLength(1);
+        expect(s.channels.zone.dacs[0].flipX).toBe(true);
+
+        // Re-route to a DIFFERENT output: that one was never inverted.
+        s = run(s, { type: 'SET_CHANNEL_DAC', payload: { channelId: 'zone', dac: { ip: '10.0.0.5', channel: 0 } } });
+        expect(s.channels.zone.dacs[0].flipX).toBe(false);
+    });
 });
 
 describe('lanes', () => {

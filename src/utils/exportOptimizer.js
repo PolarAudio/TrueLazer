@@ -229,11 +229,18 @@ export function optimizeShapePoints(pts, opts = {}) {
 }
 
 // Sequential per-frame optimizer that carries a shared ILDA point budget
-// across every shape drawn in the frame. Internal accounting converts the
-// ILDA budget into a sampled-point allowance (each sampled segment emits two
-// ILDA points) and reserves one blanked move point per shape.
+// across every shape drawn in the frame.
+//
+// The budget is counted in ILDA POINTS - the unit the DAC's point clock
+// actually spends per frame. A solid shape emits one ILDA point per outline
+// point, so a shape's cost is simply the number of points it emits. Charging
+// anything else (an outline length scaled by a guessed factor) throws away
+// budget the hardware is already paying for: at one point a solid shape was
+// charged twice what it emitted, so a frame could only ever use half of the
+// points it had been given.
 export function createPointBudgetOptimizer({ budget = DEFAULT_POINT_BUDGET } = {}) {
-  let remaining = Math.max(2, Math.floor(budget / 2) - 2);
+  // Two points are kept in reserve for the frame's own lift between shapes.
+  let remaining = Math.max(2, Math.floor(budget) - 2);
   return {
     get remaining() {
       return remaining;
@@ -241,12 +248,18 @@ export function createPointBudgetOptimizer({ budget = DEFAULT_POINT_BUDGET } = {
     processShape(pts, opts = {}) {
       if (!pts || pts.length < 2) return { points: pts || [], indexes: pts ? pts.map((_, i) => i) : [] };
       const minPoints = opts.minPoints ?? 4;
-      const allowance = Math.max(minPoints, remaining);
+      // The caller may hand in its own share of the budget (see the fair-share
+      // split in frameProgram). Without one, a shape may use everything that
+      // is left.
+      const allowance = opts.allowance !== undefined
+        ? Math.max(minPoints, opts.allowance)
+        : Math.max(minPoints, remaining);
       return optimizeShapePoints(pts, { ...opts, targetCount: allowance, minCount: minPoints });
     },
-    accountFor(shapePointCount) {
-      // subtract the sampled points plus the blanked move point this shape adds
-      remaining = Math.max(0, remaining - shapePointCount - 1);
+    // Charge what the shape really emitted, so the next shape is budgeted
+    // against what is genuinely left.
+    accountFor(ildaPoints) {
+      remaining = Math.max(0, remaining - ildaPoints);
     }
   };
 }

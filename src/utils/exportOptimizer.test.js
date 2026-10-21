@@ -123,7 +123,10 @@ describe('createPointBudgetOptimizer', () => {
     const pts = Array.from({ length: 100 }, (_, i) => pt(i, 0));
     const res = opt.processShape(pts);
     opt.accountFor(res.indexes.length);
-    expect(opt.remaining).toBeLessThan(Math.floor(120 / 2) - 2);
+    // The budget is in ILDA points, so what is left is the budget minus what
+    // was charged.
+    expect(opt.remaining).toBe(Math.floor(120) - 2 - res.indexes.length);
+    expect(opt.remaining).toBeLessThan(Math.floor(120) - 2);
   });
 });
 

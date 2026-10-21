@@ -104,6 +104,24 @@ const AboutWindow = ({ show, onClose }) => {
                         <Row label="App data" value={info?.userDataPath || '—'} mono />
                     </Section>
 
+                    <Section title="Project">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
+                            <div style={{ color: '#e8eaed', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                                https://github.com/PolarAudio/TrueLazer
+                            </div>
+                            <button
+                                className="about-link"
+                                onClick={() => window.electronAPI?.openExternalUrl?.('https://github.com/PolarAudio/TrueLazer')}
+                            >
+                                Open
+                            </button>
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#80868b', marginTop: '6px', lineHeight: '1.5' }}>
+                            Bug reports and feature requests can be filed from Help ▸ Report a Bug...
+                            and Help ▸ Request a Feature...
+                        </div>
+                    </Section>
+
                 </div>
             </div>
             <style>{`
@@ -153,6 +171,16 @@ const AboutWindow = ({ show, onClose }) => {
                     border: 1px solid #444;
                     color: white;
                     border-radius: 4px;
+                }
+                .about-link {
+                    background: none;
+                    border: none;
+                    color: #8ab4f8;
+                    font-size: 12px;
+                    cursor: pointer;
+                    padding: 0;
+                    flex-shrink: 0;
+                    text-decoration: underline;
                 }
             `}</style>
         </div>
