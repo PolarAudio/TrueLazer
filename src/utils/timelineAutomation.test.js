@@ -5,7 +5,7 @@ import {
     getLaneParam, getLaneEffectDef, laneDefaultValue, evaluateLaneForEffect,
     buildChannelEffects, applyCueEffectOverrides,
     getLaneGenParam, getLaneGenDef, evaluateGenLane, buildGeneratorOverrides,
-    activeAutoClip, automationClipAt, evaluateClipAt,
+    activeAutoClip, automationClipAt, evaluateClipAt, collectCueOverridableEffects,
 } from './timelineAutomation';
 
 describe('resolveEasing', () => {
@@ -379,6 +379,55 @@ describe('effect-linked lanes', () => {
         expect(effects).toHaveLength(1);
         expect(effects[0].id).toBe('wave');
         expect(effects[0].params.amplitude).toBeCloseTo(0.5);
+    });
+});
+
+describe('collectCueOverridableEffects', () => {
+    it('finds the effect on the automation CLIP, not on the lane', () => {
+        // A modern lane is only a container. The effect lives on its clips, so
+        // reading lane.effectId found nothing and the Inspector's "Clip effect
+        // toggles" section never rendered.
+        const lanes = [{
+            id: 'l1',
+            effectId: null,
+            clips: [{ id: 'c1', startTime: 0, duration: 8, effectId: 'invert', paramId: null, values: {} }],
+        }];
+        expect(collectCueOverridableEffects(lanes)).toEqual(['invert']);
+    });
+
+    it('still reads a legacy lane that carries the effect itself', () => {
+        const lanes = [{ id: 'l1', effectId: 'delay', paramId: 'steps', keyframes: [] }];
+        expect(collectCueOverridableEffects(lanes)).toEqual(['delay']);
+    });
+
+    it('offers the track\'s effects whatever the cue\'s timing', () => {
+        const lanes = [{
+            id: 'l1',
+            clips: [
+                { id: 'c1', startTime: 0, duration: 2, effectId: 'invert' },
+                { id: 'c2', startTime: 10, duration: 2, effectId: 'delay' },
+            ],
+        }];
+        // The list is TRACK scoped: a cue override is applied whenever that
+        // cue plays, and it creates the effect if it is not running then - so
+        // filtering by overlap would hide the case the override exists for.
+        expect(collectCueOverridableEffects(lanes)).toEqual(['invert', 'delay']);
+    });
+
+    it('de-duplicates the same effect on several clips', () => {
+        const lanes = [{
+            id: 'l1',
+            clips: [
+                { id: 'c1', startTime: 0, duration: 4, effectId: 'invert' },
+                { id: 'c2', startTime: 2, duration: 4, effectId: 'invert' },
+            ],
+        }];
+        expect(collectCueOverridableEffects(lanes)).toEqual(['invert']);
+    });
+
+    it('returns nothing for a channel with no effect lanes', () => {
+        expect(collectCueOverridableEffects([])).toEqual([]);
+        expect(collectCueOverridableEffects([{ id: 'l1', clips: [] }])).toEqual([]);
     });
 });
 

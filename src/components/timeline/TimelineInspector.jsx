@@ -13,6 +13,7 @@ import {
     getLaneTarget,
     laneDefaultValue,
     evaluateClipAt,
+    collectCueOverridableEffects,
 } from '../../utils/timelineAutomation';
 import TimelinePreview from './TimelinePreview';
 
@@ -198,13 +199,20 @@ const CueEffectToggles = ({ cue }) => {
     const channel = state.channels[cue.channelId];
     if (!channel) return null;
 
+    const overrides = cue.effectOverrides || {};
     const lanes = (channel.automationLanes || [])
         .map((lid) => state.lanes[lid])
         .filter(Boolean);
-    const effectIds = [...new Set(lanes.map((l) => l.effectId).filter(Boolean))];
+    // The effect lives on the automation CLIPS a lane holds, not on the lane
+    // itself - the lane is only a container. Effects that already carry an
+    // override stay listed even if their clip was removed, so a setting never
+    // silently disappears.
+    const effectIds = [...new Set([
+        ...collectCueOverridableEffects(lanes),
+        ...Object.keys(overrides),
+    ])];
     if (effectIds.length === 0) return null;
 
-    const overrides = cue.effectOverrides || {};
     const setParam = (effectId, paramId, value) => {
         const next = { ...overrides, [effectId]: { ...(overrides[effectId] || {}), [paramId]: value } };
         actions.updateCue(cue.id, { effectOverrides: next });

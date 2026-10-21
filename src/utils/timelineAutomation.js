@@ -198,6 +198,36 @@ export function buildChannelEffects(lanes = [], time, channelId = '') {
 }
 
 /**
+ * The effects whose static (non-range) settings a cue can override.
+ *
+ * A modern lane is only a CONTAINER: the effect lives on the automation CLIPS
+ * the lane holds, not on the lane itself. ADD_LANE is always called without
+ * an effectId, so reading `lane.effectId` found nothing and the Inspector's
+ * "Clip effect toggles" section never rendered. A legacy lane carries its
+ * target on the lane, so both are read.
+ *
+ * The list is TRACK scoped, not time scoped: an override is stored on the cue
+ * and is applied whenever that cue plays, and applyCueEffectOverrides creates
+ * the effect if it is not running at that moment. So a cue override can turn a
+ * static effect on for one clip only - which is exactly what it is for, and
+ * why the effects are not filtered by whether they overlap the cue.
+ *
+ * @param {Array} lanes  the channel's automation lanes
+ * @returns {string[]} the effect ids
+ */
+export function collectCueOverridableEffects(lanes = []) {
+    const ids = new Set();
+    for (const lane of lanes || []) {
+        if (!lane) continue;
+        if (lane.effectId) ids.add(lane.effectId);
+        for (const clip of (lane.clips || [])) {
+            if (clip && clip.effectId) ids.add(clip.effectId);
+        }
+    }
+    return [...ids];
+}
+
+/**
  * Layer a clip's per-clip toggle overrides onto a channel effects array. Curves
  * only drive continuous 'range' params; every other control (select, checkbox,
  * color, text) is static per channel — this lets individual clips override
