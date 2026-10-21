@@ -32,8 +32,15 @@ import ShapeBuilder from './components/ShapeBuilder';
 import TimelineEditor from './components/TimelineEditor';
 import { timelineBridge } from './contexts/TimelineContext';
 import { resolveProjectCommand, shouldWarnOnUnsavedChanges, commandForKeyEvent } from './utils/projectRouting';
+import {
+    showProjectFingerprint,
+    isShowProjectDirty,
+    describeUnsavedWork,
+    unsavedWorkPrompt,
+} from './utils/projectDirty';
 import AboutWindow from './components/aboutWindow';
 import ReportWindow from './components/ReportWindow';
+import UpdateWindow from './components/UpdateWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
 import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
@@ -2278,6 +2285,16 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         setCurrentPage(page);
     }, []);
     const [showAboutWindow, setShowAboutWindow] = useState(false);
+    // The auto-updater's state, pushed from the main process: { phase, version,
+    // percent, error }. Null means there is nothing to show.
+    const [updateState, setUpdateState] = useState(null);
+    // Set once the stored settings have been applied. The settings load
+    // restores the user's preferences into the state, which changes the
+    // Show Project's fingerprint - so the document has to be marked clean
+    // afterwards, or a freshly started app would claim to have unsaved work.
+    const [settingsLoaded, setSettingsLoaded] = useState(false);
+    // The auto-updater's preferences (check automatically, skipped version).
+    const [updatePrefs, setUpdatePrefs] = useState({ autoCheck: true, skippedVersion: '' });
     // null = closed, otherwise 'bug' or 'feature'. The report window is one
     // component with two shapes rather than two separate windows.
     const [reportWindowMode, setReportWindowMode] = useState(null);
@@ -4799,9 +4816,34 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     // Listen for project management commands
     // Ref to hold the latest state for event listeners
     const stateRef = useRef(state);
+    // Assigned during render rather than in an effect. The unsaved-work
+    // fingerprint is taken when the app is asked to quit, and an effect
+    // updates the ref one commit late - which would mean missing the very
+    // last edit the user made.
+    stateRef.current = state;
+
+    // The Show Project's unsaved-changes baseline.
+    //
+    // The .tlp is written as the whole reducer state, so the fingerprint is
+    // taken over the DOCUMENT part of it (the show) and not the transient
+    // parts (a toast, the playback state, the selection, the parse progress).
+    // See src/utils/projectDirty.js.
+    const showProjectBaselineRef = useRef(null);
+    const markShowProjectClean = useCallback(() => {
+        showProjectBaselineRef.current = showProjectFingerprint(stateRef.current);
+    }, []);
+    const showProjectIsDirty = useCallback(
+        () => isShowProjectDirty(stateRef.current, showProjectBaselineRef.current),
+        []
+    );
+    // Seed the baseline so a freshly started app is not "dirty".
+    useEffect(() => { markShowProjectClean(); }, [markShowProjectClean]);
+    // ...and again once the stored settings have been applied, because they
+    // restore the user's preferences into the state.
     useEffect(() => {
-        stateRef.current = state;
-    }, [state]);
+        if (!settingsLoaded) return;
+        markShowProjectClean();
+    }, [settingsLoaded, markShowProjectClean]);
 
     useEffect(() => {
         let unlistenNew, unlistenOpen, unlistenSave, unlistenSaveAs, unlistenLoad;
@@ -4863,10 +4905,34 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             // the .tlp dialog and replies with 'load-project-data'.
             if (command === 'new') {
                 dispatch({ type: 'RESET_STATE' });
+                markShowProjectClean();
             } else if (command === 'save') {
-                window.electronAPI.send('save-project', stateRef.current);
+                saveShowProject(false);
             } else if (command === 'saveAs') {
-                window.electronAPI.send('save-project-as', stateRef.current);
+                saveShowProject(true);
+            }
+        };
+
+        // Save the Show Project and record that the document is clean.
+        //
+        // The write has to be confirmed before the document counts as clean: a
+        // cancelled Save As writes nothing, and a document that still looks
+        // saved would be lost without a warning.
+        const saveShowProject = async (asNewFile) => {
+            const bridge = asNewFile
+                ? window.electronAPI?.saveProjectAs
+                : window.electronAPI?.saveProject;
+            if (!bridge) return;
+            try {
+                const result = await bridge(stateRef.current);
+                if (result && result.success) {
+                    markShowProjectClean();
+                } else if (result && result.needsSaveAs) {
+                    // No path yet: main asks for a Save As instead.
+                    await saveShowProject(true);
+                }
+            } catch (error) {
+                console.error('Failed to save the show project:', error);
             }
         };
 
@@ -4902,6 +4968,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
             unlistenLoad = window.electronAPI.on('load-project-data', (data) => {
                 dispatch({ type: 'LOAD_PROJECT', payload: data });
+                // The freshly opened document is the clean baseline.
+                markShowProjectClean();
             });
         }
 
@@ -4918,7 +4986,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
     // Listen for menu actions for theme and render settings
     useEffect(() => {
-        let unlistenMenu, unlistenRenderSettings;
+        let unlistenMenu, unlistenRenderSettings, unlistenUpdateStatus;
 
         const loadInitialSettings = async () => {
             if (window.electronAPI && window.electronAPI.getAllSettings) {
@@ -4928,6 +4996,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         setEnabledShortcuts(settings.shortcutsState);
                     }
                     dispatch({ type: 'LOAD_SETTINGS', payload: settings });
+                    // The settings have been applied; the document is the
+                    // saved state again.
+                    setSettingsLoaded(true);
                 }
             }
         };
@@ -4967,6 +5038,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                             }
                         })
                         .catch(() => showNotification('Could not open the browser.'));
+                } else if (action === 'check-for-updates') {
+                    window.electronAPI?.checkForUpdates?.()
+                        .catch(() => showNotification('Could not check for updates.'));
                 } else if (action === 'settings-audio-output') {
                     setShowAudioSettingsWindow(true);
                 } else if (action === 'settings-audio-fft') {
@@ -5017,14 +5091,67 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 console.log("Render settings command received:", command);
                 dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: command.setting, value: command.value } });
             });
+
+            // The auto-updater reports its progress from the main process.
+            unlistenUpdateStatus = window.electronAPI.onUpdateStatus((status) => {
+                setUpdateState(status);
+            });
+
+            // The auto-updater's preferences.
+            window.electronAPI.getUpdatePreferences?.()
+                .then((prefs) => { if (prefs) setUpdatePrefs(prefs); })
+                .catch(() => { /* keep the defaults */ });
         }
 
         // Cleanup
         return () => {
             if (unlistenMenu) unlistenMenu();
             if (unlistenRenderSettings) unlistenRenderSettings();
+            if (unlistenUpdateStatus) unlistenUpdateStatus();
         };
     }, []); // Empty dependency array so it only runs once on mount
+
+    // The main process asks before it quits the app - which is what the
+    // auto-updater does when it restarts into a new version, and what closing
+    // the window does. Only the renderer knows what is in the editors, so only
+    // the renderer can say whether quitting would lose anything.
+    useEffect(() => {
+        if (!window.electronAPI?.onAppRequestQuit) return undefined;
+        return window.electronAPI.onAppRequestQuit((payload) => {
+            const { requestId, reason } = payload || {};
+            let editors = {};
+            try {
+                editors = {
+                    showProject: showProjectIsDirty(),
+                    shapeBuilder: !!(shapeBuilderRef.current?.isDirty?.()),
+                    // The Timeline is deliberately NOT here. Its store is
+                    // persisted to local storage as it changes, so quitting
+                    // loses nothing - the .json file on disk may be stale,
+                    // but the work survives. The other two editors keep
+                    // their documents in memory only, so quitting WOULD lose
+                    // them.
+                };
+            } catch (error) {
+                // Never let the guard itself block the app from closing.
+                console.warn('Unsaved-work check failed; continuing.', error);
+            }
+            const items = describeUnsavedWork(editors);
+            let proceed = true;
+            if (items.length > 0) {
+                // Logged because "the app asked to discard my work when I had
+                // not done any" is the kind of question that can only be
+                // answered from the log.
+                console.warn('[Quit] unsaved work found in:', items.join(', '));
+                const prompt = unsavedWorkPrompt(editors);
+                proceed = window.confirm(
+                    reason === 'update'
+                        ? `TrueLazer is about to install an update and restart.\n\n${prompt}`
+                        : prompt
+                );
+            }
+            window.electronAPI.send('app-quit-decision', { requestId, proceed });
+        });
+    }, [showProjectIsDirty]);
 
     // Handles requests from ildaParserWorker to read files from the main process
     useEffect(() => {
@@ -7800,6 +7927,21 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         onClose={() => setReportWindowMode(null)}
                         page={currentPage}
                         dacs={dacs}
+                    />
+                    <UpdateWindow
+                        state={updateState}
+                        onClose={() => setUpdateState(null)}
+                        onInstallNow={() => { window.electronAPI?.installUpdate?.('now'); }}
+                        onInstallNextLaunch={() => { window.electronAPI?.installUpdate?.('next-launch'); }}
+                        onSkip={(version) => {
+                            window.electronAPI?.skipUpdate?.(version);
+                            setUpdateState(null);
+                        }}
+                        autoCheck={updatePrefs.autoCheck}
+                        onToggleAutoCheck={(value) => {
+                            setUpdatePrefs((prev) => ({ ...prev, autoCheck: value }));
+                            window.electronAPI?.setUpdatePreferences?.({ autoCheck: value });
+                        }}
                     />
                     <OutputSettingsWindow
                         show={showOutputSettingsWindow}

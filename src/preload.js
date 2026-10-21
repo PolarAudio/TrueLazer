@@ -154,6 +154,29 @@ contextBridge.exposeInMainWorld(
   // Read-only facts for the About window. Sourced in main so the renderer does
   // not have to reach into process/electron internals.
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  // Auto-update. The updater itself lives in the main process; the renderer
+  // only asks for a check, decides what to do with a downloaded update, and
+  // answers the main process's "is it safe to quit?" question.
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: (mode) => ipcRenderer.invoke('install-update', mode),
+  skipUpdate: (version) => ipcRenderer.invoke('skip-update', version),
+  getUpdatePreferences: () => ipcRenderer.invoke('get-update-preferences'),
+  setUpdatePreferences: (patch) => ipcRenderer.invoke('set-update-preferences', patch),
+  onUpdateStatus: (callback) => {
+    const listener = (event, payload) => callback(payload);
+    ipcRenderer.on('update-status', listener);
+    return () => ipcRenderer.removeListener('update-status', listener);
+  },
+  onAppRequestQuit: (callback) => {
+    const listener = (event, payload) => callback(payload);
+    ipcRenderer.on('app-request-quit', listener);
+    return () => ipcRenderer.removeListener('app-request-quit', listener);
+  },
+  // The Show Project's save has to report back whether it actually wrote the
+  // file: without that the renderer cannot tell a clean document from a
+  // dirty one (a cancelled Save As looks exactly like a successful write).
+  saveProject: (projectData) => ipcRenderer.invoke('save-project', projectData),
+  saveProjectAs: (projectData) => ipcRenderer.invoke('save-project-as', projectData),
   // Report window (bug reports / feature requests). The diagnostics bundle is
   // assembled in main so the renderer never touches the log file or the
   // filesystem directly.
