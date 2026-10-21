@@ -20,9 +20,13 @@ import {
  *   Ctrl/Cmd+Arrow   jump to the previous/next clip start/end boundary
  *   Ctrl+C/X/V       copy / cut / paste the selected cue or automation clip
  *                    (paste at playhead, onto the currently selected track if any)
- *   Ctrl+S           save timeline project (save-as first time)
- *   Ctrl+N           new timeline project
  *   Ctrl+Z           undo   |   Ctrl+Shift+Z  redo
+ *
+ * Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S are deliberately ABSENT. They are
+ * application-menu accelerators owned by main.js, which fire on every page and
+ * are routed to the active page by src/utils/projectRouting.js. Binding them
+ * here as well made Ctrl+S save the timeline twice while also writing a stray
+ * .tlp show project.
  *   Alt+wheel        vertical zoom (block / automation row heights)
  *   Ctrl+wheel       horizontal zoom (px per second)
  *   Shift+wheel      over a cue → move it by one frame
@@ -434,23 +438,13 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 }
                 return;
             }
-            if (key === 's') {
-                e.preventDefault();
-                actionsRef.current.saveProject();
-                return;
-            }
-            if (key === 'n') {
-                e.preventDefault();
-                if (window.confirm('Start a new timeline project?')) {
-                    actionsRef.current.newProject();
-                }
-                return;
-            }
-            if (key === 'o') {
-                e.preventDefault();
-                actionsRef.current.openProject();
-                return;
-            }
+            // NOTE: Ctrl+N / Ctrl+S / Ctrl+Shift+S / Ctrl+O are deliberately NOT handled
+            // here. They are application-menu accelerators, so they fire on every
+            // page regardless of what the renderer calls preventDefault() on.
+            // main.js routes them to whichever page is active and App.jsx
+            // dispatches them to that page's own save/open. Binding them here as
+            // well made Ctrl+S save the timeline twice while ALSO writing the
+            // show project to a .tlp file.
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);

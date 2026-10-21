@@ -69,6 +69,12 @@ export const DEFAULT_TIMELINE_SETTINGS = Object.freeze({
     // true = "Trim" (resizing clamps to the neighbouring cue so clips can
     // never be dragged over one another).
     clipEditTrim: false,
+    // Run the point optimizer on timeline cue frames before they reach the DAC.
+    // Off by default so existing Timeline behaviour is byte-for-byte unchanged;
+    // turn on to make the Timeline page match the Grid page (which always
+    // optimizes), including interpolation, corner dwell and safety-zone
+    // boundary dwell.
+    optimizeOnPlayback: false,
 });
 
 export function createInitialTimelineState() {
@@ -135,7 +141,10 @@ export function getChannelDisplayName(channel, dacOutputSettings) {
         outputs.length === 1 && dacOutputSettings
             ? dacOutputSettings[`${outputs[0].ip}:${outputs[0].channel}`]?.name
             : null;
-    const isAutoSeeded = /^Channel \d+:/.test(channel.name || '');
+    // Accept both the auto-seeded form ("Channel 1: <label>") and the plain
+    // "Channel N" form minted by the Add Channel button / empty-state button,
+    // so a hand-added track also picks up the Output Settings name.
+    const isAutoSeeded = /^Channel \d+\b/.test(channel.name || '');
     if (custom && String(custom).trim() && isAutoSeeded) return String(custom).trim();
     return channel.name || 'Channel';
 }
@@ -359,6 +368,10 @@ function newCue(id, patch = {}) {
         startTime: patch.startTime ?? 0,
         duration: patch.duration ?? 5,
         isLooping: patch.isLooping ?? false,
+        // Optional per-clip colour. null/undefined means "use the default for
+        // this clip's type" (ILDA blue / generator amber), which is how every
+        // cue created before this field existed keeps its original look.
+        color: patch.color ?? null,
         layerPriority: patch.layerPriority ?? 0,
         effects: patch.effects || [],
         // Per-clip overrides for the channel's effect-lane toggle settings that
@@ -630,8 +643,20 @@ export function reducer(state, action) {
             const { channelId, dac } = action.payload;
             const channel = state.channels[channelId];
             if (!channel) return state;
+            // Re-routing a track must not throw away the invert flags of an
+            // output that is still there. The dac that arrives from a
+            // drag-drop carries no flags at all, so an output that was
+            // already inverted came back un-inverted - the user had to set it
+            // up again after every re-route.
+            const existing = (channel.dacs || []).find(
+                (d) => d && dac && d.ip === dac.ip && d.channel === dac.channel
+            );
             const dacs = dac
-                ? [{ ...dac, flipX: !!dac.flipX, flipY: !!dac.flipY }]
+                ? [{
+                    ...dac,
+                    flipX: existing ? !!existing.flipX : !!dac.flipX,
+                    flipY: existing ? !!existing.flipY : !!dac.flipY,
+                }]
                 : [];
             return {
                 ...state,

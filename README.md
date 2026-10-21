@@ -41,8 +41,8 @@ software. Here's what sets us apart:
   - 8x5 clip deck with dynamic layer and column management (edit/clear/rename).
   - Layer controls: Blackout, Solo, Blend Mode, Intensity sliders, Layer Effects and assigned DACs.
   - Master intensity slider, Laser On/Off button and composition label.
-  - Clip attributes: Play Style (Once/Repeat), Trigger (Normal/Flash/Toggle), Transport (Timeline/BPM-Sync),
-    Beat Snap (None/8/4/2/1/1/2/1/4/1/8), Audio Track.
+  - Clip attributes: Trigger (Normal/Flash/Toggle/Temp), Transport (FPS/Timeline/BPM-Sync), Play Style
+    (Loop/Once/Bounce — experimental), Audio Track.
   - Clip and World previews: render preview, beam rendering (points/lines) and scan-rate display.
 
 - **Effects System (Clip & Layer Effects)**
@@ -53,6 +53,9 @@ software. Here's what sets us apart:
   - Output: Blanking and Strobe.
   - **Warp** is a "black hole" effect — signed positional gravity that pulls or pushes points toward/away from
     its center within a radius, with a distance falloff; it is not time-based by itself.
+  - **Invert** has every option off by default, so adding it does nothing until you say what to invert.
+    Asking for an inverted colour no longer also mirrors the geometry. In the Timeline it is selected by
+    dropping it on an automation track and ticking its checkboxes.
   - **Speed-Sync animation:** every parameter can be animated via FPS, Timeline, BPM or FFT speed-sync with
     style (Loop/Bounce/Once) and direction (Forward/Backward/Pause) control.
   - **Linked X/Y axes:** effects with paired axis parameters (Warp Position, Grow Center, Move Speed,
@@ -67,12 +70,85 @@ software. Here's what sets us apart:
 - **DAC Communication**
   - The ILDA Standard IDN communication protocol, re-written in JavaScript.
   - Showbridge DAC communication (discovery, SDK queries, UDP frame streaming).
-  - EtherDream driver being ported to JavaScript (in progress).
+  - EtherDream DAC communication, built on the `@laser-dac/core` and
+    `@laser-dac/ether-dream` packages with a hand-written point conversion and
+    padding layer in `main/etherdream-communication.cjs`.
   - Assign DAC channels to clips/layers via drag-and-drop; channel reordering with custom Delay/Chase order.
 
 - **Control Integration**
   - MIDI mapping (pre-made & custom), HOTKEYS mapping, DMX/Artnet mapping.
   - General Settings, Output Settings and Output Processing windows, Shortcuts window.
+
+## Editors
+
+TrueLazer opens a **single Electron window** containing three editors, switched
+via the application menu (**TrueLazer ▸ Shape Builder** / **▸ Timeline Editor**,
+and a *Back to Show Control* button in each). `src/App.jsx` holds the active page
+in `currentPage` and renders one of three trees; there is no second `BrowserWindow`
+and no OS-level window per editor.
+
+| Editor | `currentPage` | What it is | Project format |
+|---|---|---|---|
+| Show Control | `main` | The 8×5 clip deck, layers, effects and DAC assignment | `.tlp` |
+| Timeline Editor | `timeline` | Multi-channel timeline with automation lanes, timecode sync and DJ-Link | `.json` |
+| Shape Builder | `shapeBuilder` | Vector shape editor with beam/frame programming; see `docs/SHAPE_BUILDER.md` | `.tls` |
+
+Output Settings are additionally exportable on their own as a `.tlo` file
+(**Output Settings ▸ Export… / Import…**). They otherwise ride inside the show
+project, so a new project clears them; a `.tlo` lets one rig configuration be
+reused across shows and machines. Import **merges** — only outputs whose
+`ip:channel` address matches a currently detected DAC are updated, and entries
+with no detected output are reported rather than silently applied.
+
+Because the editors share one window, they share one application menu and one set
+of modal dialogs:
+
+- **The menu adapts to the active page.** The `Layer`, `Column` and `Clip` menus
+  operate on the clip deck and are omitted outside Show Control, as are the
+  clip-deck `View ▸ Predefined Layouts` and `View ▸ Render Mode` entries.
+- **Modals overlay every page.** About, Output Settings, Output Processing, Audio,
+  General, Link/Sync, Shortcuts and Rename are mounted above the page switch.
+- **Open / Save / Save As / New target the active editor's project file**, and the
+  menu labels say which ("Save Show Project" vs "Save Timeline Project" vs "Save
+  Shape Project"). Routing lives in `src/utils/projectRouting.js`.
+- **Leaving the Shape Builder with unsaved work prompts first**, because it
+  unmounts and would otherwise discard its document. The Timeline is exempt: its
+  store sits above the page switch and persists to local storage.
+
+Shape Builder documents are saved as a `.tls` project; exporting to ILDA (`.ild`)
+or to a reusable clip (`.clip`) is a separate action.
+
+**The exported geometry is laser-grade.** A DAC cannot draw a line between two
+points — the galvo flies from one sample to the next — so a path whose segments
+are longer than the scanner can resolve renders as a chain of discrete dots, and
+a very sparse path is lit for only a handful of samples per frame, which reads
+as "the output is off". The export therefore resamples every solid shape so no
+segment is longer than the scanner's step (`0.02` display units), inside the
+**Max pts/frame** budget. The editor still keeps a sparse outline for authoring
+(the *Point density* setting), but the file that gets written is not sparse.
+
+The same resampling runs on the playback path, so third-party `.ild` files with
+sparse geometry are corrected at playback time too. *Point Optimization* now
+controls only the extras — dwell, anchors, corner handling, padding, trimming —
+not whether the path is sampled.
+
+**The frame budget is the DAC's point clock, and it is treated as a hard limit.**
+*Max pts/frame* is the number of points the hardware can scan in one frame, so
+the export spends all of it and no more:
+
+- A shape is charged the points it **actually** emits. A solid shape used to be
+  charged twice that, which silently threw away half the frame budget and
+  halved how many shapes a frame could carry.
+- The budget is split **evenly between the shapes** in a frame. A shape that
+  needs less than its share leaves the rest for the others, and when the frame
+  is crowded every shape loses density together — instead of the last shapes
+  being squeezed down to four points, which is what burns as a row of dots.
+- A shape that cannot be afforded at all is **left out** and the export says
+  so, rather than being drawn as a handful of dots or pushing the frame past
+  the hardware's point clock and making the show run slow.
+
+The per-point beam styles (dotted / dashed / points) stretch their pattern, and
+shorten the dot dwell, to fit the budget too.
 
 ## Why Support TrueLazer?
 
@@ -109,8 +185,10 @@ usable, with continuous improvements to performance, DAC communication and the e
 - ☑ Project scaffolding and basic file structure are in place.
 - ☑ Initial UI components for the clip deck, layers, and controls.
 - ☒ ILDA file parsing and rendering.
-- ☒ Showbridge DAC communication protocol (analyzed, communication works, trailing-line issues being fixed).
-- ☒ EtherDream DAC communication protocol re-written to JavaScript, needs further adjustments.
+- ☒ Showbridge DAC communication protocol (reverse-engineered and implemented; the trailing
+  line/centre-arc artefact is mitigated by keeping every frame inside one data chunk —
+  `FILL_TARGET = PTS_FULL = 575`).
+- ☒ EtherDream DAC communication protocol (built on the `@laser-dac/*` packages), needs further adjustments.
 - ☑ IDN communication protocol re-written in JavaScript and working great with the LaserVR test application.
 
 ### NDI Integration
@@ -137,8 +215,8 @@ Discovered NDI sources can be dragged from the Generator Panel onto the clip gri
    - ☑ "Selected Clip Preview" and "World Preview" windows.
    - ☑ File browser for ILDA files with drag-and-drop functionality.
    - ☑ Dynamic layer and column management (edit/clear/rename).
-   - ☒ Custom title bar with menu options (TrueLazer Info, Settings, Layer, Column, Clip, Output, Shortcuts,
-     View).
+   - ☑ Native application menu (TrueLazer, Settings, Layer, Column, Clip, Output, Shortcuts, View) with
+     New/Open/Save/Save As. The menu adapts to the active page — see *Editors* below.
 
 2. **Generative Content System**
    - ☑ Simple set of shape generators (dots, lines, circles, text) as base layers.
@@ -153,8 +231,8 @@ Discovered NDI sources can be dragged from the Generator Panel onto the clip gri
 
 4. **Control Integration**
    - ☑ MIDI and HOTKEYS mapping (pre-made & custom).
-   - ☒ DMX/Artnet mapping.
-   - ☐ OSC control.
+   - ☑ DMX/ArtNet mapping, including an Art-Net Timecode listener on UDP 6454.
+   - ☒ OSC control (listener + settings exist; no mapping editor UI yet).
 
 5. **DAC Communication**
    - ☑ ILDA Standard IDN Communication Protocol.
@@ -165,14 +243,15 @@ Discovered NDI sources can be dragged from the Generator Panel onto the clip gri
 6. **Remaining Roadmap**
    - ☐ "Global intensity" slider (dark to light color fade).
    - ☑ "Speed" select (speed source: BPM, manual, midi-clock).
-   - ☑ Timeline Editor Window.
-   - ☑ Show Editor Window.
-   - ☑ Projector Setup (Info, Rendering, Color-Balance, Safety-Zones, Test-Image) per channel/DAC.
+   - ☑ Timeline Editor.
+   - ☑ Show Editor.
+   - ☒ Per-output Projector Setup (Channel name, Output Transformation, Timing Target, Safety Zones, Test
+     Output) per channel/DAC.
    - ☑ Audio Settings (Input and Output).
-   - ☑ General Settings (Save, Load, Update Check, Animate Thumbnail Always/Hover/Off, Show FPS, ILDA Scan
-     Safety).
-   - ☐ Reset Functions (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.).
-   - ☐ Bug report feature.
+   - ☒ General Settings (currently ILDA Parsing mode + Master Speed / Target FPS; the Thumbnail render mode
+     lives under **View ▸ Render Mode**).
+    - ☐ Reset Functions (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.).
+    - ☑ Bug report feature.
 
 ## Contributing to TrueLazer
 
@@ -221,7 +300,11 @@ Before you begin, ensure you have the following installed:
    npm test
    ```
 
-   Runs the Vitest suite (effects and processors).
+   Runs the Vitest suite (33 test files covering effects, processors, generators, the point optimizer,
+   timeline automation, project routing and the DAC point budget).
+
+   There is also `npm run smoke`, which exercises the Electron main process, the native addons and
+   `better-sqlite3` outside the renderer.
 
 5. **Build the Executable**
 
@@ -237,11 +320,40 @@ Before you begin, ensure you have the following installed:
 - `src/utils/` — Effect definitions/processors, generators, ILDA parsing/writing and rendering.
 - `src/ILDA-FILE-FORMAT-FILES/` — Default ILDA files for testing/development (unpacked to the chosen install
   location during installation).
-- `main/` + `main.js` + `preload.js` — Electron main process and IPC.
+- `main/` + `main.js` + `src/preload.js` — Electron main process and IPC.
 - `native/` — Native addon source for the NDI wrapper (`build-native`).
+- `patches/` — `patch-package` patches applied on `postinstall`.
+- `docs/` — Feature documentation (`SHAPE_BUILDER.md`).
 - `sdk/` — DAC/SDK information: EtherDream reference code, Showbridge driver & protocol docs, NDI 6 SDK.
 - `dist/` — Vite production build output.
 - `release/` — Packaged installers.
+
+Topic documentation at the repository root: `Timeline_Window.md` (original design spec — see
+the status note at the top), `OptimizationPlan.md` (historical React render-performance plan),
+`ARTNET_MAPPING.md`, `idn.md`, `CONTRIBUTING.md`, and `Platform_Compatibility.md`
+(Windows/macOS/Linux status and what a cross-platform pass would need).
+
+### Reporting Bugs and Requesting Features
+
+TrueLazer has a built-in report window: **Help ▸ Report a Bug...** and **Help ▸ Request a Feature...**.
+
+The window collects the description, the area of the app involved, and — optionally — an environment
+block (app version, OS, CPU, GPU, the page you were on, the DACs that were found) and a tail of the
+application log. It then hands you a **pre-filled GitHub issue** in your browser. Nothing is submitted
+automatically: you always get to read and edit the report before it is filed.
+
+- **Copy report** puts the whole report, log included, on the clipboard. Use this when the log is too
+  long to travel in the issue link, or when you would rather paste the report somewhere else.
+- **Open logs folder** reveals `%APPDATA%/TrueLazer/logs`, which holds `main.log`.
+
+Personal paths, e-mail addresses and MAC addresses are redacted from the collected details by
+default; switch redaction off in the window if a raw path is needed to diagnose the problem. IP
+addresses are deliberately left in, because DAC troubleshooting depends on them.
+
+The log is written by both the main process and the renderer, so a crash in the UI is recorded too.
+
+Prefer to write the issue by hand? The repository has matching issue templates under
+`.github/ISSUE_TEMPLATE/`.
 
 ### How to Contribute
 

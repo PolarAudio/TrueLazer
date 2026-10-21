@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { PRESET_ORDER, DEFAULT_PRESET, getPreset } from '../utils/hardwarePresets';
 import { TARGET_MODES } from '../utils/speedTarget';
+import {
+    buildOutputSettingsFile,
+    parseOutputSettingsFile,
+    matchOutputs,
+    describeOutputKey,
+} from '../utils/dacOutputSettingsFile';
 
 // Canvas component for the safety zones and output area interaction
 const OutputCanvas = ({ 
@@ -529,6 +535,12 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   const [snapToGrid, setSnapToGrid] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
   const saveStatusTimerRef = useRef(null);
+  // Feedback for the standalone .tlo export/import. Declared with the other
+  // state, BEFORE the `if (!show) return null` below - hooks must run
+  // unconditionally or React throws "Rendered more hooks than during the
+  // previous render" the first time the window is opened.
+  const [fileStatus, setFileStatus] = useState(null);
+  const fileStatusTimerRef = useRef(null);
 
   const handleSave = () => {
       const payload = dacSettings;
@@ -541,6 +553,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   };
 
   useEffect(() => () => { if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current); }, []);
+  useEffect(() => () => { if (fileStatusTimerRef.current) clearTimeout(fileStatusTimerRef.current); }, []);
 
   // Flatten DACs to Outputs (Channels)
   const outputs = useMemo(() => {
@@ -634,6 +647,83 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       updateCurrentSettings({ safetyZones: newZones });
   };
 
+  // --- Standalone Output Settings file (.tlo) ---
+  // Output Settings normally ride inside the Show project, so a new project
+  // clears them. Export/import writes and reads them as a standalone document so
+  // one configuration can be reused across shows and machines.
+  // These are plain functions, not hooks, so they are safe to declare here.
+  const showFileStatus = (msg) => {
+      setFileStatus(msg);
+      if (fileStatusTimerRef.current) clearTimeout(fileStatusTimerRef.current);
+      fileStatusTimerRef.current = setTimeout(() => setFileStatus(null), 7000);
+  };
+
+  const handleExportFile = async () => {
+      const api = window.electronAPI;
+      if (!api?.exportDacOutputSettings) return;
+      const count = Object.keys(dacSettings || {}).length;
+      if (count === 0) {
+          showFileStatus('Nothing to export — no output settings saved yet.');
+          return;
+      }
+      const result = await api.exportDacOutputSettings(buildOutputSettingsFile(dacSettings));
+      if (!result || result.canceled) return;
+      if (result.success) showFileStatus(`Exported ${count} output setting${count === 1 ? '' : 's'}.`);
+      else showFileStatus(`Export failed: ${result.error || 'unknown error'}`);
+  };
+
+  const handleImportFile = async () => {
+      const api = window.electronAPI;
+      if (!api?.importDacOutputSettings) return;
+      const result = await api.importDacOutputSettings();
+      if (!result || result.canceled) return;
+      if (!result.success) {
+          showFileStatus(`Import failed: ${result.error || 'could not read the file'}`);
+          return;
+      }
+      const parsed = parseOutputSettingsFile(result.data);
+      if (!parsed.ok) {
+          showFileStatus(`Import failed: ${parsed.error}`);
+          return;
+      }
+      if (outputs.length === 0) {
+          showFileStatus('Import failed: no DAC outputs are currently detected.');
+          return;
+      }
+      const { matched, unmatched } = matchOutputs(parsed.outputs, outputs.map((o) => o.id));
+      const matchedCount = Object.keys(matched).length;
+      if (matchedCount === 0) {
+          showFileStatus(
+              `Import: nothing matched. No detected output is at ${unmatched.slice(0, 3).map(describeOutputKey).join(', ')}` +
+              (unmatched.length > 3 ? ` (+${unmatched.length - 3} more)` : '') + '.'
+          );
+          return;
+      }
+      const parts = [`Apply ${matchedCount} output setting${matchedCount === 1 ? '' : 's'}?`];
+      if (unmatched.length) {
+          parts.push(
+              `\n\n${unmatched.length} entry/entries in the file do not match a detected output and will be skipped:\n` +
+              unmatched.slice(0, 5).map((k) => `  · ${describeOutputKey(k)}`).join('\n') +
+              (unmatched.length > 5 ? `\n  …and ${unmatched.length - 5} more` : '')
+          );
+      }
+      parts.push('\n\nThis overwrites the current settings for the matched outputs.');
+      if (!window.confirm(parts.join(''))) return;
+
+      // Merge rather than replace: outputs absent from the file are left alone.
+      const next = { ...dacSettings };
+      for (const [id, settings] of Object.entries(matched)) {
+          next[id] = settings;
+          onUpdateDacSettings(id, settings);
+      }
+      // Persist the merged result so it survives a restart.
+      api.saveDacOutputSettings?.(next);
+      showFileStatus(
+          `Imported ${matchedCount} setting${matchedCount === 1 ? '' : 's'}` +
+          (unmatched.length ? `, skipped ${unmatched.length} unmatched.` : '.')
+      );
+  };
+
   return (
     <div className="output-settings-modal-overlay">
       <div className="output-settings-modal-content">
@@ -642,9 +732,18 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
           <div className="output-settings-header-actions">
             {saveStatus && <span className="output-settings-save-status">{saveStatus}</span>}
             <button className="save-btn" onClick={handleSave}>Save Output Settings</button>
+            <button className="save-btn" onClick={handleExportFile}
+                title="Write these settings to a .tlo file so they can be loaded into any project or machine">
+              Export…
+            </button>
+            <button className="save-btn" onClick={handleImportFile}
+                title="Load settings from a .tlo file. Only outputs whose address matches a detected DAC are updated.">
+              Import…
+            </button>
             <button className="close-btn" onClick={onClose}>Close</button>
           </div>
         </div>
+        {fileStatus && <div className="output-settings-file-status">{fileStatus}</div>}
         
         <div className="output-settings-body">
           {/* Left Column: Output List */}

@@ -224,6 +224,17 @@ const TimelineTransport = ({
                     />
                     <span>Trim</span>
                 </label>
+                <label
+                    className="timeline-checkbox"
+                    title="Run the point optimizer on cue frames before they reach the DAC — the same interpolation, corner dwell and safety-zone boundary handling the Grid page always applies. Turn on if you calibrated your safety area on the Grid page and want the Timeline to match."
+                >
+                    <input
+                        type="checkbox"
+                        checked={!!s.optimizeOnPlayback}
+                        onChange={(e) => actions.setSettings({ optimizeOnPlayback: e.target.checked })}
+                    />
+                    <span>Optimize Output</span>
+                </label>
                 <button
                     className="timeline-btn"
                     onClick={() => actions.trimOverlaps((s.selectedCueIds || []).length ? s.selectedCueIds : undefined)}

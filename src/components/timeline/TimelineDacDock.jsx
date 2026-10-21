@@ -6,7 +6,15 @@ import { useTimeline } from '../../contexts/TimelineContext';
  * to route that track to the DAC channel.
  */
 const TimelineDacDock = () => {
-    const { discoverChannels } = useTimeline();
+    const { discoverChannels, dacOutputSettings } = useTimeline();
+
+    // Prefer the name the user assigned in Output Settings over the raw
+    // discovery/service-map label ("Channel 3", "Main", ...), matching how
+    // TimelineTrackHeader and DacPanel resolve the same output.
+    const labelFor = useCallback((d) => {
+        const custom = dacOutputSettings ? dacOutputSettings[`${d.ip}:${d.channel}`]?.name : null;
+        return (custom && String(custom).trim()) || d.label || d.ip;
+    }, [dacOutputSettings]);
     const [dacs, setDacs] = useState([]);
     const [scanning, setScanning] = useState(false);
     const [error, setError] = useState('');
@@ -63,7 +71,7 @@ const TimelineDacDock = () => {
                         title={`${d.type} · ${d.ip} ch ${d.channel}`}
                     >
                         <span className="timeline-dac-chip-type">{d.type === 'etherdream' ? 'ED' : 'SB'}</span>
-                        <span className="timeline-dac-chip-label">{d.label || d.ip}[{d.channel}]</span>
+                        <span className="timeline-dac-chip-label">{labelFor(d)}[{d.channel}]</span>
                     </div>
                 ))}
             </div>

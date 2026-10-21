@@ -28,6 +28,24 @@ import {
 const DEFAULTS = OPT_DEFAULTS;
 const OPT_MAX_SOURCE_PASSTHROUGH = 4000; // above this, bypass geometry optimization
 
+/**
+ * How many equal steps to cut a segment of length `dist` into so no resulting
+ * step exceeds `step`.
+ *
+ * Two details matter here:
+ *  - A minimum of 2. With a bare `floor`, a segment between 1x and 2x the step
+ *    yields 1 and the caller emits nothing, so those segments silently get no
+ *    interpolation at all.
+ *  - An epsilon on the ratio. `dist / step` for a segment that is mathematically
+ *    an exact multiple often evaluates just below it (0.06 / 0.02 ->
+ *    2.9999999999999996), and `floor` would then drop it a whole step. That
+ *    made subdivision inconsistent from segment to segment on straight edges.
+ */
+function interpSteps(dist, step) {
+    const ratio = dist / step;
+    return Math.max(2, Math.floor(ratio + 1e-9));
+}
+
 function numSetting(settings, key) {
     const v = settings && settings[key];
     if (v === undefined || v === null || Number.isNaN(Number(v))) return DEFAULTS[key];
@@ -113,7 +131,23 @@ export function optimizePoints(points, settings = {}) {
     const presetSettings = getOptimizerSettings(settings.preset, settings.overrides || null);
     const totalSettings = { ...presetSettings, ...settings };
 
-    const maxDist = Math.max(0.0005, interpToDisplayUnits(numSetting(totalSettings, 'interpDistance')));
+    // Lit interpolation step. An explicit `maxDist` (the live "Lit Interp Dist"
+// slider, in display units) always wins; otherwise fall back to the preset's
+// `interpDistance` 0-1000 scale. The fallback is coarse on purpose (300 -> 0.6
+// display units = 30% of field width) and is larger than any segment the
+// generators emit, so with no explicit value the interpolation pass never fires
+// and smooth shapes render as discrete dots. Callers should therefore pass
+// `maxDist` rather than relying on the preset.
+const explicitMaxDist = Number(settings.maxDist);
+const maxDist = (Number.isFinite(explicitMaxDist) && explicitMaxDist > 0)
+    ? explicitMaxDist
+    : Math.max(0.0005, interpToDisplayUnits(numSetting(totalSettings, 'interpDistance')));
+// Extra blanked samples inserted at each blank<->lit transition. Same
+// precedence: explicit `pathDwell` wins over the preset value.
+const explicitPathDwell = Number(settings.pathDwell);
+const pathDwell = (Number.isFinite(explicitPathDwell) && explicitPathDwell >= 0)
+    ? Math.floor(explicitPathDwell)
+    : Math.max(0, Math.floor(numSetting(totalSettings, 'pathDwell')));
     const blankingStart = Math.max(0, Math.floor(numSetting(totalSettings, 'blankingStart')));
     const blankingEnd = Math.max(0, Math.floor(numSetting(totalSettings, 'blankingEnd')));
     const shift = Math.max(-20, Math.min(20, numSetting(totalSettings, 'shift')));
@@ -236,7 +270,7 @@ export function optimizePoints(points, settings = {}) {
         const dy = curr.y - prev.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         totalDist += dist;
-        totalInterpDesired += Math.max(1, Math.floor(dist / maxDist));
+        totalInterpDesired += interpSteps(dist, maxDist);
 
         if (prev.blanking !== curr.blanking) {
             if (!(skipDwellAtIdx[i] === 1)) totalBlankTransitions++;
@@ -265,13 +299,16 @@ export function optimizePoints(points, settings = {}) {
             const wdx = fv.x - lv.x;
             const wdy = fv.y - lv.y;
             wrapDist = Math.sqrt(wdx * wdx + wdy * wdy);
-            totalInterpDesired += Math.max(1, Math.floor(wrapDist / maxDist));
+            totalInterpDesired += interpSteps(wrapDist, maxDist);
             totalDist += wrapDist;
         }
     }
 
     // --- PHASE 2: Compute effective parameters within budget ---
-    const blankTransitionCost = totalBlankTransitions * (blankingStart + blankingEnd);
+    // Worst-case cost of one lit<->blank transition: the beam toggles, then
+    // pathDwell samples let the scanner settle before it is told to travel.
+    const blankTransitionCost = totalBlankTransitions *
+        (Math.max(blankingStart, blankingEnd) + pathDwell + litDwellStart);
     const fixedCost = processEndIdx + blankTransitionCost;
     const dwellCost = totalCornerCount * cornerDwell;
     const totalDesired = fixedCost + dwellCost + totalInterpDesired;
@@ -313,9 +350,14 @@ export function optimizePoints(points, settings = {}) {
                 if (currPoint.blanking) {
                     // lit -> blank : blankingStart dwell at prev (blanked)
                     for (let d = 0; d < blankingStart; d++) push(prevPoint.x, prevPoint.y, prevPoint.z, true, i - 1);
+                    // pathDwell lets the scanner settle after the beam is cut,
+                    // before it is commanded to travel. Without this the galvo
+                    // starts moving the instant the beam drops and overshoots.
+                    for (let d = 0; d < pathDwell; d++) push(prevPoint.x, prevPoint.y, prevPoint.z, true, i - 1);
                 } else {
                     // blank -> lit : blankingEnd dwell at curr (blanked) then lit dwell at curr
                     for (let d = 0; d < blankingEnd; d++) push(currPoint.x, currPoint.y, currPoint.z, true, i);
+                    for (let d = 0; d < pathDwell; d++) push(currPoint.x, currPoint.y, currPoint.z, true, i);
                     if (litDwellStart > 0) {
                         for (let d = 0; d < litDwellStart; d++) pushAt(currPoint.x, currPoint.y, currPoint.z, false, i);
                     }
@@ -344,7 +386,7 @@ export function optimizePoints(points, settings = {}) {
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist > effectiveMaxDist) {
-            const steps = Math.floor(dist / effectiveMaxDist);
+            const steps = interpSteps(dist, effectiveMaxDist);
             for (let s = 1; s < steps; s++) {
                 const t = s / steps;
                 const srcIdx = (i - 1) + t; // fractional source index for color shift
@@ -380,7 +422,7 @@ export function optimizePoints(points, settings = {}) {
             const wdy = firstPoint.y - closePoint.y;
             const wd = Math.sqrt(wdx * wdx + wdy * wdy);
             if (wd > effectiveMaxDist) {
-                const steps = Math.floor(wd / effectiveMaxDist);
+                const steps = interpSteps(wd, effectiveMaxDist);
                 for (let s = 1; s < steps; s++) {
                     const t = s / steps;
                     const srcIdx = (lastVisibleIdx - 1) + t;

@@ -3,8 +3,10 @@ import { useTimeline, getTimelineDuration, getChannelOutputs, isChannelAudible }
 import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
 import { useAudio } from '../contexts/AudioContext.jsx';
 import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides, applyCueEffectOverrides } from '../utils/timelineAutomation';
-import { applyEffects, applyOutputProcessing } from '../utils/effects';
-import { getPreset, DEFAULT_PRESET } from '../utils/hardwarePresets';
+import { applyEffects, applyOutputProcessingWithDwell } from '../utils/effects';
+import { optimizePoints } from '../utils/optimizer';
+import { resampleFrameToStep, DEFAULT_MAX_STEP } from '../utils/pointResample';
+import { getPreset, DEFAULT_PRESET, resolvePointBudget } from '../utils/hardwarePresets';
 import { selectActiveCue, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
 import { useTimelineSync } from './useTimelineSync';
 
@@ -62,6 +64,22 @@ export function flipPoints(points, flipX, flipY) {
         if (flipY) out[i * 8 + 1] = -out[i * 8 + 1];
     }
     return out;
+}
+
+// The net mirror for one DAC output.
+//
+// Two corrections can mirror an output: the track's own x/y buttons and the
+// Output Settings flip (a hardware correction for a mirrored projector, which
+// the Show Editor applies as well). They are the same operation on the same
+// content, so they compose - two mirrors cancel. Exported so the composition
+// can be tested on its own.
+export function resolveOutputFlip(trackFlipX, trackFlipY, settings) {
+    const globalFlipX = !!(settings && settings.flipX);
+    const globalFlipY = !!(settings && settings.flipY);
+    return {
+        flipX: (!!trackFlipX) !== globalFlipX,
+        flipY: (!!trackFlipY) !== globalFlipY,
+    };
 }
 
 // External-clock follower tuning (PLL-lite). Instead of snapping the playhead to
@@ -581,6 +599,7 @@ export function useTimelinePlayback() {
         const s = store.settings;
         const frames = {};
         const order = [...new Set(store.channelOrder || [])];
+        const optimizeOnPlayback = !!s.optimizeOnPlayback;
 
         for (const chId of order) {
             const frame = compileChannelFrame(chId, t);
@@ -617,41 +636,97 @@ export function useTimelinePlayback() {
                         ? frame.subarray(dist.start, dist.start + dist.length)
                         : new Float32Array(0);
                 }
-                let outFrame = out.flipX || out.flipY
-                    ? flipPoints(chanFrame, !!out.flipX, !!out.flipY)
-                    : chanFrame;
                 const settings = dacOutputSettingsRef.current ? dacOutputSettingsRef.current[`${out.ip}:${out.channel}`] : null;
 
-                if (settings) {
-                    if (settings.dimmer !== undefined && settings.dimmer < 1) {
-                        outFrame = scaleRgb(outFrame, Math.max(0, settings.dimmer));
-                    }
-                    if (settings.transformationEnabled || (settings.safetyZones && settings.safetyZones.length > 0)) {
-                        const processed = applyOutputProcessing(
-                            { points: outFrame, isTypedArray: !Array.isArray(outFrame) },
-                            settings,
-                            false
-                        );
-                        if (processed && processed.points) outFrame = processed.points;
-                    }
-                }
+                // Two corrections can mirror this output: the Output Settings
+                // flip (a hardware correction for the projector, which the
+                // Show Editor applies too) and the track's own x/y buttons.
+                // They are the same operation on the same content, so they
+                // compose: two mirrors cancel. The net flip is applied HERE,
+                // in the renderer and BEFORE the safety zones, so the editor
+                // shows the same picture the flipped laser draws. The main
+                // process flip stays off below, or the output would be
+                // mirrored twice.
+                const { flipX, flipY } = resolveOutputFlip(out.flipX, out.flipY, settings);
+                let outFrame = flipX || flipY
+                    ? flipPoints(chanFrame, flipX, flipY)
+                    : chanFrame;
 
+                // Preset / PPS resolution first — the optimizer needs the point
+                // budget, and the budget is per output (each wing of a zone can
+                // sit on a different preset).
                 const preset = settings?.ppsPreset && getPreset(settings.ppsPreset)
                     ? getPreset(settings.ppsPreset)
                     : getPreset(DEFAULT_PRESET);
                 const targetPpsValue = settings?.ppsOverride && settings.ppsOverride > 0
                     ? settings.ppsOverride
                     : (preset && preset.targetPps ? preset.targetPps : 30000);
+                const targetFpsValue = (settings?.targetFps && settings.targetFps > 0)
+                    ? settings.targetFps
+                    : (s.fps || 30);
+
+                // A DAC physically cannot draw a line between two points: the
+                // galvo flies from one sample to the next, so a path with long
+                // segments renders as a chain of discrete dots, and a very
+                // sparse path is lit for only a handful of samples per frame -
+                // which reads as "the output is off". Resampling to the
+                // scanner's step resolution is a correctness requirement of the
+                // output, not an optimization, so it always runs. It must run
+                // BEFORE output processing so the zone boundaries it creates
+                // get their boundary dwell below.
+                if (outFrame && (outFrame.length || 0) > 0) {
+                    const budget = resolvePointBudget(settings, targetFpsValue) || 1000;
+                    try {
+                        outFrame = resampleFrameToStep(outFrame, {
+                            maxStep: DEFAULT_MAX_STEP,
+                            maxPoints: budget,
+                        });
+                    } catch (e) {
+                        // Never let a resampling fault silence a live output.
+                        console.warn('[TimelinePlayback] point resampling failed, sending raw frame', e);
+                    }
+
+                    // Optional point optimization. Off by default so existing
+                    // Timeline playback is unchanged; when enabled this mirrors
+                    // the Grid path (corner dwell + budget) so a safety area
+                    // calibrated there behaves the same here.
+                    if (optimizeOnPlayback) {
+                        try {
+                            outFrame = optimizePoints(outFrame, {
+                                maxDist: 0.02,
+                                pathDwell: 2,
+                                maxPoints: budget,
+                            });
+                        } catch (e) {
+                            // Never let an optimizer fault silence a live output.
+                            console.warn('[TimelinePlayback] optimizePoints failed, sending raw frame', e);
+                        }
+                    }
+                }
+
+                if (settings) {
+                    if (settings.dimmer !== undefined && settings.dimmer < 1) {
+                        outFrame = scaleRgb(outFrame, Math.max(0, settings.dimmer));
+                    }
+                    if (settings.transformationEnabled || (settings.safetyZones && settings.safetyZones.length > 0)) {
+                        const processed = applyOutputProcessingWithDwell(
+                            { points: outFrame, isTypedArray: !Array.isArray(outFrame) },
+                            settings,
+                            2
+                        );
+                        if (processed && processed.points) outFrame = processed.points;
+                    }
+                }
+
                 const options = {
                     skipOptimization: false,
                     flipX: false,
                     flipY: false,
                     pps: targetPpsValue,
                     targetPps: targetPpsValue,
-                    targetFps: s.fps || 30,
+                    targetFps: targetFpsValue,
                     targetMode: 'varFpsFixedPps',
                 };
-                if (settings?.targetFps && settings.targetFps > 0) options.targetFps = settings.targetFps;
                 if (settings?.targetMode) options.targetMode = settings.targetMode;
 
                 frames[`${out.ip}:${out.channel}`] = {
@@ -929,6 +1004,11 @@ export function useTimelinePlayback() {
             el.pause();
             try { el.currentTime = 0; } catch (_) {}
         }
+        // Clear delay/chase history and continuous-phase accumulators so the
+        // next play starts clean instead of replaying stale state. Without this,
+        // wave/rotate phases carried over from the previous run and the effect
+        // appeared frozen on the second playback. Mirrors the main app's stop().
+        effectStatesRef.current.clear();
         // Blank everything this engine has been feeding.
         if (window.electronAPI) window.electronAPI.send('dac-frame-update', {});
     }, []);

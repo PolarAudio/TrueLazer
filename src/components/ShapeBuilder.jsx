@@ -1,8 +1,14 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle } from 'react';
 import { parseIldaFile } from '../utils/ilda-parser';
 import { calculateSmoothHandles } from '../utils/geometry';
 import EnvelopeEditor from './EnvelopeEditor';
-import { createPointBudgetOptimizer, DEFAULT_POINT_BUDGET } from '../utils/exportOptimizer';
+import { DEFAULT_POINT_BUDGET } from '../utils/exportOptimizer';
+import {
+  measureOutline, pointsInRun,
+  resolveDashRuns, resolveDotStations, defaultBeamPointAllowance,
+  isClosedType, DEFAULT_DOT_PITCH, DEFAULT_DASH_LENGTH, DEFAULT_GAP_LENGTH, DEFAULT_DWELL
+} from '../utils/beamProgram';
+import { buildFrameProgram, effectiveSpacingFor, toIldaPoint } from '../utils/frameProgram';
 import {
   EFFECTS, EFFECT_GROUPS, DEFAULT_ENVELOPE,
   getEffectDef, effectParamsDefaults, applyEffectToPoints, envelopeValue
@@ -27,10 +33,26 @@ const NonPassiveWheel = ({ onWheel, children }) => {
 // parsed value on blur/Enter. The live value is thus never recomputed out from
 // under the caret while typing (e.g. the shape editor re-renders every frame
 // during playback, which used to reset the field and made typing impossible).
-const NumField = ({ value, onCommit, min, max, step, style }) => {
+const NumField = ({ value, onCommit, min, max, step, style, commitOnChange = false }) => {
     const [draft, setDraft] = useState(String(value));
+    const inputRef = useRef(null);
 
-    useEffect(() => { setDraft(String(value)); }, [value]);
+    const commitRaw = (raw) => {
+        let n = parseFloat(raw);
+        if (!isFinite(n)) n = value;
+        if (min != null) n = Math.max(min, n);
+        if (max != null) n = Math.min(max, n);
+        onCommit(n);
+    };
+
+    // Re-sync the draft with the source value ONLY while the field is NOT
+    // focused. Playback re-renders the editor every frame and some panels bind
+    // to the currently played frame — without this guard those re-renders
+    // overwrote the text being typed mid-keystroke, which made number inputs
+    // un-typeable right after playback had been started once.
+    useEffect(() => {
+        if (document.activeElement !== inputRef.current) setDraft(String(value));
+    }, [value]);
 
     const commit = () => {
         let n = parseFloat(draft);
@@ -43,20 +65,24 @@ const NumField = ({ value, onCommit, min, max, step, style }) => {
 
     return (
         <input
+            ref={inputRef}
             type="number"
             step={step}
             min={min}
             max={max}
             value={draft}
             style={style}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+                setDraft(e.target.value);
+                if (commitOnChange) commitRaw(e.target.value);
+            }}
             onBlur={commit}
             onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
         />
     );
 };
 
-const ShapeBuilder = ({ onBack }) => {
+const ShapeBuilder = ({ onBack, ref }) => {
   // --- STATE ---
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState('#00ff00');
@@ -75,6 +101,9 @@ const ShapeBuilder = ({ onBack }) => {
   const [selectedPointIndexes, setSelectedPointIndexes] = useState([]); 
   const [selectedSegmentIndexes, setSelectedSegmentIndexes] = useState([]); 
   const [backgroundImage, setBackgroundImage] = useState(null);
+  // The <img> element itself cannot be serialized, so the file it came from is
+  // tracked separately and reloaded when the project is reopened.
+  const backgroundImagePathRef = useRef(null);
   const [shapeClipboard, setShapeClipboard] = useState(null);
   const [zoom, setZoom] = useState(0.6); 
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -83,7 +112,16 @@ const ShapeBuilder = ({ onBack }) => {
   const [gridSize, setGridSize] = useState(25);
   const [continuousDrawing, setContinuousDrawing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  // What the last export did with the frame budget: how much of it was used,
+  // and whether anything had to be left out.
+  const [exportNote, setExportNote] = useState(null);
   const [exportBudget, setExportBudget] = useState(DEFAULT_POINT_BUDGET);
+  // Point density, as the target spacing in px between extra outline points.
+  // 0 = off. A square is only 4 corner points, so the per-point beam styles
+  // (points / dotted / dashed) have almost nothing to draw with until the
+  // outline is resampled. This is a VIEW + EXPORT setting: it never mutates the
+  // stored shape, so dragging the slider cannot damage the editable geometry.
+  const [pointSpacing, setPointSpacing] = useState(0);
   const [previewMode, setPreviewMode] = useState('off'); // 'off' | 'line' | 'points' | 'center' | 'cone'
   const [collapsedPanels, setCollapsedPanels] = useState({ layers: false, props: false });
   const [shapeEffect, setShapeEffect] = useState(null); // { type, params, envelopes, sourceIndex }
@@ -420,7 +458,7 @@ const ShapeBuilder = ({ onBack }) => {
     });
   }, []);
 
-  const getSampledPoints = useCallback((shape) => {
+  const getSampledPoints = useCallback((shape, spacing = 0) => {
     if (!shape) return [];
     let pts = [];
     if (shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline') pts = shape.points || [];
@@ -433,8 +471,13 @@ const ShapeBuilder = ({ onBack }) => {
                 const p0 = points[j], cp1 = points[j+1], cp2 = points[j+2], p1 = points[j+3];
                 if (p0 && cp1 && cp2 && p1) {
                     const startIdx = j === 0 ? 0 : 1;
-                    for (let i = startIdx; i <= 20; i++) {
-                        const t = i / 20, it = 1 - t;
+                    let steps = 20;
+                    if (spacing > 0) {
+                        const lenEst = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+                        steps = Math.max(20, Math.ceil(lenEst / spacing));
+                    }
+                    for (let i = startIdx; i <= steps; i++) {
+                        const t = i / steps, it = 1 - t;
                         // Cubic formula: (1-t)^3*P0 + 3(1-t)^2*t*CP1 + 3(1-t)*t^2*CP2 + t^3*P1
                         pts.push({
                             x: Math.pow(it, 3) * p0.x + 3 * Math.pow(it, 2) * t * cp1.x + 3 * it * Math.pow(t, 2) * cp2.x + Math.pow(t, 3) * p1.x,
@@ -453,8 +496,13 @@ const ShapeBuilder = ({ onBack }) => {
     }
     else if (shape.type === 'circle') {
         const rx = Math.abs(shape.end.x - shape.start.x); const ry = Math.abs(shape.end.y - shape.start.y); const c = shape.color;
-        for (let i = 0; i < 32; i++) {
-            const angle = (i / 32) * Math.PI * 2;
+        let seg = 32;
+        if (spacing > 0) {
+            const peri = Math.PI * (rx + ry); // rough
+            seg = Math.max(32, Math.ceil(peri / spacing));
+        }
+        for (let i = 0; i < seg; i++) {
+            const angle = (i / seg) * Math.PI * 2;
             pts.push({ x: shape.start.x + Math.cos(angle) * rx, y: shape.start.y + Math.sin(angle) * ry, color: c });
         }
     }
@@ -462,11 +510,17 @@ const ShapeBuilder = ({ onBack }) => {
         const rx = Math.abs(shape.end.x - shape.start.x); const ry = Math.abs(shape.end.y - shape.start.y); const c = shape.color;
         const spikes = 5; const outerRadius = rx; const innerRadius = rx / 2.5;
         let rot = Math.PI / 2 * 3; const step = Math.PI / spikes;
-        for (let i = 0; i < spikes; i++) {
-            pts.push({ x: shape.start.x + Math.cos(rot) * outerRadius, y: shape.start.y + Math.sin(rot) * ry, color: c });
-            rot += step;
-            pts.push({ x: shape.start.x + Math.cos(rot) * innerRadius, y: shape.start.y + Math.sin(rot) * (ry / 2.5), color: c });
-            rot += step;
+        let count = spikes * 2;
+        if (spacing > 0) {
+            const peri = 2 * Math.PI * (outerRadius + innerRadius) / 2;
+            count = Math.max(spikes * 2, Math.ceil(peri / spacing));
+        }
+        const segs = Math.max(spikes * 2, count);
+        for (let i = 0; i < segs; i++) {
+            const r = (i % 2 === 0) ? outerRadius : innerRadius;
+            const ryv = (i % 2 === 0) ? ry : (ry / 2.5);
+            const angle = rot + step * i;
+            pts.push({ x: shape.start.x + Math.cos(angle) * r, y: shape.start.y + Math.sin(angle) * ryv, color: c });
         }
     }
     else if (shape.type === 'triangle') {
@@ -478,11 +532,103 @@ const ShapeBuilder = ({ onBack }) => {
         ];
     }
     else if (shape.type === 'group') {
-        shape.shapes.forEach(s => pts.push(...getSampledPoints(s)));
+        shape.shapes.forEach(s => pts.push(...getSampledPoints(s, spacing)));
     }
 
     return applyTransformations(pts, shape);
   }, [applyTransformations]);
+
+  // Re-space a shape's outline so consecutive points are no further apart than
+  // `spacing` px, and return it as a plain point-based shape. A square has only
+  // 4 corner points, so the per-point beam styles have nothing to draw until the
+  // outline is resampled. Non-destructive: the result is used for drawing and
+  // export only, so the editable geometry is never modified.
+  const resampleShapeBySpacing = useCallback((shape, spacing) => {
+    if (!shape || !(spacing > 0)) return shape;
+    if (shape.type === 'group') {
+      return { ...shape, shapes: (shape.shapes || []).map((s) => resampleShapeBySpacing(s, spacing)) };
+    }
+    const closed = isClosedType(shape.type);
+    // Sample curves at the requested spacing so a bezier/circle/star is not
+    // resampled from its coarse fixed 20/32-point outline (which yields long
+    // chords instead of following the curve).
+    const src = getSampledPoints(shape, spacing);
+    if (!src || src.length < 2) return shape;
+    const out = [];
+    // Maps each source index to its index in the resampled outline, so pinned
+    // anchor indexes can be remapped instead of pointing at unrelated points.
+    const srcToOut = new Array(src.length).fill(-1);
+    const segCount = closed ? src.length : src.length - 1;
+    for (let i = 0; i < segCount; i++) {
+      const a = src[i];
+      const b = src[(i + 1) % src.length];
+      srcToOut[i] = out.length;
+      out.push(a);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1e-6) continue;
+      const steps = Math.max(1, Math.floor(len / spacing));
+      for (let s = 1; s < steps; s++) {
+        out.push({ x: a.x + (dx * s) / steps, y: a.y + (dy * s) / steps, color: a.color });
+      }
+    }
+    if (!closed) {
+      srcToOut[src.length - 1] = out.length;
+      out.push(src[src.length - 1]);
+    }
+    const next = { ...shape, type: closed ? 'polygon' : 'polyline', points: out, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
+    delete next.start;
+    delete next.end;
+    delete next.width;
+    delete next.height;
+    if (Array.isArray(shape.anchorIndexes)) {
+      // Indices refer to the pre-resample outline; carrying them over unchanged
+      // would pin the wrong points (and made the export keep only the first
+      // segment), so remap them onto the new outline.
+      next.anchorIndexes = [...new Set(
+        shape.anchorIndexes.map(i => srcToOut[i]).filter(i => i >= 0)
+      )].sort((a, b) => a - b);
+    }
+    return next;
+  }, [getSampledPoints]);
+
+  // Re-space a polyline/polygon to exactly `count` points, distributed evenly by
+  // arc length, so its geometry is preserved. Used to give two outlines a common
+  // point count before tweening between them.
+  const resamplePointsToCount = useCallback((pts, count) => {
+    if (!pts || pts.length === 0 || !(count > 0)) return pts || [];
+    if (pts.length === count) return pts;
+    if (count === 1) return [{ ...pts[0] }];
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) {
+      cum.push(cum[i - 1] + Math.sqrt((pts[i].x - pts[i - 1].x) ** 2 + (pts[i].y - pts[i - 1].y) ** 2));
+    }
+    const total = cum[cum.length - 1];
+    if (!(total > 0)) return Array.from({ length: count }, () => ({ ...pts[0] }));
+    const out = [];
+    for (let k = 0; k < count; k++) {
+      const target = (k / (count - 1)) * total;
+      let i = 1;
+      while (i < cum.length - 1 && cum[i] < target) i++;
+      const segLen = cum[i] - cum[i - 1] || 1;
+      const f = (target - cum[i - 1]) / segLen;
+      const a = pts[i - 1];
+      const b = pts[i];
+      out.push({ ...a, x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
+    }
+    return out;
+  }, []);
+
+  // A beam style (dotted / dashed / points) draws dots or segments PER exposed
+  // point, so a sparse shape (2-point line, 4-corner square, a short polyline)
+  // has almost nothing to draw until its outline is resampled. When point
+  // spacing is left at 0, these styles density automatically at a small default
+  // spacing so the beam style is actually visible on EVERY frame — including the
+  // frames the tween fills in between the start/end pair.
+  // The rule itself lives in frameProgram so the preview and the export cannot
+  // disagree about how dense a shape needs to be.
+  const effectiveSpacing = useCallback((shape) => effectiveSpacingFor(shape, pointSpacing), [pointSpacing]);
 
   const getShapePoints = useCallback((shape, includeTransform = true) => {
     if (!shape) return [];
@@ -545,7 +691,7 @@ const ShapeBuilder = ({ onBack }) => {
 
       // Check shape body/segments using sampled points for curves
       const sampled = getSampledPoints(shape);
-      const isClosed = ['rect', 'circle', 'star', 'polygon'].includes(shape.type);
+      const isClosed = ['rect', 'circle', 'star', 'polygon', 'triangle'].includes(shape.type);
       
       for (let i = 0; i < sampled.length - 1; i++) {
           if (distToSegment(mouse, sampled[i], sampled[i+1]) < threshold) return { type: 'segment', index: i, path: [...pathPrefix, i] };
@@ -824,13 +970,33 @@ const ShapeBuilder = ({ onBack }) => {
       const newFrames = [...frames]; const currentShapes = [...newFrames[currentFrameIndex]];
       const shape = currentShapes[shapeIndex];
       
-      if (['rect', 'circle', 'star', 'line'].includes(shape.type)) {
+      // A bezier already stores its control points in the same `points` array as
+      // its anchors, interleaved 4-per-segment, so handing that array to the point
+      // tools would treat the handles as vertices. Convert it (like the other
+      // primitives) by sampling the real curve, and keep it an open path.
+      if (['rect', 'circle', 'star', 'line', 'triangle', 'bezier'].includes(shape.type)) {
           const sampled = getSampledPoints(shape);
           const newShape = {
-              type: shape.type === 'line' ? 'polyline' : 'polygon',
+              type: shape.type === 'line' ? 'polyline' : (shape.type === 'bezier' ? 'polyline' : 'polygon'),
               color: shape.color,
               renderMode: shape.renderMode || 'simple',
               points: sampled,
+              rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
+          };
+          currentShapes[shapeIndex] = newShape;
+          newFrames[currentFrameIndex] = currentShapes;
+          setFrames(newFrames);
+          recordHistory(newFrames);
+      } else if (shape.type === 'polyline' || shape.type === 'polygon') {
+          // Already a point-based shape, but a sparse one (a "line" made of two
+          // points, a corner-only polygon) has almost no vertices to edit or
+          // tween against. Convert it the same way as the primitives above:
+          // bake the outline into a dense, evenly-spaced array of editable
+          // points so every vertex becomes a real anchor.
+          const dense = resampleShapeBySpacing(shape, 6);
+          const newShape = {
+              ...dense,
+              type: shape.type,
               rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1
           };
           currentShapes[shapeIndex] = newShape;
@@ -916,6 +1082,33 @@ const ShapeBuilder = ({ onBack }) => {
           return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl.toString(16).padStart(2,'0')}`;
       };
 
+      // Blend the outline of two shapes whose geometry is stored DIFFERENTLY:
+      // one frame holds a `points` array, the other primitive start/end (a line
+      // that got corner points / was converted / split, a rect turned into a
+      // polygon). Neither the top-level numeric pass nor the start/end branch can
+      // bridge that, so the tween silently kept the START geometry for every
+      // intermediate frame and only the final frame showed the moved points —
+      // which reads as "the line does not interpolate". Sample both sides and
+      // blend the outlines on a common point count.
+      const blendOutlines = (s1, s2, t) => {
+          const aIsPoints = !!(s1.points && s1.points.length);
+          const bIsPoints = !!(s2.points && s2.points.length);
+          let pa, pb;
+          if (aIsPoints && bIsPoints) { pa = s1.points; pb = s2.points; }
+          else if (aIsPoints !== bIsPoints) {
+              pa = aIsPoints ? s1.points : getSampledPoints(s1);
+              pb = bIsPoints ? s2.points : getSampledPoints(s2);
+          } else return null;
+          if (!pa || pa.length < 2 || !pb || pb.length < 2) return null;
+          const n = Math.max(pa.length, pb.length);
+          const ra = resamplePointsToCount(pa, n);
+          const rb = resamplePointsToCount(pb, n);
+          return ra.map((p1, i) => {
+              const p2 = rb[i];
+              return { ...p1, x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
+          });
+      };
+
       // Recursive interpolation for matched shapes (incl. group children)
       const interpShape = (a, b, t) => {
           const interp = JSON.parse(JSON.stringify(a));
@@ -962,12 +1155,19 @@ const ShapeBuilder = ({ onBack }) => {
               interp.color = colorAt(a.color, b.color, t);
           }
 
-          // Interpolate Points if applicable (positions only when POS is on;
-          // colors only when COLOR is on; everything else — extra per-point
-          // fields like blanking/curve — is preserved by cloning p1)
-          if (a.points && b.points && a.points.length === b.points.length) {
-              interp.points = a.points.map((p1, pIdx) => {
-                  const p2 = b.points[pIdx];
+          // Interpolate Points (positions only when POS is on; colors only when
+          // COLOR is on; everything else — extra per-point fields like
+          // blanking/curve — is preserved by cloning p1). A point-count mismatch
+          // used to skip this block entirely, which left every intermediate frame
+          // showing the START geometry so the tween appeared to jump straight to
+          // the end shape on the final frame. Normalise both outlines to a common
+          // count first, so a size change always tweens.
+          if (a.points && b.points && a.points.length > 0 && b.points.length > 0) {
+              const n = Math.max(a.points.length, b.points.length);
+              const pa = resamplePointsToCount(a.points, n);
+              const pb = resamplePointsToCount(b.points, n);
+              interp.points = pa.map((p1, pIdx) => {
+                  const p2 = pb[pIdx];
                   const res = { ...p1, color: p1.color || a.color };
                   if (tweenPosition) {
                       res.x = p1.x + (p2.x - p1.x) * t;
@@ -979,6 +1179,14 @@ const ShapeBuilder = ({ onBack }) => {
                   }
                   return res;
               });
+          }
+
+          // Nothing above produced points — the two frames store their geometry
+          // differently (primitive start/end vs a points array). Bridge that,
+          // otherwise every intermediate frame holds the start geometry.
+          if (!interp.points && tweenPosition) {
+              const blended = blendOutlines(a, b, t);
+              if (blended) interp.points = blended;
           }
 
           return interp;
@@ -1007,6 +1215,35 @@ const ShapeBuilder = ({ onBack }) => {
           }
           return interp;
       };
+
+      // Pair start/end shapes by TYPE (preferring the same index, else the
+      // closest unpaired same-type shape), NOT strictly by index. Index-only
+      // matching left any start shape without a same-index twin frozen as a
+      // START clone at every intermediate frame, so the shape appeared to do
+      // nothing until the end frame's real geometry showed up — the visible
+      // "jump at the end" for a polyline (or any shape whose list order shifted
+      // between the two frames, e.g. another shape inserted ABOVE it in the end
+      // frame).
+      const usedEnd = new Set();
+      const pairs = [];
+      const unmatchedStart = [];
+      startShapes.forEach((s1, sIdx) => {
+          let s2 = null;
+          if (endShapes[sIdx] && endShapes[sIdx].type === s1.type) {
+              s2 = endShapes[sIdx];
+              usedEnd.add(sIdx);
+          } else {
+              let best = -1, bestDist = Infinity;
+              for (let j = 0; j < endShapes.length; j++) {
+                  if (usedEnd.has(j) || endShapes[j].type !== s1.type) continue;
+                  const d = Math.abs(j - sIdx);
+                  if (d < bestDist) { bestDist = d; best = j; }
+              }
+              if (best >= 0) { s2 = endShapes[best]; usedEnd.add(best); }
+          }
+          if (s2) pairs.push({ s1, s2 });
+          else unmatchedStart.push(s1);
+      });
 
       for (let i = 1; i < totalSteps; i++) {
           const t = i / totalSteps;
@@ -1037,36 +1274,34 @@ const ShapeBuilder = ({ onBack }) => {
               continue;
           }
 
-          // POS tween: blend geometry start -> end by index.
+          // POS tween: blend geometry start -> end using the hoisted pairing.
           const interpolatedShapes = [];
-
-          // Try to match shapes by index
-          startShapes.forEach((s1, sIdx) => {
-              const s2 = endShapes[sIdx];
-              if (!s2) {
-                  interpolatedShapes.push(JSON.parse(JSON.stringify(s1)));
-                  return;
-              }
-              if (s1.type !== s2.type) {
-                  // Fallback: interpolate common numeric properties
-                  const interp = JSON.parse(JSON.stringify(s1));
-                  const keys = new Set([...Object.keys(s1), ...Object.keys(s2)]);
-                  keys.forEach(k => {
-                      const v1 = s1[k];
-                      const v2 = s2[k];
-                      if (typeof v1 === 'number' && typeof v2 === 'number') {
-                          interp[k] = v1 + (v2 - v1) * t;
-                      }
-                  });
-                  if (tweenColor && s1.color && s2.color) interp.color = colorAt(s1.color, s2.color, t);
-                  interpolatedShapes.push(interp);
-                  return;
-              }
-
-              interpolatedShapes.push(interpShape(s1, s2, t));
-          });
+          pairs.forEach(({ s1, s2 }) => interpolatedShapes.push(interpShape(s1, s2, t)));
+          unmatchedStart.forEach(s1 => interpolatedShapes.push(JSON.parse(JSON.stringify(s1))));
 
           newFrames[frameIdx] = interpolatedShapes;
+      }
+
+      // The END frame is not an intermediate, but if its geometry does not share
+      // the same point correspondence as the interpolation path (different point
+      // count, or a different shape order than the start frame), the last
+      // intermediate and the end frame disagree and the shape visibly "jumps"
+      // into its end pose on the very last frame. Stamp the end frame with the
+      // t=1 pose built from the SAME pairing / resample, while keeping the end
+      // frame's own metadata (render mode, lock, name, ...).
+      if (tweenPosition && Array.isArray(endShapes)) {
+          const geomKeys = ['start', 'end', 'width', 'height', 'points', 'scaleX', 'scaleY', 'rotationX', 'rotationY', 'rotationZ', 'rotation'];
+          if (tweenColor) geomKeys.push('color');
+          newFrames[tweenEndFrame] = endShapes.map(s2 => {
+              const pair = pairs.find(p => p.s2 === s2);
+              if (!pair) return s2;
+              const at1 = interpShape(pair.s1, pair.s2, 1);
+              const out = { ...s2 };
+              geomKeys.forEach(k => {
+                  if (at1[k] !== undefined) out[k] = at1[k];
+              });
+              return out;
+          });
       }
 
       setFrames(newFrames);
@@ -1131,6 +1366,212 @@ const ShapeBuilder = ({ onBack }) => {
       setSelectedPointIndexes(newSelection);
   };
 
+  // --- SHAPE BUILDER PROJECT DOCUMENT ---
+  // The working document lives in ~50 pieces of local state, so this component
+  // is the only place that knows what belongs in a saved project. App.jsx calls
+  // getProjectState()/loadProjectState() through a ref to implement the
+  // application menu's Open/Save/New.
+  //
+  // View state (tool, zoom, pan, selections, panel collapse) is deliberately
+  // NOT persisted - it describes how the editor is looking at the document, not
+  // the document itself. Undo history is likewise not persisted.
+  const getProjectState = useCallback(() => ({
+      format: 'truelazer-shape',
+      version: 1,
+      // The artwork.
+      frames,
+      frameCount: tempFrameCount,
+      // Document-level drawing defaults.
+      color,
+      renderMode,
+      pointSpacing,
+      // Animation / sync - this is what makes a shape document reproducible.
+      tweenStartFrame,
+      tweenEndFrame,
+      tweenPosition,
+      tweenColor,
+      timelineStartFrame,
+      syncMode,
+      playbackSpeed,
+      bpm,
+      duration,
+      fps,
+      beats,
+      // Effects.
+      shapeEffect,
+      bakeEffects,
+      // The background image is an <img> element bound to a local file, so it
+      // cannot be serialized directly; the path is stored and reloaded.
+      backgroundPath: backgroundImagePathRef.current || null,
+  }), [
+      frames, tempFrameCount, color, renderMode, pointSpacing,
+      tweenStartFrame, tweenEndFrame, tweenPosition, tweenColor,
+      timelineStartFrame, syncMode, playbackSpeed, bpm, duration, fps, beats,
+      shapeEffect, bakeEffects,
+  ]);
+
+  const loadProjectState = useCallback((data) => {
+      if (!data) return;
+      // Accept either the wrapped envelope or a bare state object.
+      const d = (data.frames || data.format) ? data : (data.state || data);
+      if (Array.isArray(d.frames) && d.frames.length > 0) setFrames(d.frames);
+
+      const n = Number(d.frameCount);
+      if (Number.isFinite(n) && n >= 1) setTempFrameCount(Math.floor(n));
+
+      if (typeof d.color === 'string') setColor(d.color);
+      if (typeof d.renderMode === 'string') setRenderMode(d.renderMode);
+      if (Number.isFinite(Number(d.pointSpacing))) setPointSpacing(Number(d.pointSpacing));
+
+      const num = (key, setter, min) => {
+          const v = Number(d[key]);
+          if (Number.isFinite(v)) setter(Math.max(min, v));
+      };
+      num('tweenStartFrame', setTweenStartFrame, 0);
+      num('tweenEndFrame', setTweenEndFrame, 0);
+      num('timelineStartFrame', setTimelineStartFrame, 0);
+      num('playbackSpeed', setPlaybackSpeed, 0.01);
+      num('bpm', setBpm, 1);
+      num('duration', setDuration, 0);
+      num('fps', setFps, 1);
+      num('beats', setBeats, 1);
+
+      if (typeof d.tweenPosition === 'boolean') setTweenPosition(d.tweenPosition);
+      if (typeof d.tweenColor === 'boolean') setTweenColor(d.tweenColor);
+      if (typeof d.bakeEffects === 'boolean') setBakeEffects(d.bakeEffects);
+      if (['fps', 'bpm', 'time'].includes(d.syncMode)) setSyncMode(d.syncMode);
+      if (d.shapeEffect === null || typeof d.shapeEffect === 'object') setShapeEffect(d.shapeEffect);
+
+      // History holds references to the old frames; drop it so undo cannot
+      // rewind into the previous document.
+      setHistory([[d.frames || []]]);
+      setHistoryStep(0);
+
+      if (d.backgroundPath && typeof window !== 'undefined') {
+          backgroundImagePathRef.current = d.backgroundPath;
+          const img = new Image();
+          img.onload = () => setBackgroundImage(img);
+          img.src = `file://${d.backgroundPath}`;
+      } else {
+          backgroundImagePathRef.current = null;
+          setBackgroundImage(null);
+      }
+  }, []);
+
+  const resetProject = useCallback(() => {
+      setFrames([[]]);
+      setTempFrameCount(1);
+      setCurrentFrameIndex(0);
+      setActiveShape(null);
+      setShapeEffect(null);
+      setHistory([[[]]]);
+      setHistoryStep(0);
+      setSelectedShapeIndexes([]);
+      setSelectedPointIndexes([]);
+      setSelectedSegmentIndexes([]);
+      setShapeClipboard(null);
+      backgroundImagePathRef.current = null;
+      setBackgroundImage(null);
+  }, []);
+
+  // --- UNSAVED-CHANGES TRACKING ---
+  // Unlike the Timeline, the Shape Builder keeps its document in component
+  // state and unmounts when the page is left, so unsaved work would be lost
+  // silently. App.jsx calls isDirty() before navigating away and warns.
+  //
+  // The baseline is the document as it was last saved, opened, or reset - not
+  // "has any state", so undoing back to the original is correctly reported as
+  // clean rather than dirty forever.
+  const docSnapshot = useCallback(() => JSON.stringify({
+      frames,
+      frameCount: tempFrameCount,
+      color,
+      renderMode,
+      pointSpacing,
+      tweenStartFrame,
+      tweenEndFrame,
+      tweenPosition,
+      tweenColor,
+      timelineStartFrame,
+      syncMode,
+      playbackSpeed,
+      bpm,
+      duration,
+      fps,
+      beats,
+      shapeEffect,
+      bakeEffects,
+      backgroundPath: backgroundImagePathRef.current || null,
+  }), [
+      frames, tempFrameCount, color, renderMode, pointSpacing,
+      tweenStartFrame, tweenEndFrame, tweenPosition, tweenColor,
+      timelineStartFrame, syncMode, playbackSpeed, bpm, duration, fps, beats,
+      shapeEffect, bakeEffects,
+  ]);
+
+  const baselineRef = useRef(null);
+  const markClean = useCallback(() => { baselineRef.current = docSnapshot(); }, [docSnapshot]);
+  // Seed the baseline on mount so a freshly opened empty builder is clean.
+  useEffect(() => { if (baselineRef.current === null) markClean(); }, [markClean]);
+
+  const isDirty = useCallback(() => {
+      if (baselineRef.current === null) return false;
+      return docSnapshot() !== baselineRef.current;
+  }, [docSnapshot]);
+
+  // Let App.jsx drive save/open/new for this page through the same interface the
+  // Timeline uses (newProject / openProject / saveProject / saveProjectAs), so
+  // the application menu can dispatch to either page without special cases.
+  const projectPathRef = useRef(null);
+
+  const saveProject = useCallback(async (forceDialog) => {
+      const project = getProjectState();
+      const base = projectPathRef.current
+          ? projectPathRef.current.split(/[\\/]/).pop().replace(/\.tls$/i, '')
+          : 'shape-project';
+      const result = await window.electronAPI?.saveShapeProject?.(
+          project,
+          `${base}.tls`,
+          !!forceDialog
+      );
+      // Only a completed write makes the document clean; a cancelled dialog
+      // must leave it dirty so the navigation guard still fires.
+      if (result && result.success) {
+          projectPathRef.current = result.filePath;
+          markClean();
+      }
+      return result;
+  }, [getProjectState, markClean]);
+
+  const openProject = useCallback(async () => {
+      const data = await window.electronAPI?.openShapeProject?.();
+      if (data) {
+          loadProjectState(data);
+          // Baseline after load so the freshly opened document is not dirty.
+          markClean();
+      }
+      return data;
+  }, [loadProjectState, markClean]);
+
+  useImperativeHandle(ref, () => ({
+      newProject: () => {
+          resetProject();
+          markClean();
+      },
+      openProject,
+      saveProject: () => saveProject(false),
+      saveProjectAs: () => saveProject(true),
+      isDirty,
+      // Exposed for diagnostics and tests.
+      getProjectState: () => ({
+          ...getProjectState(),
+          defaultName: `${projectPathRef.current
+              ? projectPathRef.current.split(/[\\/]/).pop().replace(/\.tls$/i, '')
+              : 'shape-project'}.tls`,
+      }),
+      loadProjectState,
+  }), [saveProject, openProject, getProjectState, loadProjectState, resetProject, markClean, isDirty]);
+
   const handleImportImage = async () => {
       if (!window.electronAPI) return;
       const path = await window.electronAPI.showOpenDialog({ 
@@ -1139,7 +1580,8 @@ const ShapeBuilder = ({ onBack }) => {
           properties: ['openFile'] 
       });
       if (!path) return;
-      
+
+      backgroundImagePathRef.current = path;
       const img = new Image();
       img.onload = () => {
           setBackgroundImage(img);
@@ -1474,17 +1916,29 @@ const ShapeBuilder = ({ onBack }) => {
                   currentShapes[idx] = shape;
                   changed = true;
               }
-          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect') {
-              // ... existing logic for primitives ...
+          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect' || shape.type === 'triangle' || shape.type === 'bezier') {
+              // Subdivision needs real vertices. A bezier stores its anchors AND
+              // its control handles interleaved 4-per-segment in one `points`
+              // array, so subdividing that array directly would treat the handles
+              // as vertices and wreck the curve. Sample the true outline first,
+              // subdivide the samples, and hand back a plain point-based shape.
+              // A triangle was missing from this list too, so subdividing one
+              // silently did nothing.
+              const isBezier = shape.type === 'bezier';
+              const closedShape = !isBezier;   // a bezier draws as an open path
+              const pointType = closedShape ? 'polygon' : 'polyline';
               const hasSelection = selectedIndices.length > 0 || selectedSegIndices.length > 0;
               const sampled = getSampledPoints(shape);
-              
+
               if (hasSelection) {
-                  // Convert to polygon and subdivide only selection
+                  // Convert to points and subdivide only the selection
                   const newPts = [];
                   const len = sampled.length;
                   for (let i = 0; i < len; i++) {
                       newPts.push(sampled[i]);
+                      // An open path has no segment after its last point; without
+                      // this the wrap-around would stitch the ends together.
+                      if (!closedShape && i === len - 1) break;
                       if (shouldSubdivideSegment(i, len, selectedIndices, selectedSegIndices)) {
                           const p1 = sampled[i];
                           const p2 = sampled[(i + 1) % len];
@@ -1499,9 +1953,9 @@ const ShapeBuilder = ({ onBack }) => {
                           }
                       }
                   }
-                  currentShapes[idx] = { ...shape, type: 'polygon', points: newPts, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
+                  currentShapes[idx] = { ...shape, type: pointType, points: newPts, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
               } else {
-                  currentShapes[idx] = { ...shape, type: 'polygon', points: subdividePoints(sampled, smooth, true), rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
+                  currentShapes[idx] = { ...shape, type: pointType, points: subdividePoints(sampled, smooth, closedShape), rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
               }
               changed = true;
           }
@@ -1699,13 +2153,30 @@ const ShapeBuilder = ({ onBack }) => {
       selectedShapeIndexes.forEach(idx => {
           const shape = { ...currentShapes[idx] };
           let pts = [];
+          let converted = false;   // shape was retyped, so commit even if the length matches
           
-          if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
+          if (shape.type === 'line') {
+              // A primitive line has no `points` array at all, so the corner pass
+              // below had nothing to work on and silently did nothing. Turning it
+              // into a two-point polyline is what gives a line real end points:
+              // both become editable vertices that can then be subdivided, have
+              // dwell corners added, or be dragged.
+              shape.type = 'polyline';
+              shape.points = [
+                  { x: shape.start.x, y: shape.start.y, color: shape.color },
+                  { x: shape.end.x, y: shape.end.y, color: shape.color },
+              ];
+              delete shape.start;
+              delete shape.end;
               pts = shape.points;
-          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect') {
+              converted = true;
+          } else if (shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'polygon') {
+              pts = shape.points;
+          } else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'rect' || shape.type === 'triangle') {
               pts = getSampledPoints(shape);
               shape.type = 'polygon';
               shape.rotationX = 0; shape.rotationY = 0; shape.rotationZ = 0; shape.scaleX = 1; shape.scaleY = 1;
+              converted = true;
           }
 
           // Get selected indices
@@ -1717,9 +2188,9 @@ const ShapeBuilder = ({ onBack }) => {
               });
           }
 
-          if (pts.length > 2) {
+          if (pts.length > 2 || converted) {
               const newPts = [];
-              const closed = shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star';
+              const closed = shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle';
               
               for (let i = 0; i < pts.length; i++) {
                   newPts.push(pts[i]);
@@ -1752,7 +2223,7 @@ const ShapeBuilder = ({ onBack }) => {
                   }
               }
               
-              if (newPts.length !== pts.length) {
+              if (converted || newPts.length !== pts.length) {
                   shape.points = newPts;
                   currentShapes[idx] = shape;
                   changed = true;
@@ -1827,7 +2298,12 @@ const ShapeBuilder = ({ onBack }) => {
                   }
                   return shapesInFrame;
               });
-              const cleanFrames = parsedFrames.map(f => sanitizeShapes(f));
+              // Sanitize the shapes we just built, NOT the raw parser output. A
+              // parsed ILDA frame is an object ({ points, ... }), not an array of
+              // shapes, so passing it to sanitizeShapes threw
+              // "(...||[]).filter is not a function" and the import failed after
+              // doing all the conversion work.
+              const cleanFrames = newFrames.map(sanitizeShapes);
               setFrames(cleanFrames);
               recordHistory(cleanFrames);
               setFrameCount(cleanFrames.length); setCurrentFrameIndex(0);
@@ -2153,7 +2629,12 @@ const ShapeBuilder = ({ onBack }) => {
   const saveClip = async () => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
       try {
-          const exportFrames = frames.slice(timelineStartFrame);
+          // Apply the point-density resample to the exported copy only; the shapes
+          // held in state stay untouched so the setting is non-destructive.
+          const dense = (f) => (pointSpacing > 0
+            ? f.map((s) => (s ? resampleShapeBySpacing(s, pointSpacing) : s))
+            : f);
+          const exportFrames = frames.slice(timelineStartFrame).map(dense);
           // Vector-native export: keep the editable shape objects (no point
           // soup). JSON round-trip drops functions/undefined and preserves the
           // crop/draw region coordinates exactly as edited.
@@ -2170,6 +2651,9 @@ const ShapeBuilder = ({ onBack }) => {
 
   const exportIlda = async () => {
       if (frames.every(f => f.length === 0)) return; setIsExporting(true);
+      setExportNote(null);
+      let droppedShapes = 0;
+      let peakFramePoints = 0;
       try {
           const exportFrames = frames.slice(timelineStartFrame);
           // Non-destructive effect bake: while an effect is enabled, every
@@ -2179,200 +2663,57 @@ const ShapeBuilder = ({ onBack }) => {
               ? (frames[Math.min(shapeEffect.sourceIndex, frames.length - 1)] || [])
               : null;
 
-          // Recursively process a shape (or group) into point arrays with blanking
-          const processShapeToPoints = (shape, effectPos) => {
-              if (shape.type === 'group') {
-                  const allPts = [];
-                  shape.shapes.forEach((child, idx) => {
-                      const childPts = processShapeToPoints(child, effectPos);
-                      if (childPts.length > 0) {
-                          // The group's own transform (rotation/scale about its
-                          // pivot) must be applied to each child's points, so the
-                          // export matches the editor preview.
-                          const transformed = applyTransformations(childPts, shape);
-                          // Add blanked move-to between sub-shapes (except first)
-                          if (idx > 0) allPts.push({ ...transformed[0], blanking: true });
-                          allPts.push(...transformed);
-                      }
-                  });
-                  return allPts;
-              }
-
-              const mode = shape.renderMode || 'simple';
-              const sampledPts = getSampledPoints(shape);
-
-              // Preserve any user-pinned anchor points.
-              const preserve = new Set();
-              const passThrough = shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline';
-              if (passThrough && Array.isArray(shape.anchorIndexes)) {
-                  shape.anchorIndexes.forEach(i => preserve.add(i));
-              }
-
-              const budgeter = createPointBudgetOptimizer({ budget: exportBudget });
-              const optimized = budgeter.processShape(sampledPts, { preserve, minPoints: shape.type === 'line' ? 2 : 4 });
-
-              // Bake a live-evaluated effect layer (same math as the preview).
-              let effPts = optimized.points;
-              if (shapeEffect && shapeEffect.type && bakeEffects) {
-                  effPts = applyEffectToPoints(effPts, shapeEffect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
-              }
-
-              const process = (p) => ({ ...p, x: (p.x - 500) / 500, y: (1 - p.y / 500) });
-              const processed = effPts.map(process);
-
-              if (processed.length < 2) return [];
-
-              const shapePts = [];
-              for (let i = 0; i < processed.length - 1; i++) {
-                  let segmentMode = mode;
-                  if (mode === 'dashed' && i % 2 === 1) segmentMode = 'blanked';
-                  if (effPts[i+1] && effPts[i+1]._blank) segmentMode = 'blanked';
-
-                  const segmentPoints = interpolatePoints(processed[i], processed[i+1], segmentMode);
-                  
-                  if (i < processed.length - 2) {
-                      shapePts.push(...segmentPoints.slice(0, -1));
-                  } else {
-                      shapePts.push(...segmentPoints);
-                  }
-              }
-
-              // Close the shape if it's a closed type
-              const closed = shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle';
-              if (closed) {
-                  const first = processed[0];
-                  const last = processed[processed.length-1];
-                  const dist = Math.sqrt(Math.pow(first.x - last.x, 2) + Math.pow(first.y - last.y, 2));
-                  
-                  if (dist > 0.001) {
-                      let segmentMode = mode;
-                      if (mode === 'dashed' && (processed.length - 1) % 2 === 1) segmentMode = 'blanked';
-                      if (effPts[0] && effPts[0]._blank) segmentMode = 'blanked';
-
-                      const closingPoints = interpolatePoints(processed[processed.length-1], processed[0], segmentMode);
-                      if (closingPoints.length > 1) {
-                          shapePts.push(...closingPoints.slice(1));
-                      }
-                  }
-              }
-
-              // Add blanked move-to at the start of this shape
-              if (shapePts.length > 0) {
-                  return [{ ...shapePts[0], blanking: true }, ...shapePts];
-              }
-              return [];
-          };
-
           const ildaFramesData = exportFrames.map((frameShapes, frameIdx) => {
-              const pts = [];
-              const effectPos = exportFrames.length > 1 ? frameIdx / (exportFrames.length - 1) : 0;
-              const frameShapeSet = effectSource ? effectSource : frameShapes;
-              // Shared budgeter across all shapes in this frame
-              const budgeter = createPointBudgetOptimizer({ budget: exportBudget });
+            const effectPos = exportFrames.length > 1 ? frameIdx / (exportFrames.length - 1) : 0;
+            const frameShapeSet = effectSource ? effectSource : frameShapes;
 
-              const processShapeToPoints = (shape) => {
-                  if (shape.type === 'group') {
-                      const allPts = [];
-                      shape.shapes.forEach((child, idx) => {
-                          const childPts = processShapeToPoints(child);
-                          if (childPts.length > 0) {
-                              if (idx > 0) allPts.push({ ...allPts[allPts.length - 1], blanking: true });
-                              allPts.push(...childPts);
-                          }
-                      });
-                      return allPts;
-                  }
+            // One shared pipeline decides, for every shape in this frame, what
+            // the beam actually does: density, budget, effects, beam style and
+            // the lift between shapes. The preview renders the same decisions,
+            // so the editor cannot drift away from the file it produces.
+            const program = buildFrameProgram(frameShapeSet, {
+                pointSpacing,
+                budget: exportBudget,
+                effect: shapeEffect,
+                effectPos,
+                bakeEffects,
+                getSampledPoints,
+                resampleShapeBySpacing,
+                applyTransformations,
+                applyEffectToPoints,
+            });
 
-                  const mode = shape.renderMode || 'simple';
-                  const sampledPts = getSampledPoints(shape);
+            // What the frame budget allowed, and what it had to leave out. A
+            // shape that does not fit is dropped rather than drawn as a
+            // handful of dots, and the user has to be told about it.
+            if (program.points.length > peakFramePoints) peakFramePoints = program.points.length;
+            const countDropped = (entries) => entries.forEach((entry) => {
+                if (!entry) { droppedShapes++; return; }
+                if (entry.children) countDropped(entry.children);
+            });
+            countDropped(program.entries);
 
-                  const preserve = new Set();
-                  const passThrough = shape.type === 'pen' || shape.type === 'polygon' || shape.type === 'polyline';
-                  if (passThrough && Array.isArray(shape.anchorIndexes)) {
-                      shape.anchorIndexes.forEach(i => preserve.add(i));
-                  }
+            const points = program.points.map((p) => {
+                const c = hexToRgb(p.color || '#ffffff');
+                const q = toIldaPoint(p);
+                return { x: q.x, y: q.y, r: c.r, g: c.g, b: c.b, blanking: !!p.blanking };
+            });
 
-                  const optimized = budgeter.processShape(sampledPts, { preserve, minPoints: shape.type === 'line' ? 2 : 4 });
-
-                  let effPts = optimized.points;
-                  if (shapeEffect && shapeEffect.type && bakeEffects) {
-                      effPts = applyEffectToPoints(effPts, shapeEffect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
-                  }
-
-                  const process = (p) => ({ ...p, x: (p.x - 500) / 500, y: (1 - p.y / 500) });
-                  const processed = effPts.map(process);
-
-                  if (processed.length < 2) return [];
-
-                  const shapePts = [];
-                  for (let i = 0; i < processed.length - 1; i++) {
-                      let segmentMode = mode;
-                      if (mode === 'dashed' && i % 2 === 1) segmentMode = 'blanked';
-                      if (effPts[i+1] && effPts[i+1]._blank) segmentMode = 'blanked';
-
-                      const segmentPoints = interpolatePoints(processed[i], processed[i+1], segmentMode);
-                      
-                      if (i < processed.length - 2) {
-                          shapePts.push(...segmentPoints.slice(0, -1));
-                      } else {
-                          shapePts.push(...segmentPoints);
-                      }
-                  }
-
-                  const closed = shape.type === 'polygon' || shape.type === 'rect' || shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle';
-                  if (closed) {
-                      const first = processed[0];
-                      const last = processed[processed.length-1];
-                      const dist = Math.sqrt(Math.pow(first.x - last.x, 2) + Math.pow(first.y - last.y, 2));
-                      
-                      if (dist > 0.001) {
-                          let segmentMode = mode;
-                          if (mode === 'dashed' && (processed.length - 1) % 2 === 1) segmentMode = 'blanked';
-                          if (effPts[0] && effPts[0]._blank) segmentMode = 'blanked';
-
-                          const closingPoints = interpolatePoints(processed[processed.length-1], processed[0], segmentMode);
-                          if (closingPoints.length > 1) {
-                              shapePts.push(...closingPoints.slice(1));
-                          }
-                      }
-                  }
-
-                  if (shapePts.length > 0) {
-                      return [{ ...shapePts[0], blanking: true }, ...shapePts];
-                  }
-                  return [];
-              };
-              
-              frameShapeSet.forEach((s, shapeIdx) => {
-                  const shapePts = processShapeToPoints(s);
-                  pts.push(...shapePts);
-              });
-
-              return { points: pts, frameName: 'SHAPE' };
-          });
-          const { framesToIlda } = await import('../utils/ilda-writer.js');
-          const buffer = framesToIlda(ildaFramesData); await window.electronAPI.saveIldaFile(buffer, 'built_shape.ild');
+            return { points, frameName: 'SHAPE' };
+        });
+        const { framesToIlda } = await import('../utils/ilda-writer.js');
+        const buffer = framesToIlda(ildaFramesData); await window.electronAPI.saveIldaFile(buffer, 'built_shape.ild');
+        setExportNote(droppedShapes > 0
+            ? {
+                warn: true,
+                text: `${droppedShapes} shape${droppedShapes === 1 ? '' : 's'} did not fit in ${exportBudget} pts/frame and `
+                    + `were left out. Raise "Max pts/frame" or draw fewer shapes per frame.`,
+            }
+            : {
+                warn: false,
+                text: `Heaviest frame used ${peakFramePoints} of ${exportBudget} points.`,
+            });
       } catch (e) { console.error(e); } finally { setIsExporting(false); }
-  };
-
-  const interpolatePoints = (p1, p2, mode) => {
-      const c1 = hexToRgb(p1.color || color), c2 = hexToRgb(p2.color || color);
-      
-      if (mode === 'dotted') {
-          return [
-              { x: p1.x, y: p1.y, r: c1.r, g: c1.g, b: c1.b, blanking: false },
-              { x: p1.x, y: p1.y, r: c1.r, g: c1.g, b: c1.b, blanking: false }
-          ];
-      }
-
-      const isBlanked = mode === 'blanked';
-      
-      // Return just the start and end points, creating a single vector segment.
-      // No extra points are added between p1 and p2.
-      return [
-          { x: p1.x, y: p1.y, r: c1.r, g: c1.g, b: c1.b, blanking: isBlanked },
-          { x: p2.x, y: p2.y, r: c2.r, g: c2.g, b: c2.b, blanking: isBlanked }
-      ];
   };
 
   const finishMultiPointShape = () => {
@@ -2667,11 +3008,16 @@ const ShapeBuilder = ({ onBack }) => {
         if (actualDx !== 0 || actualDy !== 0) {
             setFrames(prev => {
                 const newFrames = [...prev];
-                const ns = [...newFrames[currentFrameIndex]];
+                // Write to the frame the shape was READ from. While a shape effect
+                // is active the editor displays (and hit-tests) frames[sourceIndex]
+                // rather than frames[currentFrameIndex]; writing to the current frame
+                // left the on-screen shape untouched — so shapes could not be moved —
+                // and could move an unrelated shape in the wrong frame.
+                const ns = [...newFrames[shapeSourceIndex]];
                 selectedShapeIndexes.forEach(idx => {
                     ns[idx] = moveShape({ ...ns[idx] }, actualDx, actualDy);
                 });
-                newFrames[currentFrameIndex] = ns;
+                newFrames[shapeSourceIndex] = ns;
                 return newFrames;
             });
             startPosRef.current.x += actualDx;
@@ -2683,9 +3029,10 @@ const ShapeBuilder = ({ onBack }) => {
     if (isMovingPivotRef.current && selectedShapeIndexes.length === 1) {
         const snapped = snap(mouse.x, mouse.y);
         setFrames(prev => {
-            const nf = [...prev], ns = [...nf[currentFrameIndex]];
+            // Same source-frame targeting as the shape/point drags above.
+            const nf = [...prev], ns = [...nf[shapeSourceIndex]];
             ns[selectedShapeIndexes[0]] = { ...ns[selectedShapeIndexes[0]], pivotX: snapped.x, pivotY: snapped.y };
-            nf[currentFrameIndex] = ns;
+            nf[shapeSourceIndex] = ns;
             return nf;
         });
         return;
@@ -2705,13 +3052,14 @@ const ShapeBuilder = ({ onBack }) => {
 
             if (actualDx !== 0 || actualDy !== 0) {
                 setFrames(prev => {
-                    const nf = [...prev], ns = [...nf[currentFrameIndex]];
+                    // Same source-frame targeting as the shape drag above.
+                    const nf = [...prev], ns = [...nf[shapeSourceIndex]];
                     let shape = { ...ns[selectedShapeIndexes[0]] };
                     selectedPointIndexes.forEach(pData => {
                         const path = Array.isArray(pData) ? pData : [pData];
                         shape = deepUpdate(shape, path, actualDx, actualDy);
                     });
-                    ns[selectedShapeIndexes[0]] = shape; nf[currentFrameIndex] = ns; return nf;
+                    ns[selectedShapeIndexes[0]] = shape; nf[shapeSourceIndex] = ns; return nf;
                 });
 
                 startPosRef.current.x += actualDx;
@@ -2836,7 +3184,42 @@ const ShapeBuilder = ({ onBack }) => {
   };
 
   // --- RENDERING ---
-  const drawShape = (ctx, shape, isSelected, isOnion = false, path = []) => {
+  // Pattern parameters for the preview. When the shared program resolved a
+  // pattern for this shape its lengths are used verbatim and the resolvers are
+  // NOT allowed to stretch again — the program already fitted them to what was
+  // left of the frame budget, and stretching a second time is exactly how the
+  // preview and the file drift apart. With no entry (an onion-skin ghost, or a
+  // shape the program skipped) fall back to the defaults at the export budget.
+  const beamPattern = (entry) => {
+    const s = entry && entry.stats;
+    return {
+      pitch: (s && s.pitch) || (pointSpacing > 0 ? pointSpacing : DEFAULT_DOT_PITCH),
+      dashLength: (s && s.dashLength) || DEFAULT_DASH_LENGTH,
+      gapLength: (s && s.gapLength) || DEFAULT_GAP_LENGTH,
+      dwell: (s && s.dwell) || DEFAULT_DWELL,
+    };
+  };
+  const beamMaxPoints = (entry) => (
+    entry && entry.stats ? Infinity : defaultBeamPointAllowance(exportBudget)
+  );
+
+  // 'points' style: dwell dots only, at the stations the export dwells on.
+  function drawBeamDots(ctx, pts, closed, shape, entry, isOnion) {
+    if (!pts || pts.length < 2) return;
+    const pat = beamPattern(entry);
+    const m = measureOutline(pts, closed);
+    resolveDotStations(m, {
+      pitch: pat.pitch,
+      dwell: pat.dwell,
+      drawsLine: false,
+      maxPoints: beamMaxPoints(entry),
+    }).stations.forEach((p) => {
+      ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  const drawShape = (ctx, shape, isSelected, isOnion = false, path = [], entry = null) => {
     if (!shape || shape.hidden) return; ctx.save(); 
     
     // Group handling
@@ -2844,16 +3227,23 @@ const ShapeBuilder = ({ onBack }) => {
         // Children must be rendered through the group's own transform (rotation/scale
         // about the group pivot) so the on-screen editor matches the exported frames.
         shape.shapes.forEach((child, i) => {
-            const childPts = applyTransformations(getSampledPoints(child), shape);
+            const closed = isClosedType(child.type);
+            const childEntry = (entry && entry.children) ? entry.children[i] : null;
+            // Prefer the shared program's outline: it already carries the group
+            // transform, the budget decimation and the effect bake.
+            const childPts = childEntry && childEntry.outline
+                ? childEntry.outline
+                : applyTransformations(getSampledPoints(child), shape);
             const childMode = child.renderMode || 'simple';
-            if (childMode === 'points' || childMode === 'dotted') {
-                childPts.forEach(p => {
-                    ctx.fillStyle = isOnion ? '#444' : (p.color || child.color);
-                    ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill();
-                });
+            if (childMode === 'points') {
+                // Dots only, at the shared budget-aware stations. Handled here
+                // rather than in drawPoly because the group transform has
+                // already been folded into childPts.
+                drawBeamDots(ctx, childPts, closed, 'points', child, childEntry, isOnion);
             } else {
-                const closed = child.type !== 'pen' && child.type !== 'polyline' && child.type !== 'line' && child.type !== 'bezier';
-                drawPoly(childPts, closed, childMode === 'dashed' ? 'dashed' : 'simple', [...path, i]);
+                // Pass the child's own mode through so a dotted child draws its
+                // line plus dots and a dashed child dashes, exactly as exported.
+                drawPoly(childPts, closed, childMode, [...path, i], childEntry);
             }
         });
         ctx.restore();
@@ -2892,8 +3282,9 @@ const ShapeBuilder = ({ onBack }) => {
     ctx.lineWidth = (isSelected ? 2.5 : 1.5) / zoom;
     
     // Batch drawing optimization
-    function drawPoly(pts, closed, mode = 'simple', shapePath = []) {
+    function drawPoly(pts, closed, mode = 'simple', shapePath = [], entry = null) {
         if (!pts || pts.length < 2) return;
+        const pat = beamPattern(entry);
         
         // --- PASS 1: HIGHLIGHTS ---
         if (selectedSegmentIndexes.length > 0) {
@@ -2929,6 +3320,30 @@ const ShapeBuilder = ({ onBack }) => {
         }
 
         // --- PASS 2: ACTUAL LINES ---
+        // Dashed uses the shared arc-length dash pattern, the same one the ILDA
+        // export builds, so a dash is the same length on screen and on the DAC.
+        // (The previous `i % 2` skip made the dash length depend on how many
+        // samples the outline happened to have, so changing the point density
+        // silently changed the dash pattern.)
+        if (mode === 'dashed') {
+            const m = measureOutline(pts, closed);
+            resolveDashRuns(m, {
+                dashLength: pat.dashLength,
+                gapLength: pat.gapLength,
+                maxPoints: beamMaxPoints(entry),
+            }).runs.forEach((run) => {
+                if (run.blanked) return;
+                const rp = pointsInRun(m, run);
+                if (rp.length < 2) return;
+                ctx.beginPath();
+                ctx.moveTo(rp[0].x, rp[0].y);
+                for (let k = 1; k < rp.length; k++) ctx.lineTo(rp[k].x, rp[k].y);
+                ctx.strokeStyle = isOnion ? '#444' : (rp[0].color || shape.color);
+                ctx.stroke();
+            });
+            return;
+        }
+
         let pendingStroke = false;
         ctx.beginPath();
         if (pts[0]) ctx.moveTo(pts[0].x, pts[0].y);
@@ -2996,7 +3411,16 @@ const ShapeBuilder = ({ onBack }) => {
         }
 
         if (mode === 'dotted') {
-            pts.forEach(p => {
+            // Dot positions come from the shared budget-aware stations so the
+            // dots sit exactly where the export dwells the beam.
+            const m = measureOutline(pts, closed);
+            resolveDotStations(m, {
+                pitch: pat.pitch,
+                dwell: pat.dwell,
+                drawsLine: true,
+                outlineCount: closed ? pts.length + 1 : pts.length,
+                maxPoints: beamMaxPoints(entry),
+            }).stations.forEach((p) => {
                 ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color);
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2);
@@ -3005,68 +3429,46 @@ const ShapeBuilder = ({ onBack }) => {
         }
     }
 
-    const ds = (p1, p2, mode = 'simple', shapePath = []) => {
-        if (!p1 || !p2) return;
 
-        // Pass 1: Highlight
-        const segPath = [...shapePath, 0];
-        const isSegSelected = selectedSegmentIndexes.some(sel => JSON.stringify(sel) === JSON.stringify(segPath));
-        if (isSegSelected) {
-            ctx.save();
-            ctx.strokeStyle = getInvertedColor(p1.color || shape.color);
-            ctx.lineWidth = 6 / zoom;
-            ctx.globalAlpha = 0.6;
-            ctx.lineCap = 'round';
-            ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.stroke();
-            ctx.restore();
-        }
+    // The shared program's outline, so the editor strokes exactly the geometry
+    // that was decimated, effect-baked and handed to the beam program. Falls
+    // back to a fresh sample for shapes the program skipped (hidden, degenerate).
+    const beamOutline = () => (entry && entry.outline ? entry.outline : getSampledPoints(shape));
 
-        if (mode === 'dotted') {
-            [p1, p2].forEach(p => {
-                ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color);
-                ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill();
-            });
-            return;
-        }
-        const c1 = isOnion ? '#444' : (p1.color || shape.color), c2 = isOnion ? '#444' : (p2.color || shape.color);
-        if (c1 === c2) ctx.strokeStyle = c1; else { const g = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y); g.addColorStop(0, c1); g.addColorStop(1, c2); ctx.strokeStyle = g; }
-        ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-    };
-
-    if (shape.renderMode === 'points') { getSampledPoints({...shape, rotation: 0, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1}).forEach(p => { ctx.fillStyle = isOnion ? '#444' : (p.color || shape.color); ctx.beginPath(); ctx.arc(p.x, p.y, 3 / zoom, 0, Math.PI * 2); ctx.fill(); }); ctx.restore(); return; }
+    if (shape.renderMode === 'points') {
+        // Same budget-aware stations the export dwells on, so the visible dots
+        // and the burned dots are the same dots. The outline keeps its own
+        // transform (scale/rotation) — stripping it here moved the preview dots
+        // away from the exported ones and made a manual Scale X/Y look like it
+        // did nothing.
+        drawBeamDots(ctx, beamOutline(), isClosedType(shape.type), shape, entry, isOnion);
+        ctx.restore(); return;
+    }
     
     const mode = shape.renderMode || 'simple';
 
     switch (shape.type) {
         case 'pen': case 'polyline': case 'bezier': { 
-            const pts = getSampledPoints(shape);
-            drawPoly(pts, false, mode, path);
+            drawPoly(beamOutline(), false, mode, path, entry);
             break; 
         }
         case 'polygon': {
-            const pts = getSampledPoints(shape);
-            drawPoly(pts, true, mode, path);
+            drawPoly(beamOutline(), true, mode, path, entry);
             break;
         }
         case 'line': {
-            const pts = getSampledPoints(shape);
-            ds(pts[0], pts[1], mode, path); 
+            // A line is just a 2-point open polyline; routing it through drawPoly
+            // gives it the same arc-length dash/dot handling as every other shape
+            // (it previously had its own copy that ignored dashed entirely).
+            drawPoly(beamOutline(), false, mode, path, entry);
             break;
         }
-        case 'rect': { const pts = getSampledPoints(shape); drawPoly(pts, true, mode, path); break; }
-        case 'circle': { 
-            const pts = getSampledPoints(shape);
-            drawPoly(pts, true, mode, path);
-            break; 
-        }
-        case 'star': { 
-            const pts = getSampledPoints(shape);
-            drawPoly(pts, true, mode, path);
-            break; 
-        }
+        case 'rect': { drawPoly(beamOutline(), true, mode, path, entry); break; }
+        case 'circle': { drawPoly(beamOutline(), true, mode, path, entry); break; }
+        case 'star': { drawPoly(beamOutline(), true, mode, path, entry); break; }
+        // A triangle was creatable and sampled, but the draw switch had no case
+        // for it, so no path was ever emitted and the shape rendered invisible.
+        case 'triangle': { drawPoly(beamOutline(), true, mode, path, entry); break; }
     }
     if (isSelected && !isOnion) {
         const actualPts = getShapePoints(shape);
@@ -3142,7 +3544,10 @@ const ShapeBuilder = ({ onBack }) => {
   // Preview rendering: a clean laser-style view of the shapes. Replaces the
   // editing affordances (grid, handles, per-point drops) with a single
   // continuous line, a dot cloud, or each shape's center marker.
-  const shapeIsClosed = (shape) => !(shape.type === 'pen' || shape.type === 'polyline' || shape.type === 'line' || shape.type === 'bezier');
+  // Closed-ness is decided once, in beamProgram.isClosedType. A second copy of
+  // this rule is how a shape ends up drawn open in one place and closed in
+  // another.
+  const shapeIsClosed = (shape) => isClosedType(shape && shape.type);
 
   // 3D preview: volumetric fading cone from the virtual projector center
   // (canvas center) towards each lit segment — same geometry and rendering
@@ -3259,6 +3664,40 @@ const ShapeBuilder = ({ onBack }) => {
     ctx.restore();
   };
 
+  // Shapes as they should be DRAWN: the point-density resample applied on top of
+  // the real shapes. Kept separate so the canvas shows the density while
+  // hit-testing and dragging still operate on the untouched editable geometry.
+  // Same length and order as `shapes`, so selection indices line up.
+  const displayShapes = React.useMemo(
+    () => shapes.map((s) => (s ? resampleShapeBySpacing(s, effectiveSpacing(s)) : s)),
+    [shapes, pointSpacing, resampleShapeBySpacing, effectiveSpacing]
+  );
+
+  // The exact laser program for the frame being edited, built by the same
+  // function the .ild export uses. The preview reads each shape's resolved
+  // pattern and outline from here, which is what keeps the editor honest:
+  // the dash lengths, dot positions, budget stretch and beam lifts on screen are
+  // the ones that get written to the file.
+  const frameProgram = React.useMemo(() => {
+    const first = timelineStartFrame;
+    const total = Math.max(1, frames.length - first);
+    const idx = Math.min(total - 1, Math.max(0, shapeSourceIndex - first));
+    const effectPos = total > 1 ? idx / (total - 1) : 0;
+    return buildFrameProgram(shapes, {
+      pointSpacing,
+      budget: exportBudget,
+      effect: shapeEffect,
+      effectPos,
+      bakeEffects,
+      getSampledPoints,
+      resampleShapeBySpacing,
+      applyTransformations,
+      applyEffectToPoints,
+    });
+  }, [shapes, frames.length, timelineStartFrame, shapeSourceIndex, pointSpacing,
+      exportBudget, shapeEffect, bakeEffects, getSampledPoints,
+      resampleShapeBySpacing, applyTransformations]);
+
   // --- RENDERING LOOP ---
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
@@ -3286,9 +3725,9 @@ const ShapeBuilder = ({ onBack }) => {
         }
         if (backgroundImage) { ctx.globalAlpha = 0.3; ctx.drawImage(backgroundImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE); ctx.globalAlpha = 1.0; }
         if (previewMode === 'off') {
-            if (!(shapeEffect && shapeEffect.type) && shapes.length > 0) shapes.forEach((s, i) => { if (!s) return; drawShape(ctx, s, selectedShapeIndexes.includes(i)); });
+            if (!(shapeEffect && shapeEffect.type) && displayShapes.length > 0) displayShapes.forEach((s, i) => { if (!s) return; drawShape(ctx, s, selectedShapeIndexes.includes(i), false, [], frameProgram.entries[i]); });
         } else {
-            if (shapes.length > 0) shapes.forEach(s => { if (!s) return; drawPreview(ctx, s, previewMode); });
+            if (displayShapes.length > 0) displayShapes.forEach(s => { if (!s) return; drawPreview(ctx, s, previewMode); });
         }
         if (shapeEffect && shapeEffect.type) {
             const effectPos = frameCount > 1 ? currentFrameIndex / (frameCount - 1) : 0;
@@ -3305,10 +3744,10 @@ const ShapeBuilder = ({ onBack }) => {
             // At ~0 envelope strength the effect is idle, so show the raw
             // shapes as-is. Otherwise draw ONLY the modulated layer - no full
             // shape underlay, so blanked gaps/chase jumps read as jumps.
-            if (strengthAt < 0.02 && shapes.length > 0) {
-                shapes.forEach((s, i) => { if (!s) return; previewMode === 'cone' ? drawPreview(ctx, s, 'cone') : drawShape(ctx, s, selectedShapeIndexes.includes(i)); });
+            if (strengthAt < 0.02 && displayShapes.length > 0) {
+                displayShapes.forEach((s, i) => { if (!s) return; previewMode === 'cone' ? drawPreview(ctx, s, 'cone') : drawShape(ctx, s, selectedShapeIndexes.includes(i)); });
             } else {
-                shapes.forEach(s => {
+                displayShapes.forEach(s => {
                     if (!s || s.hidden) return;
                     const rawPoints = getSampledPoints(s);
                     const modulated = applyEffectToPoints(rawPoints, shapeEffect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
@@ -3319,7 +3758,7 @@ const ShapeBuilder = ({ onBack }) => {
                 // redraw, so the current selection stays visible on top.
                 if (selectedShapeIndexes.length > 0) {
                     ctx.globalAlpha = 0.6;
-                    shapes.forEach((s, i) => {
+                    displayShapes.forEach((s, i) => {
                         if (!s || !selectedShapeIndexes.includes(i)) return;
                         const bb = getBoundingBox(s);
                         ctx.strokeStyle = '#0089ff';
@@ -3347,7 +3786,7 @@ const ShapeBuilder = ({ onBack }) => {
     
     rafId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(rafId);
-  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, selectedSegmentIndexes, onionSkin, isPlaying, zoom, pan, renderTrigger, previewMode, shapeEffect]);
+  }, [frames, currentFrameIndex, activeShape, isDrawing, backgroundImage, showGrid, gridSize, selectedShapeIndexes, selectedPointIndexes, selectedSegmentIndexes, onionSkin, isPlaying, zoom, pan, renderTrigger, previewMode, shapeEffect, displayShapes]);
 
   // --- PLAYBACK TIMER ---
   useEffect(() => {
@@ -3391,17 +3830,23 @@ const ShapeBuilder = ({ onBack }) => {
           frameDuration = Math.max(1, frameDuration);
 
           if (playbackAccumulatorRef.current >= frameDuration) {
+              // Advance at most ONE frame per animation frame. Only one frame can be
+              // displayed per tick anyway, and a short frameDuration (e.g. a 2-frame
+              // clip in bpm mode) let the accumulator compute a framesToAdvance of
+              // 10+, jumping the index wildly and thrashing state every rAF. Bounding
+              // it keeps one setState per tick with a monotonic index, which is what
+              // the "Maximum update depth exceeded" warning was reacting to.
               const framesToAdvance = Math.floor(playbackAccumulatorRef.current / frameDuration);
               if (framesToAdvance > 0) {
                   setCurrentFrameIndex(prev => {
-                      const next = prev + framesToAdvance;
+                      const next = prev + 1;
                       if (next >= fCount) {
                           // Loop within the startF -> fCount range
                           return startF + (next - startF) % activeRange;
                       }
                       return next;
                   });
-                  playbackAccumulatorRef.current -= (framesToAdvance * frameDuration);
+                  playbackAccumulatorRef.current -= frameDuration;
               }
           }
           rafId = requestAnimationFrame(tick);
@@ -3671,7 +4116,15 @@ const ShapeBuilder = ({ onBack }) => {
           </label>
           <label><input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} /> Grid</label>
           <label><input type="checkbox" checked={snapToGrid} onChange={e => setSnapToGrid(e.target.checked)} /> Snap</label>
-          {(tool === 'line' || tool === 'bezier') && <label><input type="checkbox" checked={continuousDrawing} onChange={e => setContinuousDrawing(e.target.checked)} /> Continuous</label>}
+          {(tool === 'line' || tool === 'bezier') && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <label title="Chained drawing: each click continues from the previous segment's end point (each new segment shares P0 with the last P1), instead of starting an independent segment.
+For Line it draws a multi-segment connected line; for Bezier it chains smooth curves where each new anchor keeps its handles." style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                      <input type="checkbox" checked={continuousDrawing} onChange={e => setContinuousDrawing(e.target.checked)} /> Continuous
+                  </label>
+                  <span style={{ fontSize: '0.55rem', color: '#666', maxWidth: '180px', lineHeight: '1.3' }}>ON: each segment continues from the previous end point (connected). OFF: each click starts a fresh independent shape.</span>
+              </div>
+          )}
           <select value={gridSize} onChange={e => setGridSize(parseInt(e.target.value))} style={{ background: '#222', color: 'white', border: '1px solid #444', borderRadius: '3px' }}>
             <option value="10">10px</option><option value="25">25px</option><option value="50">50px</option><option value="100">100px</option>
           </select>
@@ -3768,7 +4221,7 @@ const ShapeBuilder = ({ onBack }) => {
                             <div className="menu-item" onClick={addCornerPoints}>Add Corner Points</div>
                             <div className="menu-item" onClick={resetPivot}>Reset Anchor Point</div>
                             <div className="separator" style={{ height: '1px', background: '#444', margin: '5px 0' }} />
-                            {selectedShapeIndexes.length === 1 && ['rect', 'circle', 'star', 'line'].includes(shapes[selectedShapeIndexes[0]]?.type) && (
+                            {selectedShapeIndexes.length === 1 && ['rect', 'circle', 'star', 'line', 'triangle', 'bezier'].includes(shapes[selectedShapeIndexes[0]]?.type) && (
                                 <div className="menu-item" onClick={convertToPoints}>Convert to Points</div>
                             )}
                             <div className="menu-item" onClick={() => { 
@@ -3969,6 +4422,7 @@ const ShapeBuilder = ({ onBack }) => {
                                                       <NumField 
                                                         value={tweenStartFrame + 1} 
                                                         min={1} 
+                                                        commitOnChange
                                                         onCommit={v => setTweenStartFrame(Math.max(1, Math.round(v) || 1) - 1)} 
                                                         style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
                                                       />
@@ -3980,6 +4434,7 @@ const ShapeBuilder = ({ onBack }) => {
                                                       <NumField 
                                                         value={tweenEndFrame + 1} 
                                                         min={1} 
+                                                        commitOnChange
                                                         onCommit={v => setTweenEndFrame(Math.max(1, Math.round(v) || 1) - 1)} 
                                                         style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} 
                                                       />
@@ -3993,7 +4448,20 @@ const ShapeBuilder = ({ onBack }) => {
                                                                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                                                                     <input type="checkbox" className="sb-checkbox" checked={tweenColor} onChange={e => setTweenColor(e.target.checked)} /> COLOR
                                                                 </label>
-</div>                                              <button onClick={tweenFrames} className="primary-btn" style={{ width: '100%', padding: '5px' }}>INTERPOLATE</button>
+</div>                                              <button
+                                                  onClick={tweenFrames}
+                                                  onMouseDown={() => {
+                                                      // If a tween start/end field still has focus, its commit
+                                                      // (blur) has not run yet — clicking INTERPOLATE while the
+                                                      // end field holds an un-committed value made the guard
+                                                      // below read a stale range and wrongly report
+                                                      // "Start frame must be before end frame". Force the
+                                                      // commit before the click is processed.
+                                                      if (document.activeElement && document.activeElement.blur && document.activeElement !== document.body) {
+                                                          document.activeElement.blur();
+                                                      }
+                                                  }}
+                                                  className="primary-btn" style={{ width: '100%', padding: '5px' }}>INTERPOLATE</button>
                                            </div>                  
 
               {selectedShapeIndexes.length > 0 ? (
@@ -4012,7 +4480,7 @@ const ShapeBuilder = ({ onBack }) => {
                           </div>
                       </div>
 
-                      {selectedShapeIndexes.length === 1 && shapes[selectedShapeIndexes[0]] && (['rect', 'circle', 'star', 'line'].includes(shapes[selectedShapeIndexes[0]].type)) && (
+                      {selectedShapeIndexes.length === 1 && shapes[selectedShapeIndexes[0]] && (['rect', 'circle', 'star', 'line', 'triangle'].includes(shapes[selectedShapeIndexes[0]].type)) && (
                           <div className="primitive-properties" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', background: '#222', borderRadius: '4px' }}>
                               <div className="property-group">
                                   <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>POSITION (X / Y)</label>
@@ -4156,6 +4624,38 @@ const ShapeBuilder = ({ onBack }) => {
                   <label htmlFor="exportBudget">Max pts/frame</label>
                   <input id="exportBudget" type="number" min="100" max="5000" step="100" value={exportBudget} onChange={(e) => setExportBudget(Math.max(0, parseInt(e.target.value, 10) || 0))} style={{ width: '70px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.7rem' }} />
                   <div style={{ marginLeft: 'auto', color: '#555' }}>(1200 = 20k pts @ 30fps)</div>
+              </div>
+              {exportNote ? (
+                  <div style={{ marginTop: '5px', fontSize: '0.65rem', lineHeight: '1.5', color: exportNote.warn ? '#ff7b72' : '#888' }}>
+                      {exportNote.text}
+                  </div>
+              ) : null}
+              {/* Point density: a slider rather than a number, because the useful
+                  question is "denser / sparser", and the effect is immediately
+                  visible on the canvas for the per-point beam styles. Left at 0 it
+                  is off and the shapes export exactly as edited. */}
+              <div style={{ marginTop: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', fontSize: '0.7rem', color: '#888', marginBottom: '2px' }}>
+                      <label htmlFor="pointSpacing">Point density</label>
+                      <span style={{ marginLeft: 'auto', color: pointSpacing > 0 ? 'var(--theme-color)' : '#555' }}>
+                          {pointSpacing > 0 ? `${pointSpacing} px spacing` : 'off — corners only'}
+                      </span>
+                  </div>
+                  <input
+                      id="pointSpacing"
+                      type="range"
+                      min="0"
+                      max="50"
+                      step="1"
+                      value={pointSpacing}
+                      onChange={(e) => setPointSpacing(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      style={{ width: '100%' }}
+                  />
+                  <div style={{ fontSize: '0.62rem', color: '#555', marginTop: '2px' }}>
+                      Adds evenly spaced outline points so Points / Dotted / Dashed have
+                      something to draw. Previewed live and baked into the export; your
+                      shapes are not modified.
+                  </div>
               </div>
           </div>
         </aside>

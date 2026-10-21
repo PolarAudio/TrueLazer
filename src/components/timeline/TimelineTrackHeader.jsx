@@ -126,7 +126,7 @@ const TrackHeader = ({ channel, height }) => {
             <div
                 className={`timeline-track-dac ${outputs.length > 1 ? 'zone' : ''}`}
                 title={outputs.length
-                    ? `${outputs.length} output${outputs.length > 1 ? 's (zone)' : ''}: ${outputs.map((o) => `${o.label || o.ip}[${o.channel}]${o.flipX ? ' ⮀' : ''}${o.flipY ? ' ⮁' : ''}`).join(', ')}`
+                    ? `${outputs.length} output${outputs.length > 1 ? 's (zone)' : ''}: ${outputs.map((o) => `${dacOutputSettings[`${o.ip}:${o.channel}`]?.name || o.label || o.ip}[${o.channel}]${o.flipX ? ' ⮀' : ''}${o.flipY ? ' ⮁' : ''}`).join(', ')}`
                     : 'none (drag a DAC here; shift-drag adds to a zone; x/y buttons invert that DAC)'}
             >
                 {outputs.length > 0 ? (
@@ -137,7 +137,9 @@ const TrackHeader = ({ channel, height }) => {
                             </span>
                             <button
                                 className={`timeline-dac-axis ${o.flipX ? 'active' : ''}`}
-                                title={o.flipX ? 'Invert X is ON (click to reset)' : 'Invert X axis for this DAC'}
+                                title={o.flipX
+                                    ? 'Invert X is ON (click to reset)'
+                                    : `Invert X axis for this DAC${dacOutputSettings[`${o.ip}:${o.channel}`]?.flipX ? ' — the Output Settings already invert X, so this cancels it' : ''}`}
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     actions.setOutputFlip(channel.id, o.ip, o.channel, 'x');
@@ -145,7 +147,9 @@ const TrackHeader = ({ channel, height }) => {
                             >x</button>
                             <button
                                 className={`timeline-dac-axis ${o.flipY ? 'active' : ''}`}
-                                title={o.flipY ? 'Invert Y is ON (click to reset)' : 'Invert Y axis for this DAC'}
+                                title={o.flipY
+                                    ? 'Invert Y is ON (click to reset)'
+                                    : `Invert Y axis for this DAC${dacOutputSettings[`${o.ip}:${o.channel}`]?.flipY ? ' — the Output Settings already invert Y, so this cancels it' : ''}`}
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     actions.setOutputFlip(channel.id, o.ip, o.channel, 'y');

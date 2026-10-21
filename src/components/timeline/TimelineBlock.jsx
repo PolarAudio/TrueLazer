@@ -1,6 +1,7 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { useTimeline, getAdjacentCues } from '../../contexts/TimelineContext';
 import { timeToPx, pxToTime, snapToGrid } from '../../utils/timelineTime';
+import { clipBlockStyle } from '../../utils/timelineClipColor';
 
 /**
  * A single cue block on the timeline. Pointer-based drag (move) and resize via
@@ -173,10 +174,15 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
     const width = Math.max(6, timeToPx(cue.duration, pxPerSecond));
     const isIlda = cue.type === 'ILDA';
 
+    // Null unless the user picked a colour, so an uncoloured clip keeps the CSS
+    // default for its type. The overlap stripes live on ::before precisely so
+    // they layer over this instead of replacing it.
+    const colorStyle = useMemo(() => clipBlockStyle(cue), [cue.color]);
+
     return (
         <div
-            className={`timeline-block ${isIlda ? 'ilda' : 'generator'} ${selected ? 'selected' : ''} ${cue.isLooping ? 'looping' : ''} ${overlapping ? 'overlap' : ''}`}
-            style={{ left, width }}
+            className={`timeline-block ${isIlda ? 'ilda' : 'generator'} ${selected ? 'selected' : ''} ${cue.isLooping ? 'looping' : ''} ${overlapping ? 'overlap' : ''} ${cue.color ? 'custom-color' : ''}`}
+            style={colorStyle ? { left, width, ...colorStyle } : { left, width }}
             data-cue-id={cue.id}
             data-channel-id={cue.channelId}
             onPointerDown={(e) => startDrag(e, 'move')}

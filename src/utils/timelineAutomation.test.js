@@ -272,6 +272,73 @@ describe('effect-linked lanes', () => {
         expect(rotate.params.direction).toBe('CW'); // non-automated params keep defaults
     });
 
+    it('builds an effect whose params are all static (Invert) from the clip values', () => {
+        // Invert has only checkboxes, so no curve can drive it and the lane
+        // array used to drop it entirely - the Inspector showed working
+        // checkboxes that never reached the laser.
+        const lanes = [{
+            id: 'l1',
+            clips: [{
+                id: 'c1', startTime: 0, duration: 4,
+                effectId: 'invert', paramId: null,
+                values: { invertX: true, invertY: false, invertColor: true },
+            }],
+        }];
+        const effects = buildChannelEffects(lanes, 2, 'ch1');
+        expect(effects).toHaveLength(1);
+        expect(effects[0].id).toBe('invert');
+        expect(effects[0].instanceId).toBe('auto.ch1.invert');
+        expect(effects[0].params.invertX).toBe(true);
+        expect(effects[0].params.invertY).toBe(false);
+        expect(effects[0].params.invertColor).toBe(true);
+    });
+
+    it('drops a static effect the clip carries no values for', () => {
+        // Nothing was configured, so there is nothing to apply - and Invert's
+        // options all default to off, so applying it would do nothing anyway.
+        const lanes = [{
+            id: 'l1',
+            clips: [{ id: 'c1', startTime: 0, duration: 4, effectId: 'invert', paramId: null, values: {} }],
+        }];
+        expect(buildChannelEffects(lanes, 2, 'ch1')).toEqual([]);
+    });
+
+    it('merges the static settings of a second clip for the same effect', () => {
+        const lanes = [{
+            id: 'l1',
+            clips: [
+                { id: 'a', startTime: 0, duration: 4, effectId: 'invert', paramId: null, values: { invertX: true } },
+                { id: 'b', startTime: 4, duration: 4, effectId: 'invert', paramId: null, values: { invertY: true } },
+            ],
+        }];
+        // Only the active clip contributes at a time.
+        const at2 = buildChannelEffects(lanes, 2, 'ch1');
+        expect(at2).toHaveLength(1);
+        expect(at2[0].params.invertX).toBe(true);
+        const at6 = buildChannelEffects(lanes, 6, 'ch1');
+        expect(at6).toHaveLength(1);
+        expect(at6[0].params.invertY).toBe(true);
+    });
+
+    it('leaves a range param to its curve when a static clip shares the effect', () => {
+        // The stored value of a RANGE param belongs to the curve, not to the
+        // clip, so merging static settings must not overwrite it.
+        const lanes = [
+            { id: 'l1', effectId: 'rotate', paramId: 'angle', keyframes: [{ time: 0, value: 90 }] },
+            {
+                id: 'l2',
+                clips: [{
+                    id: 'c1', startTime: 0, duration: 4, effectId: 'rotate', paramId: null,
+                    values: { direction: 'CCW', angle: 999 },
+                }],
+            },
+        ];
+        const effects = buildChannelEffects(lanes, 2, 'ch1');
+        const rot = effects.find((e) => e.id === 'rotate');
+        expect(rot.params.angle).toBeCloseTo(90);   // the curve wins
+        expect(rot.params.direction).toBe('CCW');   // the static value is merged
+    });
+
     it('buildChannelEffects instance ids never collide across channels', () => {
         const a = buildChannelEffects([{ id: 'x', effectId: 'wave', paramId: 'amplitude' }], 0, 'chA');
         const b = buildChannelEffects([{ id: 'x', effectId: 'wave', paramId: 'amplitude' }], 0, 'chB');
@@ -367,9 +434,12 @@ describe('per-clip effect overrides', () => {
         expect(out).toHaveLength(2);
         const inv = out.find((e) => e.id === 'invert');
         expect(inv.instanceId).toBe('override.invert');
+        // Asking for an inverted COLOUR must not also mirror the geometry:
+        // Invert's options all default to off, so the override is the whole
+        // story.
         expect(inv.params).toEqual({
-            invertX: true,
-            invertY: true,
+            invertX: false,
+            invertY: false,
             invertZ: false,
             invertColor: true,
         });

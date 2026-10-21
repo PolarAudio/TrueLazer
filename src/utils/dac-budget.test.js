@@ -86,10 +86,77 @@ describe('dac-budget decimatePoints', () => {
             pts[i * 8] = i; // x coordinate = index
         }
         const out = decimatePoints(pts, target);
+        expect(out.length).toBe(target * 8);
+        // Every emitted point must be a faithful copy of SOME source point --
+        // the x coordinate doubles as the source index so we can verify both
+        // the geometry and the blanking flag travelled together.
         for (let i = 0; i < target; i++) {
-            const srcIdx = Math.round((i * (n - 1)) / (target - 1));
+            const srcIdx = out[i * 8];
+            expect(srcIdx).toBe(Math.floor(srcIdx));
+            expect(srcIdx).toBeLessThan(n);
             expect(out[i * 8 + 6]).toBe(pts[srcIdx * 8 + 6]);
-            expect(out[i * 8]).toBe(pts[srcIdx * 8]);
+        }
+        // Strictly increasing, i.e. order is preserved.
+        for (let i = 1; i < target; i++) {
+            expect(out[i * 8]).toBeGreaterThan(out[(i - 1) * 8]);
+        }
+    });
+
+    it('preserves a short blanked run instead of sampling straight over it', () => {
+        // The safety-zone failure mode: a zone covering only a few samples of a
+        // long frame must survive decimation, not be stepped over.
+        const n = 1000, target = 575;
+        const pts = new Float32Array(n * 8);
+        for (let i = 0; i < n; i++) {
+            pts[i * 8] = i;
+            // A narrow zone over samples 500-505 only.
+            pts[i * 8 + 6] = (i >= 500 && i <= 505) ? 1 : 0;
+            if (!(i >= 500 && i <= 505)) pts[i * 8 + 3] = 255;
+        }
+        const out = decimatePoints(pts, target);
+        const blanked = [];
+        for (let i = 0; i < out.length / 8; i++) {
+            if (out[i * 8 + 6] > 0.5) blanked.push(out[i * 8]);
+        }
+        // The whole zone survived, and both of its edges are present so the
+        // beam still cuts before entering it.
+        expect(blanked.length).toBeGreaterThanOrEqual(6);
+        expect(blanked).toContain(500);
+        expect(blanked).toContain(505);
+        expect(Math.min(...blanked)).toBe(500);
+        expect(Math.max(...blanked)).toBe(505);
+    });
+
+    it('keeps the first and last point of every blanked run', () => {
+        const n = 200, target = 60;
+        const pts = new Float32Array(n * 8);
+        for (let i = 0; i < n; i++) {
+            pts[i * 8] = i;
+            pts[i * 8 + 6] = (i >= 90 && i < 110) ? 1 : 0;
+        }
+        const out = decimatePoints(pts, target);
+        const xs = [];
+        for (let i = 0; i < out.length / 8; i++) xs.push(out[i * 8]);
+        expect(xs).toContain(89); // last lit before the run
+        expect(xs).toContain(90); // first blanked
+        expect(xs).toContain(109); // last blanked
+        expect(xs).toContain(110); // first lit after the run
+    });
+
+    it('emits strictly ascending source indices and honours the budget', () => {
+        const n = 900, target = 300;
+        const pts = new Float32Array(n * 8);
+        for (let i = 0; i < n; i++) {
+            pts[i * 8] = i;
+            pts[i * 8 + 6] = i >= 400 && i < 410 ? 1 : 0;
+        }
+        const out = decimatePoints(pts, target);
+        expect(out.length).toBe(target * 8);
+        let prev = -1;
+        for (let i = 0; i < out.length / 8; i++) {
+            const x = out[i * 8];
+            expect(x).toBeGreaterThan(prev);
+            prev = x;
         }
     });
 

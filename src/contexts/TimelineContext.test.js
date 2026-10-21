@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     createInitialTimelineState, normalizeHydratedState, getTimelineDuration,
     getSortedCues, isChannelAudible, extractAudioPeaks, getChannelOutputs,
-    getOverlappingCueIds, getAdjacentCues, computeOverlapTrims,
+    getOverlappingCueIds, getAdjacentCues, computeOverlapTrims, getChannelDisplayName,
 } from './TimelineContext';
 
 // Import the reducer + a mini dispatch runner so we can unit-test the store
@@ -345,6 +345,26 @@ describe('zones / multi-DAC routing', () => {
         expect(s.channels.zone.dacs[1].flipY).toBe(true);
         s = run(s, { type: 'SET_OUTPUT_FLIP', payload: { channelId: 'zone', ip: '10.0.0.6', channel: 1, axis: 'x' } });
         expect(s.channels.zone.dacs[1].flipX).toBe(false); // toggled back
+    });
+
+    it('SET_CHANNEL_DAC keeps the invert flags of an output that stays', () => {
+        // A plain drag-drop re-routes the track and collapses the zone, and
+        // the dac that arrives from the drop carries no flags at all - so an
+        // output that was already inverted came back un-inverted and the
+        // user had to set it up again after every re-route.
+        let s = createInitialTimelineState();
+        s = run(s, { type: 'ADD_CHANNEL', payload: { id: 'zone', name: 'Zone', dacs: [outA, outB] } });
+        s = run(s, { type: 'SET_OUTPUT_FLIP', payload: { channelId: 'zone', ip: '10.0.0.6', channel: 1, axis: 'x' } });
+        expect(s.channels.zone.dacs[1].flipX).toBe(true);
+
+        // Re-route to the SAME output. The flag must survive.
+        s = run(s, { type: 'SET_CHANNEL_DAC', payload: { channelId: 'zone', dac: { ip: '10.0.0.6', channel: 1 } } });
+        expect(s.channels.zone.dacs).toHaveLength(1);
+        expect(s.channels.zone.dacs[0].flipX).toBe(true);
+
+        // Re-route to a DIFFERENT output: that one was never inverted.
+        s = run(s, { type: 'SET_CHANNEL_DAC', payload: { channelId: 'zone', dac: { ip: '10.0.0.5', channel: 0 } } });
+        expect(s.channels.zone.dacs[0].flipX).toBe(false);
     });
 });
 
@@ -949,5 +969,57 @@ describe('automation clip multi-selection (marquee)', () => {
         expect(s.settings.selectedCueIds).toEqual(['c1']);
         expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'l1', clipId: 'ac1' }, { laneId: 'l1', clipId: 'ac2' }]);
         expect(s.settings.selectedAutoClip).toEqual({ laneId: 'l1', clipId: 'ac2' });
+    });
+});
+// --- Regression: timeline channels must show the Output Settings name -------
+//
+// A DAC channel renamed in Output Settings kept showing its discovery
+// service-map label ("Channel 3", "Main", ...) in the timeline, because the
+// resolver only honoured a custom name when the timeline channel name matched
+// the auto-seeded "Channel N: <label>" form. Channels minted by the Add Channel
+// button use a bare "Channel N", so they never picked the name up either.
+describe('getChannelDisplayName', () => {
+    const ch = (name, dacs) => ({ id: 'c1', name, dacs });
+
+    it('prefers the Output Settings name for an auto-seeded channel', () => {
+        const settings = { '10.0.0.5:1': { name: 'Front Curtain' } };
+        expect(getChannelDisplayName(ch('Channel 1: Channel 3', [{ ip: '10.0.0.5', channel: 1 }]), settings))
+            .toBe('Front Curtain');
+    });
+
+    it('prefers it for a bare "Channel N" name too', () => {
+        const settings = { '10.0.0.5:1': { name: 'Front Curtain' } };
+        expect(getChannelDisplayName(ch('Channel 2', [{ ip: '10.0.0.5', channel: 1 }]), settings))
+            .toBe('Front Curtain');
+    });
+
+    it('keeps a name the user typed in the timeline', () => {
+        const settings = { '10.0.0.5:1': { name: 'Front Curtain' } };
+        expect(getChannelDisplayName(ch('My Rig', [{ ip: '10.0.0.5', channel: 1 }]), settings))
+            .toBe('My Rig');
+    });
+
+    it('falls back to the timeline name when no custom name is set', () => {
+        expect(getChannelDisplayName(ch('Channel 1: Channel 3', [{ ip: '10.0.0.5', channel: 1 }]), {}))
+            .toBe('Channel 1: Channel 3');
+    });
+
+    it('ignores a blank or whitespace-only custom name', () => {
+        const s = { '10.0.0.5:1': { name: '   ' } };
+        expect(getChannelDisplayName(ch('Channel 1: Main', [{ ip: '10.0.0.5', channel: 1 }]), s))
+            .toBe('Channel 1: Main');
+    });
+
+    it('leaves a multi-output (zone) channel on its own label', () => {
+        const settings = { '10.0.0.5:1': { name: 'Left Wing' } };
+        const zone = ch('Channel 1: Zone', [{ ip: '10.0.0.5', channel: 1 }, { ip: '10.0.0.6', channel: 1 }]);
+        expect(getChannelDisplayName(zone, settings)).toBe('Channel 1: Zone');
+    });
+
+    it('is safe with no channel, no settings, or no outputs', () => {
+        expect(getChannelDisplayName(null, {})).toBe('');
+        expect(getChannelDisplayName(ch('Channel 1', []), {})).toBe('Channel 1');
+        expect(getChannelDisplayName(ch('Channel 1', [{ ip: '1.2.3.4', channel: 0 }]), null))
+            .toBe('Channel 1');
     });
 });

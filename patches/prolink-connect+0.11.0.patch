@@ -1,8 +1,46 @@
 diff --git a/node_modules/prolink-connect/lib/index.js b/node_modules/prolink-connect/lib/index.js
-index cbda556..d9f9403 100644
+index cbda556..330cddd 100644
 --- a/node_modules/prolink-connect/lib/index.js
 +++ b/node_modules/prolink-connect/lib/index.js
-@@ -4938,6 +4938,11 @@ async function bringOnline(config) {
+@@ -3814,13 +3814,34 @@ class LocalDatabase {
+             device,
+             slot,
+         });
+-        if (media.tracksType !== types_1.TrackType.RB) {
++        // TrueLazer vendored patch: a CDJ does not always answer the media-slot
++        // query (measured: a CDJ-3000 with an analysed rekordbox USB mounted
++        // returned no reply, so queryMediaSlot times out as undefined). Upstream
++        // then dereferences `media.tracksType` and throws, so the whole local
++        // database path is unreachable. The actual database is fetched over NFS
++        // and needs only `device` + `slot`, none of the media-slot fields, so
++        // fall back to a minimal descriptor and let the NFS fetch decide whether
++        // the slot really holds an analysed rekordbox database.
++        const effectiveMedia = media ?? {
++            deviceId: device.id,
++            slot,
++            name: '',
++            color: 0,
++            createdDate: new Date(0),
++            freeBytes: 0,
++            totalBytes: 0,
++            tracksType: types_1.TrackType.RB,
++            trackCount: 0,
++            playlistCount: 0,
++            hasSettings: false,
++        };
++        if (effectiveMedia.tracksType !== types_1.TrackType.RB) {
+             return null;
+         }
+-        const id = getMediaId(media);
++        const id = getMediaId(effectiveMedia);
+         // Aquire a lock for this device slot that will not release until we've
+         // guarnteed the existance of the database.
+-        const db = await lock.runExclusive(() => { var _a; return (_a = __classPrivateFieldGet(this, _LocalDatabase_dbs, "f").find(db => db.id === id)) !== null && _a !== void 0 ? _a : __classPrivateFieldGet(this, _LocalDatabase_hydrateDatabase, "f").call(this, device, slot, media); });
++        const db = await lock.runExclusive(() => { var _a; return __classPrivateFieldGet(this, _LocalDatabase_dbs, "f").find(db => db.id === id) !== null && _a !== void 0 ? _a : __classPrivateFieldGet(this, _LocalDatabase_hydrateDatabase, "f").call(this, device, slot, effectiveMedia); });
+         return db.orm;
+     }
+     /**
+@@ -4938,6 +4959,11 @@ async function bringOnline(config) {
          deviceManager,
          statusEmitter,
      });
@@ -14,3 +52,29 @@ index cbda556..d9f9403 100644
      return network;
  }
  exports.bringOnline = bringOnline;
+@@ -7545,7 +7571,24 @@ class StatusEmitter {
+         const request = (0, media_1.makeMediaSlotRequest)(options);
+         const media = await __classPrivateFieldGet(this, _StatusEmitter_mediaSlotQueryLock, "f").runExclusive(async () => {
+             await (0, udp_1.udpSend)(__classPrivateFieldGet(this, _StatusEmitter_statusSocket, "f"), request, constants_1.STATUS_PORT, options.device.ip.address);
+-            return new Promise(resolve => this.once('mediaSlot', resolve));
++            // TrueLazer vendored patch: upstream waits on once('mediaSlot') with no
++            // timeout. A CDJ does not answer this request (it volunteers the same
++            // packet on a track load instead), so upstream's promise never settles
++            // and it keeps holding the mutex, wedging every later media slot query.
++            // Bound the wait and detach the listener when it expires.
++            return await new Promise((resolve) => {
++                let timer = null;
++                const onSlot = (m) => {
++                    if (timer)
++                        clearTimeout(timer);
++                    resolve(m);
++                };
++                timer = setTimeout(() => {
++                    this.off('mediaSlot', onSlot);
++                    resolve(undefined);
++                }, 3000);
++                this.once('mediaSlot', onSlot);
++            });
+         });
+         return media;
+     }

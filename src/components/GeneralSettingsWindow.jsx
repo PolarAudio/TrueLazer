@@ -1,6 +1,6 @@
 import React from 'react';
 
-const GeneralSettingsWindow = ({ show, onClose }) => {
+const GeneralSettingsWindow = ({ show, onClose, masterSpeed }) => {
   if (!show) return null;
 
   return (
@@ -31,6 +31,24 @@ const GeneralSettingsWindow = ({ show, onClose }) => {
                 processing (Legacy), which always preserves the original geometry.
               </p>
             </div>
+
+            {masterSpeed && (
+              <div className="general-settings-section" style={{ marginTop: '16px' }}>
+                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>Master Speed</h4>
+                <div
+                  className="param-editor"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}
+                >
+                  <label className="param-label" style={{ fontSize: '11px' }}>Target FPS</label>
+                  {masterSpeed}
+                </div>
+                <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
+                  Playback frame rate for the whole show, and the audio playback rate
+                  that follows it. This drives every clip and effect timing, so it is
+                  set here rather than during a show.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

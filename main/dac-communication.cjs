@@ -175,15 +175,20 @@ function stopSending(ip, type) {
 }
 
 // Always-feed idle frame for the continuous 30fps send loop. Only Showbridge
-// consumes it for now — its DMA must keep receiving datagrams to stay warm (a
-// single cold blank packet is not enough to keep it responsive), mirroring
-// EtherDream / Truwave's continuous idle stream. Other DAC types keep the
-// legacy silent-blank behaviour.
+// consumed it, so an idle IDN/StageLinq target sent nothing at all and its player
+// held the last frame it had been given until its own timeout — the beam stayed on
+// for seconds after the app stopped asking for output. IDN gets the same treatment
+// now: its DMA-equivalent also expects a stream. EtherDream / Truwave keeps the
+// legacy silent-blank behaviour, so it is matched explicitly rather than falling
+// into an `else` that would silently change it.
 function sendIdleFrame(ip, channel, type, options) {
     if (type === 'Showbridge') {
         return showbridge.sendIdleFrame(ip, channel, options || null);
     }
-    return null;
+    if (type === 'EtherDream') {
+        return null;
+    }
+    return idn.sendIdleFrame(ip, channel, options || null);
 }
 
 function connectDac(ip, type) {

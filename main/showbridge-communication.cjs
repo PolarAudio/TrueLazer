@@ -65,7 +65,36 @@ function clamp(val, min, max) {
 
 // =============== PACKET BUILDING ===============
 
-function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk, dataOff) {
+// The colour scale of a frame is decided ONCE for the whole frame, not per
+// channel. A single channel sitting at exactly 1.0 is ambiguous - it could be
+// 1/255 in a 0..255 frame or full white in a 0..1 frame - and the old
+// per-channel test read it as 0..1 and wrote full white. (The Invert effect
+// produces exactly 1.0 when it inverts a 254.) A frame that uses any value
+// above 1 is a 0..255 frame; a frame that never does is a 0..1 frame.
+function frameUses255Scale(points, isTyped, numPoints) {
+    for (let i = 0; i < numPoints; i++) {
+        let r, g, b;
+        if (isTyped) {
+            const o = i * 8;
+            r = points[o + 3] || 0;
+            g = points[o + 4] || 0;
+            b = points[o + 5] || 0;
+        } else {
+            const p = points[i];
+            if (p instanceof Float32Array || Array.isArray(p)) {
+                r = p[3] || 0; g = p[4] || 0; b = p[5] || 0;
+            } else if (p && typeof p === 'object') {
+                r = p.r || 0; g = p.g || 0; b = p.b || 0;
+            } else {
+                continue;
+            }
+        }
+        if (r > 1 || g > 1 || b > 1) return true;
+    }
+    return false;
+}
+
+function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk, dataOff, scale255) {
     let lastX = 0, lastY = 0;
     for (let i = 0; i < ptsPerChunk; i++) {
         const off = dataOff + i * POINT_SIZE;
@@ -104,9 +133,7 @@ function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk,
             y = clamp(y, -1.0, 1.0);
             lastX = x;
             lastY = y;
-            if (r > 1) r /= 255;
-            if (g > 1) g /= 255;
-            if (b > 1) b /= 255;
+            if (scale255) { r /= 255; g /= 255; b /= 255; }
             r = clamp(r, 0, 1);
             g = clamp(g, 0, 1);
             b = clamp(b, 0, 1);
@@ -301,7 +328,8 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
         ppsByte = Math.max(1, Math.min(255, Math.round((totalPoints * effFps) / 1000)));
     }
     frameBuf.writeUInt8(ppsByte, 3);        // PPS (DMA timing)
-    writePoints(frameBuf, 0, isTyped, points, totalPoints, totalPoints, HEADER_SIZE);
+    writePoints(frameBuf, 0, isTyped, points, totalPoints, totalPoints, HEADER_SIZE,
+        frameUses255Scale(points, isTyped, totalPoints));
 
     for (let ci = 0; ci < TOTAL_CHUNKS; ci++) {
         const buf = Buffer.alloc(UDP_PACKET_SIZE);
@@ -707,4 +735,5 @@ module.exports = {
     closeAll,
     setStatusCallback,
     PTS_FULL,
+    frameUses255Scale,
 };

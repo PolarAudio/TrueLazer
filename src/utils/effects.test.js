@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyEffects, applyBlanking, applyColor, DEFAULT_FRAME_POINT_BUDGET } from './effects';
+import { applyEffects, applyBlanking, applyColor, DEFAULT_FRAME_POINT_BUDGET, applyBoundaryDwell, applyOutputProcessingWithDwell } from './effects';
 import { reduceFramePoints } from './pointReducer';
 
 describe('applyMirror', () => {

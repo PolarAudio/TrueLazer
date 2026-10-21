@@ -1,13 +1,27 @@
 import React from 'react';
+import { formatClock } from '../utils/djLinkTracks';
 
-const LinkSyncSettingsWindow = ({ show, onClose, onUpdateSettings, bpmSource = 'prolink', onBpmSourceChange }) => {
-  if (!show) return null;
-
+const LinkSyncSettingsWindow = ({
+  show,
+  onClose,
+  onUpdateSettings,
+  bpmSource = 'prolink',
+  onBpmSourceChange,
+  djLinkTransport = { enabled: false, blockedDecks: [] },
+  onDjLinkTransportChange,
+  djLinkDecks = [],
+  djLinkLinkedCountForDeck,
+}) => {
   // Default settings if none stored yet
   const defaultSettings = {
     syncProtocol: 'none',
     isSyncing: false,
   };
+  // NOTE: every hook below must run on EVERY render, including when hidden.
+  // App.jsx mounts this component permanently and toggles `show`, so an early
+  // `return null` above the hooks would make the hook count go 0 -> 6 on open
+  // and React would throw "Rendered more hooks than during the previous render".
+  // The guard is therefore placed after the last hook, below.
   const [settings, setSettings] = React.useState(() => {
     try {
       const stored = window.electronAPI && window.electronAPI.getLinkSyncSettings
@@ -50,6 +64,14 @@ const LinkSyncSettingsWindow = ({ show, onClose, onUpdateSettings, bpmSource = '
     }
     return () => { if (offProlink) offProlink(); if (offStagelinq) offStagelinq(); };
   }, []);
+
+  // Hidden AFTER the hooks — see the note above.
+  if (!show) return null;
+
+  // Normalised once: a partial `djLinkTransport` from the parent must not be able
+  // to throw on `.includes` and take the whole window down.
+  const djLinkArmed = !!djLinkTransport.enabled;
+  const djLinkBlocked = Array.isArray(djLinkTransport.blockedDecks) ? djLinkTransport.blockedDecks : [];
 
   const handleUpdate = (newSettings) => {
     setSettings(newSettings);
@@ -293,6 +315,82 @@ const LinkSyncSettingsWindow = ({ show, onClose, onUpdateSettings, bpmSource = '
                 </p>
               </div>
             )}
+
+            {/* -----------------------------------------------------------
+                DJ-Link Clip Transport — the master arm for deck-driven clip
+                playback. Deliberately its own section rather than part of the
+                protocol picker: a deck can be the BPM source and still have
+                every clip link disarmed, and vice versa.
+            ----------------------------------------------------------- */}
+            <div className="general-settings-section" style={{ marginTop: '16px' }}>
+              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>DJ-Link Clip Transport</h4>
+              <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <label className="param-label" style={{ fontSize: '11px' }}>Arm</label>
+                <button
+                  className="small-btn"
+                  style={{ padding: '4px 8px', fontSize: '11px', background: djLinkArmed ? '#2a7a2a' : '#555' }}
+                  onClick={() => onDjLinkTransportChange?.({ enabled: !djLinkArmed })}
+                >
+                  {djLinkArmed ? 'Armed' : 'Disarmed'}
+                </button>
+              </div>
+              <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '2px 0 8px' }}>
+                When armed, any clip linked to a song (drag the song info from the DJ-Link display onto a clip)
+                takes over its layer when that track is loaded in ANY deck, and plays from the deck&apos;s position.
+              </p>
+
+              {djLinkDecks.length === 0 ? (
+                <p className="info-text" style={{ fontSize: '10px', color: '#666' }}>
+                  No decks reporting. Start a Pro DJ Link or StageLinq listener above.
+                </p>
+              ) : (
+                <div className="djlink-deck-list">
+                  {djLinkDecks.map((deck) => {
+                    const blocked = djLinkBlocked.includes(deck.deckKey);
+                    const linked = djLinkLinkedCountForDeck ? djLinkLinkedCountForDeck(deck.deckKey) : 0;
+                    const raw = typeof deck.deckColor === 'string' ? deck.deckColor.replace('#', '') : '';
+                    const dot = /^[0-9a-f]{8}$/i.test(raw) ? `#${raw.slice(2, 8)}`
+                      : /^[0-9a-f]{6}$/i.test(raw) ? `#${raw}` : null;
+                    return (
+                      <div key={deck.deckKey} className={`djlink-deck-row ${blocked ? 'blocked' : ''}`}>
+                        <span className="djlink-deck-dot" style={dot ? { background: dot } : undefined} />
+                        <div className="djlink-deck-info">
+                          <div className="djlink-deck-title">
+                            {deck.title || (deck.loaded ? 'Track (no metadata yet)' : 'No track loaded')}
+                          </div>
+                          <div className="djlink-deck-sub">
+                            {[
+                              deck.source === 'stagelinq' ? 'StageLinq' : 'ProDJ',
+                              `Deck ${deck.deckId}`,
+                              deck.playing ? 'playing' : 'stopped',
+                              typeof deck.seconds === 'number' ? formatClock(deck.seconds) : null,
+                              deck.bpm > 0 ? `${Math.round(deck.bpm)} BPM` : null,
+                            ].filter(Boolean).join(' · ')}
+                          </div>
+                        </div>
+                        <div className="djlink-deck-right">
+                          <span className="djlink-deck-count">{linked} clip{linked !== 1 ? 's' : ''}</span>
+                          <button
+                            className="small-btn"
+                            style={{ padding: '2px 6px', fontSize: '10px' }}
+                            disabled={linked === 0}
+                            title={linked === 0 ? 'No clips are linked to this deck' : blocked ? 'Arm this deck' : 'Disarm this deck'}
+                            onClick={() => {
+                              const next = blocked
+                                ? djLinkBlocked.filter((k) => k !== deck.deckKey)
+                                : [...djLinkBlocked, deck.deckKey];
+                              onDjLinkTransportChange?.({ blockedDecks: next });
+                            }}
+                          >
+                            {blocked ? 'Arm' : 'Disarm'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             <div className="general-settings-section" style={{ marginTop: '16px' }}>
               <button

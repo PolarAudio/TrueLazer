@@ -1,4 +1,29 @@
-🏗️ Core Architectural Requirements
+> **STATUS: PRE-IMPLEMENTATION DESIGN SPEC. MOSTLY SHIPPED, WITH DIVERGENCES.**
+>
+> This is the original architecture proposal written before the Timeline Editor was
+> built. It is kept for the design rationale, but several proposals were
+> deliberately **not** followed and others were renamed in the shipped code.
+> Read it as "what was proposed", not "what the code does".
+>
+> **The most important divergence:** the spec says the playback clock should be
+> *"driven entirely by the master audio clock"*. The implementation deliberately
+> does the opposite — a renderer rAF wall clock owns the playhead so it always
+> advances, and the audio element is re-seeked to follow it. See the comment in
+> `src/hooks/useTimelinePlayback.js` for the reasoning.
+>
+> **Naming changed** in the normalised store. The spec's `tracks` / `blocks` /
+> `effects` / `trackOrder` are `channels` / `cues` / `lanes` / `channelOrder` in
+> `src/contexts/TimelineContext.jsx`. There is no `useTimelineStore`; the store is
+> `useReducer` + Context. `nativeFps` and `block.assetDuration` were never
+> implemented. `layerMerge.js` does priority/combine/overlay blending — it does
+> **not** crossfade, and there is no WebGL blend path.
+>
+> **Also not built:** the proposed per-track Delay/Offset chase property. Zones do
+> support multi-output routing with per-output X/Y invert.
+>
+> For what actually shipped, see `README.md` ▸ *Editors*.
+
+ 🏗️ Core Architectural Requirements
 	To get your MVP (Minimum Viable Product) timeline running, you will need to implement these foundational layers:
 1. The Clock & Sync EngineHigh-Resolution Timer: 
 	Do not rely on standard UI timers. Use a high-precision multimedia timer or audio callback-driven clock. 

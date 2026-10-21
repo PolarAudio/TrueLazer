@@ -155,7 +155,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
             <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{flex: 1, background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', fontSize: '11px', padding: '2px 5px', border: '1px solid #444'}}>
               {networkInterfaces.map(iface => (
                 <option key={iface.address} value={iface.address}>
-                  {iface.name} ({iface.address})
+                  {iface.loopback ? `${iface.name} (${iface.address}) — loopback` : `${iface.name} (${iface.address})`}
                 </option>
               ))}
             </select>

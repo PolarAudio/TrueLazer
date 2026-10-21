@@ -253,16 +253,25 @@ export const effectDefinitions = [
     name: 'Invert',
     type: 'transform',
     description: 'Inverts the point coordinates and/or colors.',
+    // Every option is OFF by default. The effect used to default to
+    // inverting X and Y, which meant that asking for an INVERT COLOR also
+    // silently mirrored the geometry - and, in the Timeline, that the
+    // per-clip override for a colour-only invert inherited a mirror nobody
+    // asked for. An effect called "Invert" that does nothing until you say
+    // what to invert is the only unsurprising version.
     defaultParams: {
-      invertX: true,
-      invertY: true,
+      invertX: false,
+      invertY: false,
       invertZ: false,
       invertColor: false,
     },
     paramControls: [
       { id: 'invertX', label: 'Invert X', type: 'checkbox' },
       { id: 'invertY', label: 'Invert Y', type: 'checkbox' },
-      { id: 'invertZ', label: 'Invert Z', type: 'checkbox' },
+      // No Invert Z control: z is not part of any 2D DAC protocol this app
+      // speaks (the renderer, the EtherDream writer, the IDN packet and the
+      // Showbridge writer all ignore it), so the checkbox could only ever be
+      // a lie. The parameter key is kept so old projects still load.
       { id: 'invertColor', label: 'Invert Color', type: 'checkbox' },
     ],
   },

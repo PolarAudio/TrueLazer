@@ -1,7 +1,18 @@
 import opentype from 'opentype.js';
 import { samplePath, sampleCircle } from './vectorPath.js';
 
-const withDefaults = (params, defaults) => ({ ...defaults, ...params });
+// Merge defaults under the caller's params, ignoring any key the caller set to
+// `undefined`. A spread would let an explicit undefined (a half-populated saved
+// clip, a preset with a missing field) clobber the default and silently change
+// behaviour.
+const withDefaults = (params, defaults) => {
+  const out = { ...defaults };
+  if (!params) return out;
+  for (const k of Object.keys(defaults)) {
+    if (params[k] !== undefined) out[k] = params[k];
+  }
+  return out;
+};
 
 // Maps bare {x,y} samples produced by the vector-path helpers into full
 // (r,g,b,lastPoint) point objects emitted by generators.
@@ -17,6 +28,8 @@ function colorize(vertices, { r, g, b, lastPoint = false, blanking } = {}) {
 // Persistent font cache using a simple object or Map
 const parsedFontCache = new Map();
 
+const KNOWN_RENDERING_STYLES = new Set(['normal', 'dotted', 'blanked', 'dots']);
+
 function applyRenderingStyle(points, params) {
     const { renderingStyle, thickness, blankingSize } = withDefaults(params, {
         renderingStyle: 'normal',
@@ -24,13 +37,18 @@ function applyRenderingStyle(points, params) {
         blankingSize: 3
     });
 
-    if (renderingStyle === 'normal' || !points || points.length === 0) {
+    if (!points || points.length === 0) return points;
+
+    // Any unrecognised style (a typo, a value from a newer preset, a bare
+    // "default") degrades to a continuous trace rather than dropping the shape.
+    const style = KNOWN_RENDERING_STYLES.has(renderingStyle) ? renderingStyle : 'normal';
+    if (style === 'normal') {
         return points;
     }
 
     const styledPoints = [];
 
-    if (renderingStyle === 'dotted') {
+    if (style === 'dotted') {
         // Dashes keep the segment line: dwell each stroke point while staying lit.
         // thickness+1 samples per point keeps the style slightly visible at the
         // default thickness of 1 and grows toward 10 at max thickness.
@@ -40,7 +58,7 @@ function applyRenderingStyle(points, params) {
                 styledPoints.push({ ...p });
             }
         }
-    } else if (renderingStyle === 'blanked') {
+    } else if (style === 'blanked') {
         // `blankingSize` = number of blanked segments. The stroke is divided into
         // 2 * blankingSize blocks (lit, blank, lit, blank, ...) of equal length.
         // Closed generators append a duplicate closing point, so it is removed
@@ -90,7 +108,7 @@ function applyRenderingStyle(points, params) {
                 styledPoints.push({ ...p, r: 0, g: 0, b: 0, blanking: true });
             }
         }
-    } else if (renderingStyle === 'dots') {
+    } else if (style === 'dots') {
         // "Only show the points and no lines". Each stroke point becomes its own
         // dot: 1 blanked approach (beam off while the scanner flies in), 8 lit
         // dwell samples so a physical projector settles into a true dot instead of
@@ -115,7 +133,9 @@ function applyRenderingStyle(points, params) {
         }
     }
 
-    return styledPoints;
+    // A style pass that produced nothing (e.g. a degenerate source stroke) must
+    // never leave the DAC with an empty frame.
+    return styledPoints.length > 0 ? styledPoints : points;
 }
 
 export async function generateText(params, fontBuffer) {
