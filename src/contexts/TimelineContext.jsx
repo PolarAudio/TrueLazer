@@ -438,6 +438,38 @@ function clipOwningKeyframe(lane, keyframeId) {
 }
 
 /** Merge persisted raw state over the defaults, ignoring unknown shapes. */
+/**
+ * Give every keyframe in a lane a unique id.
+ *
+ * The lane resolves which clip owns a point by finding the FIRST clip holding
+ * that id (clipOwningKeyframe), so two clips sharing a keyframe id make every
+ * edit on one of them - dragging the point, deleting it - land on the other,
+ * and the clips collide as React keys. A paste could create that before the
+ * paste started giving pasted keyframes fresh ids, so any project that was
+ * pasted into is repaired the moment it is opened.
+ */
+function dedupeKeyframeIds(lane) {
+    const seen = new Set();
+    const claim = (k) => {
+        if (!k) return k;
+        if (!k.id) return { ...k, id: generateId('kf') };
+        if (seen.has(k.id)) return { ...k, id: generateId('kf') };
+        seen.add(k.id);
+        return k;
+    };
+    // The clips hold the live points, so they are claimed first; a lane's own
+    // keyframes array is a legacy leftover and is repaired last.
+    const clips = (lane.clips || []).map((clip) => ({
+        ...clip,
+        keyframes: Array.isArray(clip.keyframes) ? clip.keyframes.map(claim) : [],
+    }));
+    return {
+        ...lane,
+        clips,
+        keyframes: Array.isArray(lane.keyframes) ? lane.keyframes.map(claim) : [],
+    };
+}
+
 export function normalizeHydratedState(raw) {
     const base = createInitialTimelineState();
     if (!raw || typeof raw !== 'object') return base;
@@ -519,6 +551,8 @@ export function normalizeHydratedState(raw) {
         } else if (hasClips) {
             lanes[id] = { ...lane, clips: lane.clips.map(stampClip) };
         }
+        // Repair duplicate keyframe ids (see dedupeKeyframeIds).
+        lanes[id] = dedupeKeyframeIds(lanes[id]);
     }
 
     const rawSettings = raw.settings || {};

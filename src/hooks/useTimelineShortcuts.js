@@ -9,6 +9,7 @@ import {
     nextGridTime,
     prevGridTime,
 } from '../utils/timelineTime';
+import { zoomFactorForWheel } from '../utils/timelineZoom';
 
 /**
  * A deep copy of plain data.
@@ -148,7 +149,7 @@ export function pickPasteChannel(channels, channelOrder, selectedChannelId, clip
     return (channelOrder && channelOrder[0]) || null;
 }
 
-export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
+export function useTimelineShortcuts({ scrollRef, state, actions, pb, onZoom }) {
     const s = state.settings;
 
     // Keep the latest values for the stable listeners.
@@ -158,6 +159,10 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
     actionsRef.current = actions;
     const pbRef = useRef(pb);
     pbRef.current = pb;
+    // The editor owns the zoom anchor (it keeps the playhead on screen), so
+    // the wheel handler asks it rather than setting the zoom itself.
+    const onZoomRef = useRef(onZoom);
+    onZoomRef.current = onZoom;
 
     const clipboardRef = useRef(null);
 
@@ -498,12 +503,26 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 return;
             }
 
-            // Horizontal zoom around the pointer.
+            // Horizontal zoom, anchored on the playhead.
+            //
+            // This used to only set the zoom, with a comment claiming it
+            // zoomed "around the pointer" - so the content was rescaled about
+            // the left edge and the playhead slid across the screen. The
+            // anchor now lives in one place (the editor's handleZoom), which
+            // also keeps the playhead where it is.
             if (e.ctrlKey) {
                 e.preventDefault();
-                const factor = Math.pow(1.0015, -e.deltaY);
+                // The ruler has its own wheel handler. Without this the two
+                // both fire - the native one first, then React's - and every
+                // notch over the ruler zoomed twice.
+                const onRuler = e.target && e.target.closest
+                    ? e.target.closest('.timeline-ruler')
+                    : null;
+                if (onRuler) return;
+                const factor = zoomFactorForWheel(e.deltaY);
                 const z = clamp((settings.zoom || 50) * factor, ZOOM_MIN, ZOOM_MAX);
-                actionsRef.current.setSettings({ zoom: z });
+                if (onZoomRef.current) onZoomRef.current(z);
+                else actionsRef.current.setSettings({ zoom: z });
                 return;
             }
 

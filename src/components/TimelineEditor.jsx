@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTimeline, getTimelineDuration, getSortedCues, getOverlappingCueIds } from '../contexts/TimelineContext';
 import { useTimelinePlayback } from '../hooks/useTimelinePlayback';
 import { useTimelineShortcuts } from '../hooks/useTimelineShortcuts';
 import { timeToPx, pxToTime, snapToGrid, beatGridLines, beatDuration } from '../utils/timelineTime';
+import { clampZoomValue, playheadScrollCorrection } from '../utils/timelineZoom';
 import TimelineTransport from './timeline/TimelineTransport';
 import TimelineRuler from './timeline/TimelineRuler';
 import TimelineTrackHeader from './timeline/TimelineTrackHeader';
@@ -162,7 +163,55 @@ const TimelineEditor = ({ onBack }) => {
 
     // Wheel + keyboard shortcuts (vertical zoom, scroll, framing, clipboard,
     // save/new/undo/redo). Attached to the scroll element via gridRef.
-    useTimelineShortcuts({ scrollRef: gridRef, state, actions, pb });
+    const handleRulerSeek = useCallback((t) => pb.seek(t), [pb]);
+
+    // The playhead position, kept in a ref so the zoom anchor always uses the
+    // CURRENT one. It used to be read out of a useCallback that did not
+    // depend on it, so the anchor was the playhead position at the PREVIOUS
+    // zoom - fine while the transport was running (the playhead moved, so the
+    // error was a frame wide) and badly wrong while it was stopped.
+    const playheadSecRef = useRef(0);
+    playheadSecRef.current = pb.playheadSec;
+
+    // A zoom that has been applied but whose scroll correction is still
+    // pending. The correction is applied after the new content width has been
+    // committed: the browser clamps scrollLeft to the new maximum, so a
+    // correction written straight away is thrown away when zooming out.
+    const pendingZoomRef = useRef(null);
+
+    const handleZoom = useCallback((z) => {
+        const oldZoom = state.settings.zoom;
+        const newZoom = clampZoomValue(z, { min: ZOOM_MIN, max: ZOOM_MAX });
+        actions.setSettings({ zoom: newZoom });
+        pendingZoomRef.current = {
+            oldZoom,
+            newZoom,
+            playheadSec: playheadSecRef.current,
+        };
+    }, [actions, state.settings.zoom]);
+
+    // Keep the playhead at the same place on screen across the zoom.
+    useLayoutEffect(() => {
+        const pending = pendingZoomRef.current;
+        if (!pending) return;
+        pendingZoomRef.current = null;
+        const el = gridRef.current;
+        if (!el) return;
+        el.scrollLeft = Math.max(0, playheadScrollCorrection({
+            playheadSec: pending.playheadSec,
+            oldZoom: pending.oldZoom,
+            newZoom: pending.newZoom,
+            scrollLeft: el.scrollLeft,
+        }));
+    }, [state.settings.zoom]);
+
+    const handleFit = useCallback(() => {
+        const avail = Math.max(300, viewportW - HEADER_W - 4 - END_PAD);
+        const z = getTimelineDuration(state) > 0 ? avail / getTimelineDuration(state) : ZOOM_MIN;
+        handleZoom(z);
+    }, [viewportW, state, handleZoom]);
+
+    useTimelineShortcuts({ scrollRef: gridRef, state, actions, pb, onZoom: handleZoom });
 
     const s = state.settings;
     const selectedCueIds = s.selectedCueIds || [];
@@ -187,22 +236,6 @@ const TimelineEditor = ({ onBack }) => {
 
     const gridW = Math.max(viewportW - HEADER_W - 4, timeToPx(duration, pxPerSecond) + END_PAD);
     const contentWidth = HEADER_W + gridW;
-
-    const handleRulerSeek = useCallback((t) => pb.seek(t), [pb]);
-    const handleZoom = useCallback((z) => {
-    const oldZoom = state.settings.zoom;
-    actions.setSettings({ zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)) });
-    // Keep playhead in same screen position during zoom
-    if (gridRef.current && pb.playheadSec != null) {
-        const deltaPx = timeToPx(pb.playheadSec, oldZoom) - timeToPx(pb.playheadSec, z);
-        gridRef.current.scrollLeft = Math.max(0, gridRef.current.scrollLeft - deltaPx);
-    }
-}, [actions, gridRef, state.settings.zoom]);
-    const handleFit = useCallback(() => {
-        const avail = Math.max(300, viewportW - HEADER_W - 4 - END_PAD);
-        const z = getTimelineDuration(state) > 0 ? avail / getTimelineDuration(state) : ZOOM_MIN;
-        handleZoom(z);
-    }, [viewportW, state, handleZoom]);
 
     const handleGridClick = useCallback(
         (e) => {
@@ -356,6 +389,7 @@ const TimelineEditor = ({ onBack }) => {
                 fileDrawerOpen={drawerOpen}
                 onAddGenerator={() => addGeneratorAtPlayhead()}
                 onFit={handleFit}
+                onZoom={handleZoom}
                 laserOn={pb.laserOn}
                 onToggleLaser={pb.setLaserOn}
                 sync={pb.sync}

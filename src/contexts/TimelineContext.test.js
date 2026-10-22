@@ -34,6 +34,50 @@ describe('initial + hydration', () => {
         expect(s.settings.selectedCueIds).toEqual([]);
     });
 
+    it('gives every keyframe in a lane a unique id', () => {
+        // A lane resolves which clip owns a point by finding the FIRST clip
+        // holding that id, so two clips sharing a keyframe id make every edit
+        // on one of them land on the other. A paste could create that before
+        // the paste started giving pasted keyframes fresh ids.
+        const s = normalizeHydratedState({
+            channels: { a: { id: 'a', name: 'A' } },
+            cues: {},
+            lanes: {
+                l1: {
+                    id: 'l1',
+                    clips: [
+                        { id: 'c1', effectId: 'invert', keyframes: [{ id: 'kf-1', time: 0, value: 1 }] },
+                        { id: 'c2', effectId: 'invert', keyframes: [{ id: 'kf-1', time: 0, value: 2 }] },
+                    ],
+                },
+            },
+        });
+        const ids = s.lanes.l1.clips.flatMap((c) => c.keyframes.map((k) => k.id));
+        expect(ids).toHaveLength(2);
+        expect(new Set(ids).size).toBe(2);
+        // The first clip keeps its id; only the collision is repaired.
+        expect(s.lanes.l1.clips[0].keyframes[0].id).toBe('kf-1');
+        expect(s.lanes.l1.clips[1].keyframes[0].id).not.toBe('kf-1');
+    });
+
+    it('leaves unique keyframe ids alone', () => {
+        const s = normalizeHydratedState({
+            channels: { a: { id: 'a', name: 'A' } },
+            cues: {},
+            lanes: {
+                l1: {
+                    id: 'l1',
+                    clips: [
+                        { id: 'c1', keyframes: [{ id: 'kf-1', time: 0, value: 1 }] },
+                        { id: 'c2', keyframes: [{ id: 'kf-2', time: 0, value: 2 }] },
+                    ],
+                },
+            },
+        });
+        const ids = s.lanes.l1.clips.flatMap((c) => c.keyframes.map((k) => k.id));
+        expect(ids).toEqual(['kf-1', 'kf-2']);
+    });
+
     it('migrates a legacy single selectedCueId into the selection array', () => {
         const s = normalizeHydratedState({
             settings: { selectedCueId: 'c1' },
