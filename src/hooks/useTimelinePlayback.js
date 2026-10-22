@@ -798,8 +798,11 @@ export function useTimelinePlayback() {
                 // output, not an optimization, so it always runs. It must run
                 // BEFORE output processing so the zone boundaries it creates
                 // get their boundary dwell below.
+                // Point budget for this output: the scanner's rate divided by
+                // the show's frame rate. Also the fixed frame LENGTH every frame
+                // of this output is padded to below - see there.
+                const budget = resolvePointBudget(settings, targetFpsValue) || 1000;
                 if (outFrame && (outFrame.length || 0) > 0) {
-                    const budget = resolvePointBudget(settings, targetFpsValue) || 1000;
                     try {
                         outFrame = resampleFrameToStep(outFrame, {
                             maxStep: DEFAULT_MAX_STEP,
@@ -860,7 +863,27 @@ export function useTimelinePlayback() {
                 };
                 if (settings?.targetMode) options.targetMode = settings.targetMode;
 
-                outFrames.push({ out, outFrame, options });
+                outFrames.push({ out, outFrame, options, budget });
+            }
+
+            // A channel-mode Delay/Chase intentionally gives each DAC a shifted
+            // slice of the buffer, so its per-output lengths are part of the
+            // effect and are left alone - including the fixed-length padding
+            // below and the cross-output padding after it.
+            const distributed = !!(frame && frame._channelDistributions && frame._channelDistributions.size > 0);
+
+            // A frame's LENGTH is its playback time. An IDN player consumes the
+            // points of a frame at the scanner rate, so a frame of 480 points
+            // lasts 16 ms while a frame of 640 lasts 21 ms - and an animated
+            // generator changes the shape (and therefore the resampled point
+            // count) on every frame. That is why ILDA clips, whose frames all
+            // carry the same points, stay in sync while animated generators
+            // slowly walk out of time. Pad every frame to the same fixed
+            // budget so each frame lasts the same 1/fps, whatever the content.
+            if (!distributed) {
+                for (const entry of outFrames) {
+                    entry.outFrame = padFrameToCount(entry.outFrame, entry.budget);
+                }
             }
 
             // Every output of one track must receive the SAME number of points
@@ -872,11 +895,6 @@ export function useTimelinePlayback() {
             // rates and visibly drift apart within seconds. Pad the shorter
             // frames with blanked hold points at the last position so all
             // channels play for exactly the same time.
-            //
-            // A channel-mode Delay/Chase intentionally gives each DAC a shifted
-            // slice of the buffer, so its per-output lengths are part of the
-            // effect and are left alone.
-            const distributed = !!(frame && frame._channelDistributions && frame._channelDistributions.size > 0);
             const counts = outFrames.map(({ outFrame }) =>
                 outFrame ? Math.floor((outFrame.length || 0) / (Array.isArray(outFrame) ? 1 : 8)) : 0
             );
