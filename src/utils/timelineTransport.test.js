@@ -62,6 +62,30 @@ describe('resolveTransportTime', () => {
         expect(r.reseekTo).toBe(120);
     });
 
+    it('re-seeks a stuck element AHEAD of the playhead by the output latency', () => {
+        // What is heard is the element's position minus the output latency, so
+        // the element has to sit that much ahead of the playhead for the
+        // picture and the sound to match again after a re-sync.
+        const r = resolveTransportTime({
+            ...base, audioTime: 9.9, stallSeconds: AUDIO_STALL_THRESHOLD, outputLatency: 0.02,
+        });
+        expect(r.reseekTo).toBeCloseTo(10.02);
+    });
+
+    it('never re-seeks behind the start of the timeline', () => {
+        // The element sits the output latency ahead of the playhead, so at the
+        // very start of the timeline it is placed at the latency - never
+        // before zero.
+        const r = resolveTransportTime({
+            ...base, wallTime: 0, audioTime: 0, stallSeconds: AUDIO_STALL_THRESHOLD, outputLatency: 0.05,
+        });
+        expect(r.reseekTo).toBeCloseTo(0.05);
+        const r2 = resolveTransportTime({
+            ...base, wallTime: -1, audioTime: 0, stallSeconds: AUDIO_STALL_THRESHOLD, outputLatency: 0.05,
+        });
+        expect(r2.reseekTo).toBe(0);
+    });
+
     it('uses the wall clock when there is no element at all', () => {
         const r = resolveTransportTime({ ...base, audioTime: null });
         expect(r.time).toBe(10);

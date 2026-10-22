@@ -70,9 +70,13 @@ export function resolveTransportTime({
     // it has been stuck long enough the element is re-seeked to catch up.
     const stall = stallSeconds + dt;
     if (stall > stallThreshold) {
+        // The element is placed AHEAD of the playhead by the output latency:
+        // what is heard is the element's position minus that latency, and it
+        // has to equal the playhead for the picture and the sound to match.
+        const target = wallTime + outputLatency;
         const reseekTo = duration === null || !Number.isFinite(duration)
-            ? Math.max(0, wallTime)
-            : Math.min(duration, Math.max(0, wallTime));
+            ? Math.max(0, target)
+            : Math.min(duration, Math.max(0, target));
         return {
             time: wallTime, advanced: false, stalled: true,
             reseekTo, stallSeconds: 0, lastAudioTime,

@@ -164,6 +164,9 @@ export function useTimelinePlayback() {
     // the show.
     const lastAudioTimeRef = useRef(-1);
     const audioStallRef = useRef(0);
+    // True between asking the element to start and it actually running. Only
+    // then may a 'canplay' place the element at the playhead.
+    const audioStartPendingRef = useRef(false);
     const audioCtxRef = useRef(audioCtx);
     audioCtxRef.current = audioCtx;
 
@@ -205,19 +208,30 @@ export function useTimelinePlayback() {
             return;
         }
         audioRef.current = el;
+        audioStartPendingRef.current = false;
 
         // A track that is still loading cannot be seeked, so a play pressed
         // during the load was silently dropped: the element then started from
         // its own zero and the sound ran away from the playhead. Catch it
         // here instead, and put the element where the transport is.
+        //
+        // This must happen ONCE. 'canplay' also fires every time the element
+        // refills its buffer - and seeking the element is exactly what makes
+        // it refill - so seeking on every 'canplay' turned a routine refill
+        // into: seek -> the element re-buffers -> 'canplay' -> seek. The
+        // element spent its life seeking, never advancing, and because the
+        // audio element is the transport's clock the picture followed it back
+        // and forth. That is the choppy, stuttering playback.
         const onCanPlay = () => {
             if (!isPlayingRef.current) return;
+            if (!audioStartPendingRef.current) return;   // already started
             try {
                 if (isFinite(el.duration)) {
                     el.currentTime = Math.min(playheadRef.current, el.duration);
                 }
                 lastAudioTimeRef.current = el.currentTime;
                 audioStallRef.current = 0;
+                audioStartPendingRef.current = false;
                 const p = el.play();
                 if (p) p.catch(() => { /* the transport handles a failed start */ });
             } catch (_) { /* the element is not seekable yet */ }
@@ -901,22 +915,30 @@ export function useTimelinePlayback() {
                 // element is re-seeked to catch up.
                 t = playheadRef.current + dt;
                 const el = audioRef.current;
-                if (el && audioClockRef.current && !el.paused
-                    && el.readyState >= 1 && isFinite(el.duration)) {
-                    const decision = resolveTransportTime({
-                        wallTime: t,
-                        audioTime: el.currentTime,
-                        lastAudioTime: lastAudioTimeRef.current,
-                        stallSeconds: audioStallRef.current,
-                        outputLatency: audioOutputLatency(),
-                        duration: el.duration,
-                        dt,
-                    });
-                    t = decision.time;
-                    lastAudioTimeRef.current = decision.lastAudioTime;
-                    audioStallRef.current = decision.stallSeconds;
-                    if (decision.reseekTo !== null) {
-                        try { el.currentTime = decision.reseekTo; } catch (_) {}
+                if (el && audioClockRef.current) {
+                    if (el.paused && el.readyState >= 1) {
+                        // The element stopped on its own - a stall it could not
+                        // recover from. Restart it, or the show would run on in
+                        // silence while the transport believes the audio is
+                        // there.
+                        try { const p = el.play(); if (p) p.catch(() => {}); } catch (_) {}
+                    }
+                    if (!el.paused && el.readyState >= 1 && isFinite(el.duration)) {
+                        const decision = resolveTransportTime({
+                            wallTime: t,
+                            audioTime: el.currentTime,
+                            lastAudioTime: lastAudioTimeRef.current,
+                            stallSeconds: audioStallRef.current,
+                            outputLatency: audioOutputLatency(),
+                            duration: el.duration,
+                            dt,
+                        });
+                        t = decision.time;
+                        lastAudioTimeRef.current = decision.lastAudioTime;
+                        audioStallRef.current = decision.stallSeconds;
+                        if (decision.reseekTo !== null) {
+                            try { el.currentTime = decision.reseekTo; } catch (_) {}
+                        }
                     }
                 }
                 const s = stateRef.current.settings;
@@ -1025,6 +1047,9 @@ export function useTimelinePlayback() {
         const el = audioRef.current;
         if (el) {
             audioClockRef.current = true;
+            // The element is about to start. Until it is running, a 'canplay'
+            // may still place it at the playhead - but only that one.
+            audioStartPendingRef.current = true;
             if (audioCtx) {
                 if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
                 // Route once the context is available and running (created on
@@ -1038,6 +1063,9 @@ export function useTimelinePlayback() {
             }
             if (el.readyState >= 1 && isFinite(el.duration)) {
                 try { el.currentTime = Math.min(playheadRef.current, el.duration); } catch (_) {}
+                // The element is seekable, so it is placed at the playhead
+                // here. A later 'canplay' (a buffer refill) must not touch it.
+                audioStartPendingRef.current = false;
             }
             // The element is about to start. Remember where it is, so the
             // transport can tell "advancing" from "stalled" from the very
