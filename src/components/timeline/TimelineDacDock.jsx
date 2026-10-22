@@ -58,7 +58,10 @@ const TimelineDacDock = () => {
                 >
                     Output Settings…
                 </button>
-                <span className="timeline-dac-dock-hint">Drag a chip onto a track header to route it.</span>
+                <span className="timeline-dac-dock-hint">
+                    Drag a chip onto a track header to route it. Drag on empty timeline space to sweep-select;
+                    Shift+click or Shift+drag adds to the selection, Ctrl+A takes everything.
+                </span>
             </div>
             <div className="timeline-dac-dock-list">
                 {dacs.length === 0 && !scanning && (

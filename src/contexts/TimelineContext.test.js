@@ -268,6 +268,26 @@ describe('cue lifecycle', () => {
         expect(s.settings.selectedChannelId).toBe('ch1');
     });
 
+    it('SELECT_ALL takes every clip and every automation clip', () => {
+        let s = seeded();
+        for (const id of ['a', 'b']) {
+            s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id, startTime: 0 } } });
+        }
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'lane1' } } });
+        s = run(s, { type: 'ADD_AUTO_CLIP', payload: { laneId: 'lane1', clip: { id: 'ac1', startTime: 0, duration: 1 } } });
+        // A lane selection is released by a take-everything.
+        s = run(s, { type: 'SELECT_LANE', payload: { laneId: 'lane1' } });
+        expect(s.settings.selectedLaneId).toBe('lane1');
+
+        s = run(s, { type: 'SELECT_ALL' });
+        expect(s.settings.selectedCueIds.sort()).toEqual(['a', 'b']);
+        expect(s.settings.selectedCueId).toBeTruthy();
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'lane1', clipId: 'ac1' }]);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'lane1', clipId: 'ac1' });
+        expect(s.settings.selectedLaneId).toBeNull();
+        expect(s.settings.selectedKeyframe).toBeNull();
+    });
+
     it('REMOVE_CUE prunes a dropped member of a multi-selection', () => {
         let s = seeded();
         for (const id of ['a', 'b']) {

@@ -74,6 +74,9 @@ export const cuePastePayload = (cue, id, startTime) => ({
  *   Arrow            move the playhead (frame head) — Left/Right ±1 frame
  *   Shift+Arrow      jump to the previous/next beat-grid line
  *   Ctrl/Cmd+Arrow   jump to the previous/next clip start/end boundary
+ *   Ctrl+A           select every clip
+ *   Shift+click      add a clip to the selection (Shift+drag sweeps a group
+ *                    onto the current selection)
  *   Ctrl+C/X/V       copy / cut / paste the selected cue or automation clip
  *                    (paste at playhead, onto the currently selected track if any)
  *   Ctrl+Z           undo   |   Ctrl+Shift+Z  redo
@@ -230,6 +233,17 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb, onZoom }) 
                 e.preventDefault();
                 if (e.shiftKey) actionsRef.current.redo();
                 else actionsRef.current.undo();
+                return;
+            }
+
+            // Ctrl/Cmd+A: select every clip.
+            //
+            // Shift+click and Shift+drag already ADD to the selection, but
+            // there was no way to take the whole timeline at once, and nothing
+            // told the user that the Shift gesture existed.
+            if (key === 'a') {
+                e.preventDefault();
+                actionsRef.current.selectAll();
                 return;
             }
 

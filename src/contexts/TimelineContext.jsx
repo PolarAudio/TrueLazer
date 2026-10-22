@@ -976,6 +976,37 @@ export function reducer(state, action) {
             return { ...state, settings };
         }
 
+        // Select everything: every cue clip and every automation clip.
+        //
+        // The building blocks for a multi-selection already existed (Shift+click
+        // and Shift+marquee add to the selection), but there was no way to
+        // grab everything at once - so a user who wanted "all of these" had to
+        // shift-click every clip, and a user who wanted "these five and those
+        // five" had to discover the Shift gesture on their own.
+        case 'SELECT_ALL': {
+            const cueIds = Object.keys(state.cues || {}).filter((id) => state.cues[id]);
+            const clips = [];
+            for (const laneId of Object.keys(state.lanes || {})) {
+                const lane = state.lanes[laneId];
+                if (!lane) continue;
+                for (const clip of (lane.clips || [])) {
+                    if (clip && clip.id) clips.push({ laneId, clipId: clip.id });
+                }
+            }
+            return {
+                ...state,
+                settings: {
+                    ...state.settings,
+                    selectedCueIds: cueIds,
+                    selectedCueId: cueIds.length ? cueIds[cueIds.length - 1] : null,
+                    selectedAutoClipIds: clips,
+                    selectedAutoClip: clips.length ? clips[clips.length - 1] : null,
+                    selectedLaneId: null,
+                    selectedKeyframe: null,
+                },
+            };
+        }
+
         case 'ADD_LANE': {
             const channelId = action.payload.channelId;
             const channel = state.channels[channelId];
@@ -1434,6 +1465,7 @@ export const TimelineProvider = ({ children }) => {
     // choices (selection, zoom/snap/sync settings) and load-related actions.
     const NON_EDIT_ACTIONS = new Set([
         'SELECT', 'SELECT_CUES', 'SELECT_KEYFRAME', 'SELECT_LANE', 'SELECT_AUTO_CLIP',
+        'SELECT_AUTO_CLIPS', 'SELECT_MIXED', 'SELECT_ALL',
         'SET_SETTINGS', 'HYDRATE', 'RESET', 'SEED_CHANNELS', 'SET_STATE',
     ]);
 
@@ -1755,6 +1787,7 @@ export const TimelineProvider = ({ children }) => {
             },
             select: (cueId, channelId, additive) => dispatch({ type: 'SELECT', payload: { cueId, channelId, additive } }),
             selectCues: (cueIds, channelId, additive) => dispatch({ type: 'SELECT_CUES', payload: { cueIds, channelId, additive } }),
+            selectAll: () => dispatch({ type: 'SELECT_ALL' }),
             addLane: (channelId, lane) => dispatch({ type: 'ADD_LANE', payload: { channelId, lane } }),
             updateLane: (laneId, patch) => dispatch({ type: 'UPDATE_LANE', payload: { laneId, patch } }),
             addKeyframe: (laneId, keyframe, clipId) => dispatch({ type: 'ADD_KEYFRAME', payload: { laneId, keyframe, clipId } }),

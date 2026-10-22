@@ -193,16 +193,32 @@ function optionDecode(o) {
  * only drive continuous 'range' params — every other control on a linked effect
  * (selects, checkboxes, color, text) is static per channel, so this lets each
  * clip do it differently (e.g. Delay direction per clip).
+ *
+ * It takes a LIST of clips: a change is applied to every one of them, so a
+ * group of selected clips can be given the same effect setting in one go.
+ * The values shown are the anchor's (the last clip picked) - the other clips
+ * may hold different ones.
  */
-const CueEffectToggles = ({ cue }) => {
+const CueEffectToggles = ({ cues }) => {
     const { state, actions } = useTimeline();
-    const channel = state.channels[cue.channelId];
+    const list = (Array.isArray(cues) ? cues : [cues]).filter(Boolean);
+    if (list.length === 0) return null;
+    const anchor = list[list.length - 1];
+    const channel = state.channels[anchor.channelId];
     if (!channel) return null;
 
-    const overrides = cue.effectOverrides || {};
-    const lanes = (channel.automationLanes || [])
-        .map((lid) => state.lanes[lid])
-        .filter(Boolean);
+    const overrides = anchor.effectOverrides || {};
+    // The lanes of EVERY selected clip's channel, so a clip on a track with
+    // its own effects can be given them too.
+    const lanes = [];
+    for (const c of list) {
+        const ch = state.channels[c.channelId];
+        if (!ch) continue;
+        for (const lid of (ch.automationLanes || [])) {
+            const lane = state.lanes[lid];
+            if (lane) lanes.push(lane);
+        }
+    }
     // The effect lives on the automation CLIPS a lane holds, not on the lane
     // itself - the lane is only a container. Effects that already carry an
     // override stay listed even if their clip was removed, so a setting never
@@ -214,8 +230,13 @@ const CueEffectToggles = ({ cue }) => {
     if (effectIds.length === 0) return null;
 
     const setParam = (effectId, paramId, value) => {
-        const next = { ...overrides, [effectId]: { ...(overrides[effectId] || {}), [paramId]: value } };
-        actions.updateCue(cue.id, { effectOverrides: next });
+        // Applied to every selected clip; each keeps the overrides it already
+        // had and only this one value changes.
+        for (const c of list) {
+            const cur = c.effectOverrides || {};
+            const next = { ...cur, [effectId]: { ...(cur[effectId] || {}), [paramId]: value } };
+            actions.updateCue(c.id, { effectOverrides: next });
+        }
     };
 
     const rows = [];
@@ -280,6 +301,12 @@ const CueEffectToggles = ({ cue }) => {
             <div className="timeline-inspector-hint">
                 Per-clip settings for this track's effects. Curves drive the range sliders only;
                 these toggle values are copied with the clip.
+                {list.length > 1 && (
+                    <>
+                        {' '}
+                        Showing the last picked clip; a change is applied to all {list.length} selected clips.
+                    </>
+                )}
             </div>
             {rows}
         </div>
@@ -561,6 +588,9 @@ const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
                 <div className="timeline-inspector-hint">
                     Drag any selected clip to move the group; drag its edges to trim the group.
                 </div>
+                <div className="timeline-inspector-hint">
+                    Shift+click another clip to add it to the selection; Ctrl+A takes every clip.
+                </div>
                 <button
                     className="timeline-btn"
                     onClick={() => actions.trimOverlaps(selectedIds)}
@@ -605,11 +635,23 @@ const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
                 ? <AutoClipPanel lane={selClipLane} clip={selectedClip} playheadSec={playheadSec} />
                 : (selectedLane && <AutomationLaneInfo lane={selectedLane} />))}
 
-            {multi ? summary : !cue ? (
-                <p className="timeline-inspector-hint">Select a cue block to edit its properties.</p>
+            {multi ? (
+                <>
+                    {/* The effect toggles stay available for a GROUP of clips -
+                        the per-clip editor used to be replaced by the summary,
+                        so a selection could not be given an effect setting at
+                        all. */}
+                    <CueEffectToggles cues={selectedIds.map((id) => state.cues[id]).filter(Boolean)} />
+                    {summary}
+                </>
+            ) : !cue ? (
+                <p className="timeline-inspector-hint">
+                    Select a cue block to edit its properties. Shift+click adds to the selection;
+                    Ctrl+A takes every clip.
+                </p>
             ) : (
                 <>
-                    <CueEffectToggles cue={cue} />
+                    <CueEffectToggles cues={[cue]} />
                     <div className={`timeline-cue-type ${cue.type === 'ILDA' ? 'ilda' : 'generator'}`}>
                         {cue.type === 'ILDA' ? '◈ ILDA File' : '✦ Generator'}
                         {cue.isLooping && <span className="timeline-loop-badge">LOOP</span>}
