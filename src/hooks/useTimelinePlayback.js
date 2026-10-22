@@ -55,6 +55,12 @@ const PARSE_WATCHDOG_MS = 8000;
 // left to the RelocateModal).
 const MAX_PARSE_RETRIES = 3;
 
+// Channels whose outputs were logged once for differing frame lengths (avoids
+// repeating the diagnostic every frame of playback).
+const paddedChannelsLogged = new Set();
+// Channels whose outputs asked for different point rates (logged once).
+const unifiedPpsLogged = new Set();
+
 // Channel-level axis invert: negate X and/or Y around 0 (native coordinates).
 export function flipPoints(points, flipX, flipY) {
     if (!flipX && !flipY) return points;
@@ -63,6 +69,49 @@ export function flipPoints(points, flipX, flipY) {
     for (let i = 0; i < n; i++) {
         if (flipX) out[i * 8] = -out[i * 8];
         if (flipY) out[i * 8 + 1] = -out[i * 8 + 1];
+    }
+    return out;
+}
+
+// Pad a frame with blanked hold points at its last position so every output of
+// a track can be handed the same number of points. A DAC turns a frame into
+// playback time from the frame itself (point count and/or duration), so equal
+// lengths are what keeps two channels of one device advancing together.
+export function padFrameToCount(points, count) {
+    if (!points || !(count > 0)) return points;
+    const typed = points instanceof Float32Array;
+    const have = typed
+        ? Math.floor(points.length / 8)
+        : (Array.isArray(points) ? points.length : 0);
+    if (have >= count) return points;
+
+    if (typed) {
+        const out = new Float32Array(count * 8);
+        out.set(points);
+        const last = Math.max(0, have - 1) * 8;
+        const x = have > 0 ? points[last] : 0;
+        const y = have > 0 ? points[last + 1] : 0;
+        for (let i = have; i < count; i++) {
+            const o = i * 8;
+            out[o] = x;
+            out[o + 1] = y;
+            out[o + 6] = 1;
+        }
+        return out;
+    }
+
+    const out = points.slice();
+    const lastPoint = have > 0 ? points[have - 1] : null;
+    for (let i = have; i < count; i++) {
+        out.push({
+            x: lastPoint?.x ?? 0,
+            y: lastPoint?.y ?? 0,
+            z: 0,
+            r: 0,
+            g: 0,
+            b: 0,
+            blanking: true,
+        });
     }
     return out;
 }
@@ -696,6 +745,7 @@ export function useTimelinePlayback() {
             // area scale/crop, safety-zone blanking, PPS target) â€” the same
             // `applyOutputProcessing`/PPS resolution the grid path uses, so the
             // timeline drives the same hardware behavior the main app promises.
+            const outFrames = [];
             for (const out of uniq) {
                 // A channel-mode Delay/Chase produces a concatenated buffer plus a
                 // per-DAC slice map (keyed by the output's position in the assigned
@@ -799,12 +849,68 @@ export function useTimelinePlayback() {
                     pps: targetPpsValue,
                     targetPps: targetPpsValue,
                     targetFps: targetFpsValue,
+                    // The timeline samples at settings.fps, so that is the rate
+                    // every output must PLAY at. The Output Settings targetFps
+                    // only sizes the point budget; letting it decide the frame
+                    // duration made one output play at, say, 25 Hz while its
+                    // twin played at 30 Hz - the two channels of one device then
+                    // drifted apart within seconds.
+                    frameFps: s.fps || 30,
                     targetMode: 'varFpsFixedPps',
                 };
                 if (settings?.targetMode) options.targetMode = settings.targetMode;
 
+                outFrames.push({ out, outFrame, options });
+            }
+
+            // Every output of one track must receive the SAME number of points
+            // per frame. The DAC derives each channel's playback time from the
+            // frame it was handed (IDN plays the points over the frame duration,
+            // Showbridge loops the wire frame), so two outputs of the same track
+            // that end up with different lengths - a crop, a safety zone or a
+            // resample on one wing but not the other - advance at different
+            // rates and visibly drift apart within seconds. Pad the shorter
+            // frames with blanked hold points at the last position so all
+            // channels play for exactly the same time.
+            //
+            // A channel-mode Delay/Chase intentionally gives each DAC a shifted
+            // slice of the buffer, so its per-output lengths are part of the
+            // effect and are left alone.
+            const distributed = !!(frame && frame._channelDistributions && frame._channelDistributions.size > 0);
+            const counts = outFrames.map(({ outFrame }) =>
+                outFrame ? Math.floor((outFrame.length || 0) / (Array.isArray(outFrame) ? 1 : 8)) : 0
+            );
+            const targetCount = !distributed && outFrames.length > 1 ? Math.max(0, ...counts) : 0;
+            if (targetCount > 0 && counts.some((c) => c !== targetCount) && !paddedChannelsLogged.has(chId)) {
+                paddedChannelsLogged.add(chId);
+                console.log(`[TimelinePlayback] channel ${chId}: outputs produced different frame lengths [${counts.join(', ')}] points - padding to ${targetCount} so they stay in sync`);
+            }
+
+            // One track is one image on several projectors, so every output of it
+            // must play a frame for the same time. Two outputs set to different
+            // point rates would consume their (now equal) frames at different
+            // speeds - the exact way two channels of one DAC drift apart - so the
+            // slowest rate (the common denominator) wins for the whole track.
+            if (outFrames.length > 1) {
+                const rates = outFrames
+                    .map(({ options }) => options.targetPps || options.pps || 0)
+                    .filter((v) => v > 0);
+                const trackPps = rates.length > 1 ? Math.min(...rates) : 0;
+                if (trackPps > 0 && rates.some((v) => v !== trackPps)) {
+                    for (const entry of outFrames) {
+                        entry.options.targetPps = trackPps;
+                        entry.options.pps = trackPps;
+                    }
+                    if (!unifiedPpsLogged.has(chId)) {
+                        unifiedPpsLogged.add(chId);
+                        console.log(`[TimelinePlayback] channel ${chId}: outputs asked for different point rates [${rates.join(', ')}] - using ${trackPps} pps on all so they stay in sync`);
+                    }
+                }
+            }
+
+            for (const { out, outFrame, options } of outFrames) {
                 frames[`${out.ip}:${out.channel}`] = {
-                    points: outFrame,
+                    points: targetCount > 0 ? padFrameToCount(outFrame, targetCount) : outFrame,
                     ip: out.ip,
                     channel: out.channel,
                     type: out.type || 'EtherDream',
