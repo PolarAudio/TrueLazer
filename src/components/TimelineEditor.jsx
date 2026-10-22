@@ -546,6 +546,7 @@ const TimelineEditor = ({ onBack }) => {
                 <TimelineInspector
                     onSeek={pb.seek}
                     previewFrame={pb.previewFrame}
+                    getCompiledFrame={pb.getCompiledFrame}
                     playheadSec={pb.playheadSec}
                 />
             </div>

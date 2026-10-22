@@ -26,7 +26,7 @@ function scaleRgb(points, factor) {
  * Paused transport still previews: compile is transport-independent and only
  * needs the playhead time.
  */
-const TimelinePreview = ({ previewFrame, playheadSec }) => {
+const TimelinePreview = ({ previewFrame, getCompiledFrame, playheadSec }) => {
     const { state, dacOutputSettings } = useTimeline();
     const canvasRef = useRef(null);
     const wrapRef = useRef(null);
@@ -34,6 +34,9 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
     const lastKeyRef = useRef('');
     const flipRef = useRef(null);
     const [size, setSize] = useState({ w: 340, h: 260 });
+    const playheadRef = useRef(playheadSec);
+    playheadRef.current = playheadSec;
+    const lastCompileAtRef = useRef(0);
 
     const selectedId =
         state.settings.selectedChannelId && state.channels[state.settings.selectedChannelId]
@@ -176,27 +179,49 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
         let raf;
         const loop = () => {
             if (channel) {
-                const key = `${channel.id}:${playheadSec.toFixed(3)}:${contentStamp}`;
+                const t = playheadRef.current;
+                const key = `${channel.id}:${t.toFixed(3)}:${contentStamp}`;
                 if (key !== lastKeyRef.current) {
                     lastKeyRef.current = key;
-                    let frame = previewFrame(channel.id, playheadSec);
-                    const single = flipRef.current;
-                    if (frame && single && (single.flipX || single.flipY)) {
-                        frame = flipPoints(frame, !!single.flipX, !!single.flipY);
-                    }
-                    if (frame && singleSettings) {
-                        if (singleSettings.dimmer !== undefined && singleSettings.dimmer < 1) {
-                            frame = scaleRgb(frame, Math.max(0, singleSettings.dimmer));
+                    // The DAC path compiles the same channel at the timeline's
+                    // frame rate. Reuse its frame when it is current enough, so
+                    // the preview does not compile the same content a second
+                    // time - doing that on every animation frame used more CPU
+                    // than the renderer had to spare and the picture stuttered.
+                    const fps = state.settings.fps || 30;
+                    const cached = getCompiledFrame ? getCompiledFrame(channel.id) : null;
+                    let frame = null;
+                    if (cached && Math.abs(cached.t - t) <= 2 / fps) {
+                        frame = cached.frame;
+                    } else {
+                        // No usable DAC frame (paused, laser off, or the track
+                        // is not routed): compile here, but no more often than
+                        // the timeline's own frame rate.
+                        const now = performance.now();
+                        if (now - lastCompileAtRef.current >= 1000 / fps) {
+                            lastCompileAtRef.current = now;
+                            frame = previewFrame(channel.id, t);
                         }
-                        if (singleSettings.transformationEnabled || (singleSettings.safetyZones && singleSettings.safetyZones.length > 0)) {
-                            frame = applyOutputProcessing(
-                                { points: frame, isTypedArray: !Array.isArray(frame) },
-                                singleSettings,
-                                false
-                            ).points;
-                        }
                     }
-                    frameRef.current = frame;
+                    if (frame) {
+                        const single = flipRef.current;
+                        if (single && (single.flipX || single.flipY)) {
+                            frame = flipPoints(frame, !!single.flipX, !!single.flipY);
+                        }
+                        if (singleSettings) {
+                            if (singleSettings.dimmer !== undefined && singleSettings.dimmer < 1) {
+                                frame = scaleRgb(frame, Math.max(0, singleSettings.dimmer));
+                            }
+                            if (singleSettings.transformationEnabled || (singleSettings.safetyZones && singleSettings.safetyZones.length > 0)) {
+                                frame = applyOutputProcessing(
+                                    { points: frame, isTypedArray: !Array.isArray(frame) },
+                                    singleSettings,
+                                    false
+                                ).points;
+                            }
+                        }
+                        frameRef.current = frame;
+                    }
                 }
             } else {
                 frameRef.current = null;
@@ -206,7 +231,7 @@ const TimelinePreview = ({ previewFrame, playheadSec }) => {
         };
         raf = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(raf);
-    }, [channel, playheadSec, previewFrame, draw, contentStamp]);
+    }, [channel, previewFrame, getCompiledFrame, draw, contentStamp, singleSettings, state.settings.fps]);
 
     return (
         <div className="timeline-preview">

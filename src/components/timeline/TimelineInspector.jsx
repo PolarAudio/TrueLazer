@@ -514,7 +514,7 @@ const AutomationLaneInfo = ({ lane }) => {
     );
 };
 
-const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
+const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec }) => {
     const { state, actions, dacOutputSettings, updateDacOutputSetting } = useTimeline();
     const selectedIds = state.settings.selectedCueIds || [];
     const cue = state.cues[state.settings.selectedCueId];
@@ -615,7 +615,7 @@ const TimelineInspector = ({ onSeek, previewFrame, playheadSec }) => {
     return (
         <div className="timeline-inspector">
             <h3>Inspector</h3>
-            {previewFrame && <TimelinePreview previewFrame={previewFrame} playheadSec={playheadSec} />}
+            {previewFrame && <TimelinePreview previewFrame={previewFrame} getCompiledFrame={getCompiledFrame} playheadSec={playheadSec} />}
 
             {multiAutoClips ? (
                 <div className="timeline-inspector-section timeline-multi-summary">
