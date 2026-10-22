@@ -30,10 +30,27 @@ const MAX_CHUNKS = TOTAL_CHUNKS - 1;  // 2 data chunks. DMA reads 3 x 575 = 1725
 const FILL_TARGET = PTS_FULL;
 const PPS = 30;
 
+// The firmware reads the LASER ENABLE from the first two bytes of the frame
+// payload (bytes 4-5 of the chunk, which land on the frame buffer's word 0):
+// the high byte 0x00 means "laser off", anything else means "on". The
+// bench-verified probe (main/showbridge-probe.cjs) sent 0x01d2 for a live
+// frame.
+//
+// The POINT COUNT used to live in that word. It only read as "on" because a
+// full 575-point frame happens to encode as 0x023f - but a frame with fewer
+// than 256 points encodes as 0x00xx, whose high byte is 0x00, so the DAC
+// switched the laser off and that output stayed dark. The count is now written
+// nowhere: the enable word carries the documented value instead.
+const LASER_CTRL_ON = 0x01d2;
+
 const DAC_TYPE = 'Showbridge';
 
 // =============== STATE ===============
 let globalStatusCallback = null;
+// ip -> { channels: Set<number>, order: number[], vendorId, deviceId, name }
+// `order` is the sequence in which the channels answered the discovery
+// broadcast. That order - not the channel number itself - is what maps a
+// channel onto the firmware's channel constant.
 let discoveryCache = new Map();
 
 // Per-channel state
@@ -158,8 +175,47 @@ function writePoints(buf, pointOffset, isTyped, points, ptsInChunk, ptsPerChunk,
     }
 }
 
+// Flatten the renderer's plain point list into the canonical 8-float layout
+// ([x, y, z, r, g, b, blanking, 0] per point). Accepts both the array form
+// ([x,y,r,g,b,blanking]) and the object form ({x,y,r,g,b,blanking}) the
+// renderer uses - the same two shapes writePoints() understands.
+function flattenPoints(points) {
+    const out = new Float32Array(points.length * 8);
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const o = i * 8;
+        if (!p) continue;
+        if (Array.isArray(p) || p instanceof Float32Array) {
+            out[o] = p[0] || 0;
+            out[o + 1] = p[1] || 0;
+            out[o + 2] = p[2] || 0;
+            out[o + 3] = p[3] || 0;
+            out[o + 4] = p[4] || 0;
+            out[o + 5] = p[5] || 0;
+            out[o + 6] = p[6] || 0;
+        } else if (typeof p === 'object') {
+            out[o] = p.x || 0;
+            out[o + 1] = p.y || 0;
+            out[o + 2] = p.z || 0;
+            out[o + 3] = p.r || 0;
+            out[o + 4] = p.g || 0;
+            out[o + 5] = p.b || 0;
+            out[o + 6] = p.blanking || 0;
+        }
+    }
+    return out;
+}
+
 function buildFrameChunks(chType, pps, points, mode, fps) {
-    const isTyped = points instanceof Float32Array;
+    let isTyped = points instanceof Float32Array;
+    // A plain point array (the Show Control grid path sends one) would skip the
+    // interpolation fill below, and that fill is what pads the frame out to a
+    // full chunk. Flatten it to the canonical typed layout first so every
+    // frame is built the same way, whichever path produced it.
+    if (!isTyped && Array.isArray(points)) {
+        points = flattenPoints(points);
+        isTyped = true;
+    }
     let totalPoints = isTyped ? Math.floor(points.length / 8) : (points ? points.length : 0);
     if (totalPoints === 0) return [];
 
@@ -313,7 +369,7 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
     // single contiguous 8-byte point by the DMA.  Only 1 point may straddle the
     // boundary and that point is fully preserved (zero data loss).
     const frameBuf = Buffer.alloc(dataChunks * payloadLen);
-    frameBuf.writeInt16LE(totalPoints, 0);  // count (read by DMA as 16-bit LE)
+    frameBuf.writeInt16LE(LASER_CTRL_ON, 0);  // laser enable (payload bytes 4-5)
     frameBuf.writeUInt8(0, 2);              // status (firmware overwrites with 0xfa when complete)
 
     // Mode-aware PPS byte. The DMA loops the FULL wire frame (after fill/clip),
@@ -357,7 +413,7 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
         chunks.push(buf);
     }
 
-    return chunks;
+    return { chunks, pointCount: totalPoints };
 }
 
 // =============== NATIVE DISCOVERY ===============
@@ -412,12 +468,17 @@ async function discoverDacs(timeout = 3000) {
                 if (!discoveryCache.has(dac.ip)) {
                     discoveryCache.set(dac.ip, {
                         channels: new Set(),
+                        order: [],
                         vendorId: dac.vendorId,
                         deviceId: dac.deviceId,
                         name: dac.name,
                     });
                 }
-                discoveryCache.get(dac.ip).channels.add(dac.channel);
+                const entry = discoveryCache.get(dac.ip);
+                entry.channels.add(dac.channel);
+                if (!entry.order.includes(dac.channel)) {
+                    entry.order.push(dac.channel);
+                }
 
                 const key = `${dac.ip}:${dac.channel}`;
                 if (!discovered.find(d => `${d.ip}:${d.channel}` === key)) {
@@ -443,6 +504,14 @@ async function discoverDacs(timeout = 3000) {
                 if (readyCount >= ifaces.length) {
                     setTimeout(() => {
                         for (const s of sockets) { try { s.close(); } catch (e) { } }
+                        // Report the channel -> firmware constant map so a
+                        // dark channel can be checked against the unit.
+                        for (const [ip, entry] of discoveryCache) {
+                            const map = entry.order
+                                .map((ch) => `ch ${ch} = 0x${channelTypeFor(ip, ch).toString(16).padStart(2, '0')}`)
+                                .join(', ');
+                            console.log(`[Showbridge] ${ip}: ${entry.order.length} channel(s) - ${map || 'none'}`);
+                        }
                         resolve(discovered);
                     }, timeout);
                 }
@@ -457,13 +526,44 @@ function getDacServices(ip) {
         return Promise.resolve([{ serviceID: 0, name: 'Main' }]);
     }
     const services = [];
-    for (const ch of cached.channels) {
+    for (const ch of cached.order.length ? cached.order : cached.channels) {
         services.push({
             serviceID: ch,
             name: `Channel ${ch}`,
         });
     }
     return Promise.resolve(services);
+}
+
+// The firmware picks the target channel from header byte 3: 0x00 stores the
+// frame in the CH1 buffer, 0x01 in the CH2 buffer.
+//
+// That constant is the channel's POSITION in the unit, not its discovery
+// number. The discovery response numbers channels 1/2 on most units, but a
+// unit is free to report any numbering it likes - and the old mapping
+// ("channel 2 is 0x01, everything else is 0x00") got that wrong in two ways:
+// a unit reporting 0/1 put BOTH channels in the CH1 buffer, and a unit
+// reporting 2/3 swapped them. Either way the unit's second channel stayed
+// dark. Mapping by discovery order fixes both and keeps the common 1/2 case
+// byte-identical to what worked before.
+//
+// Only 0x00 and 0x01 are frame data - every other value is a different
+// packet type on real hardware (0x02 is a settings block, 0x03 a heartbeat),
+// so the constant is clamped. A unit with more channels than the firmware has
+// buffers can only ever light its first two; sending anything else would
+// feed the unit's config and heartbeat parsers a frame.
+const MAX_CHANNEL_CONSTANT = 1;
+
+function channelTypeFor(ip, channel) {
+    const entry = discoveryCache.get(ip);
+    const order = entry ? entry.order : [];
+    if (order.length > 0) {
+        const idx = order.indexOf(channel);
+        if (idx >= 0) return Math.min(idx, MAX_CHANNEL_CONSTANT);
+    }
+    // No discovery info for this unit (it was never scanned): assume the
+    // common 1-based numbering, so channel N is the firmware's channel N-1.
+    return Math.min(Math.max(0, (channel | 0) - 1), MAX_CHANNEL_CONSTANT);
 }
 
 // =============== HEARTBEAT ===============
@@ -544,15 +644,44 @@ function flushChunks(st, chunks, ip) {
     }
 }
 
+// =============== DIAGNOSTICS ==============
+//
+// A DAC that stays dark is hard to debug from the outside: the unit simply
+// ignores the frames. These logs state, per channel, exactly what the app
+// puts on the wire, so a "no output" report can be checked against the DAC's
+// own activity without a packet capture.
+const loggedChannels = new Set();
+
+function logChannelOnce(key, ip, channel, chType) {
+    if (loggedChannels.has(key)) return;
+    loggedChannels.add(key);
+    const entry = discoveryCache.get(ip);
+    const order = entry && entry.order.length ? entry.order.join(',') : 'not scanned';
+    console.log(`[Showbridge] ${ip} channel ${channel} -> firmware channel constant 0x${chType.toString(16).padStart(2, '0')}` +
+        ` (${chType === 0 ? 'CH1' : chType === 1 ? 'CH2' : 'CH' + (chType + 1)}), discovery order [${order}]`);
+}
+
+// The point count and the laser-enable word are the two values that decide
+// whether the DAC lights up, so report them once per channel as well.
+function logFrameOnce(key, ip, channel, chType, totalPoints) {
+    const logKey = `${key}#pts`;
+    if (loggedChannels.has(logKey)) return;
+    loggedChannels.add(logKey);
+    console.log(`[Showbridge] ${ip} channel ${channel}: ${totalPoints} points/frame, laser enable word 0x${LASER_CTRL_ON.toString(16).padStart(4, '0')}` +
+        ` (high byte 0x${((LASER_CTRL_ON >> 8) & 0xff).toString(16).padStart(2, '0')} = on), header byte 3 = 0x${chType.toString(16).padStart(2, '0')}`);
+}
+
 function sendFrame(ip, channel, points, fps, type, options) {
     const key = `${ip}:${channel}`;
-    const chType = channel === 2 ? 0x01 : 0x00;
+    const chType = channelTypeFor(ip, channel);
     // Showbridge control byte 3 expects Points Per Second / 1000 (Kpps),
     // e.g. 30 for 30000 PPS. options.pps arrives as full PPS, so divide here.
     const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
 
     const st = ensureChannel(ip, key);
     if (!st.running) return;
+
+    logChannelOnce(key, ip, channel, chType);
 
     // Cancel any pending chunk sends from previous frame
     for (const t of st.pendingTimers) {
@@ -568,10 +697,12 @@ function sendFrame(ip, channel, points, fps, type, options) {
     const effFps = (options && options.targetFps && options.targetFps > 0)
         ? options.targetFps
         : (fps && fps > 0 ? fps : 30);
-    const chunks = buildFrameChunks(chType, pps, points, mode, effFps);
-    if (chunks.length === 0) return;
+    const built = buildFrameChunks(chType, pps, points, mode, effFps);
+    if (built.chunks.length === 0) return;
 
-    flushChunks(st, chunks, ip);
+    logFrameOnce(key, ip, channel, chType, built.pointCount);
+
+    flushChunks(st, built.chunks, ip);
 }
 
 // Always-feed idle stream: a full PTS_FULL dark frame (center hold) pushed on
@@ -581,7 +712,7 @@ function sendFrame(ip, channel, points, fps, type, options) {
 // instead of after a cold start / missed-tick silence.
 function sendIdleFrame(ip, channel, options) {
     const key = `${ip}:${channel}`;
-    const chType = channel === 2 ? 0x01 : 0x00;
+    const chType = channelTypeFor(ip, channel);
     const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
 
     const st = ensureChannel(ip, key);
@@ -597,16 +728,16 @@ function sendIdleFrame(ip, channel, options) {
     // a clean 30fps idle stream.
     const blank = new Float32Array(8);
     blank[6] = 1;
-    const chunks = buildFrameChunks(chType, pps, blank, 'varFpsFixedFps', 30);
-    if (chunks.length === 0) return;
+    const built = buildFrameChunks(chType, pps, blank, 'varFpsFixedPps', 30);
+    if (built.chunks.length === 0) return;
 
-    flushChunks(st, chunks, ip);
+    flushChunks(st, built.chunks, ip);
 }
 
 // =============== BLANK FRAME ===============
 function sendBlankFrame(ip, channel) {
     const key = `${ip}:${channel}`;
-    const chType = channel === 2 ? 0x01 : 0x00;
+    const chType = channelTypeFor(ip, channel);
 
     const socket = dgram.createSocket('udp4');
     socket.on('error', () => { });
@@ -736,4 +867,13 @@ module.exports = {
     setStatusCallback,
     PTS_FULL,
     frameUses255Scale,
+    // Test hook: seed the discovery order of a unit the way a scan would.
+    __setDiscoveryOrder: (ip, order) => {
+        if (!discoveryCache.has(ip)) {
+            discoveryCache.set(ip, { channels: new Set(), order: [], vendorId: 0, deviceId: 0, name: '' });
+        }
+        const entry = discoveryCache.get(ip);
+        entry.order = order.slice();
+        entry.channels = new Set(order);
+    },
 };

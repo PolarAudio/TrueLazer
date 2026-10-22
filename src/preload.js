@@ -12,6 +12,14 @@ contextBridge.exposeInMainWorld(
     ipcRenderer.on('dac-status', listener);
     return () => ipcRenderer.removeListener('dac-status', listener);
   },
+  // The per-output settings are shared by the Show Control page and the
+  // Timeline; the main process announces a change so both sides reload the
+  // same map instead of each working from its own stale copy.
+  onDacOutputSettingsChanged: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('dac-output-settings-changed', listener);
+    return () => ipcRenderer.removeListener('dac-output-settings-changed', listener);
+  },
   onSystemStats: (callback) => {
     const listener = (event, data) => callback(data);
     ipcRenderer.on('system-stats', listener);

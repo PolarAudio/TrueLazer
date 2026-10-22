@@ -6,7 +6,7 @@ import { useTimeline } from '../../contexts/TimelineContext';
  * to route that track to the DAC channel.
  */
 const TimelineDacDock = () => {
-    const { discoverChannels, dacOutputSettings } = useTimeline();
+    const { discoverChannels, dacOutputSettings, openOutputSettings } = useTimeline();
 
     // Prefer the name the user assigned in Output Settings over the raw
     // discovery/service-map label ("Channel 3", "Main", ...), matching how
@@ -50,6 +50,13 @@ const TimelineDacDock = () => {
                 <span className="timeline-dac-dock-title">DAC Outputs</span>
                 <button className="timeline-btn-sm" onClick={scan} disabled={scanning}>
                     {scanning ? 'Scanning…' : `Rescan (${dacs.length})`}
+                </button>
+                <button
+                    className="timeline-btn-sm"
+                    onClick={openOutputSettings}
+                    title="Open the Output Settings for the discovered channels (dimmer, output area, safety zones)"
+                >
+                    Output Settings…
                 </button>
                 <span className="timeline-dac-dock-hint">Drag a chip onto a track header to route it.</span>
             </div>

@@ -500,9 +500,30 @@ ipcMain.handle('set-theme', (event, theme) => {
   store.set('theme', theme);
 });
 
+// The per-output settings (dimmer, output area, safety zones, PPS, ...) are
+// edited from two places - the Show Control page and the Timeline - and each
+// side keeps its own in-memory copy. Replacing the stored map outright meant
+// whichever side saved last silently reverted the other side's edits, and the
+// other side never learned about them at all.
+//
+// So: MERGE into the stored map (a key that is not in the incoming map keeps
+// its stored value) and tell every window that something changed, so both
+// sides reload the same map.
 ipcMain.handle('set-dac-output-settings', (event, dacOutputSettings) => {
-  store.set('dacOutputSettings', dacOutputSettings);
+  const incoming = (dacOutputSettings && typeof dacOutputSettings === 'object') ? dacOutputSettings : {};
+  const current = store.get('dacOutputSettings') || {};
+  const merged = { ...current, ...incoming };
+  store.set('dacOutputSettings', merged);
+  broadcastDacOutputSettings(merged);
 });
+
+// Push the current map to every open window.
+function broadcastDacOutputSettings(settings) {
+  const payload = settings || store.get('dacOutputSettings') || {};
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('dac-output-settings-changed', payload);
+  }
+}
 
 ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
   store.set('thumbnailRenderMode', mode);

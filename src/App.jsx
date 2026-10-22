@@ -323,6 +323,12 @@ function reducer(state, action) {
                 }
             };
         }
+        // Replace the whole map - used when the main process announces that
+        // the settings changed somewhere else (the Timeline's Output panel),
+        // so this side stops working from a stale copy.
+        case 'SET_DAC_OUTPUT_SETTINGS_MAP': {
+            return { ...state, dacOutputSettings: action.payload || {} };
+        }
         case 'SET_ACTIVE_PAGE': {
             return { ...state, activePageId: action.payload };
         }
@@ -4999,6 +5005,14 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     // The settings have been applied; the document is the
                     // saved state again.
                     setSettingsLoaded(true);
+                    // ...and the initial load is done, which is what releases
+                    // the per-output settings to be written back to the store.
+                    // Without this the Output Settings window's changes never
+                    // left memory: the save effect waits for this flag, so the
+                    // dimmer, output area and safety zones a user set were
+                    // dropped on every restart - and the Timeline, which reads
+                    // them from the store, never saw them at all.
+                    setInitialSettingsLoaded(true);
                 }
             }
         };
@@ -6541,6 +6555,38 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
     const handleDacsDiscovered = useCallback((dacs) => {
         dispatch({ type: 'SET_DACS', payload: dacs });
+    }, []);
+
+    // The Timeline discovers its own DACs. Hand them over so the Output
+    // Settings window - which is bound to this app's DAC list - lists the
+    // channels the timeline actually routes to, instead of an empty list.
+    useEffect(() => {
+        timelineBridge.onDacList = (list) => {
+            if (!Array.isArray(list) || list.length === 0) return;
+            dispatch({ type: 'SET_DACS', payload: list });
+        };
+        timelineBridge.onOpenOutputSettings = () => setShowOutputSettingsWindow(true);
+        return () => {
+            timelineBridge.onDacList = null;
+            timelineBridge.onOpenOutputSettings = null;
+        };
+    }, []);
+
+    // The per-output settings are shared with the Timeline. When they change
+    // over there, reload the map here instead of keeping a stale copy that
+    // silently overwrites the other side's edits on the next save.
+    const dacSettingsEchoRef = useRef('');
+    useEffect(() => {
+        if (!window.electronAPI?.onDacOutputSettingsChanged) return undefined;
+        return window.electronAPI.onDacOutputSettingsChanged((settings) => {
+            if (!settings) return;
+            // The main process echoes every write back. Ignore an echo that
+            // carries no change, or the save effect would re-save forever.
+            const json = JSON.stringify(settings);
+            if (json === dacSettingsEchoRef.current) return;
+            dacSettingsEchoRef.current = json;
+            dispatch({ type: 'SET_DAC_OUTPUT_SETTINGS_MAP', payload: settings });
+        });
     }, []);
 
     const handleApplyDacGroup = useCallback((groupDacs) => {
