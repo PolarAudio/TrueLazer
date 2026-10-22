@@ -6,6 +6,7 @@ import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides, apply
 import { applyEffects, applyOutputProcessingWithDwell } from '../utils/effects';
 import { optimizePoints } from '../utils/optimizer';
 import { resampleFrameToStep, DEFAULT_MAX_STEP } from '../utils/pointResample';
+import { resolveTransportTime } from '../utils/timelineTransport';
 import { getPreset, DEFAULT_PRESET, resolvePointBudget } from '../utils/hardwarePresets';
 import { selectActiveCue, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
 import { useTimelineSync } from './useTimelineSync';
@@ -157,6 +158,32 @@ export function useTimelinePlayback() {
     const audioRef = useRef(null); // HTMLAudioElement (or null)
     const audioClockRef = useRef(false); // don't let the wall clock fight audio
     const audioSrcConnectedRef = useRef(false);
+    // The element's own clock, and how long it has refused to advance. The
+    // transport follows the element while it runs, so the picture is exactly
+    // what is heard; a stalled element is detected here so it can never freeze
+    // the show.
+    const lastAudioTimeRef = useRef(-1);
+    const audioStallRef = useRef(0);
+    const audioCtxRef = useRef(audioCtx);
+    audioCtxRef.current = audioCtx;
+
+    /**
+     * How far behind the element's clock the sound actually reaches the
+     * speaker.
+     *
+     * The element is rendered into the AudioContext graph, and the graph has
+     * an output latency, so what is HEARD now is what the element was playing
+     * a moment ago. Without this the playhead sits that far ahead of the
+     * sound.
+     */
+    const audioOutputLatency = () => {
+        const ctx = audioCtxRef.current;
+        if (!ctx) return 0;
+        const out = Number(ctx.outputLatency);
+        if (Number.isFinite(out) && out > 0) return out;
+        const base = Number(ctx.baseLatency);
+        return Number.isFinite(base) && base > 0 ? base : 0;
+    };
 
     // (Re)build the timeline audio element when the track path changes.
     const audioPath = state.settings?.audio?.path || null;
@@ -178,7 +205,27 @@ export function useTimelinePlayback() {
             return;
         }
         audioRef.current = el;
+
+        // A track that is still loading cannot be seeked, so a play pressed
+        // during the load was silently dropped: the element then started from
+        // its own zero and the sound ran away from the playhead. Catch it
+        // here instead, and put the element where the transport is.
+        const onCanPlay = () => {
+            if (!isPlayingRef.current) return;
+            try {
+                if (isFinite(el.duration)) {
+                    el.currentTime = Math.min(playheadRef.current, el.duration);
+                }
+                lastAudioTimeRef.current = el.currentTime;
+                audioStallRef.current = 0;
+                const p = el.play();
+                if (p) p.catch(() => { /* the transport handles a failed start */ });
+            } catch (_) { /* the element is not seekable yet */ }
+        };
+        el.addEventListener('canplay', onCanPlay);
+
         return () => {
+            el.removeEventListener('canplay', onCanPlay);
             try { el.pause(); } catch (_) {}
             audioRef.current = null;
         };
@@ -838,18 +885,38 @@ export function useTimelinePlayback() {
                     t = playheadRef.current + dt;
                 }
             } else {
-                // Wall-clock master: the playhead always advances on rAF time,
-                // so a stalled/paused audio element can never freeze the show.
-                // The timeline track is re-seeked to the playhead when its own
-                // clock drifts, keeping audio and show locked together without
-                // letting the media element own the transport.
+                // The AUDIO element is the master clock while it is running, so
+                // the picture shows exactly what is heard.
+                //
+                // It used to be the other way round: the playhead ran on the
+                // wall clock and the element was only dragged into agreement
+                // once it was already 200 ms out. So the sound could sit a
+                // fifth of a second behind the waveform - which is what "the
+                // audio is delayed" was - and the correction was a hard seek,
+                // so it arrived as a jump rather than a smooth re-sync.
+                //
+                // The wall clock is still the fallback: an element that has
+                // stopped advancing (buffering, a stalled decoder) must never
+                // freeze the transport, so the show keeps running and the
+                // element is re-seeked to catch up.
                 t = playheadRef.current + dt;
                 const el = audioRef.current;
                 if (el && audioClockRef.current && !el.paused
                     && el.readyState >= 1 && isFinite(el.duration)) {
-                    const drift = el.currentTime - t;
-                    if (Math.abs(drift) >= 0.2) {
-                        try { el.currentTime = Math.min(el.duration, Math.max(0, t)); } catch (_) {}
+                    const decision = resolveTransportTime({
+                        wallTime: t,
+                        audioTime: el.currentTime,
+                        lastAudioTime: lastAudioTimeRef.current,
+                        stallSeconds: audioStallRef.current,
+                        outputLatency: audioOutputLatency(),
+                        duration: el.duration,
+                        dt,
+                    });
+                    t = decision.time;
+                    lastAudioTimeRef.current = decision.lastAudioTime;
+                    audioStallRef.current = decision.stallSeconds;
+                    if (decision.reseekTo !== null) {
+                        try { el.currentTime = decision.reseekTo; } catch (_) {}
                     }
                 }
                 const s = stateRef.current.settings;
@@ -972,6 +1039,11 @@ export function useTimelinePlayback() {
             if (el.readyState >= 1 && isFinite(el.duration)) {
                 try { el.currentTime = Math.min(playheadRef.current, el.duration); } catch (_) {}
             }
+            // The element is about to start. Remember where it is, so the
+            // transport can tell "advancing" from "stalled" from the very
+            // first frame instead of treating the start-up as a stall.
+            lastAudioTimeRef.current = el.currentTime;
+            audioStallRef.current = 0;
             const p = el.play();
             if (p) p.catch((err) => {
                 console.warn('Timeline audio play failed:', err);
@@ -986,6 +1058,8 @@ export function useTimelinePlayback() {
         const el = audioRef.current;
         if (el) { el.pause(); }
         audioClockRef.current = false;
+        lastAudioTimeRef.current = -1;
+        audioStallRef.current = 0;
         // Replay anchor: pause returns the playhead to the last position it was
         // parked at, so play/pause always resumes from the same spot (and
         // seeking there also snaps the timeline audio back).
@@ -999,6 +1073,8 @@ export function useTimelinePlayback() {
         setPlayheadSec(0);
         accRef.current = 0;
         audioClockRef.current = false;
+        lastAudioTimeRef.current = -1;
+        audioStallRef.current = 0;
         const el = audioRef.current;
         if (el) {
             el.pause();

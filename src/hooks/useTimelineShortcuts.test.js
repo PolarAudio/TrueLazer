@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { pickPasteChannel, computeArrowSeek, pressSpacePlayPause, spaceReplayFromAnchor } from './useTimelineShortcuts';
+import { pickPasteChannel, computeArrowSeek, pressSpacePlayPause, spaceReplayFromAnchor, cuePastePayload, deepCopy, freshKeyframes } from './useTimelineShortcuts';
 
 const channels = {
     ch1: { id: 'ch1', name: 'A' },
@@ -109,5 +109,98 @@ describe('pickPasteChannel', () => {
 
     it('ignores a selected id that does not exist', () => {
         expect(pickPasteChannel(channels, ['ch1'], 'ghost', { channelId: null })).toBe('ch1');
+    });
+});
+
+/**
+ * Copying a clip or an effect has to produce an INDEPENDENT copy. It used to
+ * produce something that behaved like the original: the pasted cue shared the
+ * original's generator parameters and effect overrides by reference, and the
+ * pasted effect clip kept the original's KEYFRAME ids - and the keyframe id is
+ * how a lane decides which clip owns a point, so every edit on the pasted
+ * curve landed on the original.
+ */
+describe('copy/paste independence', () => {
+    const cue = {
+        id: 'cue-1',
+        type: 'GENERATOR',
+        name: 'Circle',
+        generatorId: 'circle',
+        generatorParams: { radius: 10, speed: 2 },
+        effectOverrides: { invert: { invertX: true } },
+        effects: [{ id: 'invert', instanceId: 'inst-1', params: { invertX: true } }],
+        color: '#ff0000',
+        layerPriority: 3,
+        isLooping: true,
+        duration: 8,
+        totalFrames: 240,
+        frameStart: 0,
+        frameCount: null,
+        playbackSettings: { mode: 'bpm', bpm: 128, duration: 2, beats: 4, speedMultiplier: 1 },
+        startTime: 4,
+    };
+
+    it('copies the nested objects instead of sharing them', () => {
+        const copy = deepCopy(cue);
+        expect(copy.generatorParams).toEqual(cue.generatorParams);
+        expect(copy.generatorParams).not.toBe(cue.generatorParams);
+        expect(copy.effectOverrides.invert).not.toBe(cue.effectOverrides.invert);
+        expect(copy.effects[0]).not.toBe(cue.effects[0]);
+        expect(copy.playbackSettings).not.toBe(cue.playbackSettings);
+        copy.generatorParams.radius = 99;
+        expect(cue.generatorParams.radius).toBe(10);
+    });
+
+    it('gives the pasted cue a fresh id and its own copy of the payload', () => {
+        const payload = cuePastePayload(cue, 'cue-2', 12);
+        expect(payload.id).toBe('cue-2');
+        expect(payload.startTime).toBe(12);
+        expect(payload.generatorParams).not.toBe(cue.generatorParams);
+        expect(payload.effectOverrides).not.toBe(cue.effectOverrides);
+        expect(payload.effects).not.toBe(cue.effects);
+        expect(payload.playbackSettings).not.toBe(cue.playbackSettings);
+    });
+
+    it('carries every field the cue had', () => {
+        // The paste used to drop the colour, the priority, the playback
+        // settings and the cue's own effects, so the copy was not the same
+        // clip.
+        const payload = cuePastePayload(cue, 'cue-2', 12);
+        expect(payload.type).toBe(cue.type);
+        expect(payload.name).toBe(cue.name);
+        expect(payload.generatorId).toBe(cue.generatorId);
+        expect(payload.color).toBe(cue.color);
+        expect(payload.layerPriority).toBe(cue.layerPriority);
+        expect(payload.isLooping).toBe(cue.isLooping);
+        expect(payload.duration).toBe(cue.duration);
+        expect(payload.totalFrames).toBe(cue.totalFrames);
+        expect(payload.frameStart).toBe(cue.frameStart);
+        expect(payload.frameCount).toBe(cue.frameCount);
+        expect(payload.playbackSettings).toEqual(cue.playbackSettings);
+        expect(payload.effects).toEqual(cue.effects);
+    });
+
+    it('does not carry the stale ILDA parse handle over', () => {
+        const payload = cuePastePayload({ ...cue, workerId: 'worker-7' }, 'cue-2', 0);
+        expect(payload.workerId).toBeNull();
+    });
+
+    it('gives every pasted keyframe its own id', () => {
+        const keyframes = [
+            { id: 'kf-1', time: 0, value: 1 },
+            { id: 'kf-2', time: 1, value: 2 },
+        ];
+        const fresh = freshKeyframes(keyframes);
+        expect(fresh.map((k) => k.id)).not.toContain('kf-1');
+        expect(fresh.map((k) => k.id)).not.toContain('kf-2');
+        expect(new Set(fresh.map((k) => k.id)).size).toBe(2);
+        expect(fresh.map((k) => k.time)).toEqual([0, 1]);
+        expect(fresh.map((k) => k.value)).toEqual([1, 2]);
+    });
+
+    it('leaves the original keyframes untouched', () => {
+        const keyframes = [{ id: 'kf-1', time: 0, value: 1 }];
+        freshKeyframes(keyframes);
+        expect(keyframes[0].id).toBe('kf-1');
     });
 });

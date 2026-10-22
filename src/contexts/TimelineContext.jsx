@@ -26,7 +26,7 @@ const STORAGE_KEY = 'truelazer:timeline:v1';
 // handler. The provider refreshes these refs whenever state/actions change.
 export const timelineBridge = { stateRef: null, actionsRef: null };
 
-const generateId = (prefix = 'tl') =>
+export const generateId = (prefix = 'tl') =>
     `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 export const DEFAULT_TIMELINE_SETTINGS = Object.freeze({
