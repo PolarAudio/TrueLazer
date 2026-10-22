@@ -130,16 +130,27 @@ const TimelineEditor = ({ onBack }) => {
             committed: false,
             additive: e.shiftKey || e.ctrlKey || e.metaKey,
             channelId: laneEl ? laneEl.getAttribute('data-channel-id') : null,
+            pointerId: e.pointerId,
         };
-        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* released */ }
+        // The pointer is deliberately NOT captured here. A captured pointer
+        // makes the browser retarget the following pointerup AND click to the
+        // capturing element, so a lane's plain empty-click (clear the
+        // selection) never reached the lane at all - it fired on
+        // `.timeline-content` instead. The pointer is captured on the first
+        // real drag instead, where the retargeting does no harm.
     }, []);
 
     const onContentPointerMove = useCallback((e) => {
         const d = marqueeDragRef.current;
         if (!d) return;
         const moved = Math.abs(e.clientX - d.startX) >= 4 || Math.abs(e.clientY - d.startY) >= 4;
-        if (!d.committed && moved) d.committed = true;
-        if (!d.committed) return;
+        if (!d.committed) {
+            if (!moved) return;
+            d.committed = true;
+            // Now that it is a real drag, capture the pointer so the marquee
+            // keeps tracking it even when the cursor leaves the lane.
+            try { e.currentTarget.setPointerCapture(d.pointerId); } catch (_) { /* released */ }
+        }
         const rect = e.currentTarget.getBoundingClientRect();
         const left = Math.min(d.startX, e.clientX) - rect.left;
         const top = Math.min(d.startY, e.clientY) - rect.top;
