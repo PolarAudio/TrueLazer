@@ -51,6 +51,7 @@ export function blankFrame() {
 export function selectActiveCue(cues, t) {
     const active = (cues || [])
         .filter(Boolean)
+        .filter((c) => !c.muted)
         .map((c) => ({ c, rel: t - c.startTime }))
         .filter(({ c, rel }) => rel >= -1e-6 && (c.isLooping || rel < c.duration));
     if (active.length === 0) return null;

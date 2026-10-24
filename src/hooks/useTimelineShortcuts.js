@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { BLOCK_ROW_H, AUTO_ROW_H, ZOOM_MIN, ZOOM_MAX } from '../components/timeline/layout';
+import { generateId } from '../contexts/TimelineContext';
 import {
     beatDuration,
     clipBoundaries,
@@ -8,6 +9,61 @@ import {
     nextGridTime,
     prevGridTime,
 } from '../utils/timelineTime';
+import { zoomFactorForWheel } from '../utils/timelineZoom';
+
+/**
+ * A deep copy of plain data.
+ *
+ * A cue holds nested objects - generator parameters, per-cue effect overrides,
+ * its own effects, its playback settings. A shallow copy leaves the pasted cue
+ * and the original pointing at the SAME objects, so changing one changes the
+ * other: the paste looked like a duplicate because it was one.
+ */
+export const deepCopy = (value) => {
+    if (value === undefined || value === null) return value;
+    return JSON.parse(JSON.stringify(value));
+};
+
+/**
+ * A pasted automation clip must not share keyframe ids with the original.
+ *
+ * The keyframe id is how a lane resolves which clip owns a point:
+ * clipOwningKeyframe() finds the FIRST clip holding that id. Copied ids
+ * therefore made every edit on the pasted curve - dragging a point, deleting
+ * it - land on the ORIGINAL clip, and the two clips collided as React keys.
+ */
+export const freshKeyframes = (keyframes) =>
+    (keyframes || []).map((k) => ({ ...k, id: generateId('kf') }));
+
+/**
+ * The payload for a pasted cue.
+ *
+ * Every field the cue carried is carried over. The paste used to drop the
+ * cue's colour, layer priority, playback settings and its own effects, so the
+ * copy was not the same clip - and the nested objects were shared with the
+ * original rather than copied.
+ */
+export const cuePastePayload = (cue, id, startTime) => ({
+    id,
+    type: cue.type,
+    name: cue.name,
+    workerId: null,
+    filePath: cue.filePath ?? null,
+    fileName: cue.fileName ?? null,
+    generatorId: cue.generatorId ?? null,
+    generatorParams: deepCopy(cue.generatorParams) || {},
+    effectOverrides: deepCopy(cue.effectOverrides) || {},
+    effects: deepCopy(cue.effects) || [],
+    color: cue.color ?? null,
+    layerPriority: cue.layerPriority ?? 0,
+    isLooping: cue.isLooping,
+    duration: cue.duration,
+    totalFrames: cue.totalFrames,
+    frameStart: cue.frameStart || 0,
+    frameCount: cue.frameCount ?? null,
+    playbackSettings: deepCopy(cue.playbackSettings),
+    startTime,
+});
 
 /**
  * Keyboard + wheel shortcuts for the Timeline window. Attached to the scroll
@@ -18,6 +74,9 @@ import {
  *   Arrow            move the playhead (frame head) — Left/Right ±1 frame
  *   Shift+Arrow      jump to the previous/next beat-grid line
  *   Ctrl/Cmd+Arrow   jump to the previous/next clip start/end boundary
+ *   Ctrl+A           select every clip
+ *   Shift+click      add a clip to the selection (Shift+drag sweeps a group
+ *                    onto the current selection)
  *   Ctrl+C/X/V       copy / cut / paste the selected cue or automation clip
  *                    (paste at playhead, onto the currently selected track if any)
  *   Ctrl+Z           undo   |   Ctrl+Shift+Z  redo
@@ -93,7 +152,7 @@ export function pickPasteChannel(channels, channelOrder, selectedChannelId, clip
     return (channelOrder && channelOrder[0]) || null;
 }
 
-export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
+export function useTimelineShortcuts({ scrollRef, state, actions, pb, onZoom }) {
     const s = state.settings;
 
     // Keep the latest values for the stable listeners.
@@ -103,6 +162,10 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
     actionsRef.current = actions;
     const pbRef = useRef(pb);
     pbRef.current = pb;
+    // The editor owns the zoom anchor (it keeps the playhead on screen), so
+    // the wheel handler asks it rather than setting the zoom itself.
+    const onZoomRef = useRef(onZoom);
+    onZoomRef.current = onZoom;
 
     const clipboardRef = useRef(null);
 
@@ -173,6 +236,17 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 return;
             }
 
+            // Ctrl/Cmd+A: select every clip.
+            //
+            // Shift+click and Shift+drag already ADD to the selection, but
+            // there was no way to take the whole timeline at once, and nothing
+            // told the user that the Shift gesture existed.
+            if (key === 'a') {
+                e.preventDefault();
+                actionsRef.current.selectAll();
+                return;
+            }
+
             const selectedCues = () => {
                 const settings = stateRef.current.settings;
                 const ids = settings.selectedCueIds || (settings.selectedCueId ? [settings.selectedCueId] : []);
@@ -186,7 +260,7 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 // The anchor (earliest start) so pasting at the playhead keeps
                 // the group's internal spacing.
                 const anchor = Math.min(...cues.map((c) => c.startTime));
-                if (clipboard) clipboardRef.current = { cues: cues.map((c) => ({ ...c })), anchor };
+                if (clipboard) clipboardRef.current = { cues: cues.map((c) => deepCopy(c)), anchor };
                 return cues;
             };
 
@@ -218,7 +292,7 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
             // Cues + effect clips selected together land on ONE clipboard entry
             // so Ctrl+V restores the whole group (offset by the same delta).
             const putMixedOnClipboard = (autoClips, cueList) => {
-                const cues = cueList.map((c) => ({ ...c }));
+                const cues = cueList.map((c) => deepCopy(c));
                 const anchor = Math.min(
                     ...cues.map((c) => c.startTime ?? 0),
                     ...autoClips.map((a) => a.clip.startTime ?? 0)
@@ -292,12 +366,12 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                         const tgtLaneId = targetLaneId || gc.laneId;
                         const tgtLane = s.lanes[tgtLaneId];
                         if (!tgtLane) continue;
-                        const id = `acp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+                        const id = generateId('acp');
                         actionsRef.current.addAutoClip(tgtLaneId, {
                             id,
                             startTime: Math.max(0, (gc.clip.startTime || 0) + delta),
                             duration: gc.clip.duration,
-                            keyframes: (gc.clip.keyframes || []).map((k) => ({ ...k })),
+                            keyframes: freshKeyframes(gc.clip.keyframes),
                             effectId: gc.clip.effectId || null,
                             paramId: gc.clip.paramId || null,
                             genId: gc.clip.genId || null,
@@ -320,23 +394,10 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                             ? targetChannel
                             : (s.channels[clipCue.channelId] ? clipCue.channelId : targetChannel);
                         if (!toChannel || !s.channels[toChannel]) continue;
-                        const id = `cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-                        actionsRef.current.addCue(toChannel, {
-                            id,
-                            type: clipCue.type,
-                            name: clipCue.name,
-                            filePath: clipCue.filePath || null,
-                            fileName: clipCue.fileName || null,
-                            generatorId: clipCue.generatorId || null,
-                            generatorParams: clipCue.generatorParams || {},
-                            effectOverrides: clipCue.effectOverrides || {},
-                            isLooping: clipCue.isLooping,
-                            duration: clipCue.duration,
-                            totalFrames: clipCue.totalFrames,
-                            frameStart: clipCue.frameStart || 0,
-                            frameCount: clipCue.frameCount ?? null,
-                            startTime: Math.max(0, clipCue.startTime + delta),
-                        });
+                        const id = generateId('cue');
+                        actionsRef.current.addCue(toChannel, cuePastePayload(
+                            clipCue, id, Math.max(0, clipCue.startTime + delta)
+                        ));
                         pasted.push(id);
                     }
                     if (pasted.length > 0 || pastedClips.length > 0) {
@@ -355,12 +416,12 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                         const tgtLaneId = gc.laneId;
                         const tgtLane = s.lanes[tgtLaneId];
                         if (!tgtLane) continue;
-                        const id = `acp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+                        const id = generateId('acp');
                         actionsRef.current.addAutoClip(tgtLaneId, {
                             id,
                             startTime: Math.max(0, (gc.clip.startTime || 0) + delta),
                             duration: gc.clip.duration,
-                            keyframes: (gc.clip.keyframes || []).map((k) => ({ ...k })),
+                            keyframes: freshKeyframes(gc.clip.keyframes),
                             effectId: gc.clip.effectId || null,
                             paramId: gc.clip.paramId || null,
                             genId: gc.clip.genId || null,
@@ -387,7 +448,7 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                     actionsRef.current.addAutoClip(tgtLaneId, {
                         startTime: Math.max(0, (clip.clip.startTime || 0) + delta),
                         duration: clip.clip.duration,
-                        keyframes: (clip.clip.keyframes || []).map((k) => ({ ...k })),
+                        keyframes: freshKeyframes(clip.clip.keyframes),
                         effectId: clip.clip.effectId || null,
                         paramId: clip.clip.paramId || null,
                         genId: clip.clip.genId || null,
@@ -412,23 +473,10 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                         ? targetChannel
                         : (s.channels[clipCue.channelId] ? clipCue.channelId : targetChannel);
                     if (!toChannel || !s.channels[toChannel]) continue;
-                    const id = `cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-                    actionsRef.current.addCue(toChannel, {
-                        id,
-                        type: clipCue.type,
-                        name: clipCue.name,
-                        filePath: clipCue.filePath || null,
-                        fileName: clipCue.fileName || null,
-                        generatorId: clipCue.generatorId || null,
-                        generatorParams: clipCue.generatorParams || {},
-                        effectOverrides: clipCue.effectOverrides || {},
-                        isLooping: clipCue.isLooping,
-                        duration: clipCue.duration,
-                        totalFrames: clipCue.totalFrames,
-                        frameStart: clipCue.frameStart || 0,
-                        frameCount: clipCue.frameCount ?? null,
-                        startTime: Math.max(0, clipCue.startTime + delta),
-                    });
+                    const id = generateId('cue');
+                    actionsRef.current.addCue(toChannel, cuePastePayload(
+                        clipCue, id, Math.max(0, clipCue.startTime + delta)
+                    ));
                     pasted.push(id);
                 }
                 // Keep the freshly pasted clips selected so a quick move/trim
@@ -469,12 +517,26 @@ export function useTimelineShortcuts({ scrollRef, state, actions, pb }) {
                 return;
             }
 
-            // Horizontal zoom around the pointer.
+            // Horizontal zoom, anchored on the playhead.
+            //
+            // This used to only set the zoom, with a comment claiming it
+            // zoomed "around the pointer" - so the content was rescaled about
+            // the left edge and the playhead slid across the screen. The
+            // anchor now lives in one place (the editor's handleZoom), which
+            // also keeps the playhead where it is.
             if (e.ctrlKey) {
                 e.preventDefault();
-                const factor = Math.pow(1.0015, -e.deltaY);
+                // The ruler has its own wheel handler. Without this the two
+                // both fire - the native one first, then React's - and every
+                // notch over the ruler zoomed twice.
+                const onRuler = e.target && e.target.closest
+                    ? e.target.closest('.timeline-ruler')
+                    : null;
+                if (onRuler) return;
+                const factor = zoomFactorForWheel(e.deltaY);
                 const z = clamp((settings.zoom || 50) * factor, ZOOM_MIN, ZOOM_MAX);
-                actionsRef.current.setSettings({ zoom: z });
+                if (onZoomRef.current) onZoomRef.current(z);
+                else actionsRef.current.setSettings({ zoom: z });
                 return;
             }
 

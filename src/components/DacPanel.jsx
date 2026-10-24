@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import RadialKnob from './RadialKnob';
 import Mappable from './Mappable';
+import { discoverDacOutputs } from '../utils/dacDiscovery';
 
 const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}, onUpdateDacSettings, onApplyGroup }) => {
   const [isScanning, setIsScanning] = useState(false);
@@ -28,56 +29,34 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
     }
   }, []);
 
-  useEffect(() => {
-    if (isScanning && !scanInProgressRef.current) {
-      scanInProgressRef.current = true;
-      console.log('Starting DAC scan on:', selectedNetworkInterface?.address);
-      if (window.electronAPI) {
-          window.electronAPI.discoverDacs(2000, selectedNetworkInterface?.address)
-          .then(async (discoveredDacs) => {
-            console.log('DACs discovered:', discoveredDacs);
-            const dacsWithServices = await Promise.all(
-              discoveredDacs.map(async (dac) => {
-                try {
-                  const services = await window.electronAPI.getDacServices(dac.ip, selectedNetworkInterface?.address, dac.type);
-                  // Filter for valid services (e.g., serviceType for laser graphics)
-                  // For IDN, serviceID 0 is often a management service, so we filter it out.
-                  // For EtherDream, we typically only have one service at ID 0.
-                  const laserServices = (dac.type && dac.type.toLowerCase() === 'etherdream') 
-                    ? services 
-                    : services.filter(s => s.serviceID !== 0);
-                  return { ...dac, channels: laserServices };
-                } catch (error) {
-                  console.error(`Error fetching services for DAC ${dac.ip}:`, error);
-                  return { ...dac, channels: [] };
-                }
-              })
-            );
-            // Deduplicate by IP: keep only one entry per DAC (getDacServices already returns all channels)
-            const seenIps = new Set();
-            const deduped = dacsWithServices.filter(d => {
-              if (seenIps.has(d.ip)) return false;
-              seenIps.add(d.ip);
-              return true;
-            });
-            if (onDacsDiscovered) {
-              onDacsDiscovered(deduped);
+    useEffect(() => {
+        if (isScanning && !scanInProgressRef.current) {
+            scanInProgressRef.current = true;
+            console.log('Starting DAC scan on:', selectedNetworkInterface?.address);
+            if (window.electronAPI) {
+                // The same scan the Timeline uses, so both pages list the same
+                // DACs and the same channels. The channel list decides which
+                // per-output settings keys exist, so the two must agree.
+                discoverDacOutputs(selectedNetworkInterface?.address)
+                .then((deduped) => {
+                    if (onDacsDiscovered) {
+                        onDacsDiscovered(deduped);
+                    }
+                })
+                .catch(err => {
+                    console.error('Error discovering DACs:', err);
+                })
+                .finally(() => {
+                    setIsScanning(false);
+                    scanInProgressRef.current = false;
+                });
+            } else {
+                console.warn('electronAPI is not available. Cannot discover DACs.');
+                setIsScanning(false);
+                scanInProgressRef.current = false;
             }
-          })
-          .catch(err => {
-            console.error('Error discovering DACs:', err);
-          })
-          .finally(() => {
-            setIsScanning(false);
-            scanInProgressRef.current = false;
-          });
-      } else {
-        console.warn('electronAPI is not available. Cannot discover DACs.');
-        setIsScanning(false);
-        scanInProgressRef.current = false;
-      }
-    }
-  }, [isScanning, selectedNetworkInterface, onDacsDiscovered]);
+        }
+    }, [isScanning, selectedNetworkInterface, onDacsDiscovered]);
 
   const handleDacClick = (dac, channelId) => {
     const dacWithChannel = { ...dac, channel: channelId };

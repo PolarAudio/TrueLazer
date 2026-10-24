@@ -10,6 +10,8 @@ import { execFile } from 'child_process';
 import dgram from 'dgram';
 import { redactPrivateInfo } from './src/utils/redact.js';
 import { isAllowedExternalUrl } from './src/utils/externalUrl.js';
+import { shouldAutoCheck, shouldOfferVersion } from './src/utils/updatePolicy.js';
+import { buildWindowTitle } from './src/utils/windowTitle.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { decodeProlinkPacket } = require('./src/utils/prodjBeats.js');
@@ -228,6 +230,23 @@ const schema = {
     default: {
       enabled: false,
       blockedDecks: [],
+    }
+  },
+  // Auto-update preferences. `pendingVersion` holds a version the user chose
+  // to install on the next launch rather than restarting mid-show.
+  updatePreferences: {
+    type: 'object',
+    properties: {
+      autoCheck: { type: 'boolean', default: true },
+      skippedVersion: { type: 'string', default: '' },
+      lastCheckAt: { type: 'number', default: 0 },
+      pendingVersion: { type: 'string', default: '' },
+    },
+    default: {
+      autoCheck: true,
+      skippedVersion: '',
+      lastCheckAt: 0,
+      pendingVersion: '',
     }
   },
 };
@@ -482,9 +501,30 @@ ipcMain.handle('set-theme', (event, theme) => {
   store.set('theme', theme);
 });
 
+// The per-output settings (dimmer, output area, safety zones, PPS, ...) are
+// edited from two places - the Show Control page and the Timeline - and each
+// side keeps its own in-memory copy. Replacing the stored map outright meant
+// whichever side saved last silently reverted the other side's edits, and the
+// other side never learned about them at all.
+//
+// So: MERGE into the stored map (a key that is not in the incoming map keeps
+// its stored value) and tell every window that something changed, so both
+// sides reload the same map.
 ipcMain.handle('set-dac-output-settings', (event, dacOutputSettings) => {
-  store.set('dacOutputSettings', dacOutputSettings);
+  const incoming = (dacOutputSettings && typeof dacOutputSettings === 'object') ? dacOutputSettings : {};
+  const current = store.get('dacOutputSettings') || {};
+  const merged = { ...current, ...incoming };
+  store.set('dacOutputSettings', merged);
+  broadcastDacOutputSettings(merged);
 });
+
+// Push the current map to every open window.
+function broadcastDacOutputSettings(settings) {
+  const payload = settings || store.get('dacOutputSettings') || {};
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('dac-output-settings-changed', payload);
+  }
+}
 
 ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
   store.set('thumbnailRenderMode', mode);
@@ -672,12 +712,29 @@ let currentAppPage = 'main';
 const APP_PAGES = ['main', 'timeline', 'shapeBuilder'];
 
 function setAppPage(page) {
-  if (!APP_PAGES.includes(page) || page === currentAppPage) return;
-  currentAppPage = page;
-  buildApplicationMenu(currentThumbnailRenderMode);
+  if (!APP_PAGES.includes(page)) return;
+  if (page !== currentAppPage) {
+    currentAppPage = page;
+    buildApplicationMenu(currentThumbnailRenderMode);
+  }
+  // Also runs on the initial 'main' report, which replaces the document title
+  // from index.html with the page-aware project title.
+  updateWindowTitle();
 }
 
 ipcMain.on('ui-current-page', (_event, page) => setAppPage(page));
+
+// Starting a new document on a page has to clear that page's remembered path.
+// The renderer owns the New command (it runs on the active page), so it tells
+// main when the document was reset rather than letting the title keep pointing
+// at the file that was just discarded.
+ipcMain.on('ui-new-project', (_event, page) => {
+  const target = APP_PAGES.includes(page) ? page : currentAppPage;
+  if (target === 'main') currentProjectpath = null;
+  else if (target === 'timeline') currentTimelineProjectPath = null;
+  else if (target === 'shapeBuilder') currentShapeProjectPath = null;
+  updateWindowTitle();
+});
 
 // Timeline project files (Ctrl+S / Ctrl+O in the Timeline window).
 //
@@ -694,6 +751,7 @@ ipcMain.handle('save-timeline-project', async (event, projectData, defaultName =
   if (!forceDialog && currentTimelineProjectPath) {
     try {
       await fs.promises.writeFile(currentTimelineProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+      updateWindowTitle();
       return { success: true, filePath: currentTimelineProjectPath };
     } catch (error) { return { success: false, error: error.message }; }
   }
@@ -709,6 +767,7 @@ ipcMain.handle('save-timeline-project', async (event, projectData, defaultName =
   try {
     await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
     currentTimelineProjectPath = filePath;
+    updateWindowTitle();
     return { success: true, filePath };
   } catch (error) { return { success: false, error: error.message }; }
 });
@@ -724,6 +783,7 @@ ipcMain.handle('open-timeline-project', async (event) => {
   try {
     const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
     currentTimelineProjectPath = filePaths[0];
+    updateWindowTitle();
     return data;
   } catch (error) {
     return null;
@@ -743,6 +803,7 @@ ipcMain.handle('save-shape-project', async (event, projectData, defaultName = nu
   if (!forceDialog && currentShapeProjectPath) {
     try {
       await fs.promises.writeFile(currentShapeProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+      updateWindowTitle();
       return { success: true, filePath: currentShapeProjectPath };
     } catch (error) { return { success: false, error: error.message }; }
   }
@@ -758,6 +819,7 @@ ipcMain.handle('save-shape-project', async (event, projectData, defaultName = nu
   try {
     await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
     currentShapeProjectPath = filePath;
+    updateWindowTitle();
     return { success: true, filePath };
   } catch (error) { return { success: false, error: error.message }; }
 });
@@ -773,6 +835,7 @@ ipcMain.handle('open-shape-project', async (event) => {
   try {
     const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
     currentShapeProjectPath = filePaths[0];
+    updateWindowTitle();
     return data;
   } catch (error) {
     return null;
@@ -1008,24 +1071,259 @@ ipcMain.handle('open-log-folder', async () => {
 
 function updateWindowTitle() {
   if (!mainWindow) return;
-  const baseTitle = 'TrueLazer';
-  if (currentProjectpath) {
-    const projectName = path.basename(currentProjectpath, '.tlp');
-    mainWindow.setTitle(`${baseTitle} - ${projectName}`);
-  } else {
-    mainWindow.setTitle(`${baseTitle} - New Project`);
-  }
+  const projectPath = currentAppPage === 'timeline'
+    ? currentTimelineProjectPath
+    : currentAppPage === 'shapeBuilder'
+      ? currentShapeProjectPath
+      : currentProjectpath;
+  mainWindow.setTitle(buildWindowTitle({ page: currentAppPage, filePath: projectPath }));
 }
+
+// ---------------------------------------------------------------------------
+// Quitting with unsaved work
+// ---------------------------------------------------------------------------
+
+// The renderer owns the documents, so it is the only side that can say
+// whether there is anything to lose. The auto-updater restarts the app, which
+// makes this a hard requirement rather than a nicety: an update that silently
+// discards a half-built show is not an update anyone wants.
+let quitApproved = false;
+let quitRequestSeq = 0;
+const pendingQuitDecisions = new Map();
+
+const requestRendererQuitDecision = (reason) => new Promise((resolve) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return resolve(true);
+  const requestId = `quit-${++quitRequestSeq}`;
+  // Never hold the app hostage to a renderer that has gone away. The wait has
+  // to be generous because the answer arrives only after the user has read
+  // and answered the confirmation - and `window.confirm` blocks the renderer
+  // while it is up.
+  const timer = setTimeout(() => {
+    pendingQuitDecisions.delete(requestId);
+    console.warn('[Quit] no answer from the renderer; continuing.');
+    resolve(true);
+  }, 120000);
+  pendingQuitDecisions.set(requestId, (proceed) => {
+    clearTimeout(timer);
+    resolve(!!proceed);
+  });
+  appendToLog('info', `[Quit] asking the renderer whether it is safe to quit (${reason}).`);
+  mainWindow.webContents.send('app-request-quit', { requestId, reason });
+});
+
+ipcMain.on('app-quit-decision', (_event, payload) => {
+  const { requestId, proceed } = payload || {};
+  const settle = pendingQuitDecisions.get(requestId);
+  if (!settle) return;
+  pendingQuitDecisions.delete(requestId);
+  settle(proceed);
+});
+
+// ---------------------------------------------------------------------------
+// Auto-update
+// ---------------------------------------------------------------------------
+
+let autoUpdater = null;
+let downloadedUpdateVersion = '';
+
+const sendUpdateStatus = (payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', payload);
+  }
+};
+
+const updatePrefs = () => store.get('updatePreferences') || {};
+
+const setUpdatePrefs = (patch) => {
+  const next = { ...updatePrefs(), ...patch };
+  store.set('updatePreferences', next);
+  return next;
+};
+
+/**
+ * Load electron-updater and wire its events to the renderer.
+ *
+ * The module is imported dynamically and every failure is contained: an app
+ * that cannot load the updater must still start and still drive lasers.
+ */
+const setupAutoUpdater = async () => {
+  if (!app.isPackaged) {
+    console.log('[Updater] development build - auto-update is disabled.');
+    return;
+  }
+  let mod;
+  try {
+    mod = await import('electron-updater');
+  } catch (error) {
+    console.error('[Updater] electron-updater could not be loaded; updates are disabled:', error);
+    return;
+  }
+  // electron-updater is CommonJS: the named export is not always detected by
+  // Node's ESM loader, so fall back to the default export.
+  const updater = mod.autoUpdater || (mod.default && mod.default.autoUpdater);
+  if (!updater) {
+    console.error('[Updater] electron-updater exposes no autoUpdater; updates are disabled.');
+    return;
+  }
+  autoUpdater = updater;
+
+  // The updater logs to stdout, which a packaged app does not have. Route it
+  // into the same log the report window can attach.
+  autoUpdater.logger = {
+    info: (message) => appendToLog('info', `[updater] ${message}`),
+    warn: (message) => appendToLog('warn', `[updater] ${message}`),
+    error: (message) => appendToLog('error', `[updater] ${message}`),
+    debug: (message) => appendToLog('debug', `[updater] ${message}`),
+  };
+  // Download in the background; the user decides when to install.
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  autoUpdater.on('checking-for-update', () => {
+    sendUpdateStatus({ phase: 'checking' });
+  });
+  autoUpdater.on('update-available', (info) => {
+    const version = info && info.version ? info.version : '';
+    if (!shouldOfferVersion({ version, currentVersion: app.getVersion(), skippedVersion: updatePrefs().skippedVersion })) {
+      sendUpdateStatus({ phase: 'up-to-date', version: app.getVersion() });
+      return;
+    }
+    sendUpdateStatus({ phase: 'available', version });
+  });
+  autoUpdater.on('update-not-available', () => {
+    sendUpdateStatus({ phase: 'up-to-date', version: app.getVersion() });
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdateStatus({
+      phase: 'downloading',
+      version: downloadedUpdateVersion,
+      percent: Math.round((progress && progress.percent) || 0),
+      transferred: (progress && progress.transferred) || 0,
+      total: (progress && progress.total) || 0,
+    });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    downloadedUpdateVersion = (info && info.version) || downloadedUpdateVersion;
+    sendUpdateStatus({ phase: 'downloaded', version: downloadedUpdateVersion });
+  });
+  autoUpdater.on('error', (error) => {
+    console.error('[Updater] update error:', error);
+    sendUpdateStatus({ phase: 'error', error: (error && error.message) || String(error) });
+  });
+
+  console.log('[Updater] ready. Feed:', autoUpdater.getFeedURL ? autoUpdater.getFeedURL() : 'unknown');
+};
+
+/**
+ * Check for a newer release.
+ *
+ * `manual` checks always run; background checks are rate limited by the
+ * user's own preference and by the interval between checks.
+ */
+const checkForUpdates = async ({ manual = false } = {}) => {
+  if (!autoUpdater) {
+    sendUpdateStatus({ phase: 'error', error: 'Auto-update is not available in this build.' });
+    return { success: false, error: 'Auto-update is not available in this build.' };
+  }
+  const prefs = updatePrefs();
+  if (!manual && !shouldAutoCheck(prefs)) {
+    return { success: true, skipped: true };
+  }
+  setUpdatePrefs({ lastCheckAt: Date.now() });
+  sendUpdateStatus({ phase: 'checking' });
+  try {
+    await autoUpdater.checkForUpdates();
+    return { success: true };
+  } catch (error) {
+    console.error('[Updater] check failed:', error);
+    sendUpdateStatus({ phase: 'error', error: (error && error.message) || String(error) });
+    return { success: false, error: (error && error.message) || String(error) };
+  }
+};
+
+/**
+ * Install a downloaded update.
+ *
+ * 'now' restarts the app into the new version. That is only safe once the
+ * renderer has confirmed there is nothing to lose, so the decision is asked
+ * for here rather than assumed.
+ *
+ * 'next-launch' records the version and applies it the next time the app
+ * starts, which is the option for a show that is about to begin.
+ */
+const installUpdate = async (mode = 'now') => {
+  if (!autoUpdater || !downloadedUpdateVersion) {
+    return { success: false, error: 'No update has been downloaded.' };
+  }
+  if (mode === 'next-launch') {
+    setUpdatePrefs({ pendingVersion: downloadedUpdateVersion });
+    sendUpdateStatus({ phase: 'deferred', version: downloadedUpdateVersion });
+    return { success: true, deferred: true };
+  }
+  const proceed = await requestRendererQuitDecision('update');
+  if (!proceed) {
+    sendUpdateStatus({ phase: 'downloaded', version: downloadedUpdateVersion });
+    return { success: false, canceled: true };
+  }
+  // The renderer has already confirmed it is safe to go; do not ask twice.
+  quitApproved = true;
+  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  return { success: true };
+};
+
+/**
+ * Apply an update the user asked to install on the next launch.
+ *
+ * Runs before the window is created: the app restarts into the new version
+ * and the user never sees the old one.
+ */
+const applyPendingUpdate = async () => {
+  if (!autoUpdater) return false;
+  const pending = updatePrefs().pendingVersion;
+  if (!pending) return false;
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (result && result.updateInfo && result.updateInfo.version === pending) {
+      // The flag is cleared BEFORE the quit, or the relaunch would find it
+      // again and restart in a loop.
+      setUpdatePrefs({ pendingVersion: '' });
+      console.log(`[Updater] applying pending update ${pending}.`);
+      setImmediate(() => autoUpdater.quitAndInstall(false, true));
+      return true;
+    }
+  } catch (error) {
+    console.error('[Updater] pending update could not be applied:', error);
+  }
+  // Nothing to apply (or the feed is unreachable): stop trying.
+  setUpdatePrefs({ pendingVersion: '' });
+  return false;
+};
+
+ipcMain.handle('check-for-updates', async () => checkForUpdates({ manual: true }));
+ipcMain.handle('install-update', async (_event, mode) => installUpdate(mode));
+ipcMain.handle('skip-update', async (_event, version) => {
+  setUpdatePrefs({ skippedVersion: version || '' });
+  sendUpdateStatus({ phase: 'idle' });
+  return { success: true };
+});
+ipcMain.handle('get-update-preferences', async () => updatePrefs());
+ipcMain.handle('set-update-preferences', async (_event, patch) => {
+  const next = { ...updatePrefs() };
+  if (patch && typeof patch === 'object') {
+    if (typeof patch.autoCheck === 'boolean') next.autoCheck = patch.autoCheck;
+    if (typeof patch.skippedVersion === 'string') next.skippedVersion = patch.skippedVersion;
+  }
+  store.set('updatePreferences', next);
+  return next;
+});
 
 // IPC handlers for project management
 ipcMain.on('new-project', (event) => {
-  // Only the show editor's file path is owned here. The renderer routes the
-  // command to whichever page is active, so do not clear the show project's
-  // path when starting a new Timeline or Shape project.
-  if (currentAppPage === 'main') {
-    currentProjectpath = null;
-    updateWindowTitle();
-  }
+  // Each page owns a separate document, so reset only the active page's path.
+  if (currentAppPage === 'main') currentProjectpath = null;
+  else if (currentAppPage === 'timeline') currentTimelineProjectPath = null;
+  else if (currentAppPage === 'shapeBuilder') currentShapeProjectPath = null;
+  updateWindowTitle();
   if (mainWindow) mainWindow.webContents.send('new-project');
 });
 
@@ -1066,33 +1364,42 @@ ipcMain.on('open-project', async (event) => {
   }
 });
 
-ipcMain.on('save-project', async (event, projectData) => {
+// The renderer has to know whether a save actually happened, or it cannot
+// tell a clean document from a dirty one. The Shape and Timeline projects
+// already answer with { success, filePath }; the Show Project used to be a
+// fire-and-forget `send`, which made a cancelled Save As indistinguishable
+// from a successful write.
+ipcMain.handle('save-project', async (event, projectData) => {
   if (currentProjectpath) {
     try {
-      await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
+      await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2), 'utf8');
       updateWindowTitle();
+      return { success: true, filePath: currentProjectpath };
     } catch (error) {
       console.error('Failed to save project file:', error);
+      return { success: false, error: error.message };
     }
-  } else {
-    if (mainWindow) mainWindow.webContents.send('save-project-as');
   }
+  // No path yet: the renderer runs Save As instead. Pushing 'save-project-as'
+  // here as well would open a second dialog on top of it.
+  return { success: false, needsSaveAs: true };
 });
 
-ipcMain.on('save-project-as', async (event, projectData) => {
+ipcMain.handle('save-project-as', async (event, projectData) => {
   const defaultPath = await getDefaultProjectPath();
   const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
     defaultPath,
     filters: [{ name: 'TrueLazer Projects', extensions: ['tlp'] }],
   });
-  if (!canceled && filePath) {
-    currentProjectpath = filePath;
-    updateWindowTitle();
-    try {
-      await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2));
-    } catch (error) {
-      console.error('Failed to save project file:', error);
-    }
+  if (canceled || !filePath) return { success: false, canceled: true };
+  currentProjectpath = filePath;
+  updateWindowTitle();
+  try {
+    await fs.promises.writeFile(currentProjectpath, JSON.stringify(projectData, null, 2), 'utf8');
+    return { success: true, filePath: currentProjectpath };
+  } catch (error) {
+    console.error('Failed to save project file:', error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -1358,9 +1665,12 @@ function buildApplicationMenu(mode) {
     {
       label: 'Help',
       submenu: [
+        { label: 'User Manual', accelerator: 'F1', click: () => act('user-manual') },
+        { type: 'separator' },
         { label: 'Report a Bug...', click: () => act('report-bug') },
         { label: 'Request a Feature...', click: () => act('request-feature') },
         { type: 'separator' },
+        { label: 'Check for Updates...', click: () => act('check-for-updates') },
         { label: 'Open Logs Folder', click: () => act('open-logs-folder') },
         { label: 'Project Page on GitHub', click: () => act('open-project-page') },
       ],
@@ -1409,17 +1719,41 @@ function createWindow() {
   // is the most useful thing to have when a user reports a crash. Only
   // warnings and errors are captured - the renderer logs plenty of routine
   // progress at info level, which would bury the failures in noise.
-  win.webContents.on('console-message', (_event, details) => {
-    if (!details || details.level < 2) return;
-    const level = details.level >= 3 ? 'error' : 'warn';
-    const where = details.sourceUrl ? ` (${details.sourceUrl}:${details.lineNumber})` : '';
-    appendToLog(level, `[renderer] ${details.message}${where}`);
+  //
+  // Electron has moved this payload around: 35+ carries it on the event
+  // itself (and warns that the positional arguments are deprecated), older
+  // builds pass (level, message, line, source). Read whichever shape arrives.
+  win.webContents.on('console-message', (event, legacy) => {
+    const details = (event && typeof event.message === 'string')
+      ? event
+      : ((event && event.params) || legacy || null);
+    if (!details) return;
+    const level = details.level;
+    const isError = level === 'error' || level === 3;
+    const isWarning = level === 'warning' || level === 2;
+    if (!isError && !isWarning) return;
+    const where = details.sourceId ? ` (${details.sourceId}:${details.lineNumber})` : '';
+    appendToLog(isError ? 'error' : 'warn', `[renderer] ${details.message}${where}`);
   });
 
   // A renderer that dies takes the whole UI with it, and in a packaged build
   // the crash reason is otherwise nowhere to be found.
   win.webContents.on('render-process-gone', (_event, _webContents, details) => {
     appendToLog('error', `[renderer] process gone: reason=${details?.reason} exitCode=${details?.exitCode}`);
+  });
+
+  // Closing the window must not throw away unsaved work. The renderer is
+  // asked first; it answers with a yes/no, and only a yes lets the window
+  // close. The auto-updater's restart goes through here too, which is why
+  // quitApproved is set before it asks.
+  win.on('close', (event) => {
+    if (quitApproved) return;
+    event.preventDefault();
+    requestRendererQuitDecision('quit').then((proceed) => {
+      if (!proceed) return;
+      quitApproved = true;
+      if (!win.isDestroyed()) win.close();
+    });
   });
 
   win.on('closed', () => {
@@ -1596,15 +1930,17 @@ function createWindow() {
     // entries go away. Two reasons this has to happen here:
     //   - Once an IP is in stoppedDacIps the send loop skips it entirely, so it can
     //     never feed the idle frame.
-    //   - stopSending()'s IDN path only emits a zero-point frame on channel 0, so a
-    //     channel 1..N would keep replaying its last real frame and stay lit.
-    // A single blank packet is enough for IDN because each packet is a complete
-    // frame with a duration: the player then holds a blank rather than live output.
+    //   - stopSending() closes the IDN link, which drops all of its channels, but a
+    //     player may still hold the last frame until that close is processed.
+    // Two blanked points: a discrete IDN frame needs at least two samples, and one
+    // point is rejected by strict players (leaving the last real frame lit). Each
+    // packet is a complete frame with a duration, so the player then holds a blank.
     for (const id of Object.keys(dacFrameAccumulator)) {
       const acc = dacFrameAccumulator[id];
       if (acc.ip !== ip) continue;
-      const blank = new Float32Array(8);
+      const blank = new Float32Array(16);
       blank[6] = 1;
+      blank[14] = 1;
       sendFrame(ip, acc.channel, blank, acc.fps || 30, acc.type, acc.options);
       delete dacFrameAccumulator[id];
     }
@@ -4175,7 +4511,27 @@ function createWindow() {
   ndiCaptureLoop();
 }
 
+// Only one TrueLazer may run at a time.
+//
+// Two instances would both talk to the same DACs, and - the reason this
+// matters now - the auto-updater restarts the app by running the new
+// installer over the old install directory. A second instance still holding
+// TrueLazer.exe open makes that installer fail with "cannot replace a locked
+// file", and the user is left with a half-installed app.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
   startFileLog();
   console.log(`[Init] App started (v${app.getVersion()}) on ${os.platform()}-${os.arch()}`);
   // Web MIDI in Electron is gated behind a main-process permission grant. Without
@@ -4190,7 +4546,20 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionCheckHandler(() => true);
 
   await initializeUserData();
+
+  // The updater is loaded before the window so an update the user asked to
+  // install on the next launch is applied before they see the old version.
+  await setupAutoUpdater();
+  await applyPendingUpdate();
+
   createWindow();
+
+  // A background check, once the app has settled. A show machine that is
+  // about to go live should not be told to restart, so the update is only
+  // DOWNLOADED in the background - installing is always the user's choice.
+  setTimeout(() => {
+    checkForUpdates({ manual: false });
+  }, 15000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

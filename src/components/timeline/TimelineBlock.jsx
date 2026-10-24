@@ -181,7 +181,7 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
 
     return (
         <div
-            className={`timeline-block ${isIlda ? 'ilda' : 'generator'} ${selected ? 'selected' : ''} ${cue.isLooping ? 'looping' : ''} ${overlapping ? 'overlap' : ''} ${cue.color ? 'custom-color' : ''}`}
+            className={`timeline-block ${isIlda ? 'ilda' : 'generator'} ${selected ? 'selected' : ''} ${cue.isLooping ? 'looping' : ''} ${overlapping ? 'overlap' : ''} ${cue.color ? 'custom-color' : ''} ${cue.muted ? 'muted' : ''}`}
             style={colorStyle ? { left, width, ...colorStyle } : { left, width }}
             data-cue-id={cue.id}
             data-channel-id={cue.channelId}
@@ -190,10 +190,23 @@ const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMod
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
             onDoubleClick={(e) => { e.stopPropagation(); actions.select(cue.id, cue.channelId); }}
-            title={`${cue.name} · ${cue.startTime.toFixed(2)}s → ${(cue.startTime + cue.duration).toFixed(2)}s${overlapping ? '\n⚠ overlaps another clip — use Trim to prevent' : ''}${trimMode ? '\nTrim mode: resize clamps at neighbouring clips' : ''}`}
+            title={`${cue.name} · ${cue.startTime.toFixed(2)}s → ${(cue.startTime + cue.duration).toFixed(2)}s${cue.muted ? '\nMuted' : ''}${overlapping ? '\n⚠ overlaps another clip — use Trim to prevent' : ''}${trimMode ? '\nTrim mode: resize clamps at neighbouring clips' : ''}`}
         >
             <div className="timeline-block-icon">{isIlda ? '◈' : '✦'}</div>
             <div className="timeline-block-name">{cue.name}</div>
+            <button
+                className={`timeline-clip-mute${cue.muted ? ' active' : ''}`}
+                title={cue.muted ? 'Show clip (H)' : 'Hide clip (H)'}
+                onPointerDown={(e) => { e.stopPropagation(); }}
+                onClick={(e) => { e.stopPropagation(); actions.updateCue(cue.id, { muted: !cue.muted }); }}
+            >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    {cue.muted
+                        ? <><path d="M10.477 11.04a5 5 0 0 1-6.517-6.517L2.08 2.64a.75.75 0 1 1 1.06-1.06l10.22 10.22a.75.75 0 1 1-1.06 1.06l-1.823-1.82ZM4.27 5.33l1.2 1.2A3 3 0 0 0 8 11c.34 0 .666-.056.97-.16l1.16 1.16A4.5 4.5 0 0 1 4.27 5.33Zm7.33 4.67-1.24-1.24A3 3 0 0 0 7 6.37l-1.24-1.24A4.5 4.5 0 0 1 11.6 10Zm-4.5-6.5a5 5 0 0 1 3.48 1.4l-1.06 1.06a3.5 3.5 0 0 0-4.42.42l-1.06-1.06A5 5 0 0 1 7.1 3.5Z"/></>
+                        : <><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8Zm6.5 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0-1.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></>
+                    }
+                </svg>
+            </button>
             <div
                 className="timeline-block-handle left"
                 onPointerDown={(e) => startDrag(e, 'resize-start')}

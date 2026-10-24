@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useCallback, useState } from 'react';
 import { useAudio } from './AudioContext.jsx';
+import { discoverDacOutputs, dacOutputRows } from '../utils/dacDiscovery';
 
 /**
  * Timeline state + actions for the Timeline Window.
@@ -24,9 +25,12 @@ const STORAGE_KEY = 'truelazer:timeline:v1';
 // timeline state — that would re-render the entire grid on every timeline edit)
 // reach the timeline project state/actions inside the shared RelocateModal
 // handler. The provider refreshes these refs whenever state/actions change.
-export const timelineBridge = { stateRef: null, actionsRef: null };
+// `onDacList` lets the timeline hand its discovered DACs to the app, so the
+// Output Settings window sees the same channels the timeline routed.
+// `onOpenOutputSettings` lets the timeline open that window.
+export const timelineBridge = { stateRef: null, actionsRef: null, onDacList: null, onOpenOutputSettings: null };
 
-const generateId = (prefix = 'tl') =>
+export const generateId = (prefix = 'tl') =>
     `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 export const DEFAULT_TIMELINE_SETTINGS = Object.freeze({
@@ -372,6 +376,8 @@ function newCue(id, patch = {}) {
         // this clip's type" (ILDA blue / generator amber), which is how every
         // cue created before this field existed keeps its original look.
         color: patch.color ?? null,
+        // Muted clips are skipped during playback without being removed.
+        muted: !!patch.muted,
         layerPriority: patch.layerPriority ?? 0,
         effects: patch.effects || [],
         // Per-clip overrides for the channel's effect-lane toggle settings that
@@ -409,18 +415,19 @@ function newLane(id, patch = {}) {
     // param / legacy scalar and carries per-clip static settings (`values`).
     // Clips that predate the per-clip model inherit the lane's target fields.
     const { clips: rawClips, ...rest } = patch;
-    const clips = (Array.isArray(rawClips) ? rawClips : []).map((c) => ({
-        ...c,
-        startTime: c.startTime ?? 0,
-        duration: c.duration ?? 4,
-        keyframes: Array.isArray(c.keyframes) ? c.keyframes : [],
-        values: c.values || {},
-        effectId: c.effectId ?? laneTarget.effectId,
-        paramId: c.paramId ?? laneTarget.paramId,
-        genId: c.genId ?? laneTarget.genId,
-        genParamId: c.genParamId ?? laneTarget.genParamId,
-        targetProperty: c.targetProperty ?? laneTarget.targetProperty,
-    }));
+        const clips = (Array.isArray(rawClips) ? rawClips : []).map((c) => ({
+            ...c,
+            startTime: c.startTime ?? 0,
+            duration: c.duration ?? 4,
+            keyframes: Array.isArray(c.keyframes) ? c.keyframes : [],
+            values: c.values || {},
+            effectId: c.effectId ?? laneTarget.effectId,
+            paramId: c.paramId ?? laneTarget.paramId,
+            genId: c.genId ?? laneTarget.genId,
+            genParamId: c.genParamId ?? laneTarget.genParamId,
+            targetProperty: c.targetProperty ?? laneTarget.targetProperty,
+            muted: !!c.muted,
+        }));
     return {
         id,
         channelId: patch.channelId || null,
@@ -438,6 +445,38 @@ function clipOwningKeyframe(lane, keyframeId) {
 }
 
 /** Merge persisted raw state over the defaults, ignoring unknown shapes. */
+/**
+ * Give every keyframe in a lane a unique id.
+ *
+ * The lane resolves which clip owns a point by finding the FIRST clip holding
+ * that id (clipOwningKeyframe), so two clips sharing a keyframe id make every
+ * edit on one of them - dragging the point, deleting it - land on the other,
+ * and the clips collide as React keys. A paste could create that before the
+ * paste started giving pasted keyframes fresh ids, so any project that was
+ * pasted into is repaired the moment it is opened.
+ */
+function dedupeKeyframeIds(lane) {
+    const seen = new Set();
+    const claim = (k) => {
+        if (!k) return k;
+        if (!k.id) return { ...k, id: generateId('kf') };
+        if (seen.has(k.id)) return { ...k, id: generateId('kf') };
+        seen.add(k.id);
+        return k;
+    };
+    // The clips hold the live points, so they are claimed first; a lane's own
+    // keyframes array is a legacy leftover and is repaired last.
+    const clips = (lane.clips || []).map((clip) => ({
+        ...clip,
+        keyframes: Array.isArray(clip.keyframes) ? clip.keyframes.map(claim) : [],
+    }));
+    return {
+        ...lane,
+        clips,
+        keyframes: Array.isArray(lane.keyframes) ? lane.keyframes.map(claim) : [],
+    };
+}
+
 export function normalizeHydratedState(raw) {
     const base = createInitialTimelineState();
     if (!raw || typeof raw !== 'object') return base;
@@ -519,6 +558,8 @@ export function normalizeHydratedState(raw) {
         } else if (hasClips) {
             lanes[id] = { ...lane, clips: lane.clips.map(stampClip) };
         }
+        // Repair duplicate keyframe ids (see dedupeKeyframeIds).
+        lanes[id] = dedupeKeyframeIds(lanes[id]);
     }
 
     const rawSettings = raw.settings || {};
@@ -938,6 +979,37 @@ export function reducer(state, action) {
             return { ...state, settings };
         }
 
+        // Select everything: every cue clip and every automation clip.
+        //
+        // The building blocks for a multi-selection already existed (Shift+click
+        // and Shift+marquee add to the selection), but there was no way to
+        // grab everything at once - so a user who wanted "all of these" had to
+        // shift-click every clip, and a user who wanted "these five and those
+        // five" had to discover the Shift gesture on their own.
+        case 'SELECT_ALL': {
+            const cueIds = Object.keys(state.cues || {}).filter((id) => state.cues[id]);
+            const clips = [];
+            for (const laneId of Object.keys(state.lanes || {})) {
+                const lane = state.lanes[laneId];
+                if (!lane) continue;
+                for (const clip of (lane.clips || [])) {
+                    if (clip && clip.id) clips.push({ laneId, clipId: clip.id });
+                }
+            }
+            return {
+                ...state,
+                settings: {
+                    ...state.settings,
+                    selectedCueIds: cueIds,
+                    selectedCueId: cueIds.length ? cueIds[cueIds.length - 1] : null,
+                    selectedAutoClipIds: clips,
+                    selectedAutoClip: clips.length ? clips[clips.length - 1] : null,
+                    selectedLaneId: null,
+                    selectedKeyframe: null,
+                },
+            };
+        }
+
         case 'ADD_LANE': {
             const channelId = action.payload.channelId;
             const channel = state.channels[channelId];
@@ -1099,7 +1171,7 @@ export function reducer(state, action) {
             const lane = state.lanes[action.payload.laneId];
             if (!lane) return state;
             const id = action.payload.clip?.id || generateId('acp');
-            const clip = { id, startTime: 0, duration: 4, keyframes: [], values: {}, ...action.payload.clip };
+            const clip = { id, startTime: 0, duration: 4, keyframes: [], values: {}, muted: false, ...action.payload.clip };
             const clips = [...(Array.isArray(lane.clips) ? lane.clips : []), clip];
             return {
                 ...state,
@@ -1396,6 +1468,7 @@ export const TimelineProvider = ({ children }) => {
     // choices (selection, zoom/snap/sync settings) and load-related actions.
     const NON_EDIT_ACTIONS = new Set([
         'SELECT', 'SELECT_CUES', 'SELECT_KEYFRAME', 'SELECT_LANE', 'SELECT_AUTO_CLIP',
+        'SELECT_AUTO_CLIPS', 'SELECT_MIXED', 'SELECT_ALL',
         'SET_SETTINGS', 'HYDRATE', 'RESET', 'SEED_CHANNELS', 'SET_STATE',
     ]);
 
@@ -1550,43 +1623,18 @@ export const TimelineProvider = ({ children }) => {
     const discoverChannels = useCallback(async () => {
         if (!window.electronAPI) return [];
         try {
-            const network = await window.electronAPI.getNetworkInterfaces?.();
-            const iface = Array.isArray(network) && network.length > 0 ? network[0] : undefined;
-            const discovered = await window.electronAPI.discoverDacs(2000, iface?.address);
-            const withServices = await Promise.all(
-                (discovered || []).map(async (dac) => {
-                    try {
-                        const services =
-                            dac.type && dac.type.toLowerCase() === 'etherdream'
-                                ? await window.electronAPI.getDacServices(dac.ip, iface?.address, dac.type)
-                                : (await window.electronAPI.getDacServices(dac.ip, iface?.address, dac.type))
-                                      .filter((s) => s.serviceID !== 0);
-                        const channelList = (services || []).map((s) => ({
-                            ip: dac.ip,
-                            channel: s.serviceID ?? 0,
-                            type: dac.type,
-                            label: s.name || s.serviceName || `${dac.hostName || dac.ip}[${s.serviceID}]`,
-                        }));
-                        return channelList;
-                    } catch (e) {
-                        return [];
-                    }
-                })
-            );
+            // One shared scan for the whole app, so the Output Settings window
+            // (which is bound to the app's DAC list) shows the channels the
+            // timeline just discovered instead of an empty list.
+            const dacList = await discoverDacOutputs();
+            setDacList(dacList);
+            timelineBridge.onDacList?.(dacList);
             // A multi-channel DAC is discovered once PER response, and
-            // getDacServices then lists ALL of its channels for every response —
-            // so a 6-channel device yields 6×6 = 36 descriptors here. Collapse
+            // getDacServices then lists ALL of its channels for every response -
+            // so a 6-channel device yields 6x6 = 36 descriptors here. Collapse
             // them to one row per unique ip:channel before anything downstream
             // (dock chips, channel seeding) can duplicate an output.
-            const unique = [];
-            const seenKeys = new Set();
-            for (const row of withServices.flat()) {
-                const key = `${row.ip}:${row.channel}`;
-                if (seenKeys.has(key)) continue;
-                seenKeys.add(key);
-                unique.push(row);
-            }
-            return unique;
+            return dacOutputRows(dacList);
         } catch (e) {
             console.warn('Timeline: DAC discovery failed', e);
             return [];
@@ -1645,6 +1693,17 @@ export const TimelineProvider = ({ children }) => {
     // main app". Kept OUT of the reducer/persistence: it is transient, keyed by
     // `${ip}:${channel}`, fetched from electron-store and refreshed whenever the
     // timeline is opened (the editor mounts fresh on each page switch).
+    // The DACs the timeline discovered, with their channels. Shared with the
+    // app through the bridge so the Output Settings window lists the same
+    // channels the timeline routes to.
+    const [dacList, setDacList] = useState([]);
+
+    // Open the app's Output Settings window. The window edits the shared
+    // per-output settings, so the timeline sees the change immediately.
+    const openOutputSettings = useCallback(() => {
+        timelineBridge.onOpenOutputSettings?.();
+    }, []);
+
     const [dacOutputSettings, setDacOutputSettings] = useState({});
     const dacOutputSettingsRef = useRef({});
     const refreshDacOutputSettings = useCallback(async () => {
@@ -1663,10 +1722,25 @@ export const TimelineProvider = ({ children }) => {
         refreshDacOutputSettings();
     }, [refreshDacOutputSettings]);
 
+    // The Output Settings window edits the MAIN app's copy of these settings,
+    // which is the one the app persists. When the app changes them, pull the
+    // new map in here - otherwise the timeline keeps running on the settings
+    // it read at mount and the window appears to do nothing.
+    useEffect(() => {
+        if (!window.electronAPI?.onDacOutputSettingsChanged) return undefined;
+        return window.electronAPI.onDacOutputSettingsChanged(() => {
+            refreshDacOutputSettings();
+        });
+    }, [refreshDacOutputSettings]);
+
     // Patch one output's settings (e.g. the dimmer / zoom edited in the timeline
     // Inspector "Output" panel). Kept in the transient map; persisted to the same
     // electron-store key the main app uses so the two UIs share one source of
     // truth for channel names / dimmer / output area / zones.
+    //
+    // Only the patched output is written. The main app may hold settings for
+    // outputs this map has never seen; writing the whole map back would drop
+    // them.
     const updateDacOutputSetting = useCallback((key, patch) => {
         if (!key || !patch) return;
         const prev = dacOutputSettingsRef.current || {};
@@ -1674,7 +1748,9 @@ export const TimelineProvider = ({ children }) => {
         dacOutputSettingsRef.current = next;
         setDacOutputSettings(next);
         try {
-            if (window.electronAPI?.saveDacOutputSettings) window.electronAPI.saveDacOutputSettings(next);
+            if (window.electronAPI?.saveDacOutputSettings) {
+                window.electronAPI.saveDacOutputSettings({ [key]: next[key] });
+            }
         } catch (e) {
             console.warn('Timeline: failed to persist DAC output settings', e);
         }
@@ -1714,6 +1790,7 @@ export const TimelineProvider = ({ children }) => {
             },
             select: (cueId, channelId, additive) => dispatch({ type: 'SELECT', payload: { cueId, channelId, additive } }),
             selectCues: (cueIds, channelId, additive) => dispatch({ type: 'SELECT_CUES', payload: { cueIds, channelId, additive } }),
+            selectAll: () => dispatch({ type: 'SELECT_ALL' }),
             addLane: (channelId, lane) => dispatch({ type: 'ADD_LANE', payload: { channelId, lane } }),
             updateLane: (laneId, patch) => dispatch({ type: 'UPDATE_LANE', payload: { laneId, patch } }),
             addKeyframe: (laneId, keyframe, clipId) => dispatch({ type: 'ADD_KEYFRAME', payload: { laneId, keyframe, clipId } }),
@@ -1766,13 +1843,15 @@ export const TimelineProvider = ({ children }) => {
             canRedo: historyRef.current.future.length > 0,
             histTick,
             dacOutputSettings,
+            dacList,
             refreshDacOutputSettings,
             updateDacOutputSetting,
             discoverChannels,
             discoverAndSeedChannels,
+            openOutputSettings,
             loadTimelineAudio,
         }),
-        [state, actions, histTick, dacOutputSettings, refreshDacOutputSettings, updateDacOutputSetting, discoverChannels, discoverAndSeedChannels, loadTimelineAudio]
+        [state, actions, histTick, dacOutputSettings, dacList, refreshDacOutputSettings, updateDacOutputSetting, discoverChannels, discoverAndSeedChannels, openOutputSettings, loadTimelineAudio]
     );
 
     return <TimelineContext.Provider value={value}>{children}</TimelineContext.Provider>;

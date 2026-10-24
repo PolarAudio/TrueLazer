@@ -10,19 +10,22 @@ import { GeneratorWorkerProvider } from './contexts/GeneratorWorkerContext.jsx';
 import { ThumbnailWorkerProvider } from './contexts/ThumbnailWorkerContext.jsx';
 import { AudioProvider } from './contexts/AudioContext.jsx';
 import { TimelineProvider } from './contexts/TimelineContext.jsx';
+import { LanguageProvider } from './i18n';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-    <SharedWorkerProvider>
-      <IldaParserWorkerProvider>
-        <GeneratorWorkerProvider> {/* Wrap App with GeneratorWorkerProvider */}
-          <ThumbnailWorkerProvider>
-            <AudioProvider>
-              <TimelineProvider>
-                <App />
-              </TimelineProvider>
-            </AudioProvider>
-          </ThumbnailWorkerProvider>
-        </GeneratorWorkerProvider>
-      </IldaParserWorkerProvider>
-    </SharedWorkerProvider>
+    <LanguageProvider>
+      <SharedWorkerProvider>
+        <IldaParserWorkerProvider>
+          <GeneratorWorkerProvider> {/* Wrap App with GeneratorWorkerProvider */}
+            <ThumbnailWorkerProvider>
+              <AudioProvider>
+                <TimelineProvider>
+                  <App />
+                </TimelineProvider>
+              </AudioProvider>
+            </ThumbnailWorkerProvider>
+          </GeneratorWorkerProvider>
+        </IldaParserWorkerProvider>
+      </SharedWorkerProvider>
+    </LanguageProvider>
 );

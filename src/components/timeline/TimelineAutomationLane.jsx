@@ -580,17 +580,32 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
                                 </svg>
                             )}
                             {c.id != null && (
-                                <div
-                                    className="timeline-auto-clip-grip"
-                                    title={isSel ? 'Drag to move the clip · Delete key removes it' : 'Click to select the clip · drag to move it'}
-                                    onPointerDown={(e) => startClipDrag(e, c, 'move')}
-                                    onPointerMove={onClipDragMove}
-                                    onPointerUp={endClipDrag}
-                                    onPointerCancel={endClipDrag}
-                                    onContextMenu={(e) => deleteClip(e, c)}
-                                >
-                                    <span className="timeline-auto-clip-label">{clipLaneLabel(c)}</span>
-                                </div>
+                            <div
+                                className={`timeline-auto-clip-grip`}
+                                title={isSel ? 'Drag to move the clip · Delete key removes it' : 'Click to select the clip · drag to move it'}
+                                onPointerDown={(e) => startClipDrag(e, c, 'move')}
+                                onPointerMove={onClipDragMove}
+                                onPointerUp={endClipDrag}
+                                onPointerCancel={endClipDrag}
+                                onContextMenu={(e) => deleteClip(e, c)}
+                            >
+                                <span className="timeline-auto-clip-label">{clipLaneLabel(c)}</span>
+                                {c.id != null && (
+                                    <button
+                                        className={`timeline-clip-mute small${c.muted ? ' active' : ''}`}
+                                        title={c.muted ? 'Show automation clip' : 'Hide automation clip'}
+                                        onPointerDown={(e) => { e.stopPropagation(); }}
+                                        onClick={(e) => { e.stopPropagation(); actions.updateAutoClip(lane.id, c.id, { muted: !c.muted }); }}
+                                    >
+                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                                            {c.muted
+                                                ? <><path d="M10.477 11.04a5 5 0 0 1-6.517-6.517L2.08 2.64a.75.75 0 1 1 1.06-1.06l10.22 10.22a.75.75 0 1 1-1.06 1.06l-1.823-1.82ZM4.27 5.33l1.2 1.2A3 3 0 0 0 8 11c.34 0 .666-.056.97-.16l1.16 1.16A4.5 4.5 0 0 1 4.27 5.33Zm7.33 4.67-1.24-1.24A3 3 0 0 0 7 6.37l-1.24-1.24A4.5 4.5 0 0 1 11.6 10Zm-4.5-6.5a5 5 0 0 1 3.48 1.4l-1.06 1.06a3.5 3.5 0 0 0-4.42.42l-1.06-1.06A5 5 0 0 1 7.1 3.5Z"/></>
+                                                : <><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8Zm6.5 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0-1.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></>
+                                            }
+                                        </svg>
+                                    </button>
+                                )}
+                            </div>
                             )}
                             {c.id != null && clipW >= 8 && (
                                 <>

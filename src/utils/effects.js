@@ -667,6 +667,10 @@ function applyWave(points, numPoints, params, time, effectStates, instanceId) {
 export function applyBlanking(points, numPoints, params) {
     const blankingInterval = Number(params?.blankingInterval) || 0;
     const spacing = Number(params?.spacing) || 0;
+    // Older projects and live bindings may not carry `position`; 1 keeps the
+    // original look, where each blank sits at the end of its segment.
+    const rawPosition = Number(params?.position);
+    const position = Number.isFinite(rawPosition) ? Math.min(1, Math.max(0, rawPosition)) : 1;
     if (blankingInterval <= 0 || numPoints <= 0) return;
 
     const numSegments = Math.max(1, Math.round(blankingInterval));
@@ -685,8 +689,12 @@ export function applyBlanking(points, numPoints, params) {
             ? 1
             : Math.min(segLen - 1, Math.max(1, Math.round(effectiveSpacing + 1)));
 
-        const blankStart = endIdx - blankWidth;
-        for (let i = blankStart; i < endIdx; i++) {
+        // Position slides the blank window along the segment. It is kept inside
+        // the segment so a blank never spills into the previous segment, which
+        // would make the first and last segment look different from the rest.
+        const travel = Math.max(0, segLen - blankWidth);
+        const blankStart = startIdx + Math.round(travel * position);
+        for (let i = blankStart; i < blankStart + blankWidth; i++) {
             if (isTyped) {
                 points[i * 8 + 6] = 1;
             } else if (points[i]) {

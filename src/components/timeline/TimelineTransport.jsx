@@ -65,6 +65,7 @@ const TimelineTransport = ({
     fileDrawerOpen,
     onAddGenerator,
     onFit,
+    onZoom,
     laserOn,
     onToggleLaser,
     sync,
@@ -73,7 +74,13 @@ const TimelineTransport = ({
     const { midiInputs: ctxMidiInputs } = useMidi();
     const s = state.settings;
 
-    const setZoom = (z) => actions.setSettings({ zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(z))) });
+    // The zoom goes through the editor's handler so the playhead stays where
+    // it is on screen - setting the zoom directly slides it away.
+    const setZoom = (z) => {
+        const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(z)));
+        if (onZoom) onZoom(clamped);
+        else actions.setSettings({ zoom: clamped });
+    };
     const setSync = (patch) => actions.setSettings({ sync: { ...s.sync, ...patch } });
 
     const src = sync ? sync.source : 'internal';

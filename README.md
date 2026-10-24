@@ -74,7 +74,8 @@ software. Here's what sets us apart:
     `@laser-dac/ether-dream` packages with a hand-written point conversion and
     padding layer in `main/etherdream-communication.cjs`.
   - Assign DAC channels to clips/layers via drag-and-drop; channel reordering with custom Delay/Chase order.
-
+  - We highly recommend the libera-link tool made by the maker of Liberation 
+  https://github.com/sebleedelisle/libera-link it simply allows you to stream as IDN from TL to other brand hardware before we have them implemented.
 - **Control Integration**
   - MIDI mapping (pre-made & custom), HOTKEYS mapping, DMX/Artnet mapping.
   - General Settings, Output Settings and Output Processing windows, Shortcuts window.
@@ -336,7 +337,6 @@ the status note at the top), `OptimizationPlan.md` (historical React render-perf
 ### Reporting Bugs and Requesting Features
 
 TrueLazer has a built-in report window: **Help ▸ Report a Bug...** and **Help ▸ Request a Feature...**.
-
 The window collects the description, the area of the app involved, and — optionally — an environment
 block (app version, OS, CPU, GPU, the page you were on, the DACs that were found) and a tail of the
 application log. It then hands you a **pre-filled GitHub issue** in your browser. Nothing is submitted
@@ -354,6 +354,28 @@ The log is written by both the main process and the renderer, so a crash in the 
 
 Prefer to write the issue by hand? The repository has matching issue templates under
 `.github/ISSUE_TEMPLATE/`.
+
+### Automatic Updates
+
+TrueLazer checks GitHub for a newer release and offers to install it: **Help ▸ Check for Updates...**,
+or automatically in the background (at most once every six hours).
+
+- The update is **downloaded in the background** and never installed on its own. When it is ready, the
+  window offers **Restart and install** or **Install on next launch** — the second one is the one to use
+  when a show is about to begin. A version can also be skipped.
+- Restarting asks the renderer first whether there is unsaved work, and the Show Project and the Shape
+  Builder are prompted before anything is discarded. The Timeline keeps its document in local storage,
+  so it survives a restart untouched.
+- The feed is the GitHub release itself. The release workflow publishes `latest.yml` alongside the
+  installer, and the installer is named without spaces (`TrueLazer-Setup-<version>.exe`) so the name in
+  the manifest and the name of the uploaded asset are always the same.
+
+The updater is `electron-updater`, configured through the `publish` block in `package.json`; the
+packaged app reads its feed from `resources/app-update.yml`, which electron-builder writes at build
+time. Nothing is sent anywhere else.
+
+> The installers are **not code-signed**, so Windows shows an "Unknown publisher" prompt on every
+> install and every update. The download itself is verified against the SHA-512 in `latest.yml`.
 
 ### How to Contribute
 

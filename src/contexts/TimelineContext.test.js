@@ -34,6 +34,50 @@ describe('initial + hydration', () => {
         expect(s.settings.selectedCueIds).toEqual([]);
     });
 
+    it('gives every keyframe in a lane a unique id', () => {
+        // A lane resolves which clip owns a point by finding the FIRST clip
+        // holding that id, so two clips sharing a keyframe id make every edit
+        // on one of them land on the other. A paste could create that before
+        // the paste started giving pasted keyframes fresh ids.
+        const s = normalizeHydratedState({
+            channels: { a: { id: 'a', name: 'A' } },
+            cues: {},
+            lanes: {
+                l1: {
+                    id: 'l1',
+                    clips: [
+                        { id: 'c1', effectId: 'invert', keyframes: [{ id: 'kf-1', time: 0, value: 1 }] },
+                        { id: 'c2', effectId: 'invert', keyframes: [{ id: 'kf-1', time: 0, value: 2 }] },
+                    ],
+                },
+            },
+        });
+        const ids = s.lanes.l1.clips.flatMap((c) => c.keyframes.map((k) => k.id));
+        expect(ids).toHaveLength(2);
+        expect(new Set(ids).size).toBe(2);
+        // The first clip keeps its id; only the collision is repaired.
+        expect(s.lanes.l1.clips[0].keyframes[0].id).toBe('kf-1');
+        expect(s.lanes.l1.clips[1].keyframes[0].id).not.toBe('kf-1');
+    });
+
+    it('leaves unique keyframe ids alone', () => {
+        const s = normalizeHydratedState({
+            channels: { a: { id: 'a', name: 'A' } },
+            cues: {},
+            lanes: {
+                l1: {
+                    id: 'l1',
+                    clips: [
+                        { id: 'c1', keyframes: [{ id: 'kf-1', time: 0, value: 1 }] },
+                        { id: 'c2', keyframes: [{ id: 'kf-2', time: 0, value: 2 }] },
+                    ],
+                },
+            },
+        });
+        const ids = s.lanes.l1.clips.flatMap((c) => c.keyframes.map((k) => k.id));
+        expect(ids).toEqual(['kf-1', 'kf-2']);
+    });
+
     it('migrates a legacy single selectedCueId into the selection array', () => {
         const s = normalizeHydratedState({
             settings: { selectedCueId: 'c1' },
@@ -222,6 +266,26 @@ describe('cue lifecycle', () => {
         expect(s.settings.selectedCueIds).toEqual([]);
         expect(s.settings.selectedCueId).toBeNull();
         expect(s.settings.selectedChannelId).toBe('ch1');
+    });
+
+    it('SELECT_ALL takes every clip and every automation clip', () => {
+        let s = seeded();
+        for (const id of ['a', 'b']) {
+            s = run(s, { type: 'ADD_CUE', payload: { channelId: 'ch1', cue: { id, startTime: 0 } } });
+        }
+        s = run(s, { type: 'ADD_LANE', payload: { channelId: 'ch1', lane: { id: 'lane1' } } });
+        s = run(s, { type: 'ADD_AUTO_CLIP', payload: { laneId: 'lane1', clip: { id: 'ac1', startTime: 0, duration: 1 } } });
+        // A lane selection is released by a take-everything.
+        s = run(s, { type: 'SELECT_LANE', payload: { laneId: 'lane1' } });
+        expect(s.settings.selectedLaneId).toBe('lane1');
+
+        s = run(s, { type: 'SELECT_ALL' });
+        expect(s.settings.selectedCueIds.sort()).toEqual(['a', 'b']);
+        expect(s.settings.selectedCueId).toBeTruthy();
+        expect(s.settings.selectedAutoClipIds).toEqual([{ laneId: 'lane1', clipId: 'ac1' }]);
+        expect(s.settings.selectedAutoClip).toEqual({ laneId: 'lane1', clipId: 'ac1' });
+        expect(s.settings.selectedLaneId).toBeNull();
+        expect(s.settings.selectedKeyframe).toBeNull();
     });
 
     it('REMOVE_CUE prunes a dropped member of a multi-selection', () => {

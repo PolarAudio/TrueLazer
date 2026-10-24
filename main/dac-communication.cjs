@@ -79,9 +79,17 @@ function sendFrame(ip, channel, points, fps, type, options) {
     const targetPps = (opt.targetPps && opt.targetPps > 0)
         ? opt.targetPps
         : (opt.pps && opt.pps > 0 ? opt.pps : 30000);
-    const targetFps = (opt.targetFps && opt.targetFps > 0)
-        ? opt.targetFps
-        : (fps && fps > 0 ? fps : 30);
+    // `frameFps` is the rate the SOURCE sampled at (the Timeline's settings.fps).
+    // It owns the frame's playback duration: every output of one track must play
+    // the same frame for the same time, otherwise two channels of the same DAC
+    // advance at different rates and drift apart. `targetFps` stays the per
+    // output budget hint used by the Grid path (no frameFps there).
+    const frameFps = (opt.frameFps && opt.frameFps > 0) ? opt.frameFps : 0;
+    const targetFps = frameFps
+        ? frameFps
+        : ((opt.targetFps && opt.targetFps > 0)
+            ? opt.targetFps
+            : (fps && fps > 0 ? fps : 30));
     const targetMode = opt.targetMode || 'varFpsFixedPps';
 
     const sendOptions = {

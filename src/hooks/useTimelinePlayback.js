@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTimeline, getTimelineDuration, getChannelOutputs, isChannelAudible } from '../contexts/TimelineContext';
 import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
 import { useAudio } from '../contexts/AudioContext.jsx';
@@ -6,6 +6,7 @@ import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides, apply
 import { applyEffects, applyOutputProcessingWithDwell } from '../utils/effects';
 import { optimizePoints } from '../utils/optimizer';
 import { resampleFrameToStep, DEFAULT_MAX_STEP } from '../utils/pointResample';
+import { resolveTransportTime } from '../utils/timelineTransport';
 import { getPreset, DEFAULT_PRESET, resolvePointBudget } from '../utils/hardwarePresets';
 import { selectActiveCue, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
 import { useTimelineSync } from './useTimelineSync';
@@ -15,7 +16,7 @@ import { useTimelineSync } from './useTimelineSync';
  *
  * Clock: rAF while playing advances a wall-clock playhead (loop-aware). When a
  * timeline audio track is loaded the element follows the playhead (drift
- * corrected), never the other way around — the transport always advances.
+ * corrected), never the other way around â€” the transport always advances.
  * When an external sync source is selected the playhead follows its signal
  * (also while paused), falling back to the wall clock during playback while no
  * signal is arriving so Play never freezes the head.
@@ -54,6 +55,12 @@ const PARSE_WATCHDOG_MS = 8000;
 // left to the RelocateModal).
 const MAX_PARSE_RETRIES = 3;
 
+// Channels whose outputs were logged once for differing frame lengths (avoids
+// repeating the diagnostic every frame of playback).
+const paddedChannelsLogged = new Set();
+// Channels whose outputs asked for different point rates (logged once).
+const unifiedPpsLogged = new Set();
+
 // Channel-level axis invert: negate X and/or Y around 0 (native coordinates).
 export function flipPoints(points, flipX, flipY) {
     if (!flipX && !flipY) return points;
@@ -62,6 +69,49 @@ export function flipPoints(points, flipX, flipY) {
     for (let i = 0; i < n; i++) {
         if (flipX) out[i * 8] = -out[i * 8];
         if (flipY) out[i * 8 + 1] = -out[i * 8 + 1];
+    }
+    return out;
+}
+
+// Pad a frame with blanked hold points at its last position so every output of
+// a track can be handed the same number of points. A DAC turns a frame into
+// playback time from the frame itself (point count and/or duration), so equal
+// lengths are what keeps two channels of one device advancing together.
+export function padFrameToCount(points, count) {
+    if (!points || !(count > 0)) return points;
+    const typed = points instanceof Float32Array;
+    const have = typed
+        ? Math.floor(points.length / 8)
+        : (Array.isArray(points) ? points.length : 0);
+    if (have >= count) return points;
+
+    if (typed) {
+        const out = new Float32Array(count * 8);
+        out.set(points);
+        const last = Math.max(0, have - 1) * 8;
+        const x = have > 0 ? points[last] : 0;
+        const y = have > 0 ? points[last + 1] : 0;
+        for (let i = have; i < count; i++) {
+            const o = i * 8;
+            out[o] = x;
+            out[o + 1] = y;
+            out[o + 6] = 1;
+        }
+        return out;
+    }
+
+    const out = points.slice();
+    const lastPoint = have > 0 ? points[have - 1] : null;
+    for (let i = have; i < count; i++) {
+        out.push({
+            x: lastPoint?.x ?? 0,
+            y: lastPoint?.y ?? 0,
+            z: 0,
+            r: 0,
+            g: 0,
+            b: 0,
+            blanking: true,
+        });
     }
     return out;
 }
@@ -122,7 +172,7 @@ export function useTimelinePlayback() {
     stateRef.current = state;
     const lastPushedT = useRef(-1e100);
     // While following an external source, the playhead UI only needs to refresh
-    // at ~30 Hz — every rAF otherwise re-renders the whole editor.
+    // at ~30 Hz â€” every rAF otherwise re-renders the whole editor.
     const lastFollowPublishRef = useRef(-1e9);
     // External-source velocity tracking (unit = seconds per wall-second, so
     // ~+1 forward, ~-1 backward). The follower advances at this velocity and
@@ -140,10 +190,19 @@ export function useTimelinePlayback() {
     useEffect(() => { dacOutputSettingsRef.current = dacOutputSettings || {}; }, [dacOutputSettings]);
 
     const playheadRef = useRef(0);
+    // The last frame index (playhead time x fps) that was pushed to the DAC.
+    const lastPushedFrameRef = useRef(-1);
+    // The last frame index whose playhead was published to the editor UI.
+    const lastPublishIndexRef = useRef(-1);
+    // The last compiled frame per channel (before the per-output fan-out).
+    // The editor preview reuses it instead of compiling the same content a
+    // second time: the preview alone used more CPU than the whole renderer
+    // budget, which starved the 30fps DAC push - the picture stuttered and the
+    // DAC fell behind the audio.
+    const channelFrameCacheRef = useRef(new Map());
     // Replay anchor: the last place the playhead was parked while stopped.
     // Spacebar/play starts from here and pause returns the head to it.
     const anchorRef = useRef(0);
-    const accRef = useRef(0);
     const laserOnRef = useRef(false);
     const isPlayingRef = useRef(false);
     // Per-channel automation effect state (delay/chase history + continuous
@@ -157,6 +216,35 @@ export function useTimelinePlayback() {
     const audioRef = useRef(null); // HTMLAudioElement (or null)
     const audioClockRef = useRef(false); // don't let the wall clock fight audio
     const audioSrcConnectedRef = useRef(false);
+    // The element's own clock, and how long it has refused to advance. The
+    // transport follows the element while it runs, so the picture is exactly
+    // what is heard; a stalled element is detected here so it can never freeze
+    // the show.
+    const lastAudioTimeRef = useRef(-1);
+    const audioStallRef = useRef(0);
+    // True between asking the element to start and it actually running. Only
+    // then may a 'canplay' place the element at the playhead.
+    const audioStartPendingRef = useRef(false);
+    const audioCtxRef = useRef(audioCtx);
+    audioCtxRef.current = audioCtx;
+
+    /**
+     * How far behind the element's clock the sound actually reaches the
+     * speaker.
+     *
+     * The element is rendered into the AudioContext graph, and the graph has
+     * an output latency, so what is HEARD now is what the element was playing
+     * a moment ago. Without this the playhead sits that far ahead of the
+     * sound.
+     */
+    const audioOutputLatency = () => {
+        const ctx = audioCtxRef.current;
+        if (!ctx) return 0;
+        const out = Number(ctx.outputLatency);
+        if (Number.isFinite(out) && out > 0) return out;
+        const base = Number(ctx.baseLatency);
+        return Number.isFinite(base) && base > 0 ? base : 0;
+    };
 
     // (Re)build the timeline audio element when the track path changes.
     const audioPath = state.settings?.audio?.path || null;
@@ -178,7 +266,38 @@ export function useTimelinePlayback() {
             return;
         }
         audioRef.current = el;
+        audioStartPendingRef.current = false;
+
+        // A track that is still loading cannot be seeked, so a play pressed
+        // during the load was silently dropped: the element then started from
+        // its own zero and the sound ran away from the playhead. Catch it
+        // here instead, and put the element where the transport is.
+        //
+        // This must happen ONCE. 'canplay' also fires every time the element
+        // refills its buffer - and seeking the element is exactly what makes
+        // it refill - so seeking on every 'canplay' turned a routine refill
+        // into: seek -> the element re-buffers -> 'canplay' -> seek. The
+        // element spent its life seeking, never advancing, and because the
+        // audio element is the transport's clock the picture followed it back
+        // and forth. That is the choppy, stuttering playback.
+        const onCanPlay = () => {
+            if (!isPlayingRef.current) return;
+            if (!audioStartPendingRef.current) return;   // already started
+            try {
+                if (isFinite(el.duration)) {
+                    el.currentTime = Math.min(playheadRef.current, el.duration);
+                }
+                lastAudioTimeRef.current = el.currentTime;
+                audioStallRef.current = 0;
+                audioStartPendingRef.current = false;
+                const p = el.play();
+                if (p) p.catch(() => { /* the transport handles a failed start */ });
+            } catch (_) { /* the element is not seekable yet */ }
+        };
+        el.addEventListener('canplay', onCanPlay);
+
         return () => {
+            el.removeEventListener('canplay', onCanPlay);
             try { el.pause(); } catch (_) {}
             audioRef.current = null;
         };
@@ -186,7 +305,7 @@ export function useTimelinePlayback() {
 
     // Route the track through the analyser + destination once the AudioContext
     // exists (it is created on the first user gesture), so FFT/LTC sync and the
-    // app output both see the music. The element itself is never rebuilt here —
+    // app output both see the music. The element itself is never rebuilt here â€”
     // only the media-source graph node is attached once. Windows Electron
     // creates the context suspended on the first gesture and resumes it async,
     // so the effect re-arms on the state transition to 'running' too.
@@ -242,8 +361,8 @@ export function useTimelinePlayback() {
 
     // Every routed DAC endpoint (ip+channel+type). Sent to the main process as
     // the "always-fed targets" list: while the laser toggle is on, Showbridge
-    // endpoints receive a continuous 30fps datagram stream — the idle dark frame
-    // even when no clip is active — so the DMA never idles and the first frame
+    // endpoints receive a continuous 30fps datagram stream â€” the idle dark frame
+    // even when no clip is active â€” so the DMA never idles and the first frame
     // of a clip fires immediately (EtherDream/Truwave-style).
     const getDacTargets = useCallback(() => {
         const s = stateRef.current;
@@ -339,7 +458,7 @@ export function useTimelinePlayback() {
                 // The worker reports the file's REAL frame count when a get-frame
                 // lands out of bounds. A persisted cue.totalFrames can lie (older
                 // saves, stale pastes), and the renderer keeps requesting the
-                // ever-growing index — logging errors every frame. Clamp every
+                // ever-growing index â€” logging errors every frame. Clamp every
                 // cue on that workerId so the warmer/buildCueFrame stop walking
                 // past the end of the file.
                 const n = Math.max(1, d.totalFrames || 0);
@@ -432,8 +551,8 @@ export function useTimelinePlayback() {
 
     // --- ILDA cache warmer --------------------------------------------------
     // Runs continuously (idle AND playing). Keeps the live frame cache filled
-    // slightly ahead of the playhead so the first play after a fresh restart —
-    // or a new scrub position — doesn't stutter while get-frame responses are
+    // slightly ahead of the playhead so the first play after a fresh restart â€”
+    // or a new scrub position â€” doesn't stutter while get-frame responses are
     // still in flight. Mirrors the active-cue pick + frame-index math used by
     // compileChannelFrame/buildCueFrame so it preheats exactly what playback
     // will ask for.
@@ -497,7 +616,7 @@ export function useTimelinePlayback() {
             const live = ildaLiveRef.current.get(liveKey);
             // The worker's get-frame response wraps points in a metadata object
             // { points: Float32Array, isTypedArray, segments }. Unwrap so we hand
-            // the compile/send path a canonical 8-float-per-point Float32Array —
+            // the compile/send path a canonical 8-float-per-point Float32Array â€”
             // shipping the wrapper down the DAC send path made Showbridge's
             // buildFrameChunks compute totalPoints = wrapper.length = undefined,
             // yielding NaN buffer sizes and a main-process RangeError crash.
@@ -550,7 +669,7 @@ export function useTimelinePlayback() {
         if (pick) {
             // Generator clips are animated by per-channel gen lanes: curves
             // override the clip's range params (circle radius, square size,
-            // offset, ...) at this time — woven into buildCueFrame so preview
+            // offset, ...) at this time â€” woven into buildCueFrame so preview
             // and DAC output both use it.
             const genOverrides =
                 pick.type === 'GENERATOR'
@@ -574,7 +693,7 @@ export function useTimelinePlayback() {
                 time: t * 1000,
                 effectStates: effectStatesRef.current,
                 // Channel-mode Delay/Chase distribute across the zone's actually
-                // assigned DAC channels — the timeline's equivalent of the main
+                // assigned DAC channels â€” the timeline's equivalent of the main
                 // app's "Track layers assigned DAC Channels".
                 assignedDacs: getChannelOutputs(ch),
                 // Chase's selectable clock (time/fps/bpm) reads the timeline's
@@ -604,6 +723,10 @@ export function useTimelinePlayback() {
         for (const chId of order) {
             const frame = compileChannelFrame(chId, t);
             if (!frame) continue;
+            // Keep the channel frame (before the per-output fan-out) so the
+            // editor preview can show the very same picture the DAC gets
+            // instead of compiling it a second time.
+            channelFrameCacheRef.current.set(chId, { frame, t });
             const outputs = getChannelOutputs(store.channels[chId]);
             // Dedupe repeated assignments; a zone may be given the same
             // output twice by drag ops.
@@ -619,13 +742,14 @@ export function useTimelinePlayback() {
             // Invert is per output so a wing (e.g. right laser) can flip while
             // its mirror-zone twin (left laser) stays native. Each output then
             // receives the main app's per-output DAC settings (dimmer, output
-            // area scale/crop, safety-zone blanking, PPS target) — the same
+            // area scale/crop, safety-zone blanking, PPS target) â€” the same
             // `applyOutputProcessing`/PPS resolution the grid path uses, so the
             // timeline drives the same hardware behavior the main app promises.
+            const outFrames = [];
             for (const out of uniq) {
                 // A channel-mode Delay/Chase produces a concatenated buffer plus a
                 // per-DAC slice map (keyed by the output's position in the assigned
-                // order) — each DAC must receive only its own share, exactly like the
+                // order) â€” each DAC must receive only its own share, exactly like the
                 // main app's per-channel fan-out. Outputs outside the map get a blank
                 // frame instead of the whole concatenation.
                 let chanFrame = frame;
@@ -652,7 +776,7 @@ export function useTimelinePlayback() {
                     ? flipPoints(chanFrame, flipX, flipY)
                     : chanFrame;
 
-                // Preset / PPS resolution first — the optimizer needs the point
+                // Preset / PPS resolution first â€” the optimizer needs the point
                 // budget, and the budget is per output (each wing of a zone can
                 // sit on a different preset).
                 const preset = settings?.ppsPreset && getPreset(settings.ppsPreset)
@@ -674,8 +798,11 @@ export function useTimelinePlayback() {
                 // output, not an optimization, so it always runs. It must run
                 // BEFORE output processing so the zone boundaries it creates
                 // get their boundary dwell below.
+                // Point budget for this output: the scanner's rate divided by
+                // the show's frame rate. Also the fixed frame LENGTH every frame
+                // of this output is padded to below - see there.
+                const budget = resolvePointBudget(settings, targetFpsValue) || 1000;
                 if (outFrame && (outFrame.length || 0) > 0) {
-                    const budget = resolvePointBudget(settings, targetFpsValue) || 1000;
                     try {
                         outFrame = resampleFrameToStep(outFrame, {
                             maxStep: DEFAULT_MAX_STEP,
@@ -725,12 +852,83 @@ export function useTimelinePlayback() {
                     pps: targetPpsValue,
                     targetPps: targetPpsValue,
                     targetFps: targetFpsValue,
+                    // The timeline samples at settings.fps, so that is the rate
+                    // every output must PLAY at. The Output Settings targetFps
+                    // only sizes the point budget; letting it decide the frame
+                    // duration made one output play at, say, 25 Hz while its
+                    // twin played at 30 Hz - the two channels of one device then
+                    // drifted apart within seconds.
+                    frameFps: s.fps || 30,
                     targetMode: 'varFpsFixedPps',
                 };
                 if (settings?.targetMode) options.targetMode = settings.targetMode;
 
+                outFrames.push({ out, outFrame, options, budget });
+            }
+
+            // A channel-mode Delay/Chase intentionally gives each DAC a shifted
+            // slice of the buffer, so its per-output lengths are part of the
+            // effect and are left alone - including the fixed-length padding
+            // below and the cross-output padding after it.
+            const distributed = !!(frame && frame._channelDistributions && frame._channelDistributions.size > 0);
+
+            // A frame's LENGTH is its playback time. An IDN player consumes the
+            // points of a frame at the scanner rate, so a frame of 480 points
+            // lasts 16 ms while a frame of 640 lasts 21 ms - and an animated
+            // generator changes the shape (and therefore the resampled point
+            // count) on every frame. That is why ILDA clips, whose frames all
+            // carry the same points, stay in sync while animated generators
+            // slowly walk out of time. Pad every frame to the same fixed
+            // budget so each frame lasts the same 1/fps, whatever the content.
+            if (!distributed) {
+                for (const entry of outFrames) {
+                    entry.outFrame = padFrameToCount(entry.outFrame, entry.budget);
+                }
+            }
+
+            // Every output of one track must receive the SAME number of points
+            // per frame. The DAC derives each channel's playback time from the
+            // frame it was handed (IDN plays the points over the frame duration,
+            // Showbridge loops the wire frame), so two outputs of the same track
+            // that end up with different lengths - a crop, a safety zone or a
+            // resample on one wing but not the other - advance at different
+            // rates and visibly drift apart within seconds. Pad the shorter
+            // frames with blanked hold points at the last position so all
+            // channels play for exactly the same time.
+            const counts = outFrames.map(({ outFrame }) =>
+                outFrame ? Math.floor((outFrame.length || 0) / (Array.isArray(outFrame) ? 1 : 8)) : 0
+            );
+            const targetCount = !distributed && outFrames.length > 1 ? Math.max(0, ...counts) : 0;
+            if (targetCount > 0 && counts.some((c) => c !== targetCount) && !paddedChannelsLogged.has(chId)) {
+                paddedChannelsLogged.add(chId);
+                console.log(`[TimelinePlayback] channel ${chId}: outputs produced different frame lengths [${counts.join(', ')}] points - padding to ${targetCount} so they stay in sync`);
+            }
+
+            // One track is one image on several projectors, so every output of it
+            // must play a frame for the same time. Two outputs set to different
+            // point rates would consume their (now equal) frames at different
+            // speeds - the exact way two channels of one DAC drift apart - so the
+            // slowest rate (the common denominator) wins for the whole track.
+            if (outFrames.length > 1) {
+                const rates = outFrames
+                    .map(({ options }) => options.targetPps || options.pps || 0)
+                    .filter((v) => v > 0);
+                const trackPps = rates.length > 1 ? Math.min(...rates) : 0;
+                if (trackPps > 0 && rates.some((v) => v !== trackPps)) {
+                    for (const entry of outFrames) {
+                        entry.options.targetPps = trackPps;
+                        entry.options.pps = trackPps;
+                    }
+                    if (!unifiedPpsLogged.has(chId)) {
+                        unifiedPpsLogged.add(chId);
+                        console.log(`[TimelinePlayback] channel ${chId}: outputs asked for different point rates [${rates.join(', ')}] - using ${trackPps} pps on all so they stay in sync`);
+                    }
+                }
+            }
+
+            for (const { out, outFrame, options } of outFrames) {
                 frames[`${out.ip}:${out.channel}`] = {
-                    points: outFrame,
+                    points: targetCount > 0 ? padFrameToCount(outFrame, targetCount) : outFrame,
                     ip: out.ip,
                     channel: out.channel,
                     type: out.type || 'EtherDream',
@@ -752,10 +950,10 @@ export function useTimelinePlayback() {
     // --- Clock --------------------------------------------------------------
     // Internal: the rAF wall clock owns the playhead, so it always advances
     // while playing even if the timeline audio element stalls or is paused. The
-    // track's own clock is re-seeked to the playhead each frame it drifts —
+    // track's own clock is re-seeked to the playhead each frame it drifts â€”
     // audio follows the transport, it never owns it. External: while a signal
     // is present the playhead tracks the sync source (with sub-frame
-    // extrapolation between updates), even when paused — so the ruler/preview
+    // extrapolation between updates), even when paused â€” so the ruler/preview
     // always reflects the show clock. If an external source is selected but no
     // signal is arriving yet, the wall clock keeps the transport running while
     // playing (the head snaps to the show clock the moment a signal appears).
@@ -794,7 +992,7 @@ export function useTimelinePlayback() {
                     // Velocity = moving average of (target delta / wall time
                     // between samples). ~30 Hz absolute-position packets yield the
                     // true motion (including reverse); the beat-stepped fallback
-                    // lands at roughly ±1. Slow samples carry the whole step, so
+                    // lands at roughly Â±1. Slow samples carry the whole step, so
                     // trust the estimate more the longer between publishes.
                     if (target !== lastExtTargetRef.current) {
                         const tMs = performance.now();
@@ -838,18 +1036,46 @@ export function useTimelinePlayback() {
                     t = playheadRef.current + dt;
                 }
             } else {
-                // Wall-clock master: the playhead always advances on rAF time,
-                // so a stalled/paused audio element can never freeze the show.
-                // The timeline track is re-seeked to the playhead when its own
-                // clock drifts, keeping audio and show locked together without
-                // letting the media element own the transport.
+                // The AUDIO element is the master clock while it is running, so
+                // the picture shows exactly what is heard.
+                //
+                // It used to be the other way round: the playhead ran on the
+                // wall clock and the element was only dragged into agreement
+                // once it was already 200 ms out. So the sound could sit a
+                // fifth of a second behind the waveform - which is what "the
+                // audio is delayed" was - and the correction was a hard seek,
+                // so it arrived as a jump rather than a smooth re-sync.
+                //
+                // The wall clock is still the fallback: an element that has
+                // stopped advancing (buffering, a stalled decoder) must never
+                // freeze the transport, so the show keeps running and the
+                // element is re-seeked to catch up.
                 t = playheadRef.current + dt;
                 const el = audioRef.current;
-                if (el && audioClockRef.current && !el.paused
-                    && el.readyState >= 1 && isFinite(el.duration)) {
-                    const drift = el.currentTime - t;
-                    if (Math.abs(drift) >= 0.2) {
-                        try { el.currentTime = Math.min(el.duration, Math.max(0, t)); } catch (_) {}
+                if (el && audioClockRef.current) {
+                    if (el.paused && el.readyState >= 1) {
+                        // The element stopped on its own - a stall it could not
+                        // recover from. Restart it, or the show would run on in
+                        // silence while the transport believes the audio is
+                        // there.
+                        try { const p = el.play(); if (p) p.catch(() => {}); } catch (_) {}
+                    }
+                    if (!el.paused && el.readyState >= 1 && isFinite(el.duration)) {
+                        const decision = resolveTransportTime({
+                            wallTime: t,
+                            audioTime: el.currentTime,
+                            lastAudioTime: lastAudioTimeRef.current,
+                            stallSeconds: audioStallRef.current,
+                            outputLatency: audioOutputLatency(),
+                            duration: el.duration,
+                            dt,
+                        });
+                        t = decision.time;
+                        lastAudioTimeRef.current = decision.lastAudioTime;
+                        audioStallRef.current = decision.stallSeconds;
+                        if (decision.reseekTo !== null) {
+                            try { el.currentTime = decision.reseekTo; } catch (_) {}
+                        }
                     }
                 }
                 const s = stateRef.current.settings;
@@ -890,24 +1116,44 @@ export function useTimelinePlayback() {
                     const cues = Object.values(stateRef.current.cues || {}).filter(Boolean);
                     const crossed = cues.some(cue => cue.startTime > lastPushedT.current && cue.startTime <= t);
                     if (crossed) {
-                        accRef.current = 0;
                         push(t);
                         lastPushedT.current = t;
                     }
                 }
-                accRef.current += dt;
                 const fps = stateRef.current.settings.fps || 30;
-                if (accRef.current >= 1 / fps) {
-                    accRef.current = 0;
+                // The push rate must be the TIMELINE's frame rate, whatever the
+                // render loop happens to run at. It used to be an accumulator
+                // that was reset to zero on every push, so the leftover was
+                // thrown away: at 50 render frames per second the timeline
+                // pushed 25 frames per second and the DAC ran 17% slow, which
+                // the picture drifted away from the audio over a show. The
+                // frame index is taken from the PLAYHEAD time instead, so the
+                // DAC gets exactly fps frames per second of show time.
+                const frameIndex = Math.floor(t * fps);
+                if (frameIndex !== lastPushedFrameRef.current) {
+                    lastPushedFrameRef.current = frameIndex;
                     push(t);
                 }
             }
-            // UI refresh: internal clock updates every frame; an external
-            // master is throttled to ~30 Hz so following the CDJ doesn't force
-            // a full editor re-render at 60 fps.
-            if (!following || now - lastFollowPublishRef.current >= 33) {
-                if (following) lastFollowPublishRef.current = now;
-                setPlayheadSec(t);
+            // UI refresh: publish the playhead on the SAME frame grid the DAC
+            // is fed on, so the editor re-renders fps times per second instead
+            // of every animation frame. Re-rendering the whole editor at
+            // display rate (every cue, lane, keyframe and the preview) was a
+            // large part of what left the renderer with no headroom - the
+            // preview stuttered and the DAC push lost frames. An external
+            // master keeps its own ~30 Hz throttle so following a CDJ does not
+            // force a full editor re-render at display rate either.
+            if (following) {
+                if (now - lastFollowPublishRef.current >= 33) {
+                    lastFollowPublishRef.current = now;
+                    setPlayheadSec(t);
+                }
+            } else {
+                const publishIndex = Math.floor(t * (stateRef.current.settings.fps || 30));
+                if (publishIndex !== lastPublishIndexRef.current) {
+                    lastPublishIndexRef.current = publishIndex;
+                    setPlayheadSec(t);
+                }
             }
             raf = requestAnimationFrame(tick);
         };
@@ -920,7 +1166,6 @@ export function useTimelinePlayback() {
         const clamped = Math.max(0, t);
         playheadRef.current = clamped;
         setPlayheadSec(clamped);
-        accRef.current = 0;
         lastPushedT.current = clamped - 0.001;
         // Parking the head while stopped establishes the replay anchor;
         // moving it mid-playback never moves the anchor.
@@ -940,7 +1185,7 @@ export function useTimelinePlayback() {
         // never rewind it.
         if (!following && playheadRef.current >= end) seek(anchorRef.current);
         // When using external timecode, only start playback if the timecode
-        // signal is actively running — timecode is the master control.
+        // signal is actively running â€” timecode is the master control.
         // For internal sync, start immediately as before.
         const shouldPlay = !external || following;
         if (!shouldPlay) {
@@ -954,10 +1199,13 @@ export function useTimelinePlayback() {
 
         // Start (or restart) the timeline audio from the playhead. The rAF
         // wall clock owns the transport, so a slow/stalled element can't stall
-        // playback — it's only re-seeked when it drifts.
+        // playback â€” it's only re-seeked when it drifts.
         const el = audioRef.current;
         if (el) {
             audioClockRef.current = true;
+            // The element is about to start. Until it is running, a 'canplay'
+            // may still place it at the playhead - but only that one.
+            audioStartPendingRef.current = true;
             if (audioCtx) {
                 if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
                 // Route once the context is available and running (created on
@@ -971,7 +1219,15 @@ export function useTimelinePlayback() {
             }
             if (el.readyState >= 1 && isFinite(el.duration)) {
                 try { el.currentTime = Math.min(playheadRef.current, el.duration); } catch (_) {}
+                // The element is seekable, so it is placed at the playhead
+                // here. A later 'canplay' (a buffer refill) must not touch it.
+                audioStartPendingRef.current = false;
             }
+            // The element is about to start. Remember where it is, so the
+            // transport can tell "advancing" from "stalled" from the very
+            // first frame instead of treating the start-up as a stall.
+            lastAudioTimeRef.current = el.currentTime;
+            audioStallRef.current = 0;
             const p = el.play();
             if (p) p.catch((err) => {
                 console.warn('Timeline audio play failed:', err);
@@ -986,6 +1242,8 @@ export function useTimelinePlayback() {
         const el = audioRef.current;
         if (el) { el.pause(); }
         audioClockRef.current = false;
+        lastAudioTimeRef.current = -1;
+        audioStallRef.current = 0;
         // Replay anchor: pause returns the playhead to the last position it was
         // parked at, so play/pause always resumes from the same spot (and
         // seeking there also snaps the timeline audio back).
@@ -997,8 +1255,9 @@ export function useTimelinePlayback() {
         setIsPlaying(false);
         playheadRef.current = 0;
         setPlayheadSec(0);
-        accRef.current = 0;
         audioClockRef.current = false;
+        lastAudioTimeRef.current = -1;
+        audioStallRef.current = 0;
         const el = audioRef.current;
         if (el) {
             el.pause();
@@ -1026,8 +1285,8 @@ export function useTimelinePlayback() {
         const dacs = getDacIps();
         if (on) {
             // Register the always-fed endpoints and start the main-process 30fps
-            // send loop (idempotent). The loop starts NOW — before any clip is
-            // active — and immediately streams dark idle frames (Showbridge) so
+            // send loop (idempotent). The loop starts NOW â€” before any clip is
+            // active â€” and immediately streams dark idle frames (Showbridge) so
             // the DACs are warm and responsive the moment frame data arrives.
             api.send('dac-set-targets', getDacTargets());
             api.send('start-dac-send-loop');
@@ -1068,17 +1327,26 @@ export function useTimelinePlayback() {
     // Live preview: compile just the given channel at `t` (no DAC send). The
     // editor's preview canvas calls this every animation frame. allowUnrouted
     // means a track with no DAC assigned (or the laser toggle off) still gets a
-    // compiled frame — preview reflects the cue, not the routing/hardware state.
+    // compiled frame â€” preview reflects the cue, not the routing/hardware state.
     // Note: audibility (mute/solo) is still honored so a muted track previews dark.
     const previewFrame = useCallback(
         (channelId, t) => compileChannelFrame(channelId, t, { allowUnrouted: true }),
         [compileChannelFrame],
     );
 
-    // True while following a live external source that is actually running —
+    // The frame the DAC path last compiled for a channel, with the playhead
+    // time it was compiled for. The preview reuses it when it is current
+    // enough, so the canvas shows the DAC's own picture without compiling the
+    // same content twice.
+    const getCompiledFrame = useCallback(
+        (channelId) => channelFrameCacheRef.current.get(channelId) || null,
+        [],
+    );
+
+    // True while following a live external source that is actually running â€”
     // lets the transport UI reflect the master clock (e.g. the CDJ's play state).
     const externalRunning =
         sync.source !== 'internal' && !!sync.signal && !!sync.running;
 
-    return { isPlaying, playheadSec, laserOn, setLaserOn, play, pause, stop, seek, sync, previewFrame, anchor: anchorRef.current, externalRunning };
+    return { isPlaying, playheadSec, laserOn, setLaserOn, play, pause, stop, seek, sync, previewFrame, getCompiledFrame, anchor: anchorRef.current, externalRunning };
 }

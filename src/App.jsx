@@ -32,8 +32,16 @@ import ShapeBuilder from './components/ShapeBuilder';
 import TimelineEditor from './components/TimelineEditor';
 import { timelineBridge } from './contexts/TimelineContext';
 import { resolveProjectCommand, shouldWarnOnUnsavedChanges, commandForKeyEvent } from './utils/projectRouting';
+import {
+    showProjectFingerprint,
+    isShowProjectDirty,
+    describeUnsavedWork,
+    unsavedWorkPrompt,
+} from './utils/projectDirty';
 import AboutWindow from './components/aboutWindow';
+import UserManual from './components/UserManual';
 import ReportWindow from './components/ReportWindow';
+import UpdateWindow from './components/UpdateWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
 import { useThumbnailWorker } from './contexts/ThumbnailWorkerContext';
 import { useGeneratorWorker } from './contexts/GeneratorWorkerContext';
@@ -315,6 +323,12 @@ function reducer(state, action) {
                     [action.payload.id]: action.payload.settings
                 }
             };
+        }
+        // Replace the whole map - used when the main process announces that
+        // the settings changed somewhere else (the Timeline's Output panel),
+        // so this side stops working from a stale copy.
+        case 'SET_DAC_OUTPUT_SETTINGS_MAP': {
+            return { ...state, dacOutputSettings: action.payload || {} };
         }
         case 'SET_ACTIVE_PAGE': {
             return { ...state, activePageId: action.payload };
@@ -2278,6 +2292,17 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         setCurrentPage(page);
     }, []);
     const [showAboutWindow, setShowAboutWindow] = useState(false);
+    const [showUserManual, setShowUserManual] = useState(false);
+    // The auto-updater's state, pushed from the main process: { phase, version,
+    // percent, error }. Null means there is nothing to show.
+    const [updateState, setUpdateState] = useState(null);
+    // Set once the stored settings have been applied. The settings load
+    // restores the user's preferences into the state, which changes the
+    // Show Project's fingerprint - so the document has to be marked clean
+    // afterwards, or a freshly started app would claim to have unsaved work.
+    const [settingsLoaded, setSettingsLoaded] = useState(false);
+    // The auto-updater's preferences (check automatically, skipped version).
+    const [updatePrefs, setUpdatePrefs] = useState({ autoCheck: true, skippedVersion: '' });
     // null = closed, otherwise 'bug' or 'feature'. The report window is one
     // component with two shapes rather than two separate windows.
     const [reportWindowMode, setReportWindowMode] = useState(null);
@@ -4799,9 +4824,34 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     // Listen for project management commands
     // Ref to hold the latest state for event listeners
     const stateRef = useRef(state);
+    // Assigned during render rather than in an effect. The unsaved-work
+    // fingerprint is taken when the app is asked to quit, and an effect
+    // updates the ref one commit late - which would mean missing the very
+    // last edit the user made.
+    stateRef.current = state;
+
+    // The Show Project's unsaved-changes baseline.
+    //
+    // The .tlp is written as the whole reducer state, so the fingerprint is
+    // taken over the DOCUMENT part of it (the show) and not the transient
+    // parts (a toast, the playback state, the selection, the parse progress).
+    // See src/utils/projectDirty.js.
+    const showProjectBaselineRef = useRef(null);
+    const markShowProjectClean = useCallback(() => {
+        showProjectBaselineRef.current = showProjectFingerprint(stateRef.current);
+    }, []);
+    const showProjectIsDirty = useCallback(
+        () => isShowProjectDirty(stateRef.current, showProjectBaselineRef.current),
+        []
+    );
+    // Seed the baseline so a freshly started app is not "dirty".
+    useEffect(() => { markShowProjectClean(); }, [markShowProjectClean]);
+    // ...and again once the stored settings have been applied, because they
+    // restore the user's preferences into the state.
     useEffect(() => {
-        stateRef.current = state;
-    }, [state]);
+        if (!settingsLoaded) return;
+        markShowProjectClean();
+    }, [settingsLoaded, markShowProjectClean]);
 
     useEffect(() => {
         let unlistenNew, unlistenOpen, unlistenSave, unlistenSaveAs, unlistenLoad;
@@ -4850,6 +4900,11 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             }
 
             decision.run();
+            // The page reset its own document; let main drop the old path so
+            // the window title no longer names a file that was just discarded.
+            if (command === 'new') {
+                window.electronAPI?.notifyNewProject?.(currentPageRef.current);
+            }
             return true;
         };
 
@@ -4863,10 +4918,35 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             // the .tlp dialog and replies with 'load-project-data'.
             if (command === 'new') {
                 dispatch({ type: 'RESET_STATE' });
+                markShowProjectClean();
+                window.electronAPI?.notifyNewProject?.('main');
             } else if (command === 'save') {
-                window.electronAPI.send('save-project', stateRef.current);
+                saveShowProject(false);
             } else if (command === 'saveAs') {
-                window.electronAPI.send('save-project-as', stateRef.current);
+                saveShowProject(true);
+            }
+        };
+
+        // Save the Show Project and record that the document is clean.
+        //
+        // The write has to be confirmed before the document counts as clean: a
+        // cancelled Save As writes nothing, and a document that still looks
+        // saved would be lost without a warning.
+        const saveShowProject = async (asNewFile) => {
+            const bridge = asNewFile
+                ? window.electronAPI?.saveProjectAs
+                : window.electronAPI?.saveProject;
+            if (!bridge) return;
+            try {
+                const result = await bridge(stateRef.current);
+                if (result && result.success) {
+                    markShowProjectClean();
+                } else if (result && result.needsSaveAs) {
+                    // No path yet: main asks for a Save As instead.
+                    await saveShowProject(true);
+                }
+            } catch (error) {
+                console.error('Failed to save the show project:', error);
             }
         };
 
@@ -4884,6 +4964,49 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         // stray .tlp.
         const onKeyDown = (e) => {
             if (e.defaultPrevented) return;
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+            const key = e.key === 'h' || e.key === 'H';
+            if (key) {
+                const st = timelineBridge.stateRef?.current;
+                const actions = timelineBridge.actionsRef?.current;
+                if (!st || !actions) return;
+                const sel = Array.isArray(st.settings?.selectedCueIds) ? st.settings.selectedCueIds : [];
+                if (sel.length > 0) {
+                    let changed = false;
+                    for (const id of sel) {
+                        const c = st.cues[id];
+                        if (c) {
+                            actions.updateCue(id, { muted: !c.muted });
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
+                }
+                const aSel = Array.isArray(st.settings?.selectedAutoClipIds) ? st.settings.selectedAutoClipIds : [];
+                if (aSel.length > 0) {
+                    let changed = false;
+                    for (const sc of aSel) {
+                        if (sc && sc.laneId && sc.clipId) {
+                            const lane = st.lanes[sc.laneId];
+                            const clip = lane && Array.isArray(lane.clips) ? lane.clips.find(x => x.id === sc.clipId) : null;
+                            if (clip) {
+                                actions.updateAutoClip(sc.laneId, sc.clipId, { muted: !clip.muted });
+                                changed = true;
+                            }
+                        }
+                    }
+                    if (changed) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
+                }
+                return;
+            }
             const command = commandForKeyEvent(e);
             if (!command) return;
             // These combinations never produce a character, so acting on them
@@ -4902,6 +5025,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
             unlistenLoad = window.electronAPI.on('load-project-data', (data) => {
                 dispatch({ type: 'LOAD_PROJECT', payload: data });
+                // The freshly opened document is the clean baseline.
+                markShowProjectClean();
             });
         }
 
@@ -4918,7 +5043,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
     // Listen for menu actions for theme and render settings
     useEffect(() => {
-        let unlistenMenu, unlistenRenderSettings;
+        let unlistenMenu, unlistenRenderSettings, unlistenUpdateStatus;
 
         const loadInitialSettings = async () => {
             if (window.electronAPI && window.electronAPI.getAllSettings) {
@@ -4928,6 +5053,17 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         setEnabledShortcuts(settings.shortcutsState);
                     }
                     dispatch({ type: 'LOAD_SETTINGS', payload: settings });
+                    // The settings have been applied; the document is the
+                    // saved state again.
+                    setSettingsLoaded(true);
+                    // ...and the initial load is done, which is what releases
+                    // the per-output settings to be written back to the store.
+                    // Without this the Output Settings window's changes never
+                    // left memory: the save effect waits for this flag, so the
+                    // dimmer, output area and safety zones a user set were
+                    // dropped on every restart - and the Timeline, which reads
+                    // them from the store, never saw them at all.
+                    setInitialSettingsLoaded(true);
                 }
             }
         };
@@ -4947,6 +5083,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: false });
                 } else if (action === 'about') {
                     setShowAboutWindow(true);
+                } else if (action === 'user-manual') {
+                    setShowUserManual(true);
                 } else if (action === 'report-bug') {
                     setReportWindowMode('bug');
                 } else if (action === 'request-feature') {
@@ -4967,6 +5105,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                             }
                         })
                         .catch(() => showNotification('Could not open the browser.'));
+                } else if (action === 'check-for-updates') {
+                    window.electronAPI?.checkForUpdates?.()
+                        .catch(() => showNotification('Could not check for updates.'));
                 } else if (action === 'settings-audio-output') {
                     setShowAudioSettingsWindow(true);
                 } else if (action === 'settings-audio-fft') {
@@ -5017,14 +5158,67 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 console.log("Render settings command received:", command);
                 dispatch({ type: 'SET_RENDER_SETTING', payload: { setting: command.setting, value: command.value } });
             });
+
+            // The auto-updater reports its progress from the main process.
+            unlistenUpdateStatus = window.electronAPI.onUpdateStatus((status) => {
+                setUpdateState(status);
+            });
+
+            // The auto-updater's preferences.
+            window.electronAPI.getUpdatePreferences?.()
+                .then((prefs) => { if (prefs) setUpdatePrefs(prefs); })
+                .catch(() => { /* keep the defaults */ });
         }
 
         // Cleanup
         return () => {
             if (unlistenMenu) unlistenMenu();
             if (unlistenRenderSettings) unlistenRenderSettings();
+            if (unlistenUpdateStatus) unlistenUpdateStatus();
         };
     }, []); // Empty dependency array so it only runs once on mount
+
+    // The main process asks before it quits the app - which is what the
+    // auto-updater does when it restarts into a new version, and what closing
+    // the window does. Only the renderer knows what is in the editors, so only
+    // the renderer can say whether quitting would lose anything.
+    useEffect(() => {
+        if (!window.electronAPI?.onAppRequestQuit) return undefined;
+        return window.electronAPI.onAppRequestQuit((payload) => {
+            const { requestId, reason } = payload || {};
+            let editors = {};
+            try {
+                editors = {
+                    showProject: showProjectIsDirty(),
+                    shapeBuilder: !!(shapeBuilderRef.current?.isDirty?.()),
+                    // The Timeline is deliberately NOT here. Its store is
+                    // persisted to local storage as it changes, so quitting
+                    // loses nothing - the .json file on disk may be stale,
+                    // but the work survives. The other two editors keep
+                    // their documents in memory only, so quitting WOULD lose
+                    // them.
+                };
+            } catch (error) {
+                // Never let the guard itself block the app from closing.
+                console.warn('Unsaved-work check failed; continuing.', error);
+            }
+            const items = describeUnsavedWork(editors);
+            let proceed = true;
+            if (items.length > 0) {
+                // Logged because "the app asked to discard my work when I had
+                // not done any" is the kind of question that can only be
+                // answered from the log.
+                console.warn('[Quit] unsaved work found in:', items.join(', '));
+                const prompt = unsavedWorkPrompt(editors);
+                proceed = window.confirm(
+                    reason === 'update'
+                        ? `TrueLazer is about to install an update and restart.\n\n${prompt}`
+                        : prompt
+                );
+            }
+            window.electronAPI.send('app-quit-decision', { requestId, proceed });
+        });
+    }, [showProjectIsDirty]);
 
     // Handles requests from ildaParserWorker to read files from the main process
     useEffect(() => {
@@ -6416,6 +6610,38 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         dispatch({ type: 'SET_DACS', payload: dacs });
     }, []);
 
+    // The Timeline discovers its own DACs. Hand them over so the Output
+    // Settings window - which is bound to this app's DAC list - lists the
+    // channels the timeline actually routes to, instead of an empty list.
+    useEffect(() => {
+        timelineBridge.onDacList = (list) => {
+            if (!Array.isArray(list) || list.length === 0) return;
+            dispatch({ type: 'SET_DACS', payload: list });
+        };
+        timelineBridge.onOpenOutputSettings = () => setShowOutputSettingsWindow(true);
+        return () => {
+            timelineBridge.onDacList = null;
+            timelineBridge.onOpenOutputSettings = null;
+        };
+    }, []);
+
+    // The per-output settings are shared with the Timeline. When they change
+    // over there, reload the map here instead of keeping a stale copy that
+    // silently overwrites the other side's edits on the next save.
+    const dacSettingsEchoRef = useRef('');
+    useEffect(() => {
+        if (!window.electronAPI?.onDacOutputSettingsChanged) return undefined;
+        return window.electronAPI.onDacOutputSettingsChanged((settings) => {
+            if (!settings) return;
+            // The main process echoes every write back. Ignore an echo that
+            // carries no change, or the save effect would re-save forever.
+            const json = JSON.stringify(settings);
+            if (json === dacSettingsEchoRef.current) return;
+            dacSettingsEchoRef.current = json;
+            dispatch({ type: 'SET_DAC_OUTPUT_SETTINGS_MAP', payload: settings });
+        });
+    }, []);
+
     const handleApplyDacGroup = useCallback((groupDacs) => {
         if (selectedLayerIndex !== null && selectedColIndex !== null) {
             dispatch({ type: 'SET_CLIP_DAC_GROUP', payload: { layerIndex: selectedLayerIndex, colIndex: selectedColIndex, groupDacs } });
@@ -7794,12 +8020,31 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         show={showAboutWindow}
                         onClose={() => setShowAboutWindow(false)}
                     />
+                    <UserManual
+                        show={showUserManual}
+                        onClose={() => setShowUserManual(false)}
+                    />
                     <ReportWindow
                         show={reportWindowMode !== null}
                         mode={reportWindowMode || 'bug'}
                         onClose={() => setReportWindowMode(null)}
                         page={currentPage}
                         dacs={dacs}
+                    />
+                    <UpdateWindow
+                        state={updateState}
+                        onClose={() => setUpdateState(null)}
+                        onInstallNow={() => { window.electronAPI?.installUpdate?.('now'); }}
+                        onInstallNextLaunch={() => { window.electronAPI?.installUpdate?.('next-launch'); }}
+                        onSkip={(version) => {
+                            window.electronAPI?.skipUpdate?.(version);
+                            setUpdateState(null);
+                        }}
+                        autoCheck={updatePrefs.autoCheck}
+                        onToggleAutoCheck={(value) => {
+                            setUpdatePrefs((prev) => ({ ...prev, autoCheck: value }));
+                            window.electronAPI?.setUpdatePreferences?.({ autoCheck: value });
+                        }}
                     />
                     <OutputSettingsWindow
                         show={showOutputSettingsWindow}

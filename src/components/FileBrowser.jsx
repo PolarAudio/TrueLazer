@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import { useThumbnailWorker } from '../contexts/ThumbnailWorkerContext';
+import { useTranslation } from '../i18n';
 
 // Module-level listing cache: switching bottom tabs unmounts the FileBrowser, and
 // every remount used to re-do the default-path + readdir IPC chain. Caching here
@@ -10,10 +12,12 @@ let cachedDefaultListing = null; // { path, files, ts }
 const DEFAULT_LISTING_TTL_MS = 10000;
 
 const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onPathChange }) => {
+  const { t } = useTranslation();
   const [ildFiles, setIldFiles] = useState([]);
   const [thumbnails, setThumbnails] = useState({});
   const [invalidFiles, setInvalidFiles] = useState(new Set());
   const [loadingThumbnails, setLoadingThumbnails] = useState(new Set());
+  const [hoverPreview, setHoverPreview] = useState(null);
   const ildaParserWorker = useThumbnailWorker();
   const requestedThumbnailsRef = useRef(new Set());
   const processingQueueRef = useRef([]);
@@ -164,6 +168,25 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
     }
   }, [ildaParserWorker, loadCachedThumbnail, processNextInQueue]);
 
+  // List view has no thumbnails until one is needed. Start the (cached-first)
+  // thumbnail load when the pointer enters a file, so the hover preview appears
+  // as soon as the background parse finishes instead of waiting for a click.
+  const requestHoverThumbnail = useCallback((filePath) => {
+    if (!filePath || requestedThumbnailsRef.current.has(filePath)) return;
+    loadThumbnailsForFiles([filePath]);
+  }, [loadThumbnailsForFiles]);
+
+  const showHoverPreview = useCallback((event, filePath, fileName, hasThumbnail) => {
+    if (!hasThumbnail) requestHoverThumbnail(filePath);
+    setHoverPreview({ filePath, fileName, x: event.clientX, y: event.clientY });
+  }, [requestHoverThumbnail]);
+
+  const moveHoverPreview = useCallback((event) => {
+    setHoverPreview(prev => (prev ? { ...prev, x: event.clientX, y: event.clientY } : prev));
+  }, []);
+
+  const hideHoverPreview = useCallback(() => setHoverPreview(null), []);
+
   useEffect(() => {
     if (viewMode === 'thumbnails' && ildFiles.length > 0) {
       loadThumbnailsForFiles(ildFiles);
@@ -233,7 +256,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
 
   return (
     <div className="file-browser">
-      <button onClick={handleOpenExplorer}>Open Folder</button>
+      <button onClick={handleOpenExplorer}>{t('fileBrowser.openFolder')}</button>
       <div className="list_switcher">
         <button className={viewMode === 'list' ? 'active' : ''} onClick={() => onViewModeChange && onViewModeChange('list')}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" fill="currentColor" className="bi bi-list" viewBox="0 0 16 16">
@@ -248,7 +271,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
         </button>
       </div>
       {selectedDirectory && <p className="fileBrowser">
-        Selected Directory: {selectedDirectory.split(/[/\\]/).filter(Boolean).pop()}
+        {t('fileBrowser.selectedDirectory')}: {selectedDirectory.split(/[/\\]/).filter(Boolean).pop()}
         </p>
       }
       <div className="ild-file-grid" style= {{display: viewMode === 'thumbnails' ? null : 'none'}}>
@@ -262,7 +285,13 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
                 key={filePath}
                 className="ild-file-preview"
                 draggable
-                onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ filePath, fileName }))}
+                onDragStart={(e) => {
+                  hideHoverPreview();
+                  e.dataTransfer.setData("application/json", JSON.stringify({ filePath, fileName }));
+                }}
+                onMouseEnter={(e) => showHoverPreview(e, filePath, fileName, !!data)}
+                onMouseMove={moveHoverPreview}
+                onMouseLeave={hideHoverPreview}
               >
                 <div className="file_thumbnail">
                     {data ? (
@@ -273,7 +302,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
                     ) : isLoading ? (
                         <div className="clip-loading-spinner"></div>
                     ) : (
-                        <div className="file-thumbnail-placeholder">No Preview</div>
+                        <div className="file-thumbnail-placeholder">{t('fileBrowser.noPreview')}</div>
                     )}
                 </div>
                 <div className="file_name">{fileName}</div>
@@ -281,7 +310,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
             );
           })
         ) : (
-          <p>No valid ILD files found in selected directory.</p>
+          <p>{t('fileBrowser.noFiles')}</p>
         )}
       </div>
       <div className="ild-file-list" style= {{display: viewMode === 'list' ? null : 'none'}}>
@@ -293,16 +322,77 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
                 key={filePath}
                 className="ild-file-item"
                 draggable
-                onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ filePath, fileName }))}
+                onDragStart={(e) => {
+                  hideHoverPreview();
+                  e.dataTransfer.setData("application/json", JSON.stringify({ filePath, fileName }));
+                }}
+                onMouseEnter={(e) => showHoverPreview(e, filePath, fileName, !!thumbnails[filePath])}
+                onMouseMove={moveHoverPreview}
+                onMouseLeave={hideHoverPreview}
               >
                 {fileName}
               </div>
             );
           })
         ) : (
-          <p>No valid ILD files found in selected directory.</p>
+          <p>{t('fileBrowser.noFiles')}</p>
         )}
       </div>
+      {hoverPreview && createPortal(
+        <FileHoverPreview
+          preview={hoverPreview}
+          data={thumbnails[hoverPreview.filePath]}
+          isLoading={loadingThumbnails.has(hoverPreview.filePath)}
+          noPreviewLabel={t('fileBrowser.noPreview')}
+        />,
+        document.body
+      )}
+    </div>
+  );
+};
+
+const PREVIEW_SIZE = 180;
+const PREVIEW_GAP = 16;
+const PREVIEW_MARGIN = 8;
+
+/**
+ * Floating preview shown while the pointer is over a file.
+ *
+ * It is rendered in a portal so the timeline drawer / bottom panel cannot clip
+ * it, and pointer-events are disabled so the preview can never steal the hover
+ * from the file underneath it.
+ */
+const FileHoverPreview = ({ preview, data, isLoading, noPreviewLabel }) => {
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1920;
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 1080;
+  const previewHeight = PREVIEW_SIZE + 34;
+  const left = Math.max(
+    PREVIEW_MARGIN,
+    Math.min(preview.x + PREVIEW_GAP, viewportWidth - PREVIEW_SIZE - PREVIEW_MARGIN * 2)
+  );
+  const top = Math.max(
+    PREVIEW_MARGIN,
+    Math.min(preview.y + PREVIEW_GAP, viewportHeight - previewHeight - PREVIEW_MARGIN)
+  );
+
+  return (
+    <div className="file-hover-preview" style={{ left, top, width: PREVIEW_SIZE }}>
+      <div className="file-hover-preview-image" style={{ height: PREVIEW_SIZE }}>
+        {data ? (
+          <StaticIldaThumbnail
+            bitmap={data instanceof ImageBitmap ? data : null}
+            frame={data instanceof ImageBitmap ? null : data}
+            width={PREVIEW_SIZE}
+            height={PREVIEW_SIZE}
+            style={{ width: `${PREVIEW_SIZE}px`, height: `${PREVIEW_SIZE}px`, borderRadius: '4px' }}
+          />
+        ) : isLoading ? (
+          <div className="clip-loading-spinner"></div>
+        ) : (
+          <div className="file-thumbnail-placeholder">{noPreviewLabel}</div>
+        )}
+      </div>
+      <div className="file-hover-preview-name" title={preview.fileName}>{preview.fileName}</div>
     </div>
   );
 };
