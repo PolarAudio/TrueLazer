@@ -10,6 +10,7 @@ export const DEFAULT_LOCALE = 'en';
 
 export const LOCALES = [
     { id: 'en', label: 'English' },
+    { id: 'zh', label: '简体中文' },
 ];
 
 export const TRANSLATIONS = {
@@ -28,5 +29,21 @@ export const TRANSLATIONS = {
         'settings.languageHelp': 'Choose the language used by the interface. Missing entries fall back to English.',
 
         'menu.userManual': 'User Manual',
+    },
+    zh: {
+        'app.name': 'TrueLazer',
+        'page.main': '演出控制',
+        'page.timeline': '时间轴编辑器',
+        'page.shapeBuilder': '图形编辑器',
+
+        'fileBrowser.openFolder': '打开文件夹',
+        'fileBrowser.selectedDirectory': '已选目录',
+        'fileBrowser.noPreview': '无预览',
+        'fileBrowser.noFiles': '所选目录中未找到有效的 ILD 文件。',
+
+        'settings.language': '语言',
+        'settings.languageHelp': '选择界面语言。缺少的翻译将回退到英语。',
+
+        'menu.userManual': '使用手册',
     },
 };
