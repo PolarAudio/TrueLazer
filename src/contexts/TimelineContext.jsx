@@ -376,6 +376,8 @@ function newCue(id, patch = {}) {
         // this clip's type" (ILDA blue / generator amber), which is how every
         // cue created before this field existed keeps its original look.
         color: patch.color ?? null,
+        // Muted clips are skipped during playback without being removed.
+        muted: !!patch.muted,
         layerPriority: patch.layerPriority ?? 0,
         effects: patch.effects || [],
         // Per-clip overrides for the channel's effect-lane toggle settings that
@@ -413,18 +415,19 @@ function newLane(id, patch = {}) {
     // param / legacy scalar and carries per-clip static settings (`values`).
     // Clips that predate the per-clip model inherit the lane's target fields.
     const { clips: rawClips, ...rest } = patch;
-    const clips = (Array.isArray(rawClips) ? rawClips : []).map((c) => ({
-        ...c,
-        startTime: c.startTime ?? 0,
-        duration: c.duration ?? 4,
-        keyframes: Array.isArray(c.keyframes) ? c.keyframes : [],
-        values: c.values || {},
-        effectId: c.effectId ?? laneTarget.effectId,
-        paramId: c.paramId ?? laneTarget.paramId,
-        genId: c.genId ?? laneTarget.genId,
-        genParamId: c.genParamId ?? laneTarget.genParamId,
-        targetProperty: c.targetProperty ?? laneTarget.targetProperty,
-    }));
+        const clips = (Array.isArray(rawClips) ? rawClips : []).map((c) => ({
+            ...c,
+            startTime: c.startTime ?? 0,
+            duration: c.duration ?? 4,
+            keyframes: Array.isArray(c.keyframes) ? c.keyframes : [],
+            values: c.values || {},
+            effectId: c.effectId ?? laneTarget.effectId,
+            paramId: c.paramId ?? laneTarget.paramId,
+            genId: c.genId ?? laneTarget.genId,
+            genParamId: c.genParamId ?? laneTarget.genParamId,
+            targetProperty: c.targetProperty ?? laneTarget.targetProperty,
+            muted: !!c.muted,
+        }));
     return {
         id,
         channelId: patch.channelId || null,
@@ -1168,7 +1171,7 @@ export function reducer(state, action) {
             const lane = state.lanes[action.payload.laneId];
             if (!lane) return state;
             const id = action.payload.clip?.id || generateId('acp');
-            const clip = { id, startTime: 0, duration: 4, keyframes: [], values: {}, ...action.payload.clip };
+            const clip = { id, startTime: 0, duration: 4, keyframes: [], values: {}, muted: false, ...action.payload.clip };
             const clips = [...(Array.isArray(lane.clips) ? lane.clips : []), clip];
             return {
                 ...state,

@@ -210,10 +210,14 @@ export const effectDefinitions = [
     defaultParams: {
       blankingInterval: 0,
       spacing: 0,
+      // Where the blank sits inside each segment: 0 = segment start,
+      // 1 = segment end (the historical behaviour).
+      position: 1,
     },
     paramControls: [
       { id: 'blankingInterval', label: 'Blanking Interval', type: 'range', min: 0, max: 20, step: 1 },
       { id: 'spacing', label: 'Spacing', type: 'range', min: 0, max: 50, step: 1 },
+      { id: 'position', label: 'Position', type: 'range', min: 0, max: 1, step: 0.01 },
     ],
   },
   {

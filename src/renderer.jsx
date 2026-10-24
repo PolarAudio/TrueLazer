@@ -7,15 +7,18 @@ import { SharedWorkerProvider } from './contexts/WorkerContext.jsx';
 import { IldaParserWorkerProvider } from './contexts/IldaParserWorkerContext.jsx';
 import { GeneratorWorkerProvider } from './contexts/GeneratorWorkerContext.jsx'; // Import GeneratorWorkerProvider
 import { AudioProvider } from './contexts/AudioContext.jsx';
+import { LanguageProvider } from './i18n/index.jsx';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-    <SharedWorkerProvider>
-      <IldaParserWorkerProvider>
-        <GeneratorWorkerProvider> {/* Wrap App with GeneratorWorkerProvider */}
-          <AudioProvider>
-            <App />
-          </AudioProvider>
-        </GeneratorWorkerProvider>
-      </IldaParserWorkerProvider>
-    </SharedWorkerProvider>
+    <LanguageProvider>
+      <SharedWorkerProvider>
+        <IldaParserWorkerProvider>
+          <GeneratorWorkerProvider> {/* Wrap App with GeneratorWorkerProvider */}
+            <AudioProvider>
+              <App />
+            </AudioProvider>
+          </GeneratorWorkerProvider>
+        </IldaParserWorkerProvider>
+      </SharedWorkerProvider>
+    </LanguageProvider>
 );

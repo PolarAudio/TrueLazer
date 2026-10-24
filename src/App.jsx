@@ -39,6 +39,7 @@ import {
     unsavedWorkPrompt,
 } from './utils/projectDirty';
 import AboutWindow from './components/aboutWindow';
+import UserManual from './components/UserManual';
 import ReportWindow from './components/ReportWindow';
 import UpdateWindow from './components/UpdateWindow';
 import { useIldaParserWorker } from './contexts/IldaParserWorkerContext';
@@ -2291,6 +2292,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         setCurrentPage(page);
     }, []);
     const [showAboutWindow, setShowAboutWindow] = useState(false);
+    const [showUserManual, setShowUserManual] = useState(false);
     // The auto-updater's state, pushed from the main process: { phase, version,
     // percent, error }. Null means there is nothing to show.
     const [updateState, setUpdateState] = useState(null);
@@ -4898,6 +4900,11 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             }
 
             decision.run();
+            // The page reset its own document; let main drop the old path so
+            // the window title no longer names a file that was just discarded.
+            if (command === 'new') {
+                window.electronAPI?.notifyNewProject?.(currentPageRef.current);
+            }
             return true;
         };
 
@@ -4912,6 +4919,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             if (command === 'new') {
                 dispatch({ type: 'RESET_STATE' });
                 markShowProjectClean();
+                window.electronAPI?.notifyNewProject?.('main');
             } else if (command === 'save') {
                 saveShowProject(false);
             } else if (command === 'saveAs') {
@@ -4956,6 +4964,49 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         // stray .tlp.
         const onKeyDown = (e) => {
             if (e.defaultPrevented) return;
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+            const key = e.key === 'h' || e.key === 'H';
+            if (key) {
+                const st = timelineBridge.stateRef?.current;
+                const actions = timelineBridge.actionsRef?.current;
+                if (!st || !actions) return;
+                const sel = Array.isArray(st.settings?.selectedCueIds) ? st.settings.selectedCueIds : [];
+                if (sel.length > 0) {
+                    let changed = false;
+                    for (const id of sel) {
+                        const c = st.cues[id];
+                        if (c) {
+                            actions.updateCue(id, { muted: !c.muted });
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
+                }
+                const aSel = Array.isArray(st.settings?.selectedAutoClipIds) ? st.settings.selectedAutoClipIds : [];
+                if (aSel.length > 0) {
+                    let changed = false;
+                    for (const sc of aSel) {
+                        if (sc && sc.laneId && sc.clipId) {
+                            const lane = st.lanes[sc.laneId];
+                            const clip = lane && Array.isArray(lane.clips) ? lane.clips.find(x => x.id === sc.clipId) : null;
+                            if (clip) {
+                                actions.updateAutoClip(sc.laneId, sc.clipId, { muted: !clip.muted });
+                                changed = true;
+                            }
+                        }
+                    }
+                    if (changed) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
+                }
+                return;
+            }
             const command = commandForKeyEvent(e);
             if (!command) return;
             // These combinations never produce a character, so acting on them
@@ -5032,6 +5083,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     dispatch({ type: 'SET_WORLD_OUTPUT_ACTIVE', payload: false });
                 } else if (action === 'about') {
                     setShowAboutWindow(true);
+                } else if (action === 'user-manual') {
+                    setShowUserManual(true);
                 } else if (action === 'report-bug') {
                     setReportWindowMode('bug');
                 } else if (action === 'request-feature') {
@@ -7966,6 +8019,10 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     <AboutWindow
                         show={showAboutWindow}
                         onClose={() => setShowAboutWindow(false)}
+                    />
+                    <UserManual
+                        show={showUserManual}
+                        onClose={() => setShowUserManual(false)}
                     />
                     <ReportWindow
                         show={reportWindowMode !== null}

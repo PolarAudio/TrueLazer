@@ -769,6 +769,57 @@ describe('applyBlanking', () => {
     // 3 segments * 2 blanked points = 6 blanked points
     expect(blankedCount).toBe(6);
   });
+
+  it('position slides the blank window along each segment', () => {
+    const numPoints = 100;
+    const collectBlanked = (buf) => {
+      const out = [];
+      for (let i = 0; i < numPoints; i++) {
+        if (buf[i * 8 + 6] === 1) out.push(i);
+      }
+      return out;
+    };
+
+    const startBuf = createPointBuffer(numPoints);
+    applyBlanking(startBuf, numPoints, { blankingInterval: 4, spacing: 0, position: 0 });
+    expect(collectBlanked(startBuf)).toEqual([0, 25, 50, 75]);
+
+    const middleBuf = createPointBuffer(numPoints);
+    applyBlanking(middleBuf, numPoints, { blankingInterval: 4, spacing: 0, position: 0.5 });
+    expect(collectBlanked(middleBuf)).toEqual([12, 37, 62, 87]);
+  });
+
+  it('defaults missing or invalid position to the end of each segment', () => {
+    const numPoints = 100;
+    const collectBlanked = (buf) => {
+      const out = [];
+      for (let i = 0; i < numPoints; i++) {
+        if (buf[i * 8 + 6] === 1) out.push(i);
+      }
+      return out;
+    };
+
+    const missing = createPointBuffer(numPoints);
+    applyBlanking(missing, numPoints, { blankingInterval: 4, spacing: 0 });
+    expect(collectBlanked(missing)).toEqual([24, 49, 74, 99]);
+
+    const outOfRange = createPointBuffer(numPoints);
+    applyBlanking(outOfRange, numPoints, { blankingInterval: 4, spacing: 0, position: 99 });
+    expect(collectBlanked(outOfRange)).toEqual([24, 49, 74, 99]);
+  });
+
+  it('keeps wide blanking windows inside their segment when moved', () => {
+    const numPoints = 100;
+    const buf = createPointBuffer(numPoints);
+    applyBlanking(buf, numPoints, { blankingInterval: 4, spacing: 4, position: 0 });
+
+    const blanked = [];
+    for (let i = 0; i < numPoints; i++) {
+      if (buf[i * 8 + 6] === 1) blanked.push(i);
+    }
+    // 5-point windows start at each segment start and never cross the boundary.
+    expect(blanked).toEqual([0, 1, 2, 3, 4, 25, 26, 27, 28, 29, 50, 51, 52, 53, 54, 75, 76, 77, 78, 79]);
+  });
 });
 
 describe('applyColor', () => {

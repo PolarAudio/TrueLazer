@@ -1,6 +1,8 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 
 const GeneralSettingsWindow = ({ show, onClose, masterSpeed }) => {
+  const { t, locale, setLocale, locales } = useTranslation();
   if (!show) return null;
 
   return (
@@ -13,6 +15,26 @@ const GeneralSettingsWindow = ({ show, onClose, masterSpeed }) => {
           </div>
           <div className="modal-body">
             <div className="general-settings-section">
+              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('settings.language')}</h4>
+              <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <label className="param-label" style={{ fontSize: '11px' }}>{t('settings.language')}</label>
+                <select
+                  className="param-select"
+                  value={locale}
+                  style={{ width: '180px', fontSize: '11px' }}
+                  onChange={(event) => setLocale(event.target.value)}
+                >
+                  {locales.map((entry) => (
+                    <option key={entry.id} value={entry.id}>{entry.label}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
+                {t('settings.languageHelp')}
+              </p>
+            </div>
+
+            <div className="general-settings-section" style={{ marginTop: '16px' }}>
               <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>ILDA Parsing</h4>
               <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                 <label className="param-label" style={{ fontSize: '11px' }}>Parse Mode</label>

@@ -8,10 +8,34 @@ import {
     describeOutputKey,
 } from '../utils/dacOutputSettingsFile';
 
+export const DEFAULT_OUTPUT_SETTINGS = Object.freeze({
+  name: '',
+  safetyZones: [],
+  zoneOutlineEnabled: false,
+  outputArea: Object.freeze({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 }),
+  transformationEnabled: false,
+  transformationMode: 'crop',
+  testLineEnabled: false,
+  testLineY: 0.5,
+  verticalTestLineEnabled: false,
+  testLineX: 0.5,
+  testLineLagComp: 0,
+  testLineLagCompStart: 0,
+  testLineLagCompEnd: 0,
+  testLineShiftX: 0,
+  testLineShiftY: 0,
+  flipX: false,
+  flipY: false,
+  targetMode: TARGET_MODES.VAR_FPS_FIXED_PPS,
+  ppsPreset: DEFAULT_PRESET,
+  ppsOverride: 0,
+  targetFps: 0
+});
+
 // Canvas component for the safety zones and output area interaction
 const OutputCanvas = ({ 
-  safetyZones, 
-  outputArea, 
+  safetyZones = [], 
+  outputArea = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 }, 
   testLineY, 
   testLineX = 0.5,
   testLineEnabled,
@@ -185,7 +209,8 @@ const OutputCanvas = ({
     }
 
     // Draw Safety Zones ON TOP
-    safetyZones.forEach((zone, index) => {
+    const zones = Array.isArray(safetyZones) ? safetyZones : [];
+    zones.forEach((zone, index) => {
       drawRect(ctx, {
         x: zone.x * width,
         y: zone.y * height,
@@ -232,8 +257,8 @@ const OutputCanvas = ({
           const endPx = endX * width;
           let segments = [[startPx, endPx]];
 
-          if (safetyZones && safetyZones.length > 0) {
-              safetyZones.forEach(zone => {
+          if (zones && zones.length > 0) {
+              zones.forEach(zone => {
                   const zY = zone.y * height;
                   const zH = zone.h * height;
                   const zX = zone.x * width;
@@ -304,8 +329,8 @@ const OutputCanvas = ({
           const endPx = endY * height;
           let segments = [[startPx, endPx]];
 
-          if (safetyZones && safetyZones.length > 0) {
-              safetyZones.forEach(zone => {
+          if (zones && zones.length > 0) {
+              zones.forEach(zone => {
                   const zY = zone.y * height;
                   const zH = zone.h * height;
                   const zX = zone.x * width;
@@ -410,9 +435,11 @@ const OutputCanvas = ({
   const handleMouseDown = (e) => {
     const { x, y } = getMousePos(e);
     
+    const zones = Array.isArray(safetyZones) ? safetyZones : [];
+
     // 1. PRIORITY: Check Safety Zones Handles (Selected first)
-    if (selectedZoneIndex !== null && safetyZones[selectedZoneIndex]) {
-        const zone = safetyZones[selectedZoneIndex];
+    if (selectedZoneIndex !== null && zones[selectedZoneIndex]) {
+        const zone = zones[selectedZoneIndex];
         const handle = isOverHandle(x, y, zone);
         if (handle) {
             setDragging({ type: 'zone', index: selectedZoneIndex, handle, startX: x, startY: y, originalRect: { ...zone } });
@@ -421,8 +448,8 @@ const OutputCanvas = ({
     }
 
     // 2. PRIORITY: Check Safety Zones Body (Select/Move)
-    for (let i = safetyZones.length - 1; i >= 0; i--) {
-        const zone = safetyZones[i];
+    for (let i = zones.length - 1; i >= 0; i--) {
+        const zone = zones[i];
         if (zone && isInside(x, y, zone)) {
             onSelectZone(i);
             const handle = isOverHandle(x, y, zone); 
@@ -528,8 +555,8 @@ const OutputCanvas = ({
   );
 };
 
-const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUpdateDacSettings, sentFramesRef }) => {
-  const [selectedOutputId, setSelectedOutputId] = useState(null);
+const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUpdateDacSettings, sentFramesRef, initialOutputId = null }) => {
+  const [selectedOutputId, setSelectedOutputId] = useState(initialOutputId);
   const [selectedZoneIndex, setSelectedZoneIndex] = useState(null);
   const [gridSize, setGridSize] = useState(20);
   const [snapToGrid, setSnapToGrid] = useState(false);
@@ -558,13 +585,15 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   // Flatten DACs to Outputs (Channels)
   const outputs = useMemo(() => {
     const list = [];
-    dacs.forEach(dac => {
+    (dacs || []).forEach(dac => {
+      if (!dac) return;
       // If the DAC has a 'channels' property (from getDacServices), use it.
       // Otherwise, treat it as a single-channel device (Channel 0).
-      if (dac.channels && dac.channels.length > 0) {
+      if (Array.isArray(dac.channels) && dac.channels.length > 0) {
         dac.channels.forEach(ch => {
+           if (!ch) return;
            const id = `${dac.ip}:${ch.serviceID}`;
-           const custom = dacSettings[id]?.name;
+           const custom = dacSettings && dacSettings[id]?.name;
            list.push({
              id,
              displayName: custom || `${dac.hostName || dac.unitID || 'DAC'} : ${ch.name || `CH ${ch.serviceID}`}`,
@@ -574,9 +603,11 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
            });
         });
       } else {
+         const id = `${dac.ip}:0`;
+         const custom = dacSettings && dacSettings[id]?.name;
          list.push({
-             id: `${dac.ip}:0`,
-             displayName: dac.hostName || dac.unitID || `DAC ${dac.ip}`,
+             id,
+             displayName: custom || dac.hostName || dac.unitID || `DAC ${dac.ip}`,
              ip: dac.ip,
              channel: 0,
              dacName: dac.hostName || dac.unitID
@@ -594,44 +625,38 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
 
   if (!show) return null;
 
-  // Get current settings or default
-  const currentSettings = dacSettings[selectedOutputId] || {
-      safetyZones: [],
-      zoneOutlineEnabled: false,
-      outputArea: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
-      transformationEnabled: false,
-      transformationMode: 'crop',
-      testLineEnabled: false,
-      testLineY: 0.5,
-      verticalTestLineEnabled: false,
-      testLineX: 0.5,
-      testLineLagComp: 0,
-      testLineLagCompStart: 0,
-      testLineLagCompEnd: 0,
-      testLineShiftX: 0,
-      testLineShiftY: 0,
-      flipX: false,
-      flipY: false,
-      targetMode: TARGET_MODES.VAR_FPS_FIXED_PPS,
-      ppsPreset: DEFAULT_PRESET,
-      ppsOverride: 0,
-      targetFps: 0
+  // Get current settings merged over defaults, guaranteeing safetyZones is always an Array
+  // even if the stored settings for this channel are partial or missing fields.
+  const rawSettings = (selectedOutputId && dacSettings) ? dacSettings[selectedOutputId] : null;
+  const currentSettings = {
+      ...DEFAULT_OUTPUT_SETTINGS,
+      ...(rawSettings || {}),
+      safetyZones: Array.isArray(rawSettings?.safetyZones)
+          ? rawSettings.safetyZones
+          : [],
+      outputArea: (rawSettings?.outputArea && typeof rawSettings.outputArea === 'object')
+          ? { ...DEFAULT_OUTPUT_SETTINGS.outputArea, ...rawSettings.outputArea }
+          : { ...DEFAULT_OUTPUT_SETTINGS.outputArea }
   };
 
   const updateCurrentSettings = (updates) => {
       if (!selectedOutputId) return;
-      onUpdateDacSettings(selectedOutputId, { ...currentSettings, ...updates });
+      if (onUpdateDacSettings) {
+          onUpdateDacSettings(selectedOutputId, { ...currentSettings, ...updates });
+      }
   };
 
   const handleAddZone = () => {
       const newZone = { x: 0.4, y: 0.4, w: 0.2, h: 0.2 };
-      updateCurrentSettings({ safetyZones: [...currentSettings.safetyZones, newZone] });
-      setSelectedZoneIndex(currentSettings.safetyZones.length);
+      const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
+      updateCurrentSettings({ safetyZones: [...currentZones, newZone] });
+      setSelectedZoneIndex(currentZones.length);
   };
 
   const handleRemoveZone = () => {
       if (selectedZoneIndex === null) return;
-      const newZones = currentSettings.safetyZones.filter((_, i) => i !== selectedZoneIndex);
+      const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
+      const newZones = currentZones.filter((_, i) => i !== selectedZoneIndex);
       updateCurrentSettings({ safetyZones: newZones });
       setSelectedZoneIndex(null);
   };
@@ -642,7 +667,8 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   };
 
   const handleUpdateZone = (index, rect) => {
-      const newZones = [...currentSettings.safetyZones];
+      const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
+      const newZones = [...currentZones];
       newZones[index] = rect;
       updateCurrentSettings({ safetyZones: newZones });
   };
@@ -752,11 +778,14 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 <h4>Available Outputs</h4>
                 <ul className="dac-list">
                     {outputs.length === 0 ? <li style={{color:'#666', fontStyle:'italic'}}>No Outputs detected</li> : null}
-                    {outputs.map((out, i) => (
+                    {outputs.map((out) => (
                         <li 
                             key={out.id} 
                             className={`dac-list-item ${selectedOutputId === out.id ? 'selected' : ''}`}
-                            onClick={() => setSelectedOutputId(out.id)}
+                            onClick={() => {
+                                setSelectedOutputId(out.id);
+                                setSelectedZoneIndex(null);
+                            }}
                         >
                             <span style={{fontWeight:'bold', fontSize:'0.9em'}}>{out.displayName}</span>
                             <span style={{fontSize:'0.7em', color:'#888'}}>{out.ip}</span>
@@ -951,10 +980,16 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                             <button className="small-btn clear" onClick={handleClearZones}>Clear All</button>
                         </div>
                         <div className="zone-list">
-                            {currentSettings.safetyZones.map((z, i) => (
+                            {(currentSettings.safetyZones || []).map((z, i) => (
                                 <div key={i} className={`zone-item ${selectedZoneIndex === i ? 'selected' : ''}`} onClick={() => setSelectedZoneIndex(i)}>
                                     <span>Zone {i + 1}</span>
-                                    <button className="delete-zone-btn" onClick={(e) => { e.stopPropagation(); if(selectedZoneIndex === i) setSelectedZoneIndex(null); const nz = currentSettings.safetyZones.filter((_, idx) => idx !== i); updateCurrentSettings({ safetyZones: nz }); }}>×</button>
+                                    <button className="delete-zone-btn" onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (selectedZoneIndex === i) setSelectedZoneIndex(null);
+                                        const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
+                                        const nz = currentZones.filter((_, idx) => idx !== i);
+                                        updateCurrentSettings({ safetyZones: nz });
+                                    }}>×</button>
                                 </div>
                             ))}
                         </div>

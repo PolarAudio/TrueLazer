@@ -88,6 +88,7 @@ export function activeAutoClip(lane, time) {
     const clips = lane?.clips;
     if (!clips || clips.length === 0) return null;
     for (const c of clips) {
+        if (c.muted) continue;
         if (time >= c.startTime - 1e-6 && time < c.startTime + c.duration) return c;
     }
     return null;

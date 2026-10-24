@@ -10,31 +10,50 @@ const IDNCMD_SCAN_RESPONSE = 0x11;
 const IDNCMD_SERVICEMAP_REQUEST = 0x12;
 const IDNCMD_SERVICEMAP_RESPONSE = 0x13;
 const IDNCMD_RT_CNLMSG = 0x40;
+const IDNCMD_RT_CNLMSG_CLOSE = 0x44;
 
 const IDNVAL_CNKTYPE_LPGRF_FRAME = 0x02;
 const IDNVAL_SMOD_LPGRF_DISCRETE = 0x02;
 
 let dataSocket = null;
 let generalSequence = 0;
-// Per-channel realtime sequence counters.
+// Use a per-session client group so a fresh app session never reuses a
+// still-open receiver connection and its stale nextSequence.
+const sessionClientGroup = Math.floor(Math.random() * 16);
+const clientGroupFlags = sessionClientGroup & 0x0F;
+// Realtime sequence counters, one per destination link.
 //
-// These were a single shared counter, so with N channels interleaved on the wire
-// every channel observed its own sequence advance by N per packet. A receiver
-// validating a per-channel stream sees that as a discontinuity, which the IDN
-// Toolbox reports as "Sequence Type 1 Error - Last Seq: x, Current: y" — and with
-// more than one channel active, as one such warning per channel. A counter per
-// channel makes each channel's stream contiguous, which is what the field means.
+// The sequence lives in the IDN-RT *packet* header (command/flags/sequence) and
+// is validated by the receiver per connection/link: every datagram that arrives
+// from this sender must advance the same counter by exactly 1. It is NOT a
+// per-channel value. Keying the counter by channel made N interleaved channels
+// all restart at the same number, which a strict receiver reports as a constant
+// stream of symmetric "out of sequence (N lost)" / "(N early)" errors.
 const rtSequences = new Map();
-const nextRtSequence = (channel) => {
-    const next = ((rtSequences.get(channel) || 0) + 1) & 0xFFFF;
-    rtSequences.set(channel, next);
+const nextRtSequence = (ip) => {
+    const next = ((rtSequences.get(ip) || 0) + 1) & 0xFFFF;
+    rtSequences.set(ip, next);
     return next;
+};
+// Channel configuration headers may be sent on every message, but the spec
+// recommends repeating them roughly every 200-250 ms for loss/recovery. Sending
+// config+routing on every frame can make a player tear down and re-open the
+// graphic output for each frame (visible as an Open/Closed cycle in its log).
+const IDN_CONFIG_INTERVAL_US = 250000;
+const configSentAt = new Map();
+const nowMicroseconds = () => Number((process.hrtime.bigint() / 1000n) & 0xFFFFFFFFn);
+const shouldSendConfig = (key, nowUS) => {
+    const last = configSentAt.get(key);
+    if (last === undefined) return true;
+    // Unsigned subtraction keeps this correct across the 32-bit wrap.
+    return ((nowUS - last) >>> 0) >= IDN_CONFIG_INTERVAL_US;
 };
 let isScanning = false;
 
 function getSocket() {
     if (dataSocket) return dataSocket;
     dataSocket = dgram.createSocket('udp4');
+    try { dataSocket.setSendBufferSize(1024 * 1024); } catch (e) {}
     dataSocket.on('error', (err) => {
         console.error('IDN data socket error:', err);
         closeAll();
@@ -47,6 +66,13 @@ function closeAll() {
         try { dataSocket.close(); } catch (e) {}
         dataSocket = null;
     }
+    // Re-open every channel's configuration after the link is recreated.
+    configSentAt.clear();
+    // The socket is gone: the next send goes out on a fresh socket/link, so
+    // restart the per-link sequence counter. Keeping a stale counter would make
+    // the first packet on the new link look like a sequence jump to a strict
+    // receiver.
+    rtSequences.clear();
 }
 
 // Loopback is offered because helper software running on this same machine may
@@ -122,7 +148,7 @@ function discoverDacs(timeout = 2000, networkInterfaceIp) {
         if (scanInterfaceIsLoopback) return;
         const packet = Buffer.alloc(4);
         packet.writeUInt8(IDNCMD_SCAN_REQUEST, 0);
-        packet.writeUInt8(0, 1);
+        packet.writeUInt8(clientGroupFlags, 1);
         packet.writeUInt16BE(generalSequence++, 2);
         // No error callback on purpose: discoverySocket has an 'error' handler
         // above, and a broadcast this socket cannot make is not exceptional.
@@ -186,8 +212,27 @@ function parseScanResponse(msg, rinfo) {
   }
 }
 
+// Gracefully close the IDN link for this destination.
+//
+// This used to send a zero-point frame on channel 0, which does NOT close the
+// link: if its (default-service) routing was due, the receiver instead tried to
+// open a second inlet on a service that was already in use ("Failed to request
+// inlet, serviceMode=2"), and the real channel was only torn down by the ~10 s
+// link inactivity timeout. A bare 0x44 control packet closes the connection and
+// flushes/closes all of its channels right away.
 function sendCloseChannel(ip) {
-    sendFrame(ip, 0, new Float32Array(0), 30);
+    if (!dataSocket) return; // nothing was ever sent on this link
+    const packet = Buffer.alloc(4);
+    packet.writeUInt8(IDNCMD_RT_CNLMSG_CLOSE, 0);
+    packet.writeUInt8(clientGroupFlags, 1);
+    packet.writeUInt16BE(nextRtSequence(ip), 2);
+    dataSocket.send(packet, 0, packet.length, IDN_HELLO_UDP_PORT, ip, (err) => { if (err) console.error('IDN send error:', err); });
+    // The next session on this link is a fresh connection: drop the cached
+    // config so its first frame carries routing/config again.
+    const prefix = `${ip}:`;
+    for (const key of configSentAt.keys()) {
+        if (key.startsWith(prefix)) configSentAt.delete(key);
+    }
 }
 
 // IDN's equivalent of the Showbridge continuous idle stream.
@@ -199,12 +244,15 @@ function sendCloseChannel(ip) {
 // on until the player's own idle timeout — a few seconds of light after the app had
 // already stopped asking for output.
 //
-// A single blanked point is a complete, valid IDN frame that reads as "off" (the
-// encoder writes r=g=b=0 and the blank byte as 0 for a blanking point), and sending
-// one every tick keeps the stream alive exactly like the Showbridge path does.
+// A discrete frame sample array must either be empty or contain at least two
+// samples (start + end). A single-sample frame is invalid and strict players
+// reject it — the previous real frame then keeps repeating, leaving the beam on.
+// Two blanked points are a valid frame that reads as fully off, and sending one
+// every tick keeps the stream alive exactly like the Showbridge path does.
 function sendIdleFrame(ip, channel, options) {
-    const blank = new Float32Array(8);
-    blank[6] = 1; // blanking
+    const blank = new Float32Array(16); // two points
+    blank[6] = 1;  // point 0: blanking
+    blank[14] = 1; // point 1: blanking
     const fps = (options && options.fps > 0) ? options.fps : 30;
     return sendFrame(ip, channel, blank, fps);
 }
@@ -241,26 +289,48 @@ function sendFrame(ip, channel, points, fps) {
     const frameChunkHeaderSize = 4;
     const headerSize = 4;
     const channelMessageHeaderSize = 8;
-    const totalSize = headerSize + channelMessageHeaderSize + channelConfigSize + frameChunkHeaderSize + frameDataSize;
+    const timestampUS = nowMicroseconds();
+    const configKey = `${ip}:${channel}`;
+    const includeConfig = shouldSendConfig(configKey, timestampUS);
+    if (includeConfig) configSentAt.set(configKey, timestampUS);
+    const configSize = includeConfig ? channelConfigSize : 0;
+
+    const totalSize = headerSize + channelMessageHeaderSize + configSize + frameChunkHeaderSize + frameDataSize;
     const packet = Buffer.alloc(totalSize);
     let offset = 0;
     packet.writeUInt8(IDNCMD_RT_CNLMSG, offset++);
-    packet.writeUInt8(0, offset++);
-    packet.writeUInt16BE(nextRtSequence(channel), offset);
+    packet.writeUInt8(clientGroupFlags, offset++);
+    packet.writeUInt16BE(nextRtSequence(ip), offset);
     offset += 2;
-    packet.writeUInt16LE(channelMessageHeaderSize + channelConfigSize + frameChunkHeaderSize + frameDataSize, offset);
+    // Total size is the IDN message length only: it excludes the 4-byte packet
+    // header (command/flags/sequence) and is big-endian, so it must equal
+    // packet.length - headerSize. Strict players reject a mismatch.
+    packet.writeUInt16BE(channelMessageHeaderSize + configSize + frameChunkHeaderSize + frameDataSize, offset);
     offset += 2;
-    const contentID = 0x8000 | 0x4000 | (0 << 8) | (IDNVAL_CNKTYPE_LPGRF_FRAME & 0xFF);
+    // The channel ID (contentID bits 8-13) identifies the logical IDN channel,
+    // while the config header's Service ID selects the device's service. These
+    // are different things: hard-coding the channel ID to 0 made every service
+    // share one IDN channel, so a multi-output device re-routed it on every
+    // packet and continuously closed/re-opened its graphic output.
+    const contentID = 0x8000
+        | (includeConfig ? 0x4000 : 0)
+        | ((channel & 0x3F) << 8)
+        | (IDNVAL_CNKTYPE_LPGRF_FRAME & 0xFF);
     packet.writeUInt16BE(contentID, offset);
     offset += 2;
-    packet.writeUInt32LE(Number(process.hrtime.bigint() & BigInt(0xFFFFFFFF)), offset);
+    // Timestamp is microseconds and big-endian per the IDN stream spec. It was
+    // nanoseconds little-endian, which a strict player sees as random jumps and
+    // may answer by flushing its frame buffer each packet.
+    packet.writeUInt32BE(timestampUS, offset);
     offset += 4;
-    packet.writeUInt8(dictWordCount, offset++);
-    packet.writeUInt8(0x01, offset++);
-    packet.writeUInt8(channel, offset++);
-    packet.writeUInt8(IDNVAL_SMOD_LPGRF_DISCRETE, offset++);
-    dictionary.copy(packet, offset);
-    offset += dictionary.length;
+    if (includeConfig) {
+        packet.writeUInt8(dictWordCount, offset++);
+        packet.writeUInt8(0x01, offset++); // routing
+        packet.writeUInt8(channel, offset++); // Service ID
+        packet.writeUInt8(IDNVAL_SMOD_LPGRF_DISCRETE, offset++);
+        dictionary.copy(packet, offset);
+        offset += dictionary.length;
+    }
     const duration = Math.round(1000000 / (fps || 30));
     packet.writeUInt32BE(duration & 0x00FFFFFF, offset);
     offset += 4;
@@ -289,7 +359,7 @@ function sendFrame(ip, channel, points, fps) {
         packet.writeUInt8(blanking ? 0 : 255, offset++);
     }
     const socket = getSocket();
-    socket.send(packet, 0, packet.length, IDN_HELLO_UDP_PORT, ip);
+    socket.send(packet, 0, packet.length, IDN_HELLO_UDP_PORT, ip, (err) => { if (err) console.error('IDN send error:', err); });
 }
 
 function getDacServices(ip, localIp, timeout = 1000) {
@@ -309,7 +379,7 @@ function getDacServices(ip, localIp, timeout = 1000) {
     serviceSocket.bind(bindOptions, () => {
       const packet = Buffer.alloc(4);
       packet.writeUInt8(IDNCMD_SERVICEMAP_REQUEST, 0);
-      packet.writeUInt8(0, 1);
+      packet.writeUInt8(clientGroupFlags, 1);
       packet.writeUInt16BE(generalSequence++, 2);
       serviceSocket.send(packet, 0, packet.length, IDN_HELLO_UDP_PORT, ip);
     });

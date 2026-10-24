@@ -159,6 +159,9 @@ contextBridge.exposeInMainWorld(
   // The active page drives the application menu: entries that only apply to one
   // page are stripped, and Open/Save/New target that page's project file.
   setCurrentPage: (page) => ipcRenderer.send('ui-current-page', page),
+  // New Project runs in the renderer because each page owns its own document.
+  // Notify main so the window title stops naming the file that was discarded.
+  notifyNewProject: (page) => ipcRenderer.send('ui-new-project', page),
   // Read-only facts for the About window. Sourced in main so the renderer does
   // not have to reach into process/electron internals.
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),

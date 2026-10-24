@@ -11,6 +11,7 @@ import dgram from 'dgram';
 import { redactPrivateInfo } from './src/utils/redact.js';
 import { isAllowedExternalUrl } from './src/utils/externalUrl.js';
 import { shouldAutoCheck, shouldOfferVersion } from './src/utils/updatePolicy.js';
+import { buildWindowTitle } from './src/utils/windowTitle.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { decodeProlinkPacket } = require('./src/utils/prodjBeats.js');
@@ -711,12 +712,29 @@ let currentAppPage = 'main';
 const APP_PAGES = ['main', 'timeline', 'shapeBuilder'];
 
 function setAppPage(page) {
-  if (!APP_PAGES.includes(page) || page === currentAppPage) return;
-  currentAppPage = page;
-  buildApplicationMenu(currentThumbnailRenderMode);
+  if (!APP_PAGES.includes(page)) return;
+  if (page !== currentAppPage) {
+    currentAppPage = page;
+    buildApplicationMenu(currentThumbnailRenderMode);
+  }
+  // Also runs on the initial 'main' report, which replaces the document title
+  // from index.html with the page-aware project title.
+  updateWindowTitle();
 }
 
 ipcMain.on('ui-current-page', (_event, page) => setAppPage(page));
+
+// Starting a new document on a page has to clear that page's remembered path.
+// The renderer owns the New command (it runs on the active page), so it tells
+// main when the document was reset rather than letting the title keep pointing
+// at the file that was just discarded.
+ipcMain.on('ui-new-project', (_event, page) => {
+  const target = APP_PAGES.includes(page) ? page : currentAppPage;
+  if (target === 'main') currentProjectpath = null;
+  else if (target === 'timeline') currentTimelineProjectPath = null;
+  else if (target === 'shapeBuilder') currentShapeProjectPath = null;
+  updateWindowTitle();
+});
 
 // Timeline project files (Ctrl+S / Ctrl+O in the Timeline window).
 //
@@ -733,6 +751,7 @@ ipcMain.handle('save-timeline-project', async (event, projectData, defaultName =
   if (!forceDialog && currentTimelineProjectPath) {
     try {
       await fs.promises.writeFile(currentTimelineProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+      updateWindowTitle();
       return { success: true, filePath: currentTimelineProjectPath };
     } catch (error) { return { success: false, error: error.message }; }
   }
@@ -748,6 +767,7 @@ ipcMain.handle('save-timeline-project', async (event, projectData, defaultName =
   try {
     await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
     currentTimelineProjectPath = filePath;
+    updateWindowTitle();
     return { success: true, filePath };
   } catch (error) { return { success: false, error: error.message }; }
 });
@@ -763,6 +783,7 @@ ipcMain.handle('open-timeline-project', async (event) => {
   try {
     const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
     currentTimelineProjectPath = filePaths[0];
+    updateWindowTitle();
     return data;
   } catch (error) {
     return null;
@@ -782,6 +803,7 @@ ipcMain.handle('save-shape-project', async (event, projectData, defaultName = nu
   if (!forceDialog && currentShapeProjectPath) {
     try {
       await fs.promises.writeFile(currentShapeProjectPath, JSON.stringify(projectData, null, 2), 'utf8');
+      updateWindowTitle();
       return { success: true, filePath: currentShapeProjectPath };
     } catch (error) { return { success: false, error: error.message }; }
   }
@@ -797,6 +819,7 @@ ipcMain.handle('save-shape-project', async (event, projectData, defaultName = nu
   try {
     await fs.promises.writeFile(filePath, JSON.stringify(projectData, null, 2), 'utf8');
     currentShapeProjectPath = filePath;
+    updateWindowTitle();
     return { success: true, filePath };
   } catch (error) { return { success: false, error: error.message }; }
 });
@@ -812,6 +835,7 @@ ipcMain.handle('open-shape-project', async (event) => {
   try {
     const data = JSON.parse(await fs.promises.readFile(filePaths[0], 'utf8'));
     currentShapeProjectPath = filePaths[0];
+    updateWindowTitle();
     return data;
   } catch (error) {
     return null;
@@ -1047,13 +1071,12 @@ ipcMain.handle('open-log-folder', async () => {
 
 function updateWindowTitle() {
   if (!mainWindow) return;
-  const baseTitle = 'TrueLazer';
-  if (currentProjectpath) {
-    const projectName = path.basename(currentProjectpath, '.tlp');
-    mainWindow.setTitle(`${baseTitle} - ${projectName}`);
-  } else {
-    mainWindow.setTitle(`${baseTitle} - New Project`);
-  }
+  const projectPath = currentAppPage === 'timeline'
+    ? currentTimelineProjectPath
+    : currentAppPage === 'shapeBuilder'
+      ? currentShapeProjectPath
+      : currentProjectpath;
+  mainWindow.setTitle(buildWindowTitle({ page: currentAppPage, filePath: projectPath }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1296,13 +1319,11 @@ ipcMain.handle('set-update-preferences', async (_event, patch) => {
 
 // IPC handlers for project management
 ipcMain.on('new-project', (event) => {
-  // Only the show editor's file path is owned here. The renderer routes the
-  // command to whichever page is active, so do not clear the show project's
-  // path when starting a new Timeline or Shape project.
-  if (currentAppPage === 'main') {
-    currentProjectpath = null;
-    updateWindowTitle();
-  }
+  // Each page owns a separate document, so reset only the active page's path.
+  if (currentAppPage === 'main') currentProjectpath = null;
+  else if (currentAppPage === 'timeline') currentTimelineProjectPath = null;
+  else if (currentAppPage === 'shapeBuilder') currentShapeProjectPath = null;
+  updateWindowTitle();
   if (mainWindow) mainWindow.webContents.send('new-project');
 });
 
@@ -1644,6 +1665,8 @@ function buildApplicationMenu(mode) {
     {
       label: 'Help',
       submenu: [
+        { label: 'User Manual', accelerator: 'F1', click: () => act('user-manual') },
+        { type: 'separator' },
         { label: 'Report a Bug...', click: () => act('report-bug') },
         { label: 'Request a Feature...', click: () => act('request-feature') },
         { type: 'separator' },
@@ -1907,15 +1930,17 @@ function createWindow() {
     // entries go away. Two reasons this has to happen here:
     //   - Once an IP is in stoppedDacIps the send loop skips it entirely, so it can
     //     never feed the idle frame.
-    //   - stopSending()'s IDN path only emits a zero-point frame on channel 0, so a
-    //     channel 1..N would keep replaying its last real frame and stay lit.
-    // A single blank packet is enough for IDN because each packet is a complete
-    // frame with a duration: the player then holds a blank rather than live output.
+    //   - stopSending() closes the IDN link, which drops all of its channels, but a
+    //     player may still hold the last frame until that close is processed.
+    // Two blanked points: a discrete IDN frame needs at least two samples, and one
+    // point is rejected by strict players (leaving the last real frame lit). Each
+    // packet is a complete frame with a duration, so the player then holds a blank.
     for (const id of Object.keys(dacFrameAccumulator)) {
       const acc = dacFrameAccumulator[id];
       if (acc.ip !== ip) continue;
-      const blank = new Float32Array(8);
+      const blank = new Float32Array(16);
       blank[6] = 1;
+      blank[14] = 1;
       sendFrame(ip, acc.channel, blank, acc.fps || 30, acc.type, acc.options);
       delete dacFrameAccumulator[id];
     }

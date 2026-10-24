@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 
-const StaticIldaThumbnail = ({ frame, bitmap, width = 100, height = 100 }) => {
+const StaticIldaThumbnail = ({ frame, bitmap, width = 100, height = 100, style }) => {
     const canvasRef = useRef(null);
 
     useEffect(() => {
@@ -73,14 +73,14 @@ const StaticIldaThumbnail = ({ frame, bitmap, width = 100, height = 100 }) => {
             }
             lastWasBlanked = blanking;
         }
-    }, [frame, width, height]);
+    }, [frame, bitmap, width, height]);
 
     return (
         <canvas
             ref={canvasRef}
             width={width}
             height={height}
-            style={{ width: '50px', height: '50px', backgroundColor: 'black', display: 'block', borderRadius: '5px' }}
+            style={{ width: '50px', height: '50px', backgroundColor: 'black', display: 'block', borderRadius: '5px', ...style }}
         />
     );
 };
