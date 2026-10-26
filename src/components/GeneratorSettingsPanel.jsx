@@ -8,6 +8,7 @@ import AnimationControls from './AnimationControls';
 import { PresetSelector } from './PresetSelector';
 
 const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParamSync, layerIndex, colIndex, progressRef, workerId, generatorId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState }) => {
+    const { t } = useTranslation();
     const [hovered, setHovered] = useState(false);
 
     const paramKey = `${generatorId}.${control.id}`;
