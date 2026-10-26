@@ -1,6 +1,8 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 
 const AnimationControls = ({ animSettings, onChange }) => {
+  const { t } = useTranslation();
     const { 
         direction = 'forward', 
         style = 'loop', 
@@ -137,15 +139,15 @@ const AnimationControls = ({ animSettings, onChange }) => {
             {syncMode === 'fft' && (
                 <div className="anim-sub-settings" style={{ marginTop: '5px', padding: '2px', background: 'rgba(0,0,0,0.2)' }}>
                     <div className="control-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px' }}>
-                        <label style={{color: '#aaa', marginRight: '5px'}}>Range</label>
+                        <label style={{color: '#aaa', marginRight: '5px'}}>{t('animation.range')}</label>
                         <select 
                             value={animSettings?.fftRange || 'low'} 
                             onChange={(e) => update('fftRange', e.target.value)}
                             style={{ fontSize: '10px', background: '#333', border: '1px solid #555', color: 'white' }}
                         >
-                            <option value="low">Low</option>
-                            <option value="mid">Mid</option>
-                            <option value="high">High</option>
+                            <option value="low">{t('animation.low')}</option>
+                            <option value="mid">{t('animation.mid')}</option>
+                            <option value="high">{t('animation.high')}</option>
                         </select>
                     </div>
                 </div>
@@ -153,7 +155,7 @@ const AnimationControls = ({ animSettings, onChange }) => {
             {syncMode === 'timeline' && (
                 <div className="anim-sub-settings" style={{ marginTop: '5px', padding: '2px', background: 'rgba(0,0,0,0.2)' }}>
                     <div className="control-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px' }}>
-                        <label style={{color: '#aaa', marginRight: '5px'}}>Duration (s)</label>
+                        <label style={{color: '#aaa', marginRight: '5px'}}>{t('animation.duration')}</label>
                         <div className="value-adjuster" style={{ display: 'flex', gap: '2px' }}>
                             <button className="tiny-btn" onClick={() => adjustValue('duration', -1)}>-1</button>
                             <input 
@@ -173,7 +175,7 @@ const AnimationControls = ({ animSettings, onChange }) => {
             {syncMode === 'bpm' && (
                 <div className="anim-sub-settings" style={{ marginTop: '5px', padding: '2px', background: 'rgba(0,0,0,0.2)' }}>
                     <div className="control-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px' }}>
-                        <label style={{color: '#aaa', marginRight: '5px'}}>Beats</label>
+                        <label style={{color: '#aaa', marginRight: '5px'}}>{t('animation.beats')}</label>
                         <div className="value-adjuster" style={{ display: 'flex', gap: '2px' }}>
                             <button className="tiny-btn" onClick={() => adjustValue('beats', -1)}>-1</button>
                             <input 
@@ -193,7 +195,7 @@ const AnimationControls = ({ animSettings, onChange }) => {
             {(syncMode === 'timeline' || syncMode === 'bpm' || syncMode === 'fps') && (
                  <div className="anim-sub-settings" style={{ marginTop: '5px', padding: '2px', background: 'rgba(0,0,0,0.2)' }}>
                     <div className="control-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px' }}>
-                        <label style={{color: '#aaa', marginRight: '5px'}}>Speed</label>
+                        <label style={{color: '#aaa', marginRight: '5px'}}>{t('animation.speed')}</label>
                         <div className="value-adjuster" style={{ display: 'flex', gap: '2px' }}>
                             <button className="tiny-btn" onClick={() => adjustValue('speedMultiplier', -0.1)}>-0.1</button>
                              <input 

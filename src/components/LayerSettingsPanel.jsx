@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
+import { useTranslation } from '../i18n';
 import EffectEditor from './EffectEditor';
 import LayerEffectSpeedSettings from './LayerEffectSpeedSettings';
 
@@ -30,6 +31,7 @@ const LayerSettingsPanel = ({
     progressRef,
     getFftLevels
 }) => {
+    const { t } = useTranslation();
     const [dacStatuses, setDacStatuses] = useState({});
 
     const collapsedPanels = uiState?.collapsedPanels || {};
@@ -118,7 +120,7 @@ const LayerSettingsPanel = ({
              {/* Assigned DACs Section */}
              {assignedDacs && assignedDacs.length > 0 && (
                 <CollapsiblePanel 
-                    title="Assigned DACs"
+                    title={t('layerSettings.assignedDacs')}
                     isCollapsed={!!collapsedPanels['dacs']}
                     onToggle={(val) => togglePanel('dacs', val)}
                 >
@@ -214,7 +216,7 @@ const LayerSettingsPanel = ({
 
              {/* Layer Effects Section */}
              <CollapsiblePanel 
-                title="Layer Effects"
+                title={t('layerSettings.layerEffects')}
                 isCollapsed={!!collapsedPanels['effects']}
                 onToggle={(val) => togglePanel('effects', val)}
              >

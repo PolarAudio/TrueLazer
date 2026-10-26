@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from '../i18n';
 
 /**
  * Component for selecting, saving, and deleting presets for effects and generators.
@@ -17,6 +18,8 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
     const [isNaming, setIsNaming] = useState(false);
     const [tempName, setTempName] = useState('');
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+
+    const { t } = useTranslation();
 
     const loadPresets = async () => {
         if (window.electronAPI && window.electronAPI.getPresets) {
@@ -83,7 +86,7 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
                     type="text"
                     value={tempName}
                     onChange={(e) => setTempName(e.target.value)}
-                    placeholder="Preset Name..."
+                    placeholder={t('preset.namePlaceholder')}
                     autoFocus
                     onKeyDown={(e) => {
                         if (e.key === 'Enter') handleSave();
@@ -110,18 +113,18 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
     if (isConfirmingDelete) {
         return (
             <div className="preset-selector delete-mode" style={{ display: 'flex', gap: '5px', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontSize: '10px', color: '#f44', flex: 1 }}>Delete?</span>
+                <span style={{ fontSize: '10px', color: '#f44', flex: 1 }}>{t('preset.deleteConfirm')}</span>
                 <button 
                     onClick={handleDelete}
                     style={{ background: '#f44', border: 'none', color: '#fff', cursor: 'pointer', padding: '2px 8px', borderRadius: '3px', fontSize: '10px', fontWeight: 'bold' }}
                 >
-                    YES
+                    {t('preset.yes')}
                 </button>
                 <button 
                     onClick={() => setIsConfirmingDelete(false)}
                     style={{ background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', padding: '2px 8px', borderRadius: '3px', fontSize: '10px' }}
                 >
-                    NO
+                    {t('preset.no')}
                 </button>
             </div>
         );
@@ -134,7 +137,7 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
                 onChange={handleSelect}
                 style={{ flex: 1, background: '#111', color: '#fff', border: '1px solid #444', fontSize: '11px', padding: '2px' }}
             >
-                <option value="">-- Select Preset --</option>
+                <option value="">{t('preset.select')}</option>
                 {presets.map(p => (
                     <option key={p.name} value={p.name}>{p.name}</option>
                 ))}
@@ -143,7 +146,7 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
             <button 
                 onClick={() => setIsNaming(true)}
                 style={{ background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', padding: '2px 5px', borderRadius: '3px', display: 'flex', alignItems: 'center' }}
-                title="Save Preset"
+                title={t('preset.save')}
             >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
                     <path d="M11 2H9v3h2V2Z"/>
@@ -155,7 +158,7 @@ const PresetSelector = ({ type, subType, currentParams, onApplyPreset, onRegiste
                 onClick={() => setIsConfirmingDelete(true)}
                 disabled={!selectedPresetName}
                 style={{ background: '#333', border: '1px solid #555', color: selectedPresetName ? '#f44' : '#666', cursor: selectedPresetName ? 'pointer' : 'default', padding: '2px 5px', borderRadius: '3px', display: 'flex', alignItems: 'center' }}
-                title="Delete Preset"
+                title={t('preset.delete')}
             >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
                     <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5Zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5Zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6Z"/>

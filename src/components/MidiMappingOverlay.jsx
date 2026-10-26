@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom';
+import { useTranslation } from '../i18n';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
@@ -7,6 +8,7 @@ import { MidiColorPicker } from './MidiColorPicker';
 import { THEME_COLORS } from '../utils/midiColors';
 
 const MidiMappingOverlay = () => {
+  const { t } = useTranslation();
   const { 
     isMapping: isMidiMapping, 
     mappings: midiMappings, 
@@ -113,9 +115,9 @@ const MidiMappingOverlay = () => {
               zIndex: 10002,
               boxShadow: '0 0 20px rgba(0,0,0,0.8)'
           }}>
-              <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--theme-color)' }}>DMX MAPPING FILTER</span>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--theme-color)' }}>{t('midiMapping.dmxFilter')}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <label style={{ fontSize: '10px', color: '#888' }}>Universe:</label>
+                  <label style={{ fontSize: '10px', color: '#888' }}>{t('midiMapping.universe')}:</label>
                   <input 
                     type="number" 
                     min="0" max="255" 

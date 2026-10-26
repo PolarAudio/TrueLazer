@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useMidi } from '../contexts/MidiContext';
+import { useTranslation } from '../i18n';
 import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
 import { initializeOsc, sendOscMessage, addOscMessageListener, closeOsc } from '../utils/osc';
@@ -15,6 +16,7 @@ import { DmxMonitor } from './DmxMonitor';
  * @return {React.ReactElement} The ShortcutsWindow component.
  */
 const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
+  const { t } = useTranslation();
   const { 
     midiInitialized, 
     midiInputs, 
@@ -191,13 +193,13 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
     <div className="shortcuts-modal-overlay" style={{ pointerEvents: 'auto' }}>
       <div className="shortcuts-modal-content">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h2 style={{ margin: 0 }}>Shortcuts Settings</h2>
+            <h2 style={{ margin: 0 }}>{t('shortcuts.title')}</h2>
             <button onClick={onClose} className="close-btn">×</button>
         </div>
 
         {enabledShortcuts.midi && (
         <div className="shortcuts-section">
-          <h3>MIDI</h3>
+          <h3>{t('shortcuts.midi')}</h3>
           {!midiInitialized && <p>Initializing MIDI...</p>}
           {midiInitialized && (
             <div>
@@ -209,7 +211,7 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                     ))}
                   </select>
                   <button onClick={toggleMidiLearnMode} style={{ backgroundColor: isMapping ? 'var(--theme-color)' : '', color: isMapping ? '#000' : '#fff' }}>
-                    {isMapping ? 'Stop Mapping' : 'Start Mapping'}
+                    {isMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                   </button>
               </div>
               {isMapping && <p style={{color: 'var(--theme-color)', fontSize: '11px'}}>Mapping Mode Active: Click a button to assign.</p>}
@@ -220,7 +222,7 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
 
         {enabledShortcuts.artnet && (
         <div className="shortcuts-section">
-          <h3>DMX/Artnet</h3>
+            <h3>{t('shortcuts.artnet')}</h3>
           
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '15px', background: '#111', padding: '10px', borderRadius: '5px' }}>
               <label style={{ fontSize: '11px', color: '#888' }}>Network Interface:</label>
@@ -250,7 +252,7 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                   ))}
                 </select>
                 <button onClick={toggleArtnetLearnMode} style={{ backgroundColor: isArtnetMapping ? 'var(--theme-color)' : '', color: isArtnetMapping ? '#000' : '#fff' }}>
-                  {isArtnetMapping ? 'Stop Mapping' : 'Start Mapping'}
+                  {isArtnetMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                 </button>
                 <button onClick={autoPatchFixedFootprint} className="small-btn" title="Auto-patch standard 110-channel layout">
                     Auto-Patch
@@ -283,7 +285,7 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
 
         {enabledShortcuts.osc && (
         <div className="shortcuts-section">
-          <h3>OSC</h3>
+          <h3>{t('shortcuts.osc')}</h3>
           {!oscInitialized ? <p>Initializing OSC...</p> : (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
               <div>
@@ -311,7 +313,7 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                     <label>Args</label>
                     <input type="text" value={oscSendMessageArgs} onChange={(e) => setOscSendMessageArgs(e.target.value)} />
                   </div>
-                  <button onClick={handleOscSendMessage} style={{ width: '100%' }}>Send OSC</button>
+                    <button onClick={handleOscSendMessage} style={{ width: '100%' }}>{t('shortcuts.send')} OSC</button>
                   
                   {lastOscMessage && (
                     <div className="last-event-status" style={{ marginTop: '10px' }}>
@@ -326,15 +328,15 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
 
         {enabledShortcuts.keyboard && (
         <div className="shortcuts-section">
-          <h3>Keyboard</h3>
+          <h3>{t('shortcuts.keyboard')}</h3>
           <button onClick={toggleKeyboardLearnMode} style={{ backgroundColor: isKeyboardMapping ? 'var(--theme-color)' : '', color: isKeyboardMapping ? '#000' : '#fff' }}>
-            {isKeyboardMapping ? 'Stop Mapping' : 'Start Mapping'}
+            {isKeyboardMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
           </button>
         </div>
         )}
 
         <div style={{ marginTop: '20px', textAlign: 'right' }}>
-            <button onClick={onClose}>Close</button>
+            <button onClick={onClose}>{t('common.close')}</button>
         </div>
       </div>
     </div>

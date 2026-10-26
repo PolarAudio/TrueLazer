@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from '../i18n';
 import IldaThumbnail from './IldaThumbnail';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
@@ -58,6 +59,7 @@ const Clip = ({
   onClipHover,
   onThumbnailError
 }) => {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isLinkTarget, setIsLinkTarget] = useState(false);
@@ -88,12 +90,12 @@ const Clip = ({
     : [
       djLink.title || djLink.trackId,
       djLink.artist,
-      djLink.enabled ? null : 'link disabled',
+      djLink.enabled ? null : t('clip.linkDisabled'),
       djLink.follow === 'position'
-        ? `follows deck position (${formatClock(djLink.startSec || 0)} - ${formatClock(djLink.endSec || 0)})`
-        : `loops every ${djLink.loopBeats || 8} beats`,
-      djLink.trigger === 'play' ? 'fires on play' : 'fires on load',
-      djLinkActive ? 'deck is driving this clip' : null,
+        ? t('clip.followsDeckPosition', { start: formatClock(djLink.startSec || 0), end: formatClock(djLink.endSec || 0) })
+        : t('clip.loopsEveryBeats', { beats: djLink.loopBeats || 8 }),
+      djLink.trigger === 'play' ? t('clip.firesOnPlay') : t('clip.firesOnLoad'),
+      djLinkActive ? t('clip.deckDriving') : null,
     ].filter(Boolean).join(' — ');
 
   const handleDragOver = (e) => {
@@ -213,10 +215,10 @@ const Clip = ({
         const deck = JSON.parse(linkData);
         console.log(`[DJ-Link] drop on ${layerIndex}-${colIndex}: "${deck.title || deck.trackId}" from ${deck.source} deck ${deck.deckId}`);
         if (onLinkDjTrack) onLinkDjTrack(layerIndex, colIndex, deck);
-        else onUnsupportedFile('Song linking is not available here.');
+        else onUnsupportedFile(t('clip.songLinkUnavailable'));
       } catch (error) {
         console.error('Error parsing dropped DJ-Link track:', error);
-        onUnsupportedFile('Could not read that song link.');
+        onUnsupportedFile(t('clip.couldNotReadSongLink'));
       }
       return;
     }
@@ -264,7 +266,7 @@ const Clip = ({
     // unrecognised payload lands, and the message names every accepted kind so
     // the operator is not left guessing.
     console.log('[Clip.jsx] unrecognised drop — types:', JSON.stringify(types));
-    onUnsupportedFile('Nothing usable in that drop. Clips accept a .ild file, an effect, a generator, a DAC, or a song dragged from the DJ-Link display.');
+    onUnsupportedFile(t('clip.nothingUsableInDrop'));
   };
 
   const handleDragEnter = (e) => {

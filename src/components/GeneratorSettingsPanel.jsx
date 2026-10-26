@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from '../i18n';
 import { generatorDefinitions } from '../utils/generatorDefinitions';
 import CollapsiblePanel from './CollapsiblePanel';
 import RangeSlider from './RangeSlider';
@@ -70,7 +71,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                         background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 0, fontSize: '14px'
                     }}
                     onClick={() => setExpanded(!expanded)}
-                    title="Animate"
+                    title={t('generator.animate')}
                 >
 					⚙
 				</button>
@@ -167,6 +168,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
 };
 
 const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, onParameterChange, syncSettings = {}, onSetParamSync, layerIndex, colIndex, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, onRegisterPreset }) => {
+  const { t } = useTranslation();
   const [systemFonts, setSystemFonts] = useState([]);
   const [projectFonts, setProjectFonts] = useState([]);
   const [loadingSystemFonts, setLoadingSystemFonts] = useState(false);
@@ -300,11 +302,11 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
                                     ))}
                                 </optgroup>
                             ) : (
-                                <option value="load-system">{loadingSystemFonts ? 'Loading...' : 'Load System Fonts...'}</option>
+                                <option value="load-system">{loadingSystemFonts ? t('common.loading') : t('generator.loadSystemFonts')}</option>
                             )}
                             
                             <optgroup label="Actions">
-                                <option value="browse">Browse File...</option>
+                                <option value="browse">{t('common.browse')} File...</option>
                             </optgroup>
                         </select>
                         <span className="font-path-tiny" title={currentFont}>{currentFont.split(/[\\/]/).pop()}</span>

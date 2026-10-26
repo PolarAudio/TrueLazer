@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useMidi } from '../contexts/MidiContext';
+import { useTranslation } from '../i18n';
 import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
 import GlobalQuickAssigns from './GlobalQuickAssigns';
@@ -15,6 +16,7 @@ const SettingsPanel = ({
   renderSettings = {},
   onSetRenderSetting
 }) => {
+  const { t } = useTranslation();
   const { 
     midiInitialized, 
     midiInputs, 
@@ -130,7 +132,7 @@ const SettingsPanel = ({
 
       {quickAssigns && (
           <CollapsiblePanel 
-            title="Quick Assigns"
+            title={t('settingsPanel.quickAssigns')}
             isCollapsed={!!collapsedStates['quickAssigns']}
             onToggle={(val) => handleToggle('quickAssigns', val)}
           >
@@ -145,7 +147,7 @@ const SettingsPanel = ({
 
       {/* Channel/DAC Settings Placeholder */}
       <CollapsiblePanel 
-        title="Channel/DAC Settings"
+        title={t('settingsPanel.channelDac')}
         isCollapsed={!!collapsedStates['dacSettings']}
         onToggle={(val) => handleToggle('dacSettings', val)}
       >
@@ -158,7 +160,7 @@ const SettingsPanel = ({
         <div className="shortcuts-settings-panel">
           {enabledShortcuts.keyboard && (
             <CollapsiblePanel 
-                title="Keyboard Shortcuts"
+                title={t('settingsPanel.keyboardShortcuts')}
                 isCollapsed={!!collapsedStates['keyboard']}
                 onToggle={(val) => handleToggle('keyboard', val)}
             >
@@ -169,7 +171,7 @@ const SettingsPanel = ({
                           onClick={toggleKeyboardLearnMode}
                           style={{ backgroundColor: isKeyboardMapping ? 'var(--theme-color)' : '', gridColumn: 'span 2' }}
                       >
-                          {isKeyboardMapping ? 'Stop Mapping' : 'Start Mapping'}
+                          {isKeyboardMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                       </button>
                       <button className="small-btn" onClick={saveKeyboardMappings}>Save Default</button>
                       <button className="small-btn" onClick={exportKeyboardMappings}>Export</button>
@@ -184,7 +186,7 @@ const SettingsPanel = ({
           )}
           {enabledShortcuts.midi && (
             <CollapsiblePanel 
-                title="MIDI Shortcuts"
+                title={t('settingsPanel.midiShortcuts')}
                 isCollapsed={!!collapsedStates['midi']}
                 onToggle={(val) => handleToggle('midi', val)}
             >
@@ -203,7 +205,7 @@ const SettingsPanel = ({
                           onClick={toggleMidiLearnMode}
                           style={{ backgroundColor: isMapping ? 'var(--theme-color)' : '', gridColumn: 'span 2' }}
                       >
-                          {isMapping ? 'Stop Mapping' : 'Start Mapping'}
+                          {isMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                       </button>
                       <button className="small-btn" onClick={saveMappings}>Save Default</button>
                       <button className="small-btn" onClick={exportMidiMappings}>Export</button>
@@ -222,7 +224,7 @@ const SettingsPanel = ({
 
           {enabledShortcuts.artnet && (
             <CollapsiblePanel 
-                title="ArtNet Shortcuts"
+                title={t('settingsPanel.artnetShortcuts')}
                 isCollapsed={!!collapsedStates['artnet']}
                 onToggle={(val) => handleToggle('artnet', val)}
             >
@@ -250,9 +252,9 @@ const SettingsPanel = ({
                           onClick={toggleArtnetLearnMode}
                           style={{ backgroundColor: isArtnetMapping ? 'var(--theme-color)' : '', gridColumn: 'span 2' }}
                       >
-                          {isArtnetMapping ? 'Stop Mapping' : 'Start Mapping'}
+                          {isArtnetMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                       </button>
-                      <button className="small-btn" onClick={autoPatchFixedFootprint} title="Auto-patch standard 110-channel layout">Auto-Patch</button>
+                      <button className="small-btn" onClick={autoPatchFixedFootprint} title={t('settingsPanel.autoPatch')}>Auto-Patch</button>
                       <button className="small-btn" onClick={saveArtnetMappings}>Save Default</button>
                       <button className="small-btn" onClick={exportArtnetMappings}>Export</button>
                       <button className="small-btn" onClick={importArtnetMappings}>Import</button>
@@ -270,7 +272,7 @@ const SettingsPanel = ({
 
 {enabledShortcuts.osc && (
             <CollapsiblePanel 
-                title="OSC Shortcuts"
+                title={t('settingsPanel.oscShortcuts')}
                 isCollapsed={!!collapsedStates['osc']}
                 onToggle={(val) => handleToggle('osc', val)}
             >

@@ -1,7 +1,9 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 import CollapsiblePanel from './CollapsiblePanel';
 
 const LayerEffectSpeedSettings = ({ enabled, settings, globalBpm, globalFps, onToggle, onUpdate, uiState, onUpdateUiState }) => {
+  const { t } = useTranslation();
   const s = {
     mode: 'fps',
     beats: 8,
@@ -56,21 +58,21 @@ const LayerEffectSpeedSettings = ({ enabled, settings, globalBpm, globalFps, onT
             <button
               className={s.mode === 'fps' ? 'active' : 'button_inactive'}
               onClick={() => onUpdate({ mode: 'fps' })}
-            >FPS</button>
+            >{t('clipPlayback.fps')}</button>
             <button
               className={s.mode === 'timeline' ? 'active' : 'button_inactive'}
               onClick={() => onUpdate({ mode: 'timeline' })}
-            >Timeline</button>
+            >{t('clipPlayback.timeline')}</button>
             <button
               className={s.mode === 'bpm' ? 'active' : 'button_inactive'}
               onClick={() => onUpdate({ mode: 'bpm' })}
-            >BPM Sync</button>
+            >{t('clipPlayback.bpmSync')}</button>
           </div>
 
           <div className="playback-controls">
             {s.mode === 'fps' && (
               <div className="control-group">
-                <label>FPS Target (from Global FPS)</label>
+                <label>{t('layerEffectSpeed.fpsTarget')}</label>
                 <div className="value-adjuster" style={{ opacity: 0.7 }}>
                   <input type="number" value={globalFps} readOnly disabled />
                 </div>
@@ -79,7 +81,7 @@ const LayerEffectSpeedSettings = ({ enabled, settings, globalBpm, globalFps, onT
 
             {s.mode === 'timeline' && (
               <div className="control-group">
-                <label>Duration (s)</label>
+                <label>{t('clipPlayback.duration')}</label>
                 <div className="value-adjuster">
                   <button onClick={() => adjustValue('duration', -1)}>-1</button>
                   <input
@@ -97,13 +99,13 @@ const LayerEffectSpeedSettings = ({ enabled, settings, globalBpm, globalFps, onT
             {s.mode === 'bpm' && (
               <>
                 <div className="control-group">
-                  <label>Global BPM (from Master BPM)</label>
+                  <label>{t('layerEffectSpeed.globalBpm')}</label>
                   <div className="value-adjuster" style={{ opacity: 0.7 }}>
                     <input type="number" value={globalBpm} readOnly disabled />
                   </div>
                 </div>
                 <div className="control-group">
-                  <label>Beats</label>
+                  <label>{t('clipPlayback.beats')}</label>
                   <div className="value-adjuster">
                     <button onClick={() => adjustValue('beats', -1)}>-1</button>
                     <input
@@ -121,7 +123,7 @@ const LayerEffectSpeedSettings = ({ enabled, settings, globalBpm, globalFps, onT
 
             {(s.mode === 'timeline' || s.mode === 'bpm') && (
               <div className="control-group">
-                <label>Speed Multiplier</label>
+                <label>{t('clipPlayback.speedMultiplier')}</label>
                 <div className="value-adjuster">
                   <button onClick={() => adjustValue('speedMultiplier', -0.1)}>-0.1</button>
                   <input

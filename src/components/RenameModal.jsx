@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from '../i18n';
 
 const RenameModal = ({ show, title, initialValue, onSave, onClose }) => {
+  const { t } = useTranslation();
   const [value, setValue] = useState(initialValue || '');
 
   useEffect(() => {
@@ -24,7 +26,7 @@ const RenameModal = ({ show, title, initialValue, onSave, onClose }) => {
   return (
     <div className="shortcuts-modal-overlay" style={{ pointerEvents: 'auto' }}>
       <div className="shortcuts-modal-content" style={{ maxWidth: '400px' }}>
-        <h3>{title || 'Rename'}</h3>
+        <h3>{title || t('common.rename')}</h3>
         <div className="settings-section" style={{ border: 'none' }}>
           <input
             type="text"
@@ -43,12 +45,12 @@ const RenameModal = ({ show, title, initialValue, onSave, onClose }) => {
             }}
           />
           <div className="button-row" style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button onClick={onClose}>Cancel</button>
-            <button 
+            <button onClick={onClose}>{t('common.cancel')}</button>
+            <button
               onClick={handleSave}
               style={{ backgroundColor: 'var(--theme-color)', color: 'black' }}
             >
-              Save
+              {t('common.save')}
             </button>
           </div>
         </div>

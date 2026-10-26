@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { useTranslation } from '../i18n';
 import manualMarkdown from '../../docs/USER_MANUAL.md?raw';
 
 const INLINE_PATTERN = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
@@ -177,6 +178,7 @@ function parseBlocks(markdown) {
 }
 
 const UserManual = ({ show, onClose }) => {
+    const { t } = useTranslation();
     const content = useMemo(() => parseBlocks(manualMarkdown), []);
 
     if (!show) return null;
@@ -185,8 +187,8 @@ const UserManual = ({ show, onClose }) => {
         <div className="modal-overlay">
             <div className="modal-content user-manual-window">
                 <div className="modal-header">
-                    <h3 style={{ margin: 0, fontSize: '15px' }}>User Manual</h3>
-                    <button className="close-btn" onClick={onClose} aria-label="Close user manual">×</button>
+                    <h3 style={{ margin: 0, fontSize: '15px' }}>{t('userManual.title')}</h3>
+                    <button className="close-btn" onClick={onClose} aria-label={t('userManual.closeAria')}>×</button>
                 </div>
                 <div className="modal-body user-manual-body">
                     <article className="user-manual">{content}</article>

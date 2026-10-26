@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatClock } from '../utils/djLinkTracks';
+import { useTranslation } from '../i18n';
 
 const LinkSyncSettingsWindow = ({
   show,
@@ -12,6 +13,7 @@ const LinkSyncSettingsWindow = ({
   djLinkDecks = [],
   djLinkLinkedCountForDeck,
 }) => {
+  const { t } = useTranslation();
   // Default settings if none stored yet
   const defaultSettings = {
     syncProtocol: 'none',
@@ -144,7 +146,7 @@ const LinkSyncSettingsWindow = ({
       <div className="modal-overlay">
         <div className="modal-content general-settings-window" style={{ minWidth: '420px' }}>
           <div className="modal-header">
-            <h3>Link/Sync Settings</h3>
+            <h3>{t('linkSync.title')}</h3>
             <button className="close-btn" onClick={onClose}>×</button>
           </div>
           <div className="modal-body">
@@ -407,7 +409,7 @@ const LinkSyncSettingsWindow = ({
                 style={{ marginLeft: '8px' }}
                 onClick={onClose}
               >
-                Close
+                {t('common.close')}
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from '../i18n';
 import CollapsiblePanel from './CollapsiblePanel';
 import { linkedClipDurationSec, withLinkDefaults } from '../utils/djLinkTracks';
 
@@ -119,6 +120,7 @@ const ClipDjLinkSettings = ({
   transportArmed,
   onArmTransport,
 }) => {
+  const { t } = useTranslation();
   const link = withLinkDefaults(rawLink);
   const collapsedPanels = uiState?.collapsedPanels || {};
   const deck = clock?.deck || null;
@@ -133,7 +135,7 @@ const ClipDjLinkSettings = ({
   // threw for the whole panel.
   if (!link) {
     return (
-      <CollapsiblePanel title="DJ-Link Transport" isCollapsed={!!collapsedPanels['djlink']} onToggle={handleToggle}>
+      <CollapsiblePanel title={t('clipDjLink.title')} isCollapsed={!!collapsedPanels['djlink']} onToggle={handleToggle}>
         <div className="djlink-empty">
           <strong>No song linked to this clip yet.</strong>
           <ol>
@@ -153,7 +155,7 @@ const ClipDjLinkSettings = ({
   const fullDuration = (link.trackDurationMs || 0) / 1000;
 
   return (
-    <CollapsiblePanel title="DJ-Link Transport" isCollapsed={!!collapsedPanels['djlink']} onToggle={handleToggle}>
+    <CollapsiblePanel title={t('clipDjLink.title')} isCollapsed={!!collapsedPanels['djlink']} onToggle={handleToggle}>
       <div className="djlink-head">
         <span className={`djlink-dot ${live ? 'live' : ''}`} style={dot ? { background: dot, boxShadow: `0 0 6px ${dot}` } : undefined} />
         <div className="djlink-head-text">
@@ -298,7 +300,7 @@ const ClipDjLinkSettings = ({
           <span className="djlink-readout-value">
             {live
               ? `${(clock.progress * 100).toFixed(1)}%${deck && deck.bpm > 0 ? ` • ${Math.round(deck.bpm)} BPM` : ''}`
-              : NOT_DRIVEN_REASONS[clock?.reason] || 'not driven'}
+              : (NOT_DRIVEN_REASONS[clock?.reason] ? t('clipDjLink.reason.' + clock?.reason) : 'not driven')}
           </span>
         </div>
         <div className="djlink-progress">

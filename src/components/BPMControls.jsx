@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Mappable from './Mappable';
+import { useTranslation } from '../i18n';
 
 const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceChange }) => {
+  const { t } = useTranslation();
   const [localBpm, setLocalBpm] = useState(bpm);
 
   useEffect(() => {
@@ -62,7 +64,7 @@ const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceCh
         </button>
         {isTapMode && (
           <Mappable id="bpm_tap">
-            <button className="bpm-tap-btn" onClick={handleTap} title="Tap to set BPM">TAP</button>
+            <button className="bpm-tap-btn" onClick={handleTap} title={t('bpm.tapHelp')}>{t('bpm.tap')}</button>
           </Mappable>
         )}
         <div className="bpm-fine-controls">
@@ -82,7 +84,7 @@ const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceCh
               step="0.1"
               ref={bpmInputRef}
               disabled={!isTapMode}
-              title={sourceLabel ? `BPM is driven by ${sourceLabel}` : 'Show BPM'}
+              title={sourceLabel ? t('bpm.drivenBy', { source: sourceLabel }) : t('bpm.showBpm')}
             />
           </Mappable>
           {isTapMode && (
@@ -91,7 +93,7 @@ const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceCh
             </Mappable>
           )}
         </div>
-        <span className="bpm-label">BPM</span>
+            <span className="bpm-label">{t('bpm.label')}</span>
       </div>
     </div>
   );

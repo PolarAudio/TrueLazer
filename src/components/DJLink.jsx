@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from '../i18n';
 import { DJLINK_TRACK_MIME, deckDescriptorFromSnapshot } from '../utils/djLinkTracks';
 
 const EMPTY = {
@@ -59,6 +60,7 @@ const StatusIcon = ({ kind }) => (
 );
 
 const DJLink = ({ source = 'tap', onLinkSong }) => {
+  const { t } = useTranslation();
   // Both sources stay subscribed so flipping the selector shows the latest deck
   // state immediately instead of waiting for the next status packet.
   const [snapshots, setSnapshots] = useState({ prolink: EMPTY, stagelinq: EMPTY });
@@ -169,9 +171,9 @@ const DJLink = ({ source = 'tap', onLinkSong }) => {
     : !s.connected ? 'off'
       : !s.trackLoaded ? 'empty'
         : s.playing ? 'playing' : 'paused';
-  const stateLabel = state === 'off' ? 'No deck'
-    : state === 'empty' ? 'No track'
-      : s.playing ? 'Playing' : 'Paused';
+  const stateLabel = state === 'off' ? t('djLink.noDeck')
+    : state === 'empty' ? t('djLink.noTrack')
+      : s.playing ? t('djLink.playing') : t('djLink.paused');
   const timeText = !displaySource ? '--:--'
     : s.duration ? `${formatTime(s.seconds)} / ${formatTime(s.duration)}` : formatTime(s.seconds);
 
@@ -216,8 +218,7 @@ const DJLink = ({ source = 'tap', onLinkSong }) => {
       ? ` — from the ${linkLabel}${link ? ' (not the BPM source)' : ''}`
       : '') +
     '. Or just click to link the selected clip.'
-    : 'No deck is reporting a loaded track, so there is nothing to link yet. ' +
-    'Start a Pro DJ Link or StageLinq listener (Link/Sync Settings) and load a track.';
+    : t('djLink.noDeckLoaded') + ' ' + t('djLink.startListener');
 
   return (
     <div className={`link-display ${isDragging ? 'dragging' : ''}`}>
@@ -234,7 +235,7 @@ const DJLink = ({ source = 'tap', onLinkSong }) => {
       <div
         className={`link-cover ${cover ? 'has-art' : ''}`}
         style={cover ? { backgroundImage: `url(${cover})` } : undefined}
-        title={cover ? '' : 'No cover art available from this player'}
+        title={cover ? '' : t('djLink.noCoverArt')}
       >
         {!cover && (
           <svg className="link-cover-placeholder" viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true">

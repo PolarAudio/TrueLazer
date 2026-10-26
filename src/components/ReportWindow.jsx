@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from '../i18n';
 import {
     BUG_SEVERITIES,
     REPORT_AREAS,
@@ -46,6 +47,7 @@ const Field = ({ label, hint, children }) => (
 );
 
 const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] }) => {
+    const { t } = useTranslation();
     const [tab, setTab] = useState(mode === 'feature' ? 'feature' : 'bug');
     const [bug, setBug] = useState(emptyBug);
     const [feature, setFeature] = useState(emptyFeature);
@@ -173,7 +175,7 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
         <div className="modal-overlay">
             <div className="modal-content report-window" style={{ minWidth: '520px', maxWidth: '760px' }}>
                 <div className="modal-header">
-                    <h3 style={{ margin: 0, fontSize: '15px' }}>Report to the TrueLazer project</h3>
+                    <h3 style={{ margin: 0, fontSize: '15px' }}>{t('report.title')}</h3>
                     <button className="close-btn" onClick={onClose} title="Close">×</button>
                 </div>
 
@@ -182,13 +184,13 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                         className={tab === 'bug' ? 'report-tab active' : 'report-tab'}
                         onClick={() => setTab('bug')}
                     >
-                        Report a bug
+                        {t('report.reportBug')}
                     </button>
                     <button
                         className={tab === 'feature' ? 'report-tab active' : 'report-tab'}
                         onClick={() => setTab('feature')}
                     >
-                        Request a feature
+                        {t('report.requestFeature')}
                     </button>
                 </div>
 

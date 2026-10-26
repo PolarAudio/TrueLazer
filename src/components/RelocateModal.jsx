@@ -1,18 +1,20 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 
 const RelocateModal = ({ missingFiles, onRelocate, onClose }) => {
+  const { t } = useTranslation();
     if (!missingFiles || missingFiles.length === 0) return null;
 
     return (
         <div className="modal-overlay">
             <div className="modal-content" style={{ width: '500px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
                 <div className="modal-header">
-                    <h3>Missing Files</h3>
+                    <h3>{t('dialog.missingFiles')}</h3>
                     <button className="close-btn" onClick={onClose}>×</button>
                 </div>
                 <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
                     <p style={{ marginBottom: '15px', color: '#ccc', fontSize: '0.9em' }}>
-                        The following files could not be found. Please locate one of them to update the path for all matching files in the same directory.
+                        {t('dialog.missingFilesHelp')}
                     </p>
                     <ul style={{ listStyle: 'none', padding: 0 }}>
                         {missingFiles.map((file, index) => (
@@ -36,7 +38,7 @@ const RelocateModal = ({ missingFiles, onRelocate, onClose }) => {
                                     onClick={() => onRelocate(file)}
                                     style={{ marginLeft: '10px', whiteSpace: 'nowrap' }}
                                 >
-                                    Locate
+                                    {t('dialog.locate')}
                                 </button>
                             </li>
                         ))}

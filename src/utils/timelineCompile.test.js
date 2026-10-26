@@ -30,11 +30,12 @@ describe('canonical frame helpers', () => {
         expect(f[8 + 7]).toBe(1);
     });
 
-    it('blankFrame is a single blanked + last-flagged point', () => {
+    it('blankFrame is two blanked points with the last one flagged', () => {
         const b = blankFrame();
-        expect(b.length).toBe(8);
+        expect(b.length).toBe(16);
         expect(b[6]).toBe(1);
-        expect(b[7]).toBe(1);
+        expect(b[14]).toBe(1);
+        expect(b[15]).toBe(1);
     });
 });
 

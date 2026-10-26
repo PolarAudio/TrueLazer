@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 import { useArtnet } from '../contexts/ArtnetContext';
 
 /**
@@ -7,6 +8,7 @@ import { useArtnet } from '../contexts/ArtnetContext';
  * @return {React.ReactElement} The DmxMonitor component.
  */
 const DmxMonitor = () => {
+    const { t } = useTranslation();
     const { dmxData, universeFilter, setUniverseFilter } = useArtnet();
     
     const universeData = dmxData[universeFilter] || new Uint8Array(512);
@@ -15,9 +17,9 @@ const DmxMonitor = () => {
     return (
         <div className="dmx-monitor-container" style={{ padding: '10px', background: '#111', borderRadius: '5px', height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div className="dmx-monitor-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h4 style={{ margin: 0, fontSize: '12px', color: '#888', textTransform: 'uppercase' }}>DMX Monitor</h4>
+                <h4 style={{ margin: 0, fontSize: '12px', color: '#888', textTransform: 'uppercase' }}>{t('dmxMonitor.title')}</h4>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <label style={{ fontSize: '10px', color: '#666' }}>Universe:</label>
+                    <label style={{ fontSize: '10px', color: '#666' }}>{t('dmxMonitor.universe')}:</label>
                     <input 
                         type="number" 
                         min="0" 

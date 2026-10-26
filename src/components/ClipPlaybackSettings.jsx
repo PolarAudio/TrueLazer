@@ -1,7 +1,9 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 import CollapsiblePanel from './CollapsiblePanel';
 
 const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) => {
+  const { t } = useTranslation();
   const {
     mode = 'fps',
     duration = 1,
@@ -57,22 +59,22 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
         <button
           className={mode === 'fps' ? 'active' : 'button_inactive'}
           onClick={() => handleModeChange('fps')}
-        >FPS</button>
+        >{t('clipPlayback.fps')}</button>
         <button
           className={mode === 'timeline' ? 'active' : 'button_inactive'}
           onClick={() => handleModeChange('timeline')}
-        >Timeline</button>
+        >{t('clipPlayback.timeline')}</button>
         <button
           className={mode === 'bpm' ? 'active' : 'button_inactive'}
           onClick={() => handleModeChange('bpm')}
-        >BPM Sync</button>
+        >{t('clipPlayback.bpmSync')}</button>
       </div>
 
       <div className="playback-controls">
         {mode === 'fps' && (
           <>
             <div className="control-group">
-              <label>Speed (FPS)</label>
+              <label>{t('clipPlayback.speedFps')}</label>
               <div className="value-adjuster">
                 <button onClick={() => adjustValue('fps', -1)}>-1</button>
                 <input
@@ -117,7 +119,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
 
         {mode === 'bpm' && (
           <div className="control-group">
-            <label>Beats</label>
+            <label>{t('clipPlayback.beats')}</label>
             <div className="value-adjuster">
               <button onClick={() => adjustValue('beats', -1)}>-1</button>
               <input
@@ -134,7 +136,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
 
         {(mode === 'timeline' || mode === 'bpm') && (
           <div className="control-group">
-            <label>Speed Multiplier</label>
+            <label>{t('clipPlayback.speedMultiplier')}</label>
             <div className="value-adjuster">
               <button onClick={() => adjustValue('speedMultiplier', -0.1)}>-0.1</button>
               <input
@@ -150,7 +152,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
         <div className="playback-direction-style" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #333' }}>
           <label>In Development (Experimental)</label>
           <div className="control-group">
-            <label>Direction</label>
+            <label>{t('clipPlayback.direction')}</label>
             <div className="radio-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                 <input
@@ -160,7 +162,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
                   checked={direction === 'forward'}
                   onChange={() => handleDirectionChange('forward')}
                 />
-                Forward
+                {t('clipPlayback.forward')}
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                 <input
@@ -170,7 +172,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
                   checked={direction === 'backward'}
                   onChange={() => handleDirectionChange('backward')}
                 />
-                Backward
+                {t('clipPlayback.backward')}
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                 <input
@@ -180,12 +182,12 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
                   checked={direction === 'pause'}
                   onChange={() => handleDirectionChange('pause')}
                 />
-                Pause
+                {t('clipPlayback.pause')}
               </label>
             </div>
           </div>
           <div className="control-group">
-            <label>Style</label>
+            <label>{t('clipPlayback.style')}</label>
             <div className="radio-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                 <input
@@ -195,7 +197,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
                   checked={style === 'loop'}
                   onChange={() => handleStyleChange('loop')}
                 />
-                Loop
+                {t('clipPlayback.loop')}
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                 <input
@@ -205,7 +207,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
                   checked={style === 'once'}
                   onChange={() => handleStyleChange('once')}
                 />
-                Once
+                {t('clipPlayback.once')}
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
                 <input
@@ -215,7 +217,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
                   checked={style === 'bounce'}
                   onChange={() => handleStyleChange('bounce')}
                 />
-                Bounce
+                {t('clipPlayback.bounce')}
               </label>
             </div>
           </div>

@@ -1,6 +1,8 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 
 const OutputProcessingWindow = ({ show, onClose, renderSettings = {}, onSetRenderSetting }) => {
+  const { t } = useTranslation();
   if (!show) return null;
 
   return (
@@ -8,14 +10,14 @@ const OutputProcessingWindow = ({ show, onClose, renderSettings = {}, onSetRende
       <div className="modal-overlay">
         <div className="modal-content output-processing-window" style={{ minWidth: '460px', maxHeight: '90vh', overflowY: 'auto' }}>
           <div className="modal-header">
-            <h3>Output Processing</h3>
+              <h3>{t('outputProcessing.title')}</h3>
             <button className="close-btn" onClick={onClose}>×</button>
           </div>
           <div className="modal-body">
             <div className="output-processing-section">
-              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>Processing</h4>
+                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('outputProcessing.processing')}</h4>
               <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <label className="param-label" style={{ fontSize: '11px' }}>Point Optimization</label>
+                <label className="param-label" style={{ fontSize: '11px' }}>{t('outputProcessing.pointOptimization')}</label>
                 <input
                   type="checkbox"
                   checked={renderSettings.optimizationEnabled}
@@ -28,16 +30,16 @@ const OutputProcessingWindow = ({ show, onClose, renderSettings = {}, onSetRende
               />
 
               <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '14px' }}>
-                <label className="param-label" style={{ fontSize: '11px' }}>Layer Merge</label>
+                <label className="param-label" style={{ fontSize: '11px' }}>{t('outputProcessing.layerMerge')}</label>
                 <select
                   className="param-select"
                   value={renderSettings.layerMergeMode || 'priority'}
                   onChange={(e) => onSetRenderSetting('layerMergeMode', e.target.value)}
                   style={{ width: '170px', fontSize: '11px' }}
                 >
-                  <option value="priority">Off (Layer Priority)</option>
-                  <option value="combine">On (Sequential)</option>
-                  <option value="overlay">On (Overlay - Cut)</option>
+                  <option value="priority">{t('outputProcessing.layerMergeOff')}</option>
+                  <option value="combine">{t('outputProcessing.layerMergeSequential')}</option>
+                  <option value="overlay">{t('outputProcessing.layerMergeOverlay')}</option>
                 </select>
               </div>
               <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>

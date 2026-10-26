@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useTranslation } from '../i18n';
 import { PRESET_ORDER, DEFAULT_PRESET, getPreset } from '../utils/hardwarePresets';
 import { TARGET_MODES } from '../utils/speedTarget';
 import {
@@ -556,6 +557,7 @@ const OutputCanvas = ({
 };
 
 const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUpdateDacSettings, sentFramesRef, initialOutputId = null }) => {
+  const { t } = useTranslation();
   const [selectedOutputId, setSelectedOutputId] = useState(initialOutputId);
   const [selectedZoneIndex, setSelectedZoneIndex] = useState(null);
   const [gridSize, setGridSize] = useState(20);
@@ -754,10 +756,10 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
     <div className="output-settings-modal-overlay">
       <div className="output-settings-modal-content">
         <div className="output-settings-header">
-          <h2>Output Settings</h2>
+          <h2>{t('outputSettings.title')}</h2>
           <div className="output-settings-header-actions">
             {saveStatus && <span className="output-settings-save-status">{saveStatus}</span>}
-            <button className="save-btn" onClick={handleSave}>Save Output Settings</button>
+            <button className="save-btn" onClick={handleSave}>{t('outputSettings.save')}</button>
             <button className="save-btn" onClick={handleExportFile}
                 title="Write these settings to a .tlo file so they can be loaded into any project or machine">
               Export…
@@ -766,7 +768,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 title="Load settings from a .tlo file. Only outputs whose address matches a detected DAC are updated.">
               Import…
             </button>
-            <button className="close-btn" onClick={onClose}>Close</button>
+            <button className="close-btn" onClick={onClose}>{t('common.close')}</button>
           </div>
         </div>
         {fileStatus && <div className="output-settings-file-status">{fileStatus}</div>}

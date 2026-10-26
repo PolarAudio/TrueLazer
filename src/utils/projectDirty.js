@@ -70,10 +70,10 @@ const EDITOR_LABELS = {
  *
  * `editors` maps an editor key to a truthy value meaning "has unsaved work".
  */
-export function describeUnsavedWork(editors = {}) {
+export function describeUnsavedWork(editors = {}, labels = EDITOR_LABELS) {
     return Object.keys(EDITOR_LABELS)
         .filter((key) => !!editors[key])
-        .map((key) => EDITOR_LABELS[key]);
+        .map((key) => (labels && labels[key]) || EDITOR_LABELS[key]);
 }
 
 export const hasUnsavedWork = (editors = {}) => describeUnsavedWork(editors).length > 0;
@@ -84,8 +84,8 @@ export const hasUnsavedWork = (editors = {}) => describeUnsavedWork(editors).len
  * Phrased like the app's other destructive confirmations: OK discards and
  * continues, Cancel stays so the user can save first.
  */
-export function unsavedWorkPrompt(editors = {}) {
-    const items = describeUnsavedWork(editors);
+export function unsavedWorkPrompt(editors = {}, labels = EDITOR_LABELS) {
+    const items = describeUnsavedWork(editors, labels);
     if (items.length === 0) return '';
     const list = items.length === 1
         ? items[0]

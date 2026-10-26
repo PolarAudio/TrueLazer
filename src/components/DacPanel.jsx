@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import RadialKnob from './RadialKnob';
 import Mappable from './Mappable';
 import { discoverDacOutputs } from '../utils/dacDiscovery';
+import { useTranslation } from '../i18n';
 
 const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}, onUpdateDacSettings, onApplyGroup }) => {
+  const { t } = useTranslation();
   const [isScanning, setIsScanning] = useState(false);
   const [selectedDac, setSelectedDac] = useState(null);
   const [networkInterfaces, setNetworkInterfaces] = useState([]);
@@ -176,7 +178,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                 minWidth: '60px'
             }}
         >
-            {isScanning ? 'SCANNING...' : 'SCAN'}
+            {isScanning ? t('dac.scanning') : t('dac.scan')}
         </button>
       </div>
       <div className="dac-list">
@@ -263,7 +265,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                 </div>
             ))}
             {Object.keys(groups).length === 0 && (
-                <div style={{ fontSize: '10px', color: '#666', fontStyle: 'italic' }}>No groups defined.</div>
+                        <div style={{ fontSize: '10px', color: '#666', fontStyle: 'italic' }}>{t('dac.noGroups')}</div>
             )}
         </div>
       </div>

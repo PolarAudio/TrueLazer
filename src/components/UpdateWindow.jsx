@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 
 /**
  * The auto-update window.
@@ -10,36 +11,38 @@ import React from 'react';
  * be applied the next time the app starts (which is the one for a show that
  * is about to begin).
  */
-const PHASE_TEXT = {
-    checking: { title: 'Checking for updates', body: 'Asking GitHub for a newer release...' },
-    available: { title: 'A new version is available', body: 'It is being downloaded in the background.' },
-    downloading: { title: 'Downloading the update', body: 'You can keep working while it downloads.' },
-    downloaded: { title: 'The update is ready to install', body: 'Restarting now restarts TrueLazer into the new version.' },
-    'up-to-date': { title: 'TrueLazer is up to date', body: 'You are running the latest release.' },
-    deferred: { title: 'The update will be installed next time', body: 'It will be applied the next time TrueLazer starts.' },
+const PHASE_KEYS = {
+    checking: { title: 'update.checking', body: 'update.checkingBody' },
+    available: { title: 'update.available', body: 'update.availableBody' },
+    downloading: { title: 'update.downloading', body: 'update.downloadingBody' },
+    downloaded: { title: 'update.downloaded', body: 'update.downloadedBody' },
+    'up-to-date': { title: 'update.upToDate', body: 'update.upToDateBody' },
+    deferred: { title: 'update.deferred', body: 'update.deferredBody' },
 };
 
 const UpdateWindow = ({ state, onClose, onInstallNow, onInstallNextLaunch, onSkip, autoCheck, onToggleAutoCheck }) => {
+    const { t } = useTranslation();
     if (!state) return null;
 
     const phase = state.phase;
     if (phase === 'idle') return null;
 
-    let title = 'Update';
+    let title = t('update.title');
     let body = '';
     let showProgress = false;
     let showInstall = false;
 
     if (phase === 'error') {
-        title = 'Could not check for updates';
-        body = state.error || 'The update feed could not be reached.';
+        title = t('update.error');
+        body = state.error || t('update.errorBody');
     } else {
-        const text = PHASE_TEXT[phase] || PHASE_TEXT.checking;
+        const keys = PHASE_KEYS[phase] || PHASE_KEYS.checking;
+        const textTitle = t(keys.title);
         title = state.version && phase !== 'upToDate'
-            ? `${text.title} - ${state.version}`
-            : text.title;
-        if (phase === 'upToDate' && state.version) title = `${text.title} (${state.version})`;
-        body = text.body;
+            ? `${textTitle} - ${state.version}`
+            : textTitle;
+        if (phase === 'upToDate' && state.version) title = `${textTitle} (${state.version})`;
+        body = t(keys.body);
         showProgress = phase === 'downloading';
         showInstall = phase === 'downloaded';
     }
@@ -51,7 +54,7 @@ const UpdateWindow = ({ state, onClose, onInstallNow, onInstallNextLaunch, onSki
             <div className="modal-content update-window" style={{ minWidth: '420px', maxWidth: '520px' }}>
                 <div className="modal-header">
                     <h3 style={{ margin: 0, fontSize: '15px' }}>{title}</h3>
-                    <button className="close-btn" onClick={onClose} title="Close">×</button>
+                    <button className="close-btn" onClick={onClose} title={t('update.close')}>×</button>
                 </div>
 
                 <div className="modal-body update-body">
@@ -66,7 +69,7 @@ const UpdateWindow = ({ state, onClose, onInstallNow, onInstallNextLaunch, onSki
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#888', marginTop: '4px' }}>
                                 <span>{state.percent || 0}%</span>
-                                <span>{formatBytes(state.transferred)} of {formatBytes(state.total)}</span>
+                                <span>{formatBytes(state.transferred)} {t('update.of')} {formatBytes(state.total)}</span>
                             </div>
                         </div>
                     ) : null}
@@ -77,25 +80,25 @@ const UpdateWindow = ({ state, onClose, onInstallNow, onInstallNextLaunch, onSki
                             checked={!!autoCheck}
                             onChange={(e) => onToggleAutoCheck && onToggleAutoCheck(e.target.checked)}
                         />
-                        <span>Check for updates automatically</span>
+                        <span>{t('update.checkAutomatically')}</span>
                     </label>
                 </div>
 
                 <div className="update-footer">
                     {canSkip ? (
-                        <button className="update-button" onClick={() => onSkip(state.version)}>
-                            Skip this version
-                        </button>
-                    ) : null}
-                    <button className="update-button" onClick={onClose}>Close</button>
-                    {showInstall ? (
-                        <>
-                            <button className="update-button" onClick={onInstallNextLaunch}>
-                                Install on next launch
+                            <button className="update-button" onClick={() => onSkip(state.version)}>
+                                {t('update.skipVersion')}
                             </button>
-                            <button className="update-button primary" onClick={onInstallNow}>
-                                Restart and install
-                            </button>
+                        ) : null}
+                        <button className="update-button" onClick={onClose}>{t('update.close')}</button>
+                        {showInstall ? (
+                            <>
+                                <button className="update-button" onClick={onInstallNextLaunch}>
+                                    {t('update.installNextLaunch')}
+                                </button>
+                                <button className="update-button primary" onClick={onInstallNow}>
+                                    {t('update.restartAndInstall')}
+                                </button>
                         </>
                     ) : null}
                 </div>

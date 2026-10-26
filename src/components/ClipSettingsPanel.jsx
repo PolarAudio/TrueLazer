@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import EffectEditor from './EffectEditor';
+import { useTranslation } from '../i18n';
 import GeneratorSettingsPanel from './GeneratorSettingsPanel';
 import ClipPlaybackSettings from './ClipPlaybackSettings';
 import ClipDjLinkSettings from './ClipDjLinkSettings';
@@ -43,6 +44,7 @@ const ClipSettingsPanel = ({
   djLinkTransportArmed = true,
   onArmDjLinkTransport
 }) => {
+  const { t } = useTranslation();
   const [dacStatuses, setDacStatuses] = useState({});
   const [draggedEffectIndex, setDraggedEffectIndex] = useState(null);
   const { seekAudio } = useAudio();
@@ -198,7 +200,7 @@ const ClipSettingsPanel = ({
   return (
     <div className="clip-settings-panel settings-panel-base" onDrop={handleDrop} onDragOver={handleDragOver}>
       <CollapsiblePanel 
-        title="Audio" 
+        title={t('clipSettings.audio')} 
         isCollapsed={!!collapsedPanels['audio']}
         onToggle={(val) => togglePanel('audio', val)}
       >
@@ -333,7 +335,7 @@ const ClipSettingsPanel = ({
       )}
 
       <CollapsiblePanel 
-        title="Clip Effects"
+        title={t('clipSettings.clipEffects')}
         isCollapsed={!!collapsedPanels['effects']}
         onToggle={(val) => togglePanel('effects', val)}
       >

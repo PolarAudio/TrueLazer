@@ -1797,6 +1797,7 @@ function createWindow() {
   // blank/clear loop keeps DACs responsive the instant a clip becomes active.
   let dacTargets = [];
   const DAC_SEND_INTERVAL = 1000 / 30; // 30 fps per channel (Truwave default)
+  const IDN_SEND_STAGGER_MS = 1; // spacing between channels' packets within one frame tick
   const MAX_MISSED = 5; // ~167ms without a new frame before blanking
   const SILENT_TTL_MS = 3000; // feed laser-off blank/clear frames this long, then retire the channel
 
@@ -1846,6 +1847,14 @@ function createWindow() {
       // This replaces the old "start sending once there is frame data" model —
       // the loop runs from laser-on and swaps the idle stream for the compiled
       // frame buffer the moment a clip is active.
+      // Resolve + consume frames synchronously, but stagger the actual UDP sends.
+      // Firing every channel's packet in the same microsecond (the old behaviour)
+      // bursted N datagrams at the receiver, which dropped/reordered some of
+      // them and showed up as "IDN-RT: Out of sequence (N lost/early)" and as
+      // jumped laser output on strict players. Spacing sends ~1ms apart keeps
+      // the burst inside one frame interval (33ms) while letting the receiver's
+      // socket drain between packets.
+      const pendingSends = [];
       for (const t of dacTargets) {
         // Never reopen a DAC the user just stopped (laser-off window).
         if (stoppedDacIps.has(t.ip)) continue;
@@ -1856,13 +1865,18 @@ function createWindow() {
           acc.blanked = false;
           acc.blank = null;
           acc.lastActivity = now;
-          acc.sent = acc.frame;
-          sendFrame(t.ip, t.channel, acc.frame, acc.fps || 30, t.type, acc.options);
+          const frame = acc.frame;
+          acc.sent = frame;
           acc.frame = null;
+          pendingSends.push(() => sendFrame(t.ip, t.channel, frame, acc.fps || 30, t.type, acc.options));
         } else {
-          sendIdleFrame(t.ip, t.channel, t.type, acc ? acc.options : undefined);
+          pendingSends.push(() => sendIdleFrame(t.ip, t.channel, t.type, acc ? acc.options : undefined));
         }
       }
+      pendingSends.forEach((fn, i) => {
+        if (i === 0) fn();
+        else setTimeout(fn, i * IDN_SEND_STAGGER_MS);
+      })
 
       for (const id of Object.keys(dacFrameAccumulator)) {
         // Target channels are fed above; don't double-handle them in the
@@ -1877,8 +1891,9 @@ function createWindow() {
             // holds its output via a live datagram stream, so a single packet is
             // not enough to blank cleanly — repeated blanks prevent the abrupt cut.
             if (!acc.blanked) {
-              const blank = new Float32Array(8);
+              const blank = new Float32Array(16);
               blank[6] = 1;
+              blank[14] = 1;
               acc.blank = blank;
               acc.blanked = true;
             }
@@ -1935,16 +1950,20 @@ function createWindow() {
     // Two blanked points: a discrete IDN frame needs at least two samples, and one
     // point is rejected by strict players (leaving the last real frame lit). Each
     // packet is a complete frame with a duration, so the player then holds a blank.
+    const blankTasks = [];
     for (const id of Object.keys(dacFrameAccumulator)) {
       const acc = dacFrameAccumulator[id];
       if (acc.ip !== ip) continue;
       const blank = new Float32Array(16);
       blank[6] = 1;
       blank[14] = 1;
-      sendFrame(ip, acc.channel, blank, acc.fps || 30, acc.type, acc.options);
+      blankTasks.push(() => sendFrame(ip, acc.channel, blank, acc.fps || 30, acc.type, acc.options));
       delete dacFrameAccumulator[id];
     }
-    stopSending(ip, type);
+    blankTasks.forEach((fn, i) => setTimeout(fn, i * IDN_SEND_STAGGER_MS));
+    const closeDelay = blankTasks.length ? blankTasks.length * IDN_SEND_STAGGER_MS + 5 : 0;
+    if (closeDelay) setTimeout(() => stopSending(ip, type), closeDelay);
+    else stopSending(ip, type);
   });
 
   ipcMain.handle('get-network-interfaces', async () => {

@@ -10,7 +10,7 @@ const GeneralSettingsWindow = ({ show, onClose, masterSpeed }) => {
       <div className="modal-overlay">
         <div className="modal-content general-settings-window" style={{ minWidth: '420px' }}>
           <div className="modal-header">
-            <h3>General Settings</h3>
+            <h3>{t('settings.general')}</h3>
             <button className="close-btn" onClick={onClose}>×</button>
           </div>
           <div className="modal-body">
@@ -35,41 +35,37 @@ const GeneralSettingsWindow = ({ show, onClose, masterSpeed }) => {
             </div>
 
             <div className="general-settings-section" style={{ marginTop: '16px' }}>
-              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>ILDA Parsing</h4>
+              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('settings.ildaParsing')}</h4>
               <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <label className="param-label" style={{ fontSize: '11px' }}>Parse Mode</label>
+                <label className="param-label" style={{ fontSize: '11px' }}>{t('settings.parseMode')}</label>
                 <select
                   className="param-select"
                   value="legacy"
                   style={{ width: '180px', fontSize: '11px' }}
                   disabled
                 >
-                  <option value="legacy">Legacy Backup (default)</option>
+                  <option value="legacy">{t('settings.parseModeLegacy')}</option>
                 </select>
               </div>
               <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
-                Vector Convert is temporarily disabled while the shape remastering
-                pipeline is reworked. Files are parsed with the default point-based
-                processing (Legacy), which always preserves the original geometry.
+                {t('settings.parseModeHelp')}
               </p>
             </div>
 
             {masterSpeed && (
-              <div className="general-settings-section" style={{ marginTop: '16px' }}>
-                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>Master Speed</h4>
-                <div
-                  className="param-editor"
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}
-                >
-                  <label className="param-label" style={{ fontSize: '11px' }}>Target FPS</label>
-                  {masterSpeed}
-                </div>
-                <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
-                  Playback frame rate for the whole show, and the audio playback rate
-                  that follows it. This drives every clip and effect timing, so it is
-                  set here rather than during a show.
-                </p>
+            <div className="general-settings-section" style={{ marginTop: '16px' }}>
+              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('settings.masterSpeed')}</h4>
+              <div
+                className="param-editor"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}
+              >
+                <label className="param-label" style={{ fontSize: '11px' }}>{t('settings.targetFps')}</label>
+                {masterSpeed}
               </div>
+              <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
+                {t('settings.targetFpsHelp')}
+              </p>
+            </div>
             )}
           </div>
         </div>

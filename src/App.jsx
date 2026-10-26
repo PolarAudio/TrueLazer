@@ -63,6 +63,7 @@ import { generateCircle, generateSquare, generateLine, generateStar, generateTex
 import { throttle, debounce } from './utils/throttle';
 import { advanceDjProgress, linkedClipDurationSec, makeLinkFromDeck } from './utils/djLinkTracks';
 import { useDjLinkClipTransport } from './hooks/useDjLinkClipTransport';
+import { useTranslation } from './i18n';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -2195,6 +2196,7 @@ const SidePanelContainer = React.memo(({
 
 
 function App() {
+    const { t } = useTranslation();
     const ildaParserWorker = useIldaParserWorker();
     const thumbnailWorker = useThumbnailWorker();
     const generatorWorker = useGeneratorWorker();
@@ -2282,9 +2284,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             }
             if (shouldWarnOnUnsavedChanges(from, page, dirty)) {
                 const discard = window.confirm(
-                    'The Shape Builder has unsaved changes.\n\n' +
-                    'OK - discard them and continue\n' +
-                    'Cancel - stay here so you can save first'
+                    t('dialog.shapeBuilderUnsaved') + '\n\n' +
+                    t('dialog.shapeBuilderDiscard') + '\n' +
+                    t('dialog.shapeBuilderStay')
                 );
                 if (!discard) return;
             }
@@ -4891,9 +4893,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     hasWork = false;
                 }
                 if (hasWork) {
-                    const label = decision.owner === 'shapeBuilder' ? 'Shape' : 'Timeline';
+                    const label = decision.owner === 'shapeBuilder' ? t('dialog.shape') : t('dialog.timeline');
                     const ok = window.confirm(
-                        `Start a new ${label} project?\n\nCurrent unsaved work will be lost.`
+                        t('dialog.newProjectConfirm', { label }) + '\n\n' + t('dialog.unsavedWorkLost')
                     );
                     if (!ok) return false;
                 }
@@ -5202,17 +5204,22 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 // Never let the guard itself block the app from closing.
                 console.warn('Unsaved-work check failed; continuing.', error);
             }
-            const items = describeUnsavedWork(editors);
+                const unsavedLabels = {
+                    showProject: t('dialog.unsavedShowProject'),
+                    shapeBuilder: t('dialog.unsavedShapeBuilder'),
+                    timeline: t('dialog.unsavedTimeline'),
+                };
+                const items = describeUnsavedWork(editors, unsavedLabels);
             let proceed = true;
             if (items.length > 0) {
                 // Logged because "the app asked to discard my work when I had
                 // not done any" is the kind of question that can only be
                 // answered from the log.
                 console.warn('[Quit] unsaved work found in:', items.join(', '));
-                const prompt = unsavedWorkPrompt(editors);
+                const prompt = unsavedWorkPrompt(editors, unsavedLabels);
                 proceed = window.confirm(
                     reason === 'update'
-                        ? `TrueLazer is about to install an update and restart.\n\n${prompt}`
+                        ? t('dialog.updateRestartPrefix') + '\n\n' + prompt
                         : prompt
                 );
             }

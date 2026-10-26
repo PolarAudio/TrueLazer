@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import Mappable from './Mappable';
+import { useTranslation } from '../i18n';
 
 const MasterIntensitySlider = ({ masterIntensity, onMasterIntensityChange }) => {
     const sliderRef = useRef(null);
@@ -38,7 +39,7 @@ const MasterIntensitySlider = ({ masterIntensity, onMasterIntensityChange }) => 
 
 const AudioDeviceSelector = ({ devices, selectedId, onChange }) => (
     <div className="audio-device-selector">
-        <select value={selectedId} onChange={(e) => onChange(e.target.value)} title="Audio Output Device">
+        <select value={selectedId} onChange={(e) => onChange(e.target.value)} title={t('composition.audioOutputDevice')}>
             {devices.map(device => (
                 <option key={device.deviceId} value={device.deviceId}>
                     {device.label || `Device ${device.deviceId.slice(0, 5)}`}
@@ -55,6 +56,7 @@ const CompositionControls = ({
     isGlobalBlackout,
     onToggleGlobalBlackout
 }) => {
+    const { t } = useTranslation();
     const handleDragStart = (e, action) => {
         e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
             type: 'toggle',

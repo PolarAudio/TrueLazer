@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
 import { useMidi } from '../contexts/MidiContext';
 import { useArtnet } from '../contexts/ArtnetContext';
 import { useKeyboard } from '../contexts/KeyboardContext';
@@ -9,6 +10,8 @@ const Mappable = ({ id, children, style }) => {
   const { isMapping: isKeyboardMapping, setLearningId: setKeyboardLearningId, removeMapping: removeKeyboardMapping } = useKeyboard() || {};
 
   const isMapping = isMidiMapping || isArtnetMapping || isKeyboardMapping;
+
+  const { t } = useTranslation();
 
   const handleClickCapture = (e, dropdownValue = null) => {
     if (isMapping) {
@@ -50,7 +53,7 @@ const Mappable = ({ id, children, style }) => {
                         data-mappable-id={optId}
                         style={{ ...opt.props.style, color: 'var(--theme-color)' }}
                       >
-                        {opt.props.children} [Mappable]
+                        {opt.props.children} {t('mappable.tag')}
                       </option>
                   );
               }

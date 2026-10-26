@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useTranslation } from '../i18n';
 import { effectDefinitions } from '../utils/effectDefinitions';
 import Mappable from './Mappable';
 import RangeSlider from './RangeSlider';
@@ -447,6 +448,7 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
 };
 
 const EffectEditor = ({ effect, assignedDacs = [], dacSettings = {}, onParamChange, onRemove, syncSettings = {}, onSetParamSync, context = {}, progressRef, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, dragHandle, onRegisterPreset, currentPointCount }) => {
+  const { t } = useTranslation();
   if (!effect) return null;
   const effectDefinition = effectDefinitions.find(def => def.id === effect.id);
   if (!effectDefinition) return null;

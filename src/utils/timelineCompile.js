@@ -37,9 +37,13 @@ export function toFlat8(objPoints) {
 
 /** A single blacked / blanked point — used for blackout and idle frames. */
 export function blankFrame() {
-    const b = new Float32Array(8);
-    b[6] = 1;
-    b[7] = 1;
+    // A discrete IDN frame must contain either 0 or at least 2 samples; a
+    // single-sample frame is rejected by strict players, which then keep the
+    // last real frame on screen. Two blanked points read as fully off.
+    const b = new Float32Array(16);
+    b[6] = 1;  // point 0: blanking
+    b[14] = 1; // point 1: blanking
+    b[15] = 1; // point 1: last point
     return b;
 }
 
