@@ -6,7 +6,7 @@ import { useTimeline } from '../../contexts/TimelineContext';
  * to route that track to the DAC channel.
  */
 const TimelineDacDock = () => {
-    const { discoverChannels, dacOutputSettings, openOutputSettings } = useTimeline();
+    const { discoverChannels, dacOutputSettings, openOutputSettings, state, actions } = useTimeline();
 
     // Prefer the name the user assigned in Output Settings over the raw
     // discovery/service-map label ("Channel 3", "Main", ...), matching how
@@ -18,6 +18,15 @@ const TimelineDacDock = () => {
     const [dacs, setDacs] = useState([]);
     const [scanning, setScanning] = useState(false);
     const [error, setError] = useState('');
+    const [groups, setGroups] = useState(() => {
+        try {
+            if (window.electronAPI && window.electronAPI.getDacGroups) {
+                const result = window.electronAPI.getDacGroups();
+                if (result && typeof result.then !== 'function') return result || {};
+            }
+        } catch (_) { /* ignore */ }
+        return {};
+    });
 
     const scan = useCallback(async () => {
         setScanning(true);
@@ -42,7 +51,38 @@ const TimelineDacDock = () => {
         }
     }, [discoverChannels]);
 
+    const loadGroups = useCallback(async () => {
+        if (window.electronAPI && window.electronAPI.getDacGroups) {
+            try {
+                const g = await window.electronAPI.getDacGroups();
+                setGroups(g || {});
+            } catch (_) {
+                // ignore
+            }
+        }
+    }, []);
+
+    const groupChannelsToOutputs = useCallback((channels) => {
+        return (channels || [])
+            .map((gd) => ({
+                ip: gd.ip,
+                channel: gd.channel != null ? gd.channel : gd.serviceID,
+                type: gd.type || 'etherdream',
+                label: gd.label || gd.hostName || null,
+            }))
+            .filter((o) => o.ip != null && o.channel != null);
+    }, []);
+
+    const applyGroupToSelectedTrack = useCallback((channels) => {
+        const selectedId = state && state.settings ? state.settings.selectedChannelId : null;
+        if (!selectedId || !actions || !actions.setChannelDacs) return;
+        const outputs = groupChannelsToOutputs(channels);
+        if (outputs.length === 0) return;
+        actions.setChannelDacs(selectedId, outputs);
+    }, [state, actions, groupChannelsToOutputs]);
+
     useEffect(() => { scan(); }, [scan]);
+    useEffect(() => { loadGroups(); }, [loadGroups]);
 
     return (
         <div className="timeline-dac-dock">
@@ -57,6 +97,13 @@ const TimelineDacDock = () => {
                     title="Open the Output Settings for the discovered channels (dimmer, output area, safety zones)"
                 >
                     Output Settings…
+                </button>
+                <button
+                    className="timeline-btn-sm"
+                    onClick={loadGroups}
+                    title="Reload saved DAC groups"
+                >
+                    Reload Groups ({Object.keys(groups).length})
                 </button>
                 <span className="timeline-dac-dock-hint">
                     Drag a chip onto a track header to route it. Drag on empty timeline space to sweep-select;
@@ -85,6 +132,31 @@ const TimelineDacDock = () => {
                     </div>
                 ))}
             </div>
+
+            {Object.keys(groups).length > 0 && (
+                <div className="timeline-dac-dock-groups">
+                    <div className="timeline-dac-dock-groups-title">DAC Groups</div>
+                    <div className="timeline-dac-dock-list">
+                        {Object.entries(groups).map(([name, groupDacs]) => (
+                            <div
+                                key={name}
+                                className="timeline-dac-chip timeline-dac-group-chip"
+                                draggable
+                                onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify({
+                                    isGroup: true,
+                                    name,
+                                    channels: groupDacs,
+                                }))}
+                                onClick={() => applyGroupToSelectedTrack(groupDacs)}
+                                title={`Drag onto a track header to assign all ${groupDacs.length} channels. Click to assign to the selected track.`}
+                            >
+                                <span className="timeline-dac-chip-type">GRP</span>
+                                <span className="timeline-dac-chip-label">{name} ({groupDacs.length})</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -60,6 +60,46 @@ const TrackHeader = ({ channel, height }) => {
                 // Plain drop replaces the routing (single-channel mode).
                 actions.setChannelDac(channel.id, output);
             }
+        } else if (data.isGroup || Array.isArray(data.channels) || data.allChannels) {
+            const dedup = (list) => {
+                const seen = new Set();
+                return list.filter((o) => {
+                    const key = `${o.ip}:${o.channel}`;
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
+            };
+            const groupOutputs = [];
+            if (Array.isArray(data.channels)) {
+                for (const gd of data.channels) {
+                    if (gd && gd.ip != null && gd.channel != null) {
+                        groupOutputs.push({
+                            ip: gd.ip,
+                            channel: gd.channel,
+                            type: gd.type || data.type || 'etherdream',
+                            label: gd.label || gd.hostName || data.label || null,
+                        });
+                    } else if (gd && gd.serviceID != null) {
+                        const ip = gd.ip != null ? gd.ip : data.ip;
+                        if (ip != null) {
+                            groupOutputs.push({
+                                ip,
+                                channel: gd.serviceID,
+                                type: data.type || gd.type || 'etherdream',
+                                label: gd.name || gd.label || data.label || null,
+                            });
+                        }
+                    }
+                }
+            }
+            const cleaned = dedup(groupOutputs.filter((o) => o.ip != null && o.channel != null));
+            if (cleaned.length === 0) return;
+            if (e.shiftKey) {
+                actions.setChannelDacs(channel.id, dedup([...outputs, ...cleaned]));
+            } else {
+                actions.setChannelDacs(channel.id, cleaned);
+            }
         }
     };
 

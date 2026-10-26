@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
+import IldaThumbnail from './IldaThumbnail';
 import { useThumbnailWorker } from '../contexts/ThumbnailWorkerContext';
 import { useTranslation } from '../i18n';
 
@@ -23,6 +24,9 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
   const processingQueueRef = useRef([]);
   const isProcessingRef = useRef(false);
   const fileStatsCacheRef = useRef({});
+  const fileWorkerIdsRef = useRef({});
+  const fullParsedFilesRef = useRef(new Set());
+  const fullParsePendingRef = useRef(new Set());
 
   const selectedDirectory = path;
   const setSelectedDirectory = onPathChange;
@@ -81,6 +85,17 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
       if (e.data.browserFile) {
         if (e.data.type === 'parse-ilda') {
           if (e.data.success) {
+            if (e.data.filePath) {
+              const isFullParse = e.data.stopAtFirstFrame === false;
+              if (isFullParse) {
+                fileWorkerIdsRef.current[e.data.filePath] = e.data.workerId;
+                fullParsedFilesRef.current.add(e.data.filePath);
+                fullParsePendingRef.current.delete(e.data.filePath);
+                setHoverPreview(prev => (prev && prev.filePath === e.data.filePath ? { ...prev } : prev));
+              } else if (!fullParsedFilesRef.current.has(e.data.filePath)) {
+                fileWorkerIdsRef.current[e.data.filePath] = e.data.workerId;
+              }
+            }
             ildaParserWorker.postMessage({
                 type: 'get-frame',
                 workerId: e.data.workerId,
@@ -103,7 +118,7 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
                 [e.data.filePath]: bitmap
             }));
             const stats = fileStatsCacheRef.current[e.data.filePath];
-            if (stats && bitmap instanceof ImageBitmap) {
+            if (stats && isImageBitmapLike(bitmap)) {
               saveThumbnailToCache(e.data.filePath, stats, bitmap).catch(console.error);
             }
           }
@@ -176,10 +191,25 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
     loadThumbnailsForFiles([filePath]);
   }, [loadThumbnailsForFiles]);
 
+  const ensureFullParse = useCallback((filePath) => {
+    if (!filePath || !ildaParserWorker) return;
+    if (fullParsedFilesRef.current.has(filePath) || fullParsePendingRef.current.has(filePath)) return;
+    fullParsePendingRef.current.add(filePath);
+    const fileName = filePath.split(/[/\\]/).pop();
+    ildaParserWorker.postMessage({
+      type: 'load-and-parse-ilda',
+      fileName,
+      filePath,
+      browserFile: true,
+      stopAtFirstFrame: false
+    });
+  }, [ildaParserWorker]);
+
   const showHoverPreview = useCallback((event, filePath, fileName, hasThumbnail) => {
     if (!hasThumbnail) requestHoverThumbnail(filePath);
+    if (viewMode === 'thumbnails') ensureFullParse(filePath);
     setHoverPreview({ filePath, fileName, x: event.clientX, y: event.clientY });
-  }, [requestHoverThumbnail]);
+  }, [requestHoverThumbnail, ensureFullParse, viewMode]);
 
   const moveHoverPreview = useCallback((event) => {
     setHoverPreview(prev => (prev ? { ...prev, x: event.clientX, y: event.clientY } : prev));
@@ -296,8 +326,8 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
                 <div className="file_thumbnail">
                     {data ? (
                         <StaticIldaThumbnail 
-                            bitmap={data instanceof ImageBitmap ? data : null} 
-                            frame={data instanceof ImageBitmap ? null : data} 
+                            bitmap={isImageBitmapLike(data) ? data : null} 
+                            frame={isImageBitmapLike(data) ? null : data} 
                         />
                     ) : isLoading ? (
                         <div className="clip-loading-spinner"></div>
@@ -344,6 +374,10 @@ const FileBrowser = ({ onDropIld, viewMode = 'list', onViewModeChange, path, onP
           data={thumbnails[hoverPreview.filePath]}
           isLoading={loadingThumbnails.has(hoverPreview.filePath)}
           noPreviewLabel={t('fileBrowser.noPreview')}
+          viewMode={viewMode}
+          picturePreviewActive={viewMode === 'thumbnails'}
+          ildaParserWorker={ildaParserWorker}
+          workerId={hoverPreview ? fileWorkerIdsRef.current[hoverPreview.filePath] : undefined}
         />,
         document.body
       )}
@@ -362,7 +396,19 @@ const PREVIEW_MARGIN = 8;
  * it, and pointer-events are disabled so the preview can never steal the hover
  * from the file underneath it.
  */
-const FileHoverPreview = ({ preview, data, isLoading, noPreviewLabel }) => {
+function isImageBitmapLike(value) {
+  if (!value) return false;
+  if (typeof ImageBitmap !== 'undefined') {
+    try {
+      if (value instanceof ImageBitmap) return true;
+    } catch (e) {
+      // ignore
+    }
+  }
+  return !!(value.constructor && value.constructor.name === 'ImageBitmap');
+}
+
+const FileHoverPreview = ({ preview, data, isLoading, noPreviewLabel, viewMode, picturePreviewActive, picturePreview, isPicturePreviewActive, playback, ildaParserWorker, workerId }) => {
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1920;
   const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 1080;
   const previewHeight = PREVIEW_SIZE + 34;
@@ -375,17 +421,44 @@ const FileHoverPreview = ({ preview, data, isLoading, noPreviewLabel }) => {
     Math.min(preview.y + PREVIEW_GAP, viewportHeight - previewHeight - PREVIEW_MARGIN)
   );
 
+  const isPicturePreview = Boolean(
+    picturePreviewActive ??
+    picturePreview ??
+    isPicturePreviewActive ??
+    playback ??
+    (viewMode === 'thumbnails') ??
+    (viewMode === 'picture') ??
+    false
+  );
+
+  // Playback hover is independent of the global thumbnail render mode: it only
+  // depends on whether the file browser is showing picture previews.
+  const usePlayback = isPicturePreview && (!!workerId || !isImageBitmapLike(data));
+
   return (
     <div className="file-hover-preview" style={{ left, top, width: PREVIEW_SIZE }}>
       <div className="file-hover-preview-image" style={{ height: PREVIEW_SIZE }}>
         {data ? (
-          <StaticIldaThumbnail
-            bitmap={data instanceof ImageBitmap ? data : null}
-            frame={data instanceof ImageBitmap ? null : data}
-            width={PREVIEW_SIZE}
-            height={PREVIEW_SIZE}
-            style={{ width: `${PREVIEW_SIZE}px`, height: `${PREVIEW_SIZE}px`, borderRadius: '4px' }}
-          />
+          usePlayback ? (
+            <IldaThumbnail
+              frame={isImageBitmapLike(data) ? null : data}
+              frames={data && data.frames ? data.frames : undefined}
+              width={PREVIEW_SIZE}
+              height={PREVIEW_SIZE}
+              ildaParserWorker={ildaParserWorker}
+              workerId={workerId}
+              liveEnabled={true}
+              style={{ width: `${PREVIEW_SIZE}px`, height: `${PREVIEW_SIZE}px`, borderRadius: '4px' }}
+            />
+          ) : (
+            <StaticIldaThumbnail
+              bitmap={isImageBitmapLike(data) ? data : null}
+              frame={isImageBitmapLike(data) ? null : data}
+              width={PREVIEW_SIZE}
+              height={PREVIEW_SIZE}
+              style={{ width: `${PREVIEW_SIZE}px`, height: `${PREVIEW_SIZE}px`, borderRadius: '4px' }}
+            />
+          )
         ) : isLoading ? (
           <div className="clip-loading-spinner"></div>
         ) : (
@@ -397,4 +470,5 @@ const FileHoverPreview = ({ preview, data, isLoading, noPreviewLabel }) => {
   );
 };
 
+export { FileHoverPreview, isImageBitmapLike };
 export default FileBrowser;

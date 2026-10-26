@@ -4535,10 +4535,31 @@ input[type="checkbox"].tl-checkbox:after {
   color: #dfe4ec;
 }
 
+.timeline-dac-dock-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline-dac-dock-groups-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #9aa3b2;
+}
+
+.timeline-dac-group-chip {
+  background: #2a3340;
+  border-color: #5a6a80;
+}
+
 .timeline-dac-dock-empty {
   color: #7a8190;
   font-size: 12px;
   padding: 2px 0;
+}
+
+.timeline-dac-group-chip .timeline-dac-chip-type {
+  background: #7c9cff;
 }
 
 /* Selected-track playback preview (lives inside the inspector panel) */
