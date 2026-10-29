@@ -124,6 +124,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
   const [pointSpacing, setPointSpacing] = useState(0);
   const [previewMode, setPreviewMode] = useState('off'); // 'off' | 'line' | 'points' | 'center' | 'cone'
   const [collapsedPanels, setCollapsedPanels] = useState({ layers: false, props: false });
+  const [arrayModifier, setArrayModifier] = useState({ mode: 'linear', count: 5, spacing: 50, axis: 'x', angle: 30 });
   const [shapeEffect, setShapeEffect] = useState(null); // { type, params, envelopes, sourceIndex }
   const [bakeEffects, setBakeEffects] = useState(true);
   const [envTarget, setEnvTarget] = useState(null);   // param id with its playback envelope editor open
@@ -255,6 +256,30 @@ const ShapeBuilder = ({ onBack, ref }) => {
       return baked;
   };
 
+  const bakeGroupTransform = (child, group) => {
+      const pts = applyTransformations(getSampledPoints(child), group);
+      const baked = {
+          ...child,
+          points: pts,
+          rotationX: 0, rotationY: 0, rotationZ: 0,
+          scaleX: 1, scaleY: 1
+      };
+      if (child.type === 'line') {
+          baked.start = pts[0];
+          baked.end = pts[1];
+          delete baked.points;
+      } else {
+          baked.type = (child.type === 'rect' || child.type === 'circle' || child.type === 'star' || child.type === 'triangle') ? 'polygon' : child.type;
+          delete baked.start;
+          delete baked.end;
+          delete baked.width;
+          delete baked.height;
+      }
+      delete baked.pivotX;
+      delete baked.pivotY;
+      return baked;
+  };
+
   const groupShapes = () => {
       if (selectedShapeIndexes.length < 2) return;
       const newFrames = [...frames];
@@ -292,19 +317,8 @@ const ShapeBuilder = ({ onBack, ref }) => {
       const currentShapes = [...newFrames[currentFrameIndex]];
       currentShapes.splice(selectedShapeIndexes[0], 1);
       
-      // When ungrouping, we might want to keep the group's transforms? 
-      // For now, let's keep it simple: ungrouping results in shapes with group transforms baked in.
-      const bakedSubShapes = group.shapes.map(s => {
-          // Temporarily apply group transforms to child and bake
-          const pts = applyTransformations(getSampledPoints(s), group);
-          return {
-              ...s,
-              points: pts,
-              rotationX: 0, rotationY: 0, rotationZ: 0,
-              scaleX: 1, scaleY: 1
-          };
-      });
-
+      // Ungrouping bakes the group's accumulated transform into every child so the ungrouped shapes keep the position the group gave them.
+      const bakedSubShapes = group.shapes.map(s => bakeGroupTransform(s, group));
       currentShapes.push(...bakedSubShapes);
       newFrames[currentFrameIndex] = currentShapes;
       setFrames(newFrames);
@@ -855,7 +869,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
               if (!item.points) return null;
               const indicesToDelete = paths.map(p => p[0]);
               const newPts = item.points.filter((_, i) => !indicesToDelete.includes(i));
-              if (newPts.length < 2) return null;
+              if (newPts.length < 1) return null;
               return { ...item, points: newPts };
           }
       };
@@ -1416,8 +1430,22 @@ const ShapeBuilder = ({ onBack, ref }) => {
       const d = (data.frames || data.format) ? data : (data.state || data);
       if (Array.isArray(d.frames) && d.frames.length > 0) setFrames(d.frames);
 
+      // frameCount must be updated alongside tempFrameCount: the LENGTH input shows
+      // tempFrameCount, but the ruler, navigation, and the frames-sync effect all read
+      // frameCount. Leaving it stale keeps the old frame count on screen and lets the
+      // sync effect trim the freshly loaded frames back to it on the next change.
       const n = Number(d.frameCount);
-      if (Number.isFinite(n) && n >= 1) setTempFrameCount(Math.floor(n));
+      const framesLen = Array.isArray(d.frames) ? d.frames.length : 0;
+      const resolvedCount = (Number.isFinite(n) && n >= 1) ? Math.floor(n) : Math.max(1, framesLen);
+      setTempFrameCount(resolvedCount);
+      setFrameCount(resolvedCount);
+
+      // Selection and playback state still reference the previous document.
+      setCurrentFrameIndex(0);
+      setActiveShape(null);
+      setSelectedShapeIndexes([]);
+      setSelectedPointIndexes([]);
+      setSelectedSegmentIndexes([]);
 
       if (typeof d.color === 'string') setColor(d.color);
       if (typeof d.renderMode === 'string') setRenderMode(d.renderMode);
@@ -1444,7 +1472,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
       // History holds references to the old frames; drop it so undo cannot
       // rewind into the previous document.
-      setHistory([[d.frames || []]]);
+      setHistory([[JSON.parse(JSON.stringify(d.frames || []))]]);
       setHistoryStep(0);
 
       if (d.backgroundPath && typeof window !== 'undefined') {
@@ -1461,6 +1489,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
   const resetProject = useCallback(() => {
       setFrames([[]]);
       setTempFrameCount(1);
+      setFrameCount(1);
       setCurrentFrameIndex(0);
       setActiveShape(null);
       setShapeEffect(null);
@@ -2484,6 +2513,80 @@ const ShapeBuilder = ({ onBack, ref }) => {
       setSelectedPointIndexes([]);
       setContextMenu({visible:false}); 
   };
+  const duplicateShapes = () => {
+      if (selectedShapeIndexes.length === 0) return;
+      const newFrames = [...frames];
+      const ns = [...(newFrames[currentFrameIndex] || [])];
+      const clones = selectedShapeIndexes.map(idx => JSON.parse(JSON.stringify(ns[idx])));
+      const startIndex = ns.length;
+      clones.forEach(c => ns.push(c));
+      newFrames[currentFrameIndex] = ns;
+      setFrames(newFrames);
+      recordHistory(newFrames);
+      setSelectedShapeIndexes(clones.map((_, i) => startIndex + i));
+      setSelectedPointIndexes([]);
+  };
+  const applyArray = () => {
+      if (selectedShapeIndexes.length === 0) return;
+      const { mode, count, spacing, axis, angle } = arrayModifier;
+      if (count < 1) return;
+      const newFrames = [...frames];
+      const ns = [...(newFrames[currentFrameIndex] || [])];
+      const clones = [];
+      selectedShapeIndexes.forEach(idx => {
+          const original = ns[idx];
+          if (!original) return;
+          for (let i = 1; i <= count; i++) {
+              const clone = JSON.parse(JSON.stringify(original));
+              if (mode === 'linear') {
+                  const dx = axis === 'x' ? spacing * i : 0;
+                  const dy = axis === 'y' ? spacing * i : 0;
+                  const move = (s) => {
+                      if (s.type === 'group') { s.shapes = s.shapes.map(move); }
+                      if (s.points) s.points = s.points.map(p => ({...p, x: p.x + dx, y: p.y + dy}));
+                      if (s.anchors) s.anchors = s.anchors.map(p => ({...p, x: p.x + dx, y: p.y + dy}));
+                      if (s.start) { s.start = {...s.start, x: s.start.x + dx, y: s.start.y + dy}; }
+                      if (s.end) { s.end = {...s.end, x: s.end.x + dx, y: s.end.y + dy}; }
+                      if (s.pivotX !== undefined) s.pivotX += dx;
+                      if (s.pivotY !== undefined) s.pivotY += dy;
+                      return s;
+                  };
+                  move(clone);
+              } else if (mode === 'radial') {
+                  const pivotX = original.pivotX !== undefined ? original.pivotX : getShapeCenter(original).x;
+                  const pivotY = original.pivotY !== undefined ? original.pivotY : getShapeCenter(original).y;
+                  const rot = (angle * i) * Math.PI / 180;
+                  const cos = Math.cos(rot), sin = Math.sin(rot);
+                  const rotatePoint = (p) => {
+                      const x = p.x - pivotX, y = p.y - pivotY;
+                      return { ...p, x: pivotX + x * cos - y * sin, y: pivotY + x * sin + y * cos };
+                  };
+                  const rotate = (s) => {
+                      if (s.type === 'group') { s.shapes = s.shapes.map(rotate); }
+                      if (s.points) s.points = s.points.map(rotatePoint);
+                      if (s.anchors) s.anchors = s.anchors.map(rotatePoint);
+                      if (s.start) s.start = rotatePoint(s.start);
+                      if (s.end) s.end = rotatePoint(s.end);
+                      if (s.pivotX !== undefined) {
+                          const pp = rotatePoint({x: s.pivotX, y: s.pivotY});
+                          s.pivotX = pp.x; s.pivotY = pp.y;
+                      }
+                      return s;
+                  };
+                  rotate(clone);
+                  clone.rotationZ = (clone.rotationZ || 0) + rot;
+              }
+              clones.push(clone);
+          }
+      });
+      const startIndex = ns.length;
+      clones.forEach(c => ns.push(c));
+      newFrames[currentFrameIndex] = ns;
+      setFrames(newFrames);
+      recordHistory(newFrames);
+      setSelectedShapeIndexes(clones.map((_, i) => startIndex + i));
+      setSelectedPointIndexes([]);
+  };
   const duplicateFrame = () => { const nf = [...frames]; nf.splice(currentFrameIndex + 1, 0, JSON.parse(JSON.stringify(frames[currentFrameIndex]))); setFrames(nf); recordHistory(nf); setFrameCount(prev => prev + 1); setCurrentFrameIndex(prev => prev + 1); };
   const undo = () => {
       if (historyStep > 0 && history[historyStep - 1]) {
@@ -2890,6 +2993,16 @@ const ShapeBuilder = ({ onBack, ref }) => {
             }
         }
     } else {
+        if (tool === 'point') {
+            const pointShape = { type: 'pen', color, renderMode, points: [{ x: sx, y: sy, color }], rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1 };
+            const nf = [...frames];
+            nf[currentFrameIndex] = [...(nf[currentFrameIndex] || []), pointShape];
+            setFrames(nf);
+            recordHistory(nf);
+            setSelectedShapeIndexes([nf[currentFrameIndex].length - 1]);
+            setIsDrawing(false);
+            return;
+        }
         const newShape = { type: tool, color, renderMode, start: { x: sx, y: sy }, end: { x: sx, y: sy }, width: 0, height: 0, rotation: 0, scaleX: 1, scaleY: 1, rotationX: 0, rotationY: 0, rotationZ: 0 };
         if (tool === 'pen') newShape.points = [{ x: sx, y: sy, color }, { x: sx, y: sy, color }];
         else if (tool === 'bezier') {
@@ -3205,7 +3318,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
   // 'points' style: dwell dots only, at the stations the export dwells on.
   function drawBeamDots(ctx, pts, closed, shape, entry, isOnion) {
-    if (!pts || pts.length < 2) return;
+    if (!pts || pts.length === 0) return;
     const pat = beamPattern(entry);
     const m = measureOutline(pts, closed);
     resolveDotStations(m, {
@@ -3283,7 +3396,16 @@ const ShapeBuilder = ({ onBack, ref }) => {
     
     // Batch drawing optimization
     function drawPoly(pts, closed, mode = 'simple', shapePath = [], entry = null) {
-        if (!pts || pts.length < 2) return;
+        if (!pts || pts.length === 0) return;
+        // A single-point outline is a dwell dot, matching what the beam program
+        // exports; stroking it would emit nothing.
+        if (pts.length === 1) {
+            ctx.fillStyle = pts[0].color || shape.color;
+            ctx.beginPath();
+            ctx.arc(pts[0].x, pts[0].y, 3 / zoom, 0, Math.PI * 2);
+            ctx.fill();
+            return;
+        }
         const pat = beamPattern(entry);
         
         // --- PASS 1: HIGHLIGHTS ---
@@ -3449,7 +3571,15 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
     switch (shape.type) {
         case 'pen': case 'polyline': case 'bezier': { 
-            drawPoly(beamOutline(), false, mode, path, entry);
+            const outline = beamOutline();
+            if (outline.length === 1) {
+                ctx.fillStyle = outline[0].color || shape.color;
+                ctx.beginPath();
+                ctx.arc(outline[0].x, outline[0].y, 3 / zoom, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                drawPoly(outline, false, mode, path, entry);
+            }
             break; 
         }
         case 'polygon': {
@@ -3908,6 +4038,12 @@ const ShapeBuilder = ({ onBack, ref }) => {
               setIsPlaying(prev => !prev);
           }
       }
+      else if (e.shiftKey && e.key === 'D') {
+          if (!isTyping && selectedShapeIndexes.length > 0) {
+              e.preventDefault();
+              duplicateShapes();
+          }
+      }
       else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
           if (!isTyping) {
               const isMovingSelection = selectedShapeIndexes.length > 0 || selectedPointIndexes.length > 0;
@@ -4155,6 +4291,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
           <ToolButton active={tool === 'polygon'} onClick={() => { setTool('polygon'); setIsDrawing(false); setActiveShape(null); }} icon="bi-pentagon" />
           <ToolButton active={tool === 'star'} onClick={() => { setTool('star'); setIsDrawing(false); setActiveShape(null); }} icon="bi-star" />
           <ToolButton active={tool === 'triangle'} onClick={() => { setTool('triangle'); setIsDrawing(false); setActiveShape(null); }} icon="bi-triangle" />
+          <ToolButton active={tool === 'point'} onClick={() => { setTool('point'); setIsDrawing(false); setActiveShape(null); }} icon="bi-dot" />
           <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', paddingBottom: '10px' }}>
             <input type="color" value={ensureHex(color)} onChange={(e) => { setColor(e.target.value); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: e.target.value }); }} title="Custom Color" style={{ width: '35px', height: '35px', border: '2px solid #333', background: 'none', cursor: 'pointer', marginBottom: '5px' }} />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
@@ -4220,6 +4357,31 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                             <div className="menu-item" onClick={mergePointsInShape}>Merge Points</div>
                             <div className="menu-item" onClick={addCornerPoints}>Add Corner Points</div>
                             <div className="menu-item" onClick={resetPivot}>Reset Anchor Point</div>
+                            <div className="menu-item" onClick={() => {
+                                const nf = [...frames];
+                                const ns = [...nf[currentFrameIndex]];
+                                selectedShapeIndexes.forEach(idx => {
+                                    if (ns[idx]) ns[idx] = { ...ns[idx], pivotX: 500, pivotY: 500 };
+                                });
+                                nf[currentFrameIndex] = ns;
+                                setFrames(nf);
+                                recordHistory(nf);
+                                setContextMenu({ visible: false });
+                            }}>Set Anchor to Screen Center</div>
+                            <div className="menu-item" onClick={() => {
+                                const nf = [...frames];
+                                const ns = [...nf[currentFrameIndex]];
+                                selectedShapeIndexes.forEach(idx => {
+                                    if (ns[idx]) {
+                                        const c = getShapeCenter(ns[idx]);
+                                        ns[idx] = { ...ns[idx], pivotX: c.x, pivotY: c.y };
+                                    }
+                                });
+                                nf[currentFrameIndex] = ns;
+                                setFrames(nf);
+                                recordHistory(nf);
+                                setContextMenu({ visible: false });
+                            }}>Set Anchor to Shape Center</div>
                             <div className="separator" style={{ height: '1px', background: '#444', margin: '5px 0' }} />
                             {selectedShapeIndexes.length === 1 && ['rect', 'circle', 'star', 'line', 'triangle', 'bezier'].includes(shapes[selectedShapeIndexes[0]]?.type) && (
                                 <div className="menu-item" onClick={convertToPoints}>Convert to Points</div>
@@ -4463,6 +4625,44 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                                   }}
                                                   className="primary-btn" style={{ width: '100%', padding: '5px' }}>INTERPOLATE</button>
                                            </div>                  
+
+              {selectedShapeIndexes.length > 0 && (
+                  <div className="array-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
+                      <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>ARRAY MODIFIER</h4>
+                      <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
+                          <ModeButton active={arrayModifier.mode === 'linear'} onClick={() => setArrayModifier(prev => ({ ...prev, mode: 'linear' }))}>LINEAR</ModeButton>
+                          <ModeButton active={arrayModifier.mode === 'radial'} onClick={() => setArrayModifier(prev => ({ ...prev, mode: 'radial' }))}>RADIAL</ModeButton>
+                      </div>
+                      <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: '0.6rem', color: '#888' }}>COUNT</label>
+                              <NumField value={arrayModifier.count} min={1} max={100} onCommit={v => setArrayModifier(prev => ({ ...prev, count: Math.max(1, Math.round(v) || 1) }))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} />
+                          </div>
+                          {arrayModifier.mode === 'linear' ? (
+                              <div style={{ flex: 1 }}>
+                                  <label style={{ fontSize: '0.6rem', color: '#888' }}>SPACING (PX)</label>
+                                  <NumField value={arrayModifier.spacing} step={5} onCommit={v => setArrayModifier(prev => ({ ...prev, spacing: v }))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} />
+                              </div>
+                          ) : (
+                              <div style={{ flex: 1 }}>
+                                  <label style={{ fontSize: '0.6rem', color: '#888' }}>ANGLE (DEG)</label>
+                                  <NumField value={arrayModifier.angle} step={5} onCommit={v => setArrayModifier(prev => ({ ...prev, angle: v }))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} />
+                              </div>
+                          )}
+                      </div>
+                      {arrayModifier.mode === 'linear' && (
+                          <div style={{ display: 'flex', gap: '10px', marginBottom: '8px' }}>
+                              <label style={{ fontSize: '0.65rem', color: '#888', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                  <input type="radio" name="arrayAxis" checked={arrayModifier.axis === 'x'} onChange={() => setArrayModifier(prev => ({ ...prev, axis: 'x' }))} /> X
+                              </label>
+                              <label style={{ fontSize: '0.65rem', color: '#888', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                  <input type="radio" name="arrayAxis" checked={arrayModifier.axis === 'y'} onChange={() => setArrayModifier(prev => ({ ...prev, axis: 'y' }))} /> Y
+                              </label>
+                          </div>
+                      )}
+                      <button onClick={applyArray} className="primary-btn" style={{ width: '100%', padding: '5px' }}>APPLY ARRAY</button>
+                  </div>
+              )}
 
               {selectedShapeIndexes.length > 0 ? (
                   <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>

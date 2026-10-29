@@ -232,15 +232,29 @@ export function buildBeamProgram(pts, opts = {}) {
   const out = [];
   const stats = { mode, dwell, pitch, dashLength, gapLength, dots: 0, scaled: false };
 
-  if (m.count < 2 || !(m.total > 0)) {
-    return { points: out, metrics: m, runs: [], stations: [], stats };
-  }
-
   const push = (p, blanking) => {
     const r = resolveColor(p, fallbackColor);
     r.blanking = !!blanking;
     out.push(r);
   };
+
+  if (m.count === 0) {
+    return { points: out, metrics: m, runs: [], stations: [], stats };
+  }
+
+  // A zero-length outline - the point tool's single dot, or several coincident
+  // points - is a dwell: the beam holds on one spot for `dwell` point-clock
+  // ticks, which is how a laser draws a visible dot. There is no arc length to
+  // measure a dash/dot pattern against, so every mode collapses to this.
+  if (!(m.total > 0)) {
+    const budget = Number.isFinite(maxPoints) ? maxPoints : Infinity;
+    const hold = Math.max(1, Math.min(Math.round(dwell), budget));
+    const p = m.pts[0];
+    for (let k = 0; k < hold; k++) push(p, false);
+    stats.dots = 1;
+    stats.dwell = hold;
+    return { points: out, metrics: m, runs: [], stations: [{ ...p, d: 0 }], stats };
+  }
 
   if (mode === 'dashed') {
     const { runs, dashLength: dash, gapLength: gap, scaled } = resolveDashRuns(m, { dashLength, gapLength, maxPoints });
@@ -295,8 +309,8 @@ export function buildBeamProgram(pts, opts = {}) {
     return { points: out, metrics: m, runs: [], stations, stats };
   }
 
-  // simple: the outline as drawn.
-  for (let i = 0; i < m.count; i++) push(m.pts[i], false);
-  if (closed) push(m.pts[0], false);
+  // simple: the outline as drawn. Blanked points (pens-up) stay blanked.
+  for (let i = 0; i < m.count; i++) push(m.pts[i], m.pts[i].blanking);
+  if (closed) push(m.pts[0], m.pts[0].blanking);
   return { points: out, metrics: m, runs: [], stations: [], stats };
 }

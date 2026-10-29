@@ -141,13 +141,16 @@ export function buildFrameProgram(shapes, opts = {}) {
     // scaled 2x gets 2x-long dashes, matching the preview.
     let sampled = getSampledPoints(dense);
     if (group && applyTransformations) sampled = applyTransformations(sampled, group);
-    if (!sampled || sampled.length < 2) return null;
+    if (!sampled || sampled.length === 0) return null;
 
     // This shape's share of what is left of the frame budget. A shape that
     // cannot be afforded is dropped rather than drawn as a handful of dots:
     // the frame budget IS the DAC's point clock, and a frame that overruns it
     // makes the whole show run slow.
-    const minPoints = shape.type === 'line' ? 2 : 4;
+    // A single-point outline (the point tool's dot) is a legitimate dwell, so
+    // its budget floor is 1 sampled point - not the 4 a polygon needs, which
+    // dropped every dot out of a crowded frame.
+    const minPoints = shape.type === 'line' ? 2 : (sampled.length === 1 ? 1 : 4);
     const share = shapesLeft > 0 ? Math.floor(budgeter.remaining / shapesLeft) : 0;
     shapesLeft--;
     if (share < minPoints) return null;
@@ -172,7 +175,8 @@ export function buildFrameProgram(shapes, opts = {}) {
 
     let outline = optimized.points;
     if (effect && effect.type && bakeEffects && applyEffectToPoints) {
-        outline = applyEffectToPoints(outline, effect, effectPos, { globalCenter: { x: 500, y: 500 } }).points;
+        const modulated = applyEffectToPoints(outline, effect, effectPos, { globalCenter: { x: 500, y: 500 } });
+        outline = modulated.points.map((p) => ({ ...p, blanking: !!p._blank }));
     }
 
     // A solid shape is exported as its outline, and the editor keeps that

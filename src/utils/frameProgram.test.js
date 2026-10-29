@@ -8,6 +8,7 @@ import {
 import { DEFAULT_POINT_BUDGET } from './exportOptimizer';
 import { DEFAULT_DOT_PITCH, DEFAULT_DWELL } from './beamProgram';
 import { DEFAULT_MAX_STEP_PX } from './pointResample';
+import { applyEffectToPoints as realApplyEffectToPoints } from './shapeEffects';
 
 // --- Minimal stand-ins for the editor's shape geometry. The real ones live in
 // --- the Shape Builder component; injecting them is what lets this module be
@@ -329,5 +330,66 @@ describe('buildFrameProgram', () => {
   it('defaults the dot pitch when the user set no density', () => {
     const { entries } = build([{ ...line(30), renderMode: 'dotted' }], { budget: 4000 });
     expect(entries[0].stats.pitch).toBe(BEAM_AUTO_SPACING || DEFAULT_DOT_PITCH);
+  });
+
+  it('carries baked chase blanking into the emitted beam points', () => {
+    const { points } = build([line(8)], {
+      budget: 2000,
+      effect: { type: 'chase', params: { segments: 4, onRatio: 0.5 } },
+      bakeEffects: true,
+      effectPos: 0,
+      applyEffectToPoints: realApplyEffectToPoints,
+    });
+    expect(points.some((p) => p.blanking)).toBe(true);
+  });
+
+  it('carries baked mirror geometry into the emitted beam points', () => {
+    const { points } = build([line(2)], {
+      budget: 2000,
+      effect: { type: 'mirror', params: { mode: 1, additive: 1, axisOffset: 500, planeRotation: 0 } },
+      bakeEffects: true,
+      effectPos: 0,
+      applyEffectToPoints: realApplyEffectToPoints,
+    });
+    expect(points.some((p) => Math.abs(p.x - 990) < 1e-6)).toBe(true);
+  });
+});
+
+// The point tool creates a 1-point pen. It used to be dropped by the
+// length < 2 filter, so dots drawn in the editor never reached the .ild file.
+describe('buildFrameProgram single-point pen', () => {
+  const dotShape = {
+    type: 'pen',
+    color: '#ff00ff',
+    points: [{ x: 400, y: 600, color: '#ff00ff' }],
+  };
+
+  it('exports the dot as a dwell instead of dropping the shape', () => {
+    const program = build([dotShape]);
+    expect(program.entries[0]).not.toBeNull();
+    expect(program.points.length).toBeGreaterThanOrEqual(DEFAULT_DWELL);
+    const lit = program.points.filter(p => !p.blanking);
+    expect(lit.length).toBeGreaterThanOrEqual(1);
+    expect(lit[0]).toMatchObject({ x: 400, y: 600 });
+  });
+
+  it('keeps the dot when it shares the frame with other shapes', () => {
+    const program = build([line(6, 0), dotShape]);
+    expect(program.entries[1]).not.toBeNull();
+    expect(program.points.some(p => !p.blanking && p.x === 400 && p.y === 600)).toBe(true);
+  });
+
+  it('lifts the beam before dwelling on the dot', () => {
+    const program = build([line(6, 0), dotShape]);
+    const idx = program.points.findIndex(p => !p.blanking && p.x === 400 && p.y === 600);
+    expect(idx).toBeGreaterThan(0);
+    expect(program.points[idx - 1].blanking).toBe(true);
+  });
+
+  it('exports a dot nested in a group', () => {
+    const group = { type: 'group', pivotX: 0, pivotY: 0, scaleX: 2, scaleY: 2, shapes: [dotShape] };
+    const program = build([group]);
+    expect(program.entries[0].children[0]).not.toBeNull();
+    expect(program.points.some(p => !p.blanking && p.x === 800 && p.y === 1200)).toBe(true);
   });
 });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTimeline } from '../../contexts/TimelineContext';
 import { useMidi } from '../../contexts/MidiContext';
 import { formatClock, SNAP_MODES, snapInterval } from '../../utils/timelineTime';
@@ -83,6 +83,27 @@ const TimelineTransport = ({
     };
     const setSync = (patch) => actions.setSettings({ sync: { ...s.sync, ...patch } });
 
+    const transportRef = useRef(null);
+    const [transportGap, setTransportGap] = useState(14);
+    useEffect(() => {
+        const el = transportRef.current;
+        if (!el) return;
+        const compute = () => {
+            const style = getComputedStyle(el);
+            const avail = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+            const kids = el.children;
+            if (!kids || kids.length < 2) { setTransportGap(14); return; }
+            let sum = 0;
+            for (let i = 0; i < kids.length; i++) sum += kids[i].offsetWidth || 0;
+            const g = (avail - sum) / (kids.length - 1);
+            setTransportGap(Math.max(2, Math.min(14, Math.floor(g) || 14)));
+        };
+        compute();
+        const ro = new ResizeObserver(compute);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
     const src = sync ? sync.source : 'internal';
     // MIDI devices: prefer the sync hook's own discovery (it self-enables
     // WebMidi even when the app MIDI-shortcut toggle is off), else the
@@ -108,7 +129,7 @@ const TimelineTransport = ({
         : '';
 
     return (
-        <div className="timeline-transport">
+        <div ref={transportRef} className="timeline-transport" style={{ gap: transportGap }}>
             <div className="timeline-transport-left">
                 <button className="timeline-btn" onClick={onBack}>← Show Control</button>
                 <h2 className="timeline-title">Timeline</h2>

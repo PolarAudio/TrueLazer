@@ -2857,10 +2857,15 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         setPlaybackRate(rate);
     }, [playbackFps, setPlaybackRate]);
 
+    // One pending hide timer at a time: stacked setTimeouts from rapid
+    // notifications used to let the FIRST timer hide a still-current toast.
+    const notificationTimerRef = useRef(null);
     const showNotification = useCallback((message) => {
         dispatch({ type: 'SET_NOTIFICATION', payload: { message, visible: true } });
-        setTimeout(() => {
+        if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+        notificationTimerRef.current = setTimeout(() => {
             dispatch({ type: 'SET_NOTIFICATION', payload: { message: '', visible: false } });
+            notificationTimerRef.current = null;
         }, 3000);
     }, [dispatch]);
 
@@ -4966,7 +4971,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         // stray .tlp.
         const onKeyDown = (e) => {
             if (e.defaultPrevented) return;
-            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable)) return;
             const key = e.key === 'h' || e.key === 'H';
             if (key) {
                 const st = timelineBridge.stateRef?.current;

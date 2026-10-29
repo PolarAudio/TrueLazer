@@ -52,7 +52,7 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
     const handleKeyDown = (e) => {
       if (!enabled) return;
 
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) {
         return;
       }
 
@@ -80,7 +80,7 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
     const handleKeyUp = (e) => {
       if (!enabled) return;
 
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) {
         return;
       }
 

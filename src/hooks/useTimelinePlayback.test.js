@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { resolveOutputFlip, flipPoints, padFrameToCount } from './useTimelinePlayback';
 
 describe('resolveOutputFlip', () => {

@@ -1,6 +1,6 @@
 {
   "name": "TrueLazer",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "development build",
   "main": "main.js",
   "scripts": {
@@ -47,7 +47,7 @@
       "!node_modules/better-sqlite3/deps/**",
       "!node_modules/better-sqlite3/src/**",
       "!node_modules/better-sqlite3-multiple-ciphers/**",
-      "!node_modules/jazz-midi/bin/10_15/**",
+      "!node_modules/jazz-midi/bin/10_16/**",
       "!node_modules/jazz-midi/bin/11_15/**",
       "!node_modules/jazz-midi/bin/linux64",
       "!node_modules/jazz-midi/bin/linuxa7",

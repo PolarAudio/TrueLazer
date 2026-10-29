@@ -221,10 +221,12 @@ describe('buildBeamProgram', () => {
     expect(points[0].color).toBe('#ff0000');
   });
 
-  it('returns nothing for a degenerate outline', () => {
+  it('returns nothing for an empty outline', () => {
     expect(buildBeamProgram([], { mode: 'simple' }).points).toEqual([]);
-    expect(buildBeamProgram([pt(1, 1)], { mode: 'dotted' }).points).toEqual([]);
+    expect(buildBeamProgram([], { mode: 'dotted' }).points).toEqual([]);
   });
+  // A single point is no longer degenerate: it is a dwell dot. See the
+  // 'buildBeamProgram single-point dwell' suite below.
 });
 
 describe('isClosedType', () => {
@@ -318,5 +320,37 @@ describe('buildBeamProgram dotted closure', () => {
     const open = buildBeamProgram(square, { mode: 'dotted', closed: false, ...opts });
     const last = open.points[open.points.length - 1];
     expect(last).toMatchObject({ x: 0, y: 100 });
+  });
+});
+
+// A single point - the Shape Builder's point tool - has no arc length, but it
+// is still laser output: the beam dwells on the spot so the dot is visible.
+describe('buildBeamProgram single-point dwell', () => {
+  const dot = [{ x: 250, y: 750, color: '#00ff00' }];
+
+  it('emits a dwell of lit points on the spot for every mode', () => {
+    for (const mode of ['simple', 'dashed', 'dotted', 'points']) {
+      const r = buildBeamProgram(dot, { mode, dwell: 20 });
+      expect(r.points.length, mode).toBe(20);
+      expect(r.points.every(p => !p.blanking), mode).toBe(true);
+      expect(r.points.every(p => p.x === 250 && p.y === 750), mode).toBe(true);
+      expect(r.points[0].color, mode).toBe('#00ff00');
+    }
+  });
+
+  it('caps the dwell at the point budget', () => {
+    const r = buildBeamProgram(dot, { mode: 'simple', dwell: 20, maxPoints: 5 });
+    expect(r.points.length).toBe(5);
+  });
+
+  it('emits nothing for an empty outline', () => {
+    const r = buildBeamProgram([], { mode: 'simple' });
+    expect(r.points).toEqual([]);
+  });
+
+  it('treats coincident points as the same dwell', () => {
+    const r = buildBeamProgram([pt(10, 10), pt(10, 10)], { mode: 'simple', dwell: 4 });
+    expect(r.points.length).toBe(4);
+    expect(r.points.every(p => p.x === 10 && p.y === 10)).toBe(true);
   });
 });

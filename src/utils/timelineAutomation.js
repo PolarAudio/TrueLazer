@@ -192,7 +192,8 @@ export function buildChannelEffects(lanes = [], time, channelId = '') {
             }
         }
         if (ctrl) {
-            eff.params[clip.paramId] = evaluateClipAt(clip, time, laneDefaultValue(clip));
+            const base = (clip.values && clip.values[clip.paramId] !== undefined) ? clip.values[clip.paramId] : laneDefaultValue(clip);
+            eff.params[clip.paramId] = evaluateClipAt(clip, time, base);
         }
     }
     return [...byEffect.values()];
@@ -312,7 +313,7 @@ export function buildGeneratorOverrides(lanes = [], time, genId, baseParams = {}
         if (!out) out = { ...(baseParams || {}) };
         for (const k of Object.keys(clip.values || {})) out[k] = clip.values[k];
         const hasBase = baseParams != null && Object.prototype.hasOwnProperty.call(baseParams, clip.genParamId);
-        const base = hasBase ? baseParams[clip.genParamId] : laneDefaultValue(clip);
+        const base = (clip.values && clip.values[clip.genParamId] !== undefined) ? clip.values[clip.genParamId] : (hasBase ? baseParams[clip.genParamId] : laneDefaultValue(clip));
         out[clip.genParamId] = evaluateClipAt(clip, time, base);
     }
     return out;

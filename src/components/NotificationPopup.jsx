@@ -14,6 +14,10 @@ const NotificationPopup = ({ message, visible }) => {
       padding: '10px 20px',
       borderRadius: '5px',
       zIndex: 1000,
+      // Toasts are informational only - they must never steal a click from the
+      // clip deck underneath (a click landing here used to be silently eaten
+      // for the 3 seconds the popup is visible).
+      pointerEvents: 'none',
       opacity: visible ? 1 : 0,
       transition: 'opacity 0.5s ease-in-out',
     }}>

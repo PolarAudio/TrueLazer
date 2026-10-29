@@ -3095,7 +3095,7 @@ input[type="checkbox"].tl-checkbox:after {
   padding: 8px 12px;
   background: #23262e;
   border-bottom: 1px solid #33373f;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .timeline-transport-left,

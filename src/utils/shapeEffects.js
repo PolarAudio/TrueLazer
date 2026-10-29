@@ -209,7 +209,13 @@ export const EFFECTS = [
     { id: 'band',      label: 'Band',        min: 0, max: 3, step: 1, def: 0, options: ['Bass', 'Mid', 'High', 'Volume'] },
     { id: 'mode',      label: 'Mode',        min: 0, max: 2, step: 1, def: 0, options: ['Pulse', 'Shake', 'Bounce'] },
     { id: 'amount',    label: 'Amount (%)',  min: 0, max: 200, step: 1, def: 100 }
-  ]}
+  ]},
+  { id: 'mirror',     label: 'Mirror',       group: 'Movements', params: [
+    { id: 'mode',      label: 'Mirror Mode', min: 0, max: 4, step: 1, def: 0, options: ['none', 'x+', 'x-', 'y+', 'y-'] },
+    { id: 'additive',  label: 'Additive',    min: 0, max: 1, step: 1, def: 1 },
+    { id: 'axisOffset', label: 'Axis Offset', min: -1, max: 1, step: 0.01, def: 0 },
+    { id: 'planeRotation', label: 'Plane Rotation', min: 0, max: 360, step: 1, def: 0 }
+  ]},
 ];
 
 export function getEffectDef(id) {
@@ -338,6 +344,41 @@ export function applyEffectToPoints(points, effect, position, ctx = {}) {
         const f = 1 + modal * amount * 0.5;
         out = scaleAbout(out, center, f);
       }
+      break;
+    }
+    case 'mirror': {
+      const modeParam = def.params.find((p) => p.id === 'mode');
+      const mirrorMode = modeParam && modeParam.options ? modeParam.options[params.mode ?? modeParam.def ?? 0] : (params.mode || 'none');
+      const additive = params.additive == null ? true : !!params.additive;
+      const axisOffset = params.axisOffset ?? 0;
+      const planeRotation = params.planeRotation ?? 0;
+      const mirrorIt = !!mirrorMode && mirrorMode !== 'none';
+      if (!mirrorIt) break;
+      const angleRad = planeRotation * Math.PI / 180;
+      const cosA = Math.cos(angleRad);
+      const sinA = Math.sin(angleRad);
+      const reflect = (pt) => {
+        let x = pt.x, y = pt.y;
+        if (angleRad !== 0) {
+          const rx = x * cosA + y * sinA;
+          const ry = -x * sinA + y * cosA;
+          x = rx; y = ry;
+        }
+        const nx = (mirrorMode === 'x+' || mirrorMode === 'x-') ? 2 * axisOffset - x : x;
+        const ny = (mirrorMode === 'y+' || mirrorMode === 'y-') ? 2 * axisOffset - y : y;
+        if (angleRad !== 0) {
+          const rx = nx * cosA - ny * sinA;
+          const ry = nx * sinA + ny * cosA;
+          x = rx; y = ry;
+        }
+        return { ...pt, x: nx, y: ny };
+      };
+      out = out.map((pt, i) => {
+        const mirrored = reflect(pt);
+        const axis = mirrorMode.startsWith('x') ? pt.x : pt.y;
+        const keep = additive || !(axis < axisOffset - 1e-9);
+        return { ...mirrored, _blank: !keep };
+      });
       break;
     }
     default:
