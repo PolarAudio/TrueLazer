@@ -3,6 +3,7 @@ import { parseIldaFile } from '../utils/ilda-parser';
 import { calculateSmoothHandles } from '../utils/geometry';
 import EnvelopeEditor from './EnvelopeEditor';
 import { DEFAULT_POINT_BUDGET } from '../utils/exportOptimizer';
+import { useTranslation } from '../i18n';
 import {
   measureOutline, pointsInRun,
   resolveDashRuns, resolveDotStations, defaultBeamPointAllowance,
@@ -83,6 +84,7 @@ const NumField = ({ value, onCommit, min, max, step, style, commitOnChange = fal
 };
 
 const ShapeBuilder = ({ onBack, ref }) => {
+  const { t } = useTranslation();
   // --- STATE ---
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState('#00ff00');
@@ -795,7 +797,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
       const sourceShape = currentShapes[sIdx];
       
       if (!sourceShape.points) {
-          alert("Only point-based shapes can be split. Convert to points first.");
+          alert(t('shapeBuilder.alertSplitPointsOnly'));
           return;
       }
 
@@ -1071,7 +1073,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
   const tweenFrames = () => {
       if (tweenStartFrame >= tweenEndFrame) {
-          alert('Start frame must be before end frame');
+          alert(t('shapeBuilder.alertStartBeforeEnd'));
           return;
       }
       
@@ -1080,7 +1082,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
       const endShapes = frames[tweenEndFrame];
       
       if (!startShapes || !endShapes || startShapes.length === 0 || endShapes.length === 0) {
-          alert('Both start and end frames must contain shapes');
+          alert(t('shapeBuilder.alertFramesNeedShapes'));
           return;
       }
 
@@ -1320,7 +1322,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
       setFrames(newFrames);
       recordHistory(newFrames);
-      alert('Interpolation complete!');
+      alert(t('shapeBuilder.alertInterpolationComplete'));
   };
 
   const selectOddPoints = () => {
@@ -1604,7 +1606,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
   const handleImportImage = async () => {
       if (!window.electronAPI) return;
       const path = await window.electronAPI.showOpenDialog({ 
-          title: 'Select Background Image', 
+          title: t('shapeBuilder.dialogSelectBackgroundImage'), 
           filters: [{ name: 'Images', extensions: ['jpg', 'png', 'png', 'webp', 'bmp'] }], 
           properties: ['openFile'] 
       });
@@ -2270,7 +2272,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
   const importClip = async () => {
       if (!window.electronAPI) return;
-      const path = await window.electronAPI.showOpenDialog({ title: 'Import ILDA or Shape Clip', filters: [
+      const path = await window.electronAPI.showOpenDialog({ title: t('shapeBuilder.dialogImportIldaClip'), filters: [
           { name: 'Laser Files', extensions: ['ild', 'clip'] },
           { name: 'ILDA Files', extensions: ['ild'] },
           { name: 'TrueLazer Shape Clips', extensions: ['clip'] }
@@ -2361,7 +2363,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
   const importSVG = async () => {
       if (!window.electronAPI) return;
-      const path = await window.electronAPI.showOpenDialog({ title: 'Import SVG', filters: [{ name: 'SVG Files', extensions: ['svg'] }], properties: ['openFile'] });
+      const path = await window.electronAPI.showOpenDialog({ title: t('shapeBuilder.dialogImportSvg'), filters: [{ name: 'SVG Files', extensions: ['svg'] }], properties: ['openFile'] });
       if (!path) return; setIsLoading(true);
       try {
           const content = await window.electronAPI.readFileContent(path);
@@ -2452,14 +2454,14 @@ const ShapeBuilder = ({ onBack, ref }) => {
           }
       } catch (e) { 
           console.error('SVG Import Error:', e); 
-          alert('Error importing SVG: ' + e.message);
+          alert(t('shapeBuilder.alertSvgError', { message: e.message }));
       } finally { 
           setIsLoading(false); 
       }
   };
 
   const clearAll = () => {
-    const mode = confirm('Press OK to clear ALL frames in the animation, or CANCEL to clear only the CURRENT frame.');
+    const mode = confirm(t('shapeBuilder.confirmClearAll'));
     if (mode) {
         // Clear all frames
         const cleared = frames.map(() => []);
@@ -2809,12 +2811,13 @@ const ShapeBuilder = ({ onBack, ref }) => {
         setExportNote(droppedShapes > 0
             ? {
                 warn: true,
-                text: `${droppedShapes} shape${droppedShapes === 1 ? '' : 's'} did not fit in ${exportBudget} pts/frame and `
-                    + `were left out. Raise "Max pts/frame" or draw fewer shapes per frame.`,
+                text: droppedShapes === 1
+                    ? t('shapeBuilder.exportDroppedOne', { count: droppedShapes, budget: exportBudget })
+                    : t('shapeBuilder.exportDroppedMany', { count: droppedShapes, budget: exportBudget }),
             }
             : {
                 warn: false,
-                text: `Heaviest frame used ${peakFramePoints} of ${exportBudget} points.`,
+                text: t('shapeBuilder.exportPeak', { used: peakFramePoints, budget: exportBudget }),
             });
       } catch (e) { console.error(e); } finally { setIsExporting(false); }
   };
@@ -4215,57 +4218,56 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
   return (
     <div className="shape-builder" style={{ width: '100vw', height: '100vh', background: '#111', color: 'white', display: 'flex', flexDirection: 'column', userSelect: 'none' }}>
-      {isLoading && <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 20000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><h3>WORKING...</h3></div>}
+      {isLoading && <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 20000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><h3>{t('shapeBuilder.working')}</h3></div>}
       <header style={{ height: '50px', padding: '0 20px', background: '#1a1a1a', borderBottom: '1px solid #333', display: 'flex', alignItems: 'center', gap: '15px' }}>
-        <h2 style={{ margin: 0, fontSize: '1rem', color: 'var(--theme-color)', width: '180px' }}>SHAPE BUILDER</h2>
+        <h2 style={{ margin: 0, fontSize: '1rem', color: 'var(--theme-color)', width: '180px' }}>{t('page.shapeBuilder')}</h2>
         <div className="action-group" style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={undo} title="Undo"><i className="bi bi-arrow-counterclockwise"></i></button>
-          <button onClick={redo} title="Redo"><i className="bi bi-arrow-clockwise"></i></button>
+          <button onClick={undo} title={t('common.undo')}><i className="bi bi-arrow-counterclockwise"></i></button>
+          <button onClick={redo} title={t('common.redo')}><i className="bi bi-arrow-clockwise"></i></button>
           <div className="separator" style={{ width: '1px', height: '20px', background: '#333' }} />
-          <button onClick={copyShape} title="Copy"><i className="bi bi-clipboard"></i></button>
-          <button onClick={pasteShape} title="Paste"><i className="bi bi-clipboard-check"></i></button>
-          <button onClick={joinPoints} title="Join Points / Shapes"><i className="bi bi-share"></i></button>
-          <button onClick={groupShapes} title="Group" disabled={selectedShapeIndexes.length < 2}><i className="bi bi-intersect"></i></button>
-          <button onClick={ungroupShapes} title="Ungroup" disabled={selectedShapeIndexes.length !== 1 || shapes[selectedShapeIndexes[0]]?.type !== 'group'}><i className="bi bi-exclude"></i></button>
+          <button onClick={copyShape} title={t('common.copy')}><i className="bi bi-clipboard"></i></button>
+          <button onClick={pasteShape} title={t('common.paste')}><i className="bi bi-clipboard-check"></i></button>
+          <button onClick={joinPoints} title={t('shapeBuilder.joinPoints')}><i className="bi bi-share"></i></button>
+          <button onClick={groupShapes} title={t('shapeBuilder.group')} disabled={selectedShapeIndexes.length < 2}><i className="bi bi-intersect"></i></button>
+          <button onClick={ungroupShapes} title={t('shapeBuilder.ungroup')} disabled={selectedShapeIndexes.length !== 1 || shapes[selectedShapeIndexes[0]]?.type !== 'group'}><i className="bi bi-exclude"></i></button>
           <div className="separator" style={{ width: '1px', height: '20px', background: '#333' }} />
-          <button onClick={() => subdivideShape(false)} title="Subdivide (Linear)" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-grid-3x3"></i></button>
-          <button onClick={() => subdivideShape(true)} title="Subdivide (Smooth)" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-bezier"></i></button>
-          <button onClick={decimateShape} title="Decimate (Reduce Points)" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-filter-left"></i></button>
-          <button onClick={mergePointsInShape} title="Merge Overlapping Points" disabled={selectedShapeIndexes.length === 0}><i className="bi bi-node-plus"></i></button>
-          <button onClick={importSVG} title="Import SVG"><i className="bi bi-vector-pen"></i></button>
-          <button onClick={importClip} title="Import ILDA"><i className="bi bi-folder2-open"></i></button>
-          <button onClick={handleImportImage} title="Import Background Image"><i className="bi bi-image"></i></button>
+          <button onClick={() => subdivideShape(false)} title={t('shapeBuilder.subdivideLinear')} disabled={selectedShapeIndexes.length === 0}><i className="bi bi-grid-3x3"></i></button>
+          <button onClick={() => subdivideShape(true)} title={t('shapeBuilder.subdivideSmooth')} disabled={selectedShapeIndexes.length === 0}><i className="bi bi-bezier"></i></button>
+          <button onClick={decimateShape} title={t('shapeBuilder.decimateReduce')} disabled={selectedShapeIndexes.length === 0}><i className="bi bi-filter-left"></i></button>
+          <button onClick={mergePointsInShape} title={t('shapeBuilder.mergeOverlapping')} disabled={selectedShapeIndexes.length === 0}><i className="bi bi-node-plus"></i></button>
+          <button onClick={importSVG} title={t('shapeBuilder.importSvg')}><i className="bi bi-vector-pen"></i></button>
+          <button onClick={importClip} title={t('shapeBuilder.importIlda')}><i className="bi bi-folder2-open"></i></button>
+          <button onClick={handleImportImage} title={t('shapeBuilder.importBackground')}><i className="bi bi-image"></i></button>
           <div className="separator" style={{ width: '1px', height: '20px', background: '#333' }} />
-          <button onClick={clearAll} title="Clear All"><i className="bi bi-trash"></i></button>
-          <button onClick={() => { setZoom(0.6); setPan({x:0, y:0}); }} title="Recenter"><i className="bi bi-aspect-ratio"></i></button>
+          <button onClick={clearAll} title={t('shapeBuilder.clearAll')}><i className="bi bi-trash"></i></button>
+          <button onClick={() => { setZoom(0.6); setPan({x:0, y:0}); }} title={t('shapeBuilder.recenter')}><i className="bi bi-aspect-ratio"></i></button>
         </div>
         <div className="grid-controls" style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '0.8rem', marginLeft: '15px' }}>
           <label>
-            Preview:
+            {t('shapeBuilder.preview')}
             <select value={previewMode} onChange={e => setPreviewMode(e.target.value)} style={{ marginLeft: '4px', background: '#222', color: 'white', border: '1px solid #444', borderRadius: '3px' }}>
-              <option value="off">Off</option>
-              <option value="line">Line</option>
-              <option value="points">Points</option>
-              <option value="center">Center</option>
-              <option value="cone">3D</option>
+              <option value="off">{t('shapeBuilder.previewOff')}</option>
+              <option value="line">{t('shapeBuilder.previewLine')}</option>
+              <option value="points">{t('shapeBuilder.previewPoints')}</option>
+              <option value="center">{t('shapeBuilder.previewCenter')}</option>
+              <option value="cone">{t('shapeBuilder.preview3d')}</option>
             </select>
           </label>
-          <label><input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} /> Grid</label>
-          <label><input type="checkbox" checked={snapToGrid} onChange={e => setSnapToGrid(e.target.checked)} /> Snap</label>
+          <label><input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} /> {t('shapeBuilder.grid')}</label>
+          <label><input type="checkbox" checked={snapToGrid} onChange={e => setSnapToGrid(e.target.checked)} /> {t('shapeBuilder.snap')}</label>
           {(tool === 'line' || tool === 'bezier') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <label title="Chained drawing: each click continues from the previous segment's end point (each new segment shares P0 with the last P1), instead of starting an independent segment.
-For Line it draws a multi-segment connected line; for Bezier it chains smooth curves where each new anchor keeps its handles." style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.7rem' }}>
-                      <input type="checkbox" checked={continuousDrawing} onChange={e => setContinuousDrawing(e.target.checked)} /> Continuous
+                  <label title={t('shapeBuilder.continuousTitle')} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                      <input type="checkbox" checked={continuousDrawing} onChange={e => setContinuousDrawing(e.target.checked)} /> {t('shapeBuilder.continuous')}
                   </label>
-                  <span style={{ fontSize: '0.55rem', color: '#666', maxWidth: '180px', lineHeight: '1.3' }}>ON: each segment continues from the previous end point (connected). OFF: each click starts a fresh independent shape.</span>
+                  <span style={{ fontSize: '0.55rem', color: '#666', maxWidth: '180px', lineHeight: '1.3' }}>{t('shapeBuilder.continuousHelp')}</span>
               </div>
           )}
           <select value={gridSize} onChange={e => setGridSize(parseInt(e.target.value))} style={{ background: '#222', color: 'white', border: '1px solid #444', borderRadius: '3px' }}>
             <option value="10">10px</option><option value="25">25px</option><option value="50">50px</option><option value="100">100px</option>
           </select>
         </div>
-        <button onClick={onBack} style={{ marginLeft: 'auto' }}>Back to Show Control</button>
+        <button onClick={onBack} style={{ marginLeft: 'auto' }}>{t('shapeBuilder.backToShowControl')}</button>
       </header>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -4275,11 +4277,11 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
           
           {tool === 'select' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: '#222', padding: '4px', borderRadius: '4px', border: '1px solid #333' }}>
-                  <button onClick={selectOddPoints} title="Select Odd Points" style={{ padding: '4px', fontSize: '0.7rem' }}>ODD</button>
-                  <button onClick={selectEvenPoints} title="Select Even Points" style={{ padding: '4px', fontSize: '0.7rem' }}>EVN</button>
-                  <button onClick={invertPointSelection} title="Invert Selection" style={{ padding: '4px' }}><i className="bi bi-arrow-left-right"></i></button>
-                  <button onClick={expandPointSelection} title="Expand Selection" style={{ padding: '4px' }}><i className="bi bi-plus-lg"></i></button>
-                  <button onClick={shrinkPointSelection} title="Shrink Selection" style={{ padding: '4px' }}><i className="bi bi-dash-lg"></i></button>
+                  <button onClick={selectOddPoints} title={t('shapeBuilder.selectOdd')} style={{ padding: '4px', fontSize: '0.7rem' }}>ODD</button>
+                  <button onClick={selectEvenPoints} title={t('shapeBuilder.selectEven')} style={{ padding: '4px', fontSize: '0.7rem' }}>EVN</button>
+                  <button onClick={invertPointSelection} title={t('shapeBuilder.invertSelection')} style={{ padding: '4px' }}><i className="bi bi-arrow-left-right"></i></button>
+                  <button onClick={expandPointSelection} title={t('shapeBuilder.expandSelection')} style={{ padding: '4px' }}><i className="bi bi-plus-lg"></i></button>
+                  <button onClick={shrinkPointSelection} title={t('shapeBuilder.shrinkSelection')} style={{ padding: '4px' }}><i className="bi bi-dash-lg"></i></button>
               </div>
           )}
 
@@ -4293,24 +4295,24 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
           <ToolButton active={tool === 'triangle'} onClick={() => { setTool('triangle'); setIsDrawing(false); setActiveShape(null); }} icon="bi-triangle" />
           <ToolButton active={tool === 'point'} onClick={() => { setTool('point'); setIsDrawing(false); setActiveShape(null); }} icon="bi-dot" />
           <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', paddingBottom: '10px' }}>
-            <input type="color" value={ensureHex(color)} onChange={(e) => { setColor(e.target.value); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: e.target.value }); }} title="Custom Color" style={{ width: '35px', height: '35px', border: '2px solid #333', background: 'none', cursor: 'pointer', marginBottom: '5px' }} />
+            <input type="color" value={ensureHex(color)} onChange={(e) => { setColor(e.target.value); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: e.target.value }); }} title={t('shapeBuilder.customColor')} style={{ width: '35px', height: '35px', border: '2px solid #333', background: 'none', cursor: 'pointer', marginBottom: '5px' }} />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
               {[
-                { name: 'Red', hex: '#ff0000' },
-                { name: 'Orange', hex: '#ff6400' },
-                { name: 'Yellow', hex: '#ffff00' },
-                { name: 'Green', hex: '#00ff00' },
-                { name: 'Cyan', hex: '#00ffff' },
-                { name: 'Blue', hex: '#0000ff' },
-                { name: 'Violette', hex: '#8000ff' },
-                { name: 'Pink', hex: '#ff6496' },
-                { name: 'Magenta', hex: '#ff00ff' },
-                { name: 'White', hex: '#ffffff' }
+                { name: 'red', hex: '#ff0000' },
+                { name: 'orange', hex: '#ff6400' },
+                { name: 'yellow', hex: '#ffff00' },
+                { name: 'green', hex: '#00ff00' },
+                { name: 'cyan', hex: '#00ffff' },
+                { name: 'blue', hex: '#0000ff' },
+                { name: 'violet', hex: '#8000ff' },
+                { name: 'pink', hex: '#ff6496' },
+                { name: 'magenta', hex: '#ff00ff' },
+                { name: 'white', hex: '#ffffff' }
               ].map(c => (
                 <button
                   key={c.hex}
                   onClick={() => { setColor(c.hex); if (selectedShapeIndexes.length > 0) updateSelectedShape({ color: c.hex }); }}
-                  title={c.name}
+                  title={t('shapeBuilder.color.' + c.name)}
                   style={{
                     width: '18px',
                     height: '18px',
@@ -4334,29 +4336,29 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                 <div className="context-menu" style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, background: '#222', border: '1px solid #444', borderRadius: '4px', padding: '5px 0', zIndex: 10000 }}>
                     {(contextMenu.target?.type === 'point' || selectedPointIndexes.length > 0) && (
                         <>
-                            <div className="menu-item" onClick={deletePoint}>Delete {selectedPointIndexes.length > 1 ? 'Points' : 'Point'}</div>
-                            <div className="menu-item" onClick={splitShapeFromPoints}>Split to New Shape</div>
+                            <div className="menu-item" onClick={deletePoint}>{t(selectedPointIndexes.length > 1 ? 'shapeBuilder.deletePoints' : 'shapeBuilder.deletePoint')}</div>
+                            <div className="menu-item" onClick={splitShapeFromPoints}>{t('shapeBuilder.splitToNewShape')}</div>
                         </>
                     )}
                     {contextMenu.target?.type === 'segment' && (
                         <>
-                            <div className="menu-item" onClick={deleteSegment}>Delete Line</div>
-                            <div className="menu-item" onClick={splitSegment}>Split Line</div>
+                            <div className="menu-item" onClick={deleteSegment}>{t('shapeBuilder.deleteLine')}</div>
+                            <div className="menu-item" onClick={splitSegment}>{t('shapeBuilder.splitLine')}</div>
                         </>
                     )}
                     {(contextMenu.target?.type === 'shape' || selectedShapeIndexes.length > 0) && (
                         <>
                             {selectedShapeIndexes.some(idx => shapes[idx]?.type === 'polyline' || shapes[idx]?.type === 'polygon') && (
                                 <div className="menu-item" onClick={toggleShapeClosure}>
-                                    {selectedShapeIndexes.every(idx => shapes[idx]?.type === 'polygon') ? 'Open Shape' : 'Close Shape'}
+                                    {t(selectedShapeIndexes.every(idx => shapes[idx]?.type === 'polygon') ? 'shapeBuilder.openShape' : 'shapeBuilder.closeShape')}
                                 </div>
                             )}
-                            <div className="menu-item" onClick={() => subdivideShape(false)}>Subdivide (Linear)</div>
-                            <div className="menu-item" onClick={() => subdivideShape(true)}>Subdivide (Smooth)</div>
-                            <div className="menu-item" onClick={decimateShape}>Decimate</div>
-                            <div className="menu-item" onClick={mergePointsInShape}>Merge Points</div>
-                            <div className="menu-item" onClick={addCornerPoints}>Add Corner Points</div>
-                            <div className="menu-item" onClick={resetPivot}>Reset Anchor Point</div>
+                            <div className="menu-item" onClick={() => subdivideShape(false)}>{t('shapeBuilder.subdivideLinear')}</div>
+                            <div className="menu-item" onClick={() => subdivideShape(true)}>{t('shapeBuilder.subdivideSmooth')}</div>
+                            <div className="menu-item" onClick={decimateShape}>{t('shapeBuilder.decimate')}</div>
+                            <div className="menu-item" onClick={mergePointsInShape}>{t('shapeBuilder.mergePoints')}</div>
+                            <div className="menu-item" onClick={addCornerPoints}>{t('shapeBuilder.addCornerPoints')}</div>
+                            <div className="menu-item" onClick={resetPivot}>{t('shapeBuilder.resetAnchor')}</div>
                             <div className="menu-item" onClick={() => {
                                 const nf = [...frames];
                                 const ns = [...nf[currentFrameIndex]];
@@ -4367,7 +4369,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                 setFrames(nf);
                                 recordHistory(nf);
                                 setContextMenu({ visible: false });
-                            }}>Set Anchor to Screen Center</div>
+                            }}>{t('shapeBuilder.anchorScreenCenter')}</div>
                             <div className="menu-item" onClick={() => {
                                 const nf = [...frames];
                                 const ns = [...nf[currentFrameIndex]];
@@ -4381,10 +4383,10 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                 setFrames(nf);
                                 recordHistory(nf);
                                 setContextMenu({ visible: false });
-                            }}>Set Anchor to Shape Center</div>
+                            }}>{t('shapeBuilder.anchorShapeCenter')}</div>
                             <div className="separator" style={{ height: '1px', background: '#444', margin: '5px 0' }} />
                             {selectedShapeIndexes.length === 1 && ['rect', 'circle', 'star', 'line', 'triangle', 'bezier'].includes(shapes[selectedShapeIndexes[0]]?.type) && (
-                                <div className="menu-item" onClick={convertToPoints}>Convert to Points</div>
+                                <div className="menu-item" onClick={convertToPoints}>{t('shapeBuilder.convertToPoints')}</div>
                             )}
                             <div className="menu-item" onClick={() => { 
                                 const newFrames = [...frames]; 
@@ -4394,13 +4396,13 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                 setSelectedShapeIndexes([]);
                                 setSelectedPointIndexes([]);
                                 setContextMenu({ visible: false }); 
-                            }}>Delete Shape(s)</div>
+                            }}>{t('shapeBuilder.deleteShapes')}</div>
                         </>
                     )}
-                    {backgroundImage && <div className="menu-item" onClick={() => { setBackgroundImage(null); setContextMenu({ visible: false }); }}>Clear Background</div>}
+                    {backgroundImage && <div className="menu-item" onClick={() => { setBackgroundImage(null); setContextMenu({ visible: false }); }}>{t('shapeBuilder.clearBackground')}</div>}
                     <div className="separator" style={{ height: '1px', background: '#444', margin: '5px 0' }} />
-                    <div className="menu-item" onClick={copyShape}>Copy</div>
-                    <div className="menu-item" onClick={pasteShape}>Paste</div>
+                    <div className="menu-item" onClick={copyShape}>{t('common.copy')}</div>
+                    <div className="menu-item" onClick={pasteShape}>{t('common.paste')}</div>
                 </div>
             )}
           </div>
@@ -4410,11 +4412,11 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
           
           <div className="layers-panel" style={{ display: 'flex', flexDirection: 'column', height: '220px', flexShrink: 0, overflowY: 'auto', borderBottom: '1px solid #333', padding: '15px' }}>
               <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  LAYERS
+                  {t('shapeBuilder.layers')}
                   <div style={{ display: 'flex', gap: '5px' }}>
-                      <button onClick={() => togglePanel('layers')} title={collapsedPanels.layers ? "Expand" : "Collapse"} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className={`bi ${collapsedPanels.layers ? 'bi-chevron-right' : 'bi-chevron-down'}`}></i></button>
-                      <button onClick={groupShapes} title="Group" disabled={selectedShapeIndexes.length < 2} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-intersect"></i></button>
-                      <button onClick={ungroupShapes} title="Ungroup" disabled={selectedShapeIndexes.length !== 1 || shapes[selectedShapeIndexes[0]]?.type !== 'group'} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-exclude"></i></button>
+                      <button onClick={() => togglePanel('layers')} title={collapsedPanels.layers ? t('common.expand') : t('common.collapse')} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className={`bi ${collapsedPanels.layers ? 'bi-chevron-right' : 'bi-chevron-down'}`}></i></button>
+                      <button onClick={groupShapes} title={t('shapeBuilder.group')} disabled={selectedShapeIndexes.length < 2} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-intersect"></i></button>
+                      <button onClick={ungroupShapes} title={t('shapeBuilder.ungroup')} disabled={selectedShapeIndexes.length !== 1 || shapes[selectedShapeIndexes[0]]?.type !== 'group'} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className="bi bi-exclude"></i></button>
                   </div>
               </h3>
               {!collapsedPanels.layers && (<div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -4437,7 +4439,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                       >
                           <div style={{ width: '10px', height: '10px', background: s.color, marginRight: '8px', borderRadius: '2px' }}></div>
                           <span style={{ fontSize: '0.8rem', color: '#ccc', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {s && s.type ? s.type.toUpperCase() : 'SHAPE'} {i}
+                              {t('shapeBuilder.type.' + (s && s.type ? s.type : 'shape'))} {i}
                           </span>
                           <button 
                               onClick={(e) => { 
@@ -4448,7 +4450,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                   recordHistory(newFrames); 
                               }} 
                               style={{ background: 'none', border: 'none', padding: '2px', color: s.hidden ? '#555' : '#ccc' }}
-                              title={s.hidden ? "Show" : "Hide"}
+                              title={s.hidden ? t('common.show') : t('common.hide')}
                           >
                               <i className={`bi ${s.hidden ? 'bi-eye-slash' : 'bi-eye'}`}></i>
                           </button>
@@ -4461,7 +4463,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                   recordHistory(newFrames); 
                               }} 
                               style={{ background: 'none', border: 'none', padding: '2px', color: s.locked ? 'var(--theme-color)' : '#555' }}
-                              title={s.locked ? "Unlock" : "Lock"}
+                              title={s.locked ? t('common.unlock') : t('common.lock')}
                           >
                               <i className={`bi ${s.locked ? 'bi-lock-fill' : 'bi-unlock'}`}></i>
                           </button>
@@ -4472,14 +4474,14 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
 
           <div className="properties-scroll-container" style={{ flex: 1, overflowY: 'auto', padding: '15px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', borderBottom: '1px solid #333', paddingBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  PROPERTIES
-                  <button onClick={() => togglePanel('props')} title={collapsedPanels.props ? "Expand" : "Collapse"} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className={`bi ${collapsedPanels.props ? 'bi-chevron-right' : 'bi-chevron-down'}`}></i></button>
+                  {t('shapeBuilder.properties')}
+                  <button onClick={() => togglePanel('props')} title={collapsedPanels.props ? t('common.expand') : t('common.collapse')} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className={`bi ${collapsedPanels.props ? 'bi-chevron-right' : 'bi-chevron-down'}`}></i></button>
               </h3>
 
               <div className="shape-effect-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: shapeEffect ? '8px' : '0' }}>
-                      <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: 0 }}>SHAPE EFFECT</h4>
-                      {!shapeEffect && <button onClick={() => addShapeEffect('rotate')} title="Fills empty frames with the current shapes" style={{ padding: '2px 8px', fontSize: '0.7rem' }}>ADD EFFECT</button>}
+                      <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: 0 }}>{t('shapeBuilder.shapeEffect')}</h4>
+                      {!shapeEffect && <button onClick={() => addShapeEffect('rotate')} title={t('shapeBuilder.addEffectTitle')} style={{ padding: '2px 8px', fontSize: '0.7rem' }}>{t('shapeBuilder.addEffect')}</button>}
                   </div>
                   {shapeEffect && (<>
                       <div style={{ display: 'flex', gap: '5px', marginBottom: '6px' }}>
@@ -4491,7 +4493,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                   </optgroup>
                               ))}
                           </select>
-                          <button onClick={() => setShapeEffect(null)} title="Remove effect" style={{ padding: '2px 7px', fontSize: '0.7rem' }}>✕</button>
+                          <button onClick={() => setShapeEffect(null)} title={t('shapeBuilder.removeEffect')} style={{ padding: '2px 7px', fontSize: '0.7rem' }}>✕</button>
                       </div>
 
                       {getEffectDef(shapeEffect.type).params.map(pd => {
@@ -4508,7 +4510,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                       </label>
                                       {isNumeric && <button
                                           onClick={() => setEnvTarget(open ? null : pd.id)}
-                                          title="Playback envelope"
+                                          title={t('shapeBuilder.playbackEnvelope')}
                                           style={{ background: 'none', border: 'none', padding: '2px 3px', color: hasEnv ? 'var(--theme-color)' : '#555', cursor: 'pointer', fontSize: '0.6rem' }}>
                                           <i className={`bi ${hasEnv ? 'bi-gear-fill' : 'bi-gear'}`}></i>
                                       </button>}
@@ -4519,7 +4521,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                   {open && isNumeric && (
                                       <div style={{ background: '#1c1c1c', borderRadius: '3px', border: '1px solid #333', padding: '6px', marginTop: '4px' }}>
                                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                              <span style={{ fontSize: '0.55rem', color: 'var(--theme-color)' }}>PLAYBACK ENVELOPE</span>
+                                              <span style={{ fontSize: '0.55rem', color: 'var(--theme-color)' }}>{t('shapeBuilder.playbackEnvelope').toUpperCase()}</span>
                                               <button
                                                   onClick={() => {
                                                       const envelopes = { ...(shapeEffect.envelopes || {}) };
@@ -4527,7 +4529,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                                       setShapeEffect(prev => ({ ...prev, envelopes }));
                                                       setEnvTarget(null);
                                                   }}
-                                                  title="Remove envelope"
+                                                  title={t('shapeBuilder.removeEnvelope')}
                                                   style={{ background: 'none', border: 'none', color: '#b44', fontSize: '0.6rem', cursor: 'pointer' }}>
                                                   ✕
                                               </button>
@@ -4540,14 +4542,14 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                               onChange={pts => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), points: pts } } }))}
                                           />
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '6px 0 3px' }}>
-                                              <span style={{ fontSize: '0.6rem', color: '#aaa', width: '22px', flexShrink: 0 }}>AMT</span>
+                                              <span style={{ fontSize: '0.6rem', color: '#aaa', width: '22px', flexShrink: 0 }}>{t('shapeBuilder.envelopeAmount')}</span>
                                               <input type="range" min="0" max="100" step="1" value={shapeEffect.envelopes?.[pd.id]?.amount ?? DEFAULT_ENVELOPE.amount}
                                                   onChange={e => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), amount: parseFloat(e.target.value) } } }))}
                                                   style={{ flex: 1, accentColor: 'var(--theme-color)' }} />
                                               <span style={{ fontSize: '0.6rem', color: '#888', width: '26px', textAlign: 'right' }}>{(shapeEffect.envelopes?.[pd.id]?.amount ?? DEFAULT_ENVELOPE.amount).toFixed(0)}%</span>
                                           </div>
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '6px 0 3px' }}>
-                                              <span style={{ fontSize: '0.6rem', color: '#aaa', width: '22px', flexShrink: 0 }}>PHASE</span>
+                                              <span style={{ fontSize: '0.6rem', color: '#aaa', width: '22px', flexShrink: 0 }}>{t('shapeBuilder.envelopePhase')}</span>
                                               <input type="range" min="0" max="1" step="0.01" value={shapeEffect.envelopes?.[pd.id]?.phase ?? DEFAULT_ENVELOPE.phase}
                                                   onChange={e => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), phase: parseFloat(e.target.value) } } }))}
                                                   style={{ flex: 1, accentColor: 'var(--theme-color)' }} />
@@ -4556,10 +4558,10 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                           <select value={shapeEffect.envelopes?.[pd.id]?.curve ?? DEFAULT_ENVELOPE.curve}
                                               onChange={e => setShapeEffect(prev => ({ ...prev, envelopes: { ...(prev.envelopes || {}), [pd.id]: { ...(prev.envelopes?.[pd.id] || DEFAULT_ENVELOPE), curve: e.target.value } } }))}
                                               style={{ width: '100%', background: '#111', color: 'white', border: '1px solid #444', borderRadius: '3px', fontSize: '0.7rem', padding: '2px' }}>
-                                              <option value="linear">Curve: Linear</option>
-                                              <option value="easeIn">Curve: Ease In</option>
-                                              <option value="easeOut">Curve: Ease Out</option>
-                                              <option value="easeInOut">Curve: Ease In-Out</option>
+                                              <option value="linear">{t('shapeBuilder.curveLinear')}</option>
+                                              <option value="easeIn">{t('shapeBuilder.curveEaseIn')}</option>
+                                              <option value="easeOut">{t('shapeBuilder.curveEaseOut')}</option>
+                                              <option value="easeInOut">{t('shapeBuilder.curveEaseInOut')}</option>
                                           </select>
                                       </div>
                                   )}
@@ -4569,17 +4571,17 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
 
                       <label style={{ fontSize: '0.65rem', color: '#888', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', cursor: 'pointer' }}>
                           <input type="checkbox" className="sb-checkbox" checked={bakeEffects} onChange={e => setBakeEffects(e.target.checked)} />
-                          Bake effects into exported .ild
+                          {t('shapeBuilder.bakeEffects')}
                       </label>
                   </>)}
               </div>
 
               {!collapsedPanels.props && (<>
               <div className="animation-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
-                  <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>TWEENING TOOL</h4>
+                  <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>{t('shapeBuilder.tweeningTool')}</h4>
                                               <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
                                                   <div style={{ flex: 1 }}>
-                                                      <label style={{ fontSize: '0.6rem', color: '#888' }}>START FRAME</label>
+                                                      <label style={{ fontSize: '0.6rem', color: '#888' }}>{t('shapeBuilder.startFrame')}</label>
                                                       <NonPassiveWheel onWheel={handleTweenStartWheel}>
                                                       <NumField 
                                                         value={tweenStartFrame + 1} 
@@ -4591,7 +4593,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                                       </NonPassiveWheel>
                                                   </div>
                                                   <div style={{ flex: 1 }}>
-                                                      <label style={{ fontSize: '0.6rem', color: '#888' }}>END FRAME</label>
+                                                      <label style={{ fontSize: '0.6rem', color: '#888' }}>{t('shapeBuilder.endFrame')}</label>
                                                       <NonPassiveWheel onWheel={handleTweenEndWheel}>
                                                       <NumField 
                                                         value={tweenEndFrame + 1} 
@@ -4605,10 +4607,10 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                               </div>
                                                             <div style={{ display: 'flex', gap: '10px', marginBottom: '8px', fontSize: '0.7rem', color: '#ccc' }}>
                                                                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                                                                    <input type="checkbox" className="sb-checkbox" checked={tweenPosition} onChange={e => setTweenPosition(e.target.checked)} /> POS
+                                                                    <input type="checkbox" className="sb-checkbox" checked={tweenPosition} onChange={e => setTweenPosition(e.target.checked)} /> {t('shapeBuilder.tweenPos')}
                                                                 </label>
                                                                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                                                                    <input type="checkbox" className="sb-checkbox" checked={tweenColor} onChange={e => setTweenColor(e.target.checked)} /> COLOR
+                                                                    <input type="checkbox" className="sb-checkbox" checked={tweenColor} onChange={e => setTweenColor(e.target.checked)} /> {t('shapeBuilder.tweenColor')}
                                                                 </label>
 </div>                                              <button
                                                   onClick={tweenFrames}
@@ -4623,29 +4625,29 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                                           document.activeElement.blur();
                                                       }
                                                   }}
-                                                  className="primary-btn" style={{ width: '100%', padding: '5px' }}>INTERPOLATE</button>
+                                                  className="primary-btn" style={{ width: '100%', padding: '5px' }}>{t('shapeBuilder.interpolate')}</button>
                                            </div>                  
 
               {selectedShapeIndexes.length > 0 && (
                   <div className="array-tools" style={{ padding: '10px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
-                      <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>ARRAY MODIFIER</h4>
+                      <h4 style={{ fontSize: '0.8rem', color: 'var(--theme-color)', margin: '0 0 10px 0' }}>{t('shapeBuilder.arrayModifier')}</h4>
                       <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
-                          <ModeButton active={arrayModifier.mode === 'linear'} onClick={() => setArrayModifier(prev => ({ ...prev, mode: 'linear' }))}>LINEAR</ModeButton>
-                          <ModeButton active={arrayModifier.mode === 'radial'} onClick={() => setArrayModifier(prev => ({ ...prev, mode: 'radial' }))}>RADIAL</ModeButton>
+                          <ModeButton active={arrayModifier.mode === 'linear'} onClick={() => setArrayModifier(prev => ({ ...prev, mode: 'linear' }))}>{t('shapeBuilder.linear')}</ModeButton>
+                          <ModeButton active={arrayModifier.mode === 'radial'} onClick={() => setArrayModifier(prev => ({ ...prev, mode: 'radial' }))}>{t('shapeBuilder.radial')}</ModeButton>
                       </div>
                       <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
                           <div style={{ flex: 1 }}>
-                              <label style={{ fontSize: '0.6rem', color: '#888' }}>COUNT</label>
+                              <label style={{ fontSize: '0.6rem', color: '#888' }}>{t('shapeBuilder.count')}</label>
                               <NumField value={arrayModifier.count} min={1} max={100} onCommit={v => setArrayModifier(prev => ({ ...prev, count: Math.max(1, Math.round(v) || 1) }))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} />
                           </div>
                           {arrayModifier.mode === 'linear' ? (
                               <div style={{ flex: 1 }}>
-                                  <label style={{ fontSize: '0.6rem', color: '#888' }}>SPACING (PX)</label>
+                                  <label style={{ fontSize: '0.6rem', color: '#888' }}>{t('shapeBuilder.spacing')}</label>
                                   <NumField value={arrayModifier.spacing} step={5} onCommit={v => setArrayModifier(prev => ({ ...prev, spacing: v }))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} />
                               </div>
                           ) : (
                               <div style={{ flex: 1 }}>
-                                  <label style={{ fontSize: '0.6rem', color: '#888' }}>ANGLE (DEG)</label>
+                                  <label style={{ fontSize: '0.6rem', color: '#888' }}>{t('shapeBuilder.angle')}</label>
                                   <NumField value={arrayModifier.angle} step={5} onCommit={v => setArrayModifier(prev => ({ ...prev, angle: v }))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', fontSize: '0.8rem' }} />
                               </div>
                           )}
@@ -4667,18 +4669,18 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                   document.activeElement.blur();
                               }
                           }}
-                          onClick={applyArray} className="primary-btn" style={{ width: '100%', padding: '5px' }}>APPLY ARRAY</button>
+                          onClick={applyArray} className="primary-btn" style={{ width: '100%', padding: '5px' }}>{t('shapeBuilder.applyArray')}</button>
                   </div>
               )}
 
               {selectedShapeIndexes.length > 0 ? (
                   <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                       <label style={{ fontSize: '0.8rem', color: '#666', display: 'block' }}>
-                          {selectedShapeIndexes.length === 1 ? `TYPE: ${shapes[selectedShapeIndexes[0]]?.type?.toUpperCase()}` : `${selectedShapeIndexes.length} SHAPES SELECTED`}
+                          {selectedShapeIndexes.length === 1 ? `${t('shapeBuilder.typePrefix')} ${t('shapeBuilder.type.' + (shapes[selectedShapeIndexes[0]]?.type || 'shape'))}` : t('shapeBuilder.shapesSelected', { count: selectedShapeIndexes.length })}
                       </label>
                       
                       <div className="property-group">
-                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>COLOR</label>
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>{t('shapeBuilder.color')}</label>
                           <input type="color" value={ensureHex(shapes[selectedShapeIndexes[0]]?.color || '#ffffff')} onChange={(e) => updateSelectedShape({ color: e.target.value })} style={{ width: '100%', height: '30px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
                             {['#ff0000', '#ff6400', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8000ff', '#ff6496', '#ff00ff', '#ffffff'].map(c => (
@@ -4690,7 +4692,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                       {selectedShapeIndexes.length === 1 && shapes[selectedShapeIndexes[0]] && (['rect', 'circle', 'star', 'line', 'triangle'].includes(shapes[selectedShapeIndexes[0]].type)) && (
                           <div className="primitive-properties" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', background: '#222', borderRadius: '4px' }}>
                               <div className="property-group">
-                                  <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>POSITION (X / Y)</label>
+                                  <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>{t('shapeBuilder.position')}</label>
                                   <div style={{ display: 'flex', gap: '5px' }}>
                                       <NumField value={Math.round(shapes[selectedShapeIndexes[0]].start?.x || 0)} onCommit={(v) => {
                                           const s = shapes[selectedShapeIndexes[0]];
@@ -4716,7 +4718,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                               </div>
                               {shapes[selectedShapeIndexes[0]].type === 'rect' && (
                                   <div className="property-group">
-                                      <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>SIZE (W / H)</label>
+                                      <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>{t('shapeBuilder.size')}</label>
                                       <div style={{ display: 'flex', gap: '5px' }}>
                                           <NumField value={Math.round(shapes[selectedShapeIndexes[0]].width || 0)} onCommit={(v) => updateSelectedShape({ width: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
                                           <NumField value={Math.round(shapes[selectedShapeIndexes[0]].height || 0)} onCommit={(v) => updateSelectedShape({ height: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.8rem' }} />
@@ -4725,7 +4727,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                               )}
                               {(shapes[selectedShapeIndexes[0]].type === 'circle' || shapes[selectedShapeIndexes[0]].type === 'star') && (
                                   <div className="property-group">
-                                      <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>RADIUS (X / Y)</label>
+                                      <label style={{ fontSize: '0.7rem', color: '#888', display: 'block', marginBottom: '3px' }}>{t('shapeBuilder.radius')}</label>
                                       <div style={{ display: 'flex', gap: '5px' }}>
                                           <NumField value={Math.round(Math.abs((shapes[selectedShapeIndexes[0]].end?.x || 0) - (shapes[selectedShapeIndexes[0]].start?.x || 0)))} onCommit={(v) => {
                                               const r = v || 0;
@@ -4746,7 +4748,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                       )}
 
                       <div className="property-group">
-                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>SCALE X / Y</label>
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>{t('shapeBuilder.scale')}</label>
                           <div style={{ display: 'flex', gap: '5px' }}>
                               <NumField value={shapes[selectedShapeIndexes[0]]?.scaleX || 1} step="0.1" onCommit={(v) => updateSelectedShape({ scaleX: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
                               <NumField value={shapes[selectedShapeIndexes[0]]?.scaleY || 1} step="0.1" onCommit={(v) => updateSelectedShape({ scaleY: v })} style={{ width: '50%', background: '#111', border: '1px solid #444', color: 'white', padding: '4px' }} />
@@ -4754,7 +4756,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                       </div>
 
                       <div className="property-group">
-                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>ROTATION X / Y / Z (DEG)</label>
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>{t('shapeBuilder.rotation')}</label>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                               {['rotationX', 'rotationY', 'rotationZ'].map(axis => {
                                   const valRad = shapes[selectedShapeIndexes[0]]?.[axis] || 0;
@@ -4783,17 +4785,17 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                       </div>
 
                       <div className="property-group">
-                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>RENDER MODE</label>
+                          <label style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '5px' }}>{t('shapeBuilder.renderMode')}</label>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
-                              {['simple', 'dotted', 'dashed', 'points'].map(m => <ModeButton key={m} active={shapes[selectedShapeIndexes[0]]?.renderMode === m} onClick={() => updateSelectedShape({ renderMode: m })}>{m}</ModeButton>)}
+                              {['simple', 'dotted', 'dashed', 'points'].map(m => <ModeButton key={m} active={shapes[selectedShapeIndexes[0]]?.renderMode === m} onClick={() => updateSelectedShape({ renderMode: m })}>{t('shapeBuilder.mode.' + m)}</ModeButton>)}
                           </div>
                       </div>
                   </div>
-              ) : <p style={{ fontSize: '0.8rem', color: '#555', textAlign: 'center', marginTop: '20px' }}>Select shapes or drag a box to begin.</p>}
+              ) : <p style={{ fontSize: '0.8rem', color: '#555', textAlign: 'center', marginTop: '20px' }}>{t('shapeBuilder.selectToBegin')}</p>}
 
               {selectedPointIndexes.length > 0 && selectedShapeIndexes.length === 1 && (
                   <div className="point-properties" style={{ background: '#222', padding: '10px', borderRadius: '4px', border: '1px solid var(--theme-color)', flexShrink: 0 }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--theme-color)', display: 'block', marginBottom: '5px' }}>{selectedPointIndexes.length} POINTS SELECTED</label>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--theme-color)', display: 'block', marginBottom: '5px' }}>{t('shapeBuilder.pointsSelected', { count: selectedPointIndexes.length })}</label>
                       <input type="color" value={ensureHex(selectedPointColor)} onChange={(e) => updatePointColor(e.target.value)} style={{ width: '100%', height: '40px', background: 'none', border: '1px solid #444', cursor: 'pointer' }} />
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
                         {['#ff0000', '#ff6400', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#8000ff', '#ff6496', '#ff00ff', '#ffffff'].map(c => (
@@ -4809,7 +4811,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                           });
                           return (
                               <button onClick={toggleSelectedPointAnchor} style={{ width: '100%', marginTop: '8px', padding: '6px', background: allAnchored ? 'var(--theme-color)' : '#333', color: allAnchored ? 'black' : '#ccc', fontWeight: allAnchored ? 'bold' : 'normal', border: '1px solid #444', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem' }}>
-                                  {allAnchored ? 'UNMARK AS ANCHOR' : 'MARK AS ANCHOR (kept on export)'}
+                                  {allAnchored ? t('shapeBuilder.unmarkAnchor') : t('shapeBuilder.markAnchor')}
                               </button>
                           );
                       })()}
@@ -4820,17 +4822,17 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
 
           <div className="save-container" style={{ padding: '15px', borderTop: '1px solid #333', background: '#1a1a1a' }}>
               <button className="primary-btn" style={{ width: '100%', padding: '12px' }} onClick={exportIlda} disabled={frames.every(f => f.length === 0) || isExporting}>
-                  {isExporting ? 'EXPORTING...' : 'Export ILDA (.ild)'}
+                  {isExporting ? t('shapeBuilder.exporting') : t('shapeBuilder.exportIlda')}
               </button>
-              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>standard laser format — exports from {timelineStartFrame + 1}</div>
+              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>{t('shapeBuilder.exportIldaHint', { frame: timelineStartFrame + 1 })}</div>
               <button className="primary-btn" style={{ width: '100%', padding: '8px', marginTop: '8px', background: 'transparent !important', border: '1px solid var(--theme-color) !important', color: 'var(--theme-color) !important' }} onClick={saveClip} disabled={frames.every(f => f.length === 0) || isExporting}>
-                  {isExporting ? 'EXPORTING...' : 'Save as Clip (.clip)'}
+                  {isExporting ? t('shapeBuilder.exporting') : t('shapeBuilder.saveClip')}
               </button>
-              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>keeps vector shapes editable</div>
+              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#888', marginTop: '4px' }}>{t('shapeBuilder.saveClipHint')}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', fontSize: '0.7rem', color: '#888' }}>
-                  <label htmlFor="exportBudget">Max pts/frame</label>
+                  <label htmlFor="exportBudget">{t('shapeBuilder.maxPtsPerFrame')}</label>
                   <input id="exportBudget" type="number" min="100" max="5000" step="100" value={exportBudget} onChange={(e) => setExportBudget(Math.max(0, parseInt(e.target.value, 10) || 0))} style={{ width: '70px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', fontSize: '0.7rem' }} />
-                  <div style={{ marginLeft: 'auto', color: '#555' }}>(1200 = 20k pts @ 30fps)</div>
+                  <div style={{ marginLeft: 'auto', color: '#555' }}>{t('shapeBuilder.budgetHint')}</div>
               </div>
               {exportNote ? (
                   <div style={{ marginTop: '5px', fontSize: '0.65rem', lineHeight: '1.5', color: exportNote.warn ? '#ff7b72' : '#888' }}>
@@ -4843,9 +4845,9 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                   is off and the shapes export exactly as edited. */}
               <div style={{ marginTop: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', fontSize: '0.7rem', color: '#888', marginBottom: '2px' }}>
-                      <label htmlFor="pointSpacing">Point density</label>
+                      <label htmlFor="pointSpacing">{t('shapeBuilder.pointDensity')}</label>
                       <span style={{ marginLeft: 'auto', color: pointSpacing > 0 ? 'var(--theme-color)' : '#555' }}>
-                          {pointSpacing > 0 ? `${pointSpacing} px spacing` : 'off — corners only'}
+                          {pointSpacing > 0 ? t('shapeBuilder.pxSpacing', { spacing: pointSpacing }) : t('shapeBuilder.densityOff')}
                       </span>
                   </div>
                   <input
@@ -4859,9 +4861,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                       style={{ width: '100%' }}
                   />
                   <div style={{ fontSize: '0.62rem', color: '#555', marginTop: '2px' }}>
-                      Adds evenly spaced outline points so Points / Dotted / Dashed have
-                      something to draw. Previewed live and baked into the export; your
-                      shapes are not modified.
+{t('shapeBuilder.pointDensityHelp')}
                   </div>
               </div>
           </div>
@@ -4873,11 +4873,11 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                 <button onClick={() => setIsPlaying(!isPlaying)} style={{ width: '40px', height: '40px', borderRadius: '50%', background: isPlaying ? 'var(--theme-color)' : '#333', color: isPlaying ? 'black' : 'white' }}><i className={`bi ${isPlaying ? 'bi-pause-fill' : 'bi-play-fill'}`}></i></button>
                 <button onClick={() => setCurrentFrameIndex(prev => Math.max(0, prev - 1))}><i className="bi bi-chevron-left"></i></button>
                 <button onClick={() => setCurrentFrameIndex(prev => Math.min(frameCount - 1, prev + 1))}><i className="bi bi-chevron-right"></i></button>
-                <button onClick={duplicateFrame} title="Duplicate Frame"><i className="bi bi-layers-half"></i></button>
+                <button onClick={duplicateFrame} title={t('shapeBuilder.duplicateFrame')}><i className="bi bi-layers-half"></i></button>
             </div>
             <div className="timeline-sync" style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '8px 12px', background: '#222', borderRadius: '4px', border: '1px solid #333', flexShrink: 0 }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={{ fontSize: '0.6rem', color: '#666', letterSpacing: '1px' }}>SYNC</span>
+                    <span style={{ fontSize: '0.6rem', color: '#666', letterSpacing: '1px' }}>{t('shapeBuilder.sync')}</span>
                     <div style={{ display: 'flex', gap: '3px' }}>
                         <ModeButton active={syncMode === 'fps'} onClick={() => handleSetSyncMode('fps')}>FPS</ModeButton>
                         <ModeButton active={syncMode === 'bpm'} onClick={() => handleSetSyncMode('bpm')}>BPM</ModeButton>
@@ -4887,7 +4887,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', minWidth: '190px' }}>
                     {syncMode === 'fps' && (
                         <label style={{ fontSize: '0.7rem', color: '#888' }}>
-                            FPS: {fps}
+                            {t('shapeBuilder.fpsLabel', { fps })}
                             <input type="range" min="1" max="60" value={fps} onChange={e => handleSetFps(parseInt(e.target.value))} />
                         </label>
                     )}
@@ -4900,7 +4900,7 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                                 </NonPassiveWheel>
                             </div>
                             <div style={{ flex: 1 }}>
-                                <label style={{ fontSize: '0.7rem', color: '#888' }}>BEATS</label>
+                                <label style={{ fontSize: '0.7rem', color: '#888' }}>{t('shapeBuilder.beats')}</label>
                                 <NonPassiveWheel onWheel={handleBeatsWheel}>
                                 <NumField value={beats} min={1} onCommit={v => handleSetBeats(Math.max(1, Math.round(v) || 1))} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
                                 </NonPassiveWheel>
@@ -4909,23 +4909,23 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                     )}
                     {syncMode === 'time' && (
                         <label style={{ fontSize: '0.7rem', color: '#888' }}>
-                            DURATION (S): {duration}
+                            {t('shapeBuilder.durationLabel', { duration })}
                             <NonPassiveWheel onWheel={handleDurationWheel}>
                             <NumField value={duration} step="0.1" min={0} onCommit={v => handleSetDuration(v || 0)} style={{ width: '100%', background: '#111', border: '1px solid #444', color: 'white', padding: '2px' }} />
                             </NonPassiveWheel>
                         </label>
                     )}
                     <label style={{ fontSize: '0.7rem', color: '#888' }}>
-                        SPEED: {playbackSpeed.toFixed(1)}x
+                        {t('shapeBuilder.speedLabel', { speed: playbackSpeed.toFixed(1) })}
                         <input type="range" min="0.1" max="4" step="0.1" value={playbackSpeed} onChange={e => handleSetPlaybackSpeed(parseFloat(e.target.value))} />
                     </label>
                 </div>
             </div>
             <div className="frame-slider-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#666' }}>
-                    <span>FRAME {currentFrameIndex + 1} / {frameCount}</span>
+                    <span>{t('shapeBuilder.frameLabel', { current: currentFrameIndex + 1, total: frameCount })}</span>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                        <input type="checkbox" checked={onionSkin} onChange={e => setOnionSkin(e.target.checked)} /> Onion Skin
+                        <input type="checkbox" checked={onionSkin} onChange={e => setOnionSkin(e.target.checked)} /> {t('shapeBuilder.onionSkin')}
                     </label>
                 </div>
                 <TimelineRuler 
@@ -4942,13 +4942,13 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
             </div>
             <div className="timeline-settings" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <label style={{ fontSize: '0.8rem', color: '#888' }}>START:</label>
+                    <label style={{ fontSize: '0.8rem', color: '#888' }}>{t('shapeBuilder.startLabel')}</label>
                     <NonPassiveWheel onWheel={handleTimelineStartWheel}>
                     <NumField value={timelineStartFrame + 1} min={1} max={frameCount} onCommit={v => setTimelineStartFrame(Math.max(1, Math.round(v) || 1) - 1)} style={{ width: '60px', background: '#111', border: '1px solid #444', color: 'white', padding: '4px', borderRadius: '3px' }} />
                     </NonPassiveWheel>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <label style={{ fontSize: '0.8rem', color: '#888' }}>LENGTH:</label>
+                    <label style={{ fontSize: '0.8rem', color: '#888' }}>{t('shapeBuilder.lengthLabel')}</label>
                     <NonPassiveWheel onWheel={e => handleNumberWheel(e, setFrameCount)}>
                     <input 
                       type="number" 

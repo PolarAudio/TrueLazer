@@ -55,6 +55,7 @@ const OutputCanvas = ({
   sentFramesRef,
   channelId
 }) => {
+  const { t } = useTranslation();
   const canvasRef = useRef(null);
   const [dragging, setDragging] = useState(null); // { type, index, handle, startX, startY, originalRect }
 
@@ -91,7 +92,7 @@ const OutputCanvas = ({
     // Label the physical center (DAC cartesian 0,0) so the corner "0,0" label
     // isn't mistaken for it.
     ctx.fillStyle = '#ddd';
-    ctx.fillText('physical 0,0', width / 2 - 42, height / 2 + 14);
+    ctx.fillText(t('outputSettings.physicalZero'), width / 2 - 42, height / 2 + 14);
   };
 
   const drawRect = (ctx, rect, color, isSelected = false, isOutputArea = false) => {
@@ -576,7 +577,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       if (window.electronAPI && window.electronAPI.saveDacOutputSettings) {
           window.electronAPI.saveDacOutputSettings(payload);
       }
-      setSaveStatus('Saved');
+      setSaveStatus('saved');
       if (saveStatusTimerRef.current) clearTimeout(saveStatusTimerRef.current);
       saveStatusTimerRef.current = setTimeout(() => setSaveStatus(null), 2000);
   };
@@ -691,13 +692,13 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       if (!api?.exportDacOutputSettings) return;
       const count = Object.keys(dacSettings || {}).length;
       if (count === 0) {
-          showFileStatus('Nothing to export — no output settings saved yet.');
+          showFileStatus(t('outputSettings.nothingToExport'));
           return;
       }
       const result = await api.exportDacOutputSettings(buildOutputSettingsFile(dacSettings));
       if (!result || result.canceled) return;
-      if (result.success) showFileStatus(`Exported ${count} output setting${count === 1 ? '' : 's'}.`);
-      else showFileStatus(`Export failed: ${result.error || 'unknown error'}`);
+      if (result.success) showFileStatus(t(count === 1 ? 'outputSettings.exportedOne' : 'outputSettings.exportedMany', { count }));
+      else showFileStatus(t('outputSettings.exportFailed', { error: result.error || t('outputSettings.unknownError') }));
   };
 
   const handleImportFile = async () => {
@@ -706,36 +707,36 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       const result = await api.importDacOutputSettings();
       if (!result || result.canceled) return;
       if (!result.success) {
-          showFileStatus(`Import failed: ${result.error || 'could not read the file'}`);
+          showFileStatus(t('outputSettings.importFailed', { error: result.error || t('outputSettings.couldNotReadFile') }));
           return;
       }
       const parsed = parseOutputSettingsFile(result.data);
       if (!parsed.ok) {
-          showFileStatus(`Import failed: ${parsed.error}`);
+          showFileStatus(t('outputSettings.importFailed', { error: parsed.error }));
           return;
       }
       if (outputs.length === 0) {
-          showFileStatus('Import failed: no DAC outputs are currently detected.');
+          showFileStatus(t('outputSettings.importNoOutputs'));
           return;
       }
       const { matched, unmatched } = matchOutputs(parsed.outputs, outputs.map((o) => o.id));
       const matchedCount = Object.keys(matched).length;
       if (matchedCount === 0) {
           showFileStatus(
-              `Import: nothing matched. No detected output is at ${unmatched.slice(0, 3).map(describeOutputKey).join(', ')}` +
-              (unmatched.length > 3 ? ` (+${unmatched.length - 3} more)` : '') + '.'
+              t('outputSettings.importNothingMatched', { list: unmatched.slice(0, 3).map(describeOutputKey).join(', ') }) +
+              (unmatched.length > 3 ? t('outputSettings.importMore', { count: unmatched.length - 3 }) : '') + '.'
           );
           return;
       }
-      const parts = [`Apply ${matchedCount} output setting${matchedCount === 1 ? '' : 's'}?`];
+      const parts = [t(matchedCount === 1 ? 'outputSettings.applyOne' : 'outputSettings.applyMany', { count: matchedCount })];
       if (unmatched.length) {
           parts.push(
-              `\n\n${unmatched.length} entry/entries in the file do not match a detected output and will be skipped:\n` +
+              '\n\n' + t(unmatched.length === 1 ? 'outputSettings.skippedOne' : 'outputSettings.skippedMany', { count: unmatched.length }) + '\n' +
               unmatched.slice(0, 5).map((k) => `  · ${describeOutputKey(k)}`).join('\n') +
-              (unmatched.length > 5 ? `\n  …and ${unmatched.length - 5} more` : '')
+              (unmatched.length > 5 ? '\n  ' + t('outputSettings.andMore', { count: unmatched.length - 5 }) : '')
           );
       }
-      parts.push('\n\nThis overwrites the current settings for the matched outputs.');
+      parts.push('\n\n' + t('outputSettings.overwriteNotice'));
       if (!window.confirm(parts.join(''))) return;
 
       // Merge rather than replace: outputs absent from the file are left alone.
@@ -747,8 +748,8 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       // Persist the merged result so it survives a restart.
       api.saveDacOutputSettings?.(next);
       showFileStatus(
-          `Imported ${matchedCount} setting${matchedCount === 1 ? '' : 's'}` +
-          (unmatched.length ? `, skipped ${unmatched.length} unmatched.` : '.')
+          t(matchedCount === 1 ? 'outputSettings.importedOne' : 'outputSettings.importedMany', { count: matchedCount }) +
+          (unmatched.length ? t('outputSettings.skippedSuffix', { count: unmatched.length }) : '.')
       );
   };
 
@@ -758,15 +759,15 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
         <div className="output-settings-header">
           <h2>{t('outputSettings.title')}</h2>
           <div className="output-settings-header-actions">
-            {saveStatus && <span className="output-settings-save-status">{saveStatus}</span>}
+            {saveStatus && <span className="output-settings-save-status">{t('outputSettings.' + saveStatus)}</span>}
             <button className="save-btn" onClick={handleSave}>{t('outputSettings.save')}</button>
             <button className="save-btn" onClick={handleExportFile}
-                title="Write these settings to a .tlo file so they can be loaded into any project or machine">
-              Export…
+                title={t('outputSettings.exportTitle')}>
+              {t('outputSettings.export')}
             </button>
             <button className="save-btn" onClick={handleImportFile}
-                title="Load settings from a .tlo file. Only outputs whose address matches a detected DAC are updated.">
-              Import…
+                title={t('outputSettings.importTitle')}>
+              {t('outputSettings.import')}
             </button>
             <button className="close-btn" onClick={onClose}>{t('common.close')}</button>
           </div>
@@ -777,9 +778,9 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
           {/* Left Column: Output List */}
           <div className="output-settings-col">
             <div className="settings-group">
-                <h4>Available Outputs</h4>
+                <h4>{t('outputSettings.availableOutputs')}</h4>
                 <ul className="dac-list">
-                    {outputs.length === 0 ? <li style={{color:'#666', fontStyle:'italic'}}>No Outputs detected</li> : null}
+                    {outputs.length === 0 ? <li style={{color:'#666', fontStyle:'italic'}}>{t('outputSettings.noOutputs')}</li> : null}
                     {outputs.map((out) => (
                         <li 
                             key={out.id} 
@@ -800,19 +801,19 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
           {/* Middle Column: Canvas */}
           <div className="output-settings-col canvas-col">
             <div className="canvas-toolbar">
-                <button className="tool-btn" onClick={handleAddZone} title="Add Safety Zone">
+                <button className="tool-btn" onClick={handleAddZone} title={t('outputSettings.addSafetyZone')}>
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-plus-square" viewBox="0 0 16 16">
 						<path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2z"/>
 						<path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4"/>
 					</svg>
 				</button>
-                <button className={`tool-btn ${currentSettings.transformationEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ transformationEnabled: !currentSettings.transformationEnabled })} title="Toggle Output Transformation">
+                <button className={`tool-btn ${currentSettings.transformationEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ transformationEnabled: !currentSettings.transformationEnabled })} title={t('outputSettings.toggleTransformation')}>
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-border-outer" viewBox="0 0 16 16">
 						<path d="M7.5 1.906v.938h1v-.938zm0 1.875v.938h1V3.78h-1zm0 1.875v.938h1v-.938zM1.906 8.5h.938v-1h-.938zm1.875 0h.938v-1H3.78v1zm1.875 0h.938v-1h-.938zm2.813 0v-.031H8.5V7.53h-.031V7.5H7.53v.031H7.5v.938h.031V8.5zm.937 0h.938v-1h-.938zm1.875 0h.938v-1h-.938zm1.875 0h.938v-1h-.938zM7.5 9.406v.938h1v-.938zm0 1.875v.938h1v-.938zm0 1.875v.938h1v-.938z"/>
 						<path d="M0 0v16h16V0zm1 1h14v14H1z"/>
 					</svg>
 				</button>
-                <button className={`tool-btn ${currentSettings.testLineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ testLineEnabled: !currentSettings.testLineEnabled })} title="Toggle Test Line">
+                <button className={`tool-btn ${currentSettings.testLineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ testLineEnabled: !currentSettings.testLineEnabled })} title={t('outputSettings.toggleTestLine')}>
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-eye" viewBox="0 0 16 16">
 						<path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8M1.173 8a13 13 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5s3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5s-3.879-1.168-5.168-2.457A13 13 0 0 1 1.172 8z"/>
 						<path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0"/>
@@ -821,7 +822,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 
                 <span style={{width: 1, background: '#555', margin: '0 5px'}}></span>
                 
-                <button className={`tool-btn ${currentSettings.zoneOutlineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ zoneOutlineEnabled: !currentSettings.zoneOutlineEnabled })} title="Toggle Zone Outlines (canvas + laser)">
+                <button className={`tool-btn ${currentSettings.zoneOutlineEnabled ? 'active' : ''}`} onClick={() => updateCurrentSettings({ zoneOutlineEnabled: !currentSettings.zoneOutlineEnabled })} title={t('outputSettings.toggleZoneOutlines')}>
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-square-dashed" viewBox="0 0 16 16">
 						<path d="M5.466 1.17q.262.001.533.03h.004a1 1 0 0 1 .031.253V2.5a.5.5 0 0 1-1 0v-1a.5.5 0 0 1 .432-.33ZM7.5 1q.251.005.5.022a.5.5 0 0 1 .028.672l-.031.468a.5.5 0 0 1-1-.055v-1A.5.5 0 0 1 7.5 1ZM10.5 1.15a.5.5 0 0 1 .297.368l.03.201a.5.5 0 0 1-.97.179l-.032-.201a.5.5 0 0 1 .464-.58q.105-.006.211.033ZM15 10.5a.5.5 0 0 1-.478.5l-.371.02a.5.5 0 0 1 .044-.999l.37-.02a.5.5 0 0 1 .435.499ZM15 7.6a.5.5 0 0 1-.48.5l-.36.018a.5.5 0 0 1 .044-1l.36-.02a.5.5 0 0 1 .436.501ZM15 4.65a.5.5 0 0 1-.478.5l-.374.02a.5.5 0 0 1 .044-.998l.374-.02a.5.5 0 0 1 .434.498ZM8.5 4.5a.5.5 0 0 1 .5.5V5a.5.5 0 0 1-.969.147A.5.5 0 0 1 8 5a.5.5 0 0 1 .5-.5ZM12.5 1.7a.5.5 0 0 1 .474.615l-.38 1.751a.5.5 0 0 1-.968-.246l.38-1.75a.5.5 0 0 1 .494-.37ZM14.828 4.6a.5.5 0 0 1 .162.56l-.723 1.7a.5.5 0 0 1-.922-.388l.724-1.7a.5.5 0 0 1 .68-.246.5.5 0 0 1 .08-.057ZM14.828 7.6a.5.5 0 0 1 .16.562l-.715 1.66a.5.5 0 1 1-.924-.382l.715-1.66a.5.5 0 0 1 .599-.288.5.5 0 0 1 .165.108ZM14.828 10.6a.5.5 0 0 1 .158.565l-.697 1.62a.5.5 0 1 1-.93-.372l.698-1.62a.5.5 0 0 1 .854.135.5.5 0 0 1 .083-.327ZM12.5 14.3a.5.5 0 0 1-.46.355l-1.852.097a.5.5 0 0 1 .058-.998l1.84-.096a.5.5 0 0 1 .414.642ZM7.76 14.61a.5.5 0 0 1 .1-.95l2.006-.105a.5.5 0 0 1 .056.999l-2.006.105a.5.5 0 0 1-.156.947ZM4.5 14.7a.5.5 0 0 1-.464.33l-1.724.09a.5.5 0 0 1-.018-1l1.724-.09a.5.5 0 0 1 .486.67ZM1.5 13.82a.5.5 0 0 1-.46-.577l.216-1.73a.5.5 0 0 1 .984.176l-.18 1.44a.5.5 0 0 1-.56.69ZM1.172 7.6a.5.5 0 0 1 .503.53l-.02.4a.5.5 0 0 1-1-.053l.02-.4a.5.5 0 0 1 .497-.477ZM5.5 1.17a.5.5 0 0 1 .465.337l.088.31a.5.5 0 0 1-.94.339l-.088-.31A.5.5 0 0 1 5.5 1.17ZM10.5 14.8a.5.5 0 0 1-.465.337l-.088.31a.5.5 0 0 1-.94-.339l.088-.31a.5.5 0 0 1 .94.002ZM1.17 4.65a.5.5 0 0 1 .5-.48l.37.03a.5.5 0 0 1-.044.998l-.37-.03a.5.5 0 0 1-.456-.518ZM3.9 1.5a.5.5 0 0 1-.252.63l-.5.24a.5.5 0 0 1-.447-.894l.498-.24a.5.5 0 0 1 .401.264Z"/>
 						<path d="M2 1h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Zm4-8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Zm4-8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 4h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/>
@@ -830,14 +831,14 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 
                 <span style={{width: 1, background: '#555', margin: '0 5px'}}></span>
                 
-                <button className={`tool-btn ${snapToGrid ? 'active' : ''}`} onClick={() => setSnapToGrid(!snapToGrid)} title="Snap to Grid">
+                <button className={`tool-btn ${snapToGrid ? 'active' : ''}`} onClick={() => setSnapToGrid(!snapToGrid)} title={t('outputSettings.snapToGrid')}>
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-magnet-fill" viewBox="0 0 16 16">
 						<path d="M15 12h-4v3h4zM5 12H1v3h4zM0 8a8 8 0 1 1 16 0v8h-6V8a2 2 0 1 0-4 0v8H0z"/>
 					</svg>
 				</button>
                 
                 <div style={{display:'flex', alignItems:'center', gap:5, marginLeft:5}}>
-                    <span style={{fontSize:10, color:'#aaa'}}>Grid:</span>
+                    <span style={{fontSize:10, color:'#aaa'}}>{t('outputSettings.grid')}</span>
                     <input type="number" min="5" max="100" value={gridSize} onChange={(e) => setGridSize(parseInt(e.target.value))} className="param-number-input" style={{width:40}} />
                 </div>
             </div>
@@ -869,9 +870,9 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
              {selectedOutputId ? (
                  <>
                     <div className="settings-group">
-                        <h4>Channel</h4>
+                        <h4>{t('outputSettings.channel')}</h4>
                         <div className="control-row" style={{marginBottom: 5}}>
-                            <label style={{flex: 1}}>Name</label>
+                            <label style={{flex: 1}}>{t('outputSettings.name')}</label>
                             <input
                                 type="text"
                                 className="param-text-input"
@@ -882,54 +883,54 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                             />
                         </div>
                         <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '2px 0 0' }}>
-                            Custom name shown everywhere this channel appears (main list, channel list, dimmers, effect routing). Leave empty for the default.
+                            {t('outputSettings.nameHelp')}
                         </p>
                     </div>
 
                     <div className="settings-group">
-                        <h4>Output Transformation</h4>
+                        <h4>{t('outputSettings.transformation')}</h4>
                         <div className="control-row" style={{marginBottom:10}}>
-                             <label style={{flex:1}}>Enable Editing</label>
+                             <label style={{flex:1}}>{t('outputSettings.enableEditing')}</label>
                              <input type="checkbox" checked={currentSettings.transformationEnabled} onChange={(e) => updateCurrentSettings({ transformationEnabled: e.target.checked })} />
                         </div>
                         <div className="control-row" style={{marginBottom:10}}>
-                             <label style={{flex:1}}>Flip X</label>
+                             <label style={{flex:1}}>{t('outputSettings.flipX')}</label>
                              <input type="checkbox" checked={currentSettings.flipX || false} onChange={(e) => updateCurrentSettings({ flipX: e.target.checked })} />
                         </div>
                         <div className="control-row" style={{marginBottom:10}}>
-                             <label style={{flex:1}}>Flip Y</label>
+                             <label style={{flex:1}}>{t('outputSettings.flipY')}</label>
                              <input type="checkbox" checked={currentSettings.flipY || false} onChange={(e) => updateCurrentSettings({ flipY: e.target.checked })} />
                         </div>
                         {currentSettings.transformationEnabled && (
                             <div className="control-row">
-                                <label style={{flex:1}}>Mode</label>
+                                <label style={{flex:1}}>{t('outputSettings.mode')}</label>
                                 <select 
                                     className="param-select"
                                     value={currentSettings.transformationMode} 
                                     onChange={(e) => updateCurrentSettings({ transformationMode: e.target.value })}
                                 >
-                                    <option value="crop">Crop</option>
-                                    <option value="scale">Scale</option>
+                                    <option value="crop">{t('outputSettings.modeCrop')}</option>
+                                    <option value="scale">{t('outputSettings.modeScale')}</option>
                                 </select>
                             </div>
                         )}
                     </div>
 
                     <div className="settings-group">
-                        <h4>Timing Target</h4>
+                        <h4>{t('outputSettings.timingTarget')}</h4>
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>Target Mode</label>
+                            <label style={{flex:1}}>{t('outputSettings.targetMode')}</label>
                             <select
                                 className="param-select"
                                 value={currentSettings.targetMode || TARGET_MODES.VAR_FPS_FIXED_PPS}
                                 onChange={(e) => updateCurrentSettings({ targetMode: e.target.value })}
                             >
-                                <option value={TARGET_MODES.VAR_FPS_FIXED_PPS}>Variable FPS → Fixed PPS</option>
-                                <option value={TARGET_MODES.VAR_PPS_FIXED_FPS}>Variable PPS → Fixed FPS</option>
+                                <option value={TARGET_MODES.VAR_FPS_FIXED_PPS}>{t('outputSettings.varFpsFixedPps')}</option>
+                                <option value={TARGET_MODES.VAR_PPS_FIXED_FPS}>{t('outputSettings.varPpsFixedFps')}</option>
                             </select>
                         </div>
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>Hardware Preset</label>
+                            <label style={{flex:1}}>{t('outputSettings.hardwarePreset')}</label>
                             <select
                                 className="param-select"
                                 value={currentSettings.ppsPreset || DEFAULT_PRESET}
@@ -941,11 +942,11 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                             </select>
                         </div>
                         <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '6px 0' }}>
-                            Target PPS: {getPreset(currentSettings.ppsPreset || DEFAULT_PRESET).targetPps.toLocaleString()} pps
-                            ({(currentSettings.ppsPreset || DEFAULT_PRESET) === 'slow' ? '15-20k' : (currentSettings.ppsPreset || DEFAULT_PRESET) === 'fast' ? '35k+' : '25-35k'} band)
+                            {t('outputSettings.targetPpsLine', { pps: getPreset(currentSettings.ppsPreset || DEFAULT_PRESET).targetPps.toLocaleString(), band:
+                            (currentSettings.ppsPreset || DEFAULT_PRESET) === 'slow' ? '15-20k' : (currentSettings.ppsPreset || DEFAULT_PRESET) === 'fast' ? '35k+' : '25-35k' })}
                         </p>
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>PPS Override</label>
+                            <label style={{flex:1}}>{t('outputSettings.ppsOverride')}</label>
                             <input
                                 type="number"
                                 min="0" max="120000" step="1000"
@@ -955,7 +956,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                             />
                         </div>
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>Target FPS</label>
+                            <label style={{flex:1}}>{t('outputSettings.targetFps')}</label>
                             <input
                                 type="number"
                                 min="1" max="360" step="1"
@@ -963,28 +964,27 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                                 onChange={(e) => updateCurrentSettings({ targetFps: parseInt(e.target.value) || 0 })}
                                 style={{ width: '85px', fontSize: '11px' }}
                             />
-                            <span style={{ fontSize: '9px', color: '#888' }}>0 = use UI rate</span>
+                            <span style={{ fontSize: '9px', color: '#888' }}>{t('outputSettings.zeroUseUiRate')}</span>
                         </div>
                         <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '6px' }}>
-                            Per-channel PPS/FPS target. When unset (0/empty), the UI main-thread
-                            values are used for frame-buffer construction.
+                            {t('outputSettings.timingHelp')}
                         </p>
                     </div>
 
                     <div className="settings-group">
-                        <h4>Safety Zones</h4>
+                        <h4>{t('outputSettings.safetyZones')}</h4>
                         <div className="control-row" style={{justifyContent: 'space-between', marginBottom: 5}}>
-                            <label style={{flex:1}}>Zone Outlines</label>
-                            <input type="checkbox" checked={!!currentSettings.zoneOutlineEnabled} onChange={(e) => updateCurrentSettings({ zoneOutlineEnabled: e.target.checked })} title="Show zone boundaries on canvas and on the laser" />
+                            <label style={{flex:1}}>{t('outputSettings.zoneOutlines')}</label>
+                            <input type="checkbox" checked={!!currentSettings.zoneOutlineEnabled} onChange={(e) => updateCurrentSettings({ zoneOutlineEnabled: e.target.checked })} title={t('outputSettings.zoneOutlinesTitle')} />
                         </div>
                         <div className="control-row" style={{justifyContent: 'space-between', marginBottom: 5}}>
-                            <button className="small-btn" onClick={handleAddZone}>Add New</button>
-                            <button className="small-btn clear" onClick={handleClearZones}>Clear All</button>
+                            <button className="small-btn" onClick={handleAddZone}>{t('outputSettings.addNew')}</button>
+                            <button className="small-btn clear" onClick={handleClearZones}>{t('outputSettings.clearAll')}</button>
                         </div>
                         <div className="zone-list">
                             {(currentSettings.safetyZones || []).map((z, i) => (
                                 <div key={i} className={`zone-item ${selectedZoneIndex === i ? 'selected' : ''}`} onClick={() => setSelectedZoneIndex(i)}>
-                                    <span>Zone {i + 1}</span>
+                                    <span>{t('outputSettings.zoneN', { index: i + 1 })}</span>
                                     <button className="delete-zone-btn" onClick={(e) => {
                                         e.stopPropagation();
                                         if (selectedZoneIndex === i) setSelectedZoneIndex(null);
@@ -997,23 +997,23 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                         </div>
                         {selectedZoneIndex !== null && (
                             <div style={{marginTop: 10, borderTop:'1px solid #333', paddingTop:5}}>
-                                <label>Selected Zone Properties</label>
+                                <label>{t('outputSettings.selectedZoneProperties')}</label>
                                 <div style={{fontSize:'0.8em', color:'#aaa'}}>
-                                    Select and drag zone on canvas to resize.
+                                    {t('outputSettings.zoneResizeHint')}
                                 </div>
                             </div>
                         )}
                     </div>
 
                     <div className="settings-group">
-                        <h4>Test Output</h4>
+                        <h4>{t('outputSettings.testOutput')}</h4>
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>Horizontal Test Line</label>
+                            <label style={{flex:1}}>{t('outputSettings.horizontalTestLine')}</label>
                              <input type="checkbox" checked={currentSettings.testLineEnabled} onChange={(e) => updateCurrentSettings({ testLineEnabled: e.target.checked })} />
                         </div>
                         {currentSettings.testLineEnabled && (
                             <div className="control-row">
-                                <label>Y Position</label>
+                                <label>{t('outputSettings.yPosition')}</label>
                                 <input 
                                     type="range" 
                                     min="0" max="1" step="0.01" 
@@ -1025,7 +1025,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                         )}
                         {currentSettings.testLineEnabled && (
                             <div className="control-row">
-                                <label>Center Shift X</label>
+                                <label>{t('outputSettings.centerShiftX')}</label>
                                 <input 
                                     type="range" 
                                     min="-0.1" max="0.1" step="0.001" 
@@ -1037,12 +1037,12 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                             </div>
                         )}
                         <div className="control-row" style={{marginBottom:10}}>
-                            <label style={{flex:1}}>Vertical Test Line</label>
+                            <label style={{flex:1}}>{t('outputSettings.verticalTestLine')}</label>
                              <input type="checkbox" checked={currentSettings.verticalTestLineEnabled ?? false} onChange={(e) => updateCurrentSettings({ verticalTestLineEnabled: e.target.checked })} />
                         </div>
                         {(currentSettings.verticalTestLineEnabled ?? false) && (
                             <div className="control-row">
-                                <label>X Position</label>
+                                <label>{t('outputSettings.xPosition')}</label>
                                 <input 
                                     type="range" 
                                     min="0" max="1" step="0.01" 
@@ -1054,7 +1054,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                         )}
                         {(currentSettings.verticalTestLineEnabled ?? false) && (
                             <div className="control-row">
-                                <label>Center Shift Y</label>
+                                <label>{t('outputSettings.centerShiftY')}</label>
                                 <input 
                                     type="range" 
                                     min="-0.1" max="0.1" step="0.001" 
@@ -1066,7 +1066,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                             </div>
                         )}
                         <div className="control-row" style={{marginBottom:10, marginTop:5}}>
-                            <label style={{flex:1}}>End Lag Comp</label>
+                            <label style={{flex:1}}>{t('outputSettings.endLagComp')}</label>
                             <input 
                                 type="range" 
                                 min="-0.1" max="0.1" step="0.001" 
@@ -1077,7 +1077,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                             <span style={{width:42, textAlign:'right', fontSize:'0.8em', color:'#aaa'}}>{currentSettings.testLineLagCompEnd !== undefined ? currentSettings.testLineLagCompEnd : (currentSettings.testLineLagComp ?? 0)}</span>
                         </div>
                         <div className="control-row" style={{marginBottom:5}}>
-                            <label style={{flex:1}}>Start Lag Comp</label>
+                            <label style={{flex:1}}>{t('outputSettings.startLagComp')}</label>
                             <input 
                                 type="range" 
                                 min="-0.1" max="0.1" step="0.001" 
@@ -1090,7 +1090,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                     </div>
                  </>
              ) : (
-                 <div style={{padding:20, textAlign:'center', color:'#666'}}>Select an Output to configure settings</div>
+                 <div style={{padding:20, textAlign:'center', color:'#666'}}>{t('outputSettings.selectOutput')}</div>
              )}
           </div>
         </div>
