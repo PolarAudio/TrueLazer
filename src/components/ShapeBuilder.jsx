@@ -2567,14 +2567,14 @@ const ShapeBuilder = ({ onBack, ref }) => {
                       if (s.anchors) s.anchors = s.anchors.map(rotatePoint);
                       if (s.start) s.start = rotatePoint(s.start);
                       if (s.end) s.end = rotatePoint(s.end);
-                      if (s.pivotX !== undefined) {
+                      if (s.pivotX !== undefined && s.pivotY !== undefined) {
                           const pp = rotatePoint({x: s.pivotX, y: s.pivotY});
                           s.pivotX = pp.x; s.pivotY = pp.y;
                       }
                       return s;
                   };
                   rotate(clone);
-                  clone.rotationZ = (clone.rotationZ || 0) + rot;
+                  // Rotation is baked into the points above; also setting rotationZ would double-rotate at render.
               }
               clones.push(clone);
           }
@@ -4660,7 +4660,14 @@ For Line it draws a multi-segment connected line; for Bezier it chains smooth cu
                               </label>
                           </div>
                       )}
-                      <button onClick={applyArray} className="primary-btn" style={{ width: '100%', padding: '5px' }}>APPLY ARRAY</button>
+                      <button
+                          onMouseDown={() => {
+                              // Commit a focused count/spacing/angle field first so APPLY never reads a stale value.
+                              if (document.activeElement && document.activeElement.blur && document.activeElement !== document.body) {
+                                  document.activeElement.blur();
+                              }
+                          }}
+                          onClick={applyArray} className="primary-btn" style={{ width: '100%', padding: '5px' }}>APPLY ARRAY</button>
                   </div>
               )}
 
