@@ -207,6 +207,12 @@ function flattenPoints(points) {
 }
 
 function buildFrameChunks(chType, pps, points, mode, fps) {
+    // Tolerate the ILDA worker's metadata wrapper ({ points, isTypedArray, ... })
+    // so a stray wrapper can never reach the point-count math below (which
+    // would compute NaN buffer sizes and crash the main process).
+    if (points && typeof points === 'object' && !(points instanceof Float32Array) && !Array.isArray(points) && points.points) {
+        points = points.points;
+    }
     let isTyped = points instanceof Float32Array;
     // A plain point array (the Show Control grid path sends one) would skip the
     // interpolation fill below, and that fill is what pads the frame out to a
@@ -859,6 +865,7 @@ module.exports = {
     discoverDacs,
     getDacServices,
     sendFrame,
+    buildFrameChunks,
     sendIdleFrame,
     sendHeartbeat,
     sendBlankFrame,

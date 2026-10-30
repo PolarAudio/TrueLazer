@@ -1132,32 +1132,44 @@ function safeTrimHistory(history, maxHistory) {
     }
 }
 
-function resolveChannelStepOrder(customOrder, assignedDacs) {
+export function resolveChannelStepOrder(customOrder, assignedDacs) {
     const hasDacs = Array.isArray(assignedDacs) && assignedDacs.length > 0;
     const hasOrder = Array.isArray(customOrder) && customOrder.length > 0;
-    if (!hasDacs) return hasOrder ? customOrder.map(item => item.originalIndex !== undefined ? item.originalIndex : 0) : [0];
+    if (!hasDacs) return hasOrder ? customOrder.map((item, idx) => (item && typeof item.originalIndex === 'number' ? item.originalIndex : idx)) : [0];
     if (!hasOrder) return assignedDacs.map((_, i) => i);
 
     const keyOf = (d) => (d && d.ip !== undefined) ? `${d.ip}:${d.channel !== undefined ? d.channel : ''}` : null;
-    if (assignedDacs.every(d => keyOf(d) !== null)) {
-        // Identity-match the saved order against the actual per-channel list so it
-        // survives channel reordering/removal and the layer+clip list combination.
-        return assignedDacs
-            .map((d, i) => ({ d, i }))
-            .sort((A, B) => {
-                const ia = customOrder.findIndex(item => keyOf(item) === keyOf(A.d));
-                const ib = customOrder.findIndex(item => keyOf(item) === keyOf(B.d));
-                if (ia === -1) return 1;
-                if (ib === -1) return -1;
-                return ia - ib;
-            })
-            .map(e => e.i);
+    const allHaveIdentity = assignedDacs.every((d) => keyOf(d) !== null)
+        && customOrder.every((item) => keyOf(item) !== null);
+
+    if (allHaveIdentity) {
+        const savedIndexByKey = new Map();
+        customOrder.forEach((item, idx) => {
+            const k = keyOf(item);
+            if (k != null && !savedIndexByKey.has(k)) savedIndexByKey.set(k, idx);
+        });
+
+        const matched = assignedDacs
+            .map((d, i) => ({ i, saved: savedIndexByKey.has(keyOf(d)) ? savedIndexByKey.get(keyOf(d)) : null }));
+        const anyMatch = matched.some((m) => m.saved !== null);
+        if (anyMatch) {
+            return matched
+                .sort((A, B) => {
+                    if (A.saved === null && B.saved === null) return A.i - B.i;
+                    if (A.saved === null) return 1;
+                    if (B.saved === null) return -1;
+                    if (A.saved !== B.saved) return A.saved - B.saved;
+                    return A.i - B.i;
+                })
+                .map((m) => m.i);
+        }
     }
 
-    // Legacy order entries without identity info: fall back to saved positions.
-    return customOrder
-        .map(item => item.originalIndex !== undefined ? item.originalIndex : 0)
-        .filter(idx => idx >= 0 && idx < assignedDacs.length);
+    const fallback = customOrder
+        .map((item, idx) => (item && typeof item.originalIndex === 'number' ? item.originalIndex : idx))
+        .filter((idx) => idx >= 0 && idx < assignedDacs.length);
+    if (fallback.length > 0) return fallback;
+    return assignedDacs.map((_, i) => i);
 }
 
 function applyDelay(points, numPoints, params, effectStates, instanceId, context) {

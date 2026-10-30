@@ -477,6 +477,26 @@ function dedupeKeyframeIds(lane) {
     };
 }
 
+function sanitizeMachineSpecific(value) {
+    if (Array.isArray(value)) return value.map(sanitizeMachineSpecific);
+    if (!value || typeof value !== 'object') return value;
+    const out = { ...value };
+    if (Array.isArray(out.customOrder)) {
+        out.customOrder = out.customOrder.map((item, idx) => {
+            if (!item || typeof item !== 'object') return { originalIndex: idx };
+            return {
+                originalIndex: typeof item.originalIndex === 'number' ? item.originalIndex : idx,
+                ...(typeof item.label === 'string' ? { label: item.label } : {}),
+            };
+        });
+    }
+    for (const key of Object.keys(out)) {
+        out[key] = sanitizeMachineSpecific(out[key]);
+    }
+    return out;
+}
+
+
 export function normalizeHydratedState(raw) {
     const base = createInitialTimelineState();
     if (!raw || typeof raw !== 'object') return base;
@@ -505,6 +525,11 @@ export function normalizeHydratedState(raw) {
         cues[id] = newCue(id, {
             ...cue,
             workerId: cue.type === 'ILDA' ? null : cue.workerId,
+            effects: Array.isArray(cue.effects) ? cue.effects.map((e) => ({
+                ...e,
+                params: sanitizeMachineSpecific(e?.params || {}),
+            })) : (cue.effects || []),
+            effectOverrides: sanitizeMachineSpecific(cue.effectOverrides || {}),
         });
     }
 
@@ -514,8 +539,12 @@ export function normalizeHydratedState(raw) {
         if (!lane || !lane.id) continue;
         lanes[id] = newLane(id, {
             ...lane,
-            clips: Array.isArray(lane.clips) ? lane.clips : [],
+            clips: Array.isArray(lane.clips) ? lane.clips.map((c) => ({
+                ...c,
+                values: sanitizeMachineSpecific(c?.values || {}),
+            })) : [],
             keyframes: Array.isArray(lane.keyframes) ? lane.keyframes : [],
+            values: sanitizeMachineSpecific(lane?.values || {}),
         });
     }
 
