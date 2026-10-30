@@ -1,7 +1,10 @@
+import { useTranslation } from '../../i18n';
 import React, { useState, useRef, useEffect } from 'react';
 import { useTimeline, isChannelAudible, getChannelOutputs, getChannelDisplayName } from '../../contexts/TimelineContext';
 
-const TrackHeader = ({ channel, height }) => {
+const TrackHeader = ({
+    channel, height }) => {
+    const { t } = useTranslation();
     const { state, actions, dacOutputSettings, refreshDacOutputSettings } = useTimeline();
     const displayName = getChannelDisplayName(channel, dacOutputSettings);
     const [editing, setEditing] = useState(false);
@@ -143,7 +146,7 @@ const TrackHeader = ({ channel, height }) => {
                     onClick={(e) => { e.stopPropagation(); actions.setChannelExpanded(channel.id, !channel.expanded); }}>
                     {channel.expanded ? '▾' : '▸'}
                 </button>
-                <button className="timeline-icon-btn danger" title="Remove channel"
+                <button className="timeline-icon-btn danger" title={t('ui.remove_channel')}
                     onClick={(e) => { e.stopPropagation(); actions.removeChannel(channel.id); }}>
                     ✕
                 </button>
@@ -151,9 +154,9 @@ const TrackHeader = ({ channel, height }) => {
 
             <div className="timeline-track-header-controls">
                 <button className={`timeline-btn-sm ${channel.muted ? 'active muted' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); actions.toggleMute(channel.id); }} title="Mute">M</button>
+                    onClick={(e) => { e.stopPropagation(); actions.toggleMute(channel.id); }} title={t('ui.mute')}>M</button>
                 <button className={`timeline-btn-sm ${channel.soloed ? 'active solo' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); actions.toggleSolo(channel.id); }} title="Solo">S</button>
+                    onClick={(e) => { e.stopPropagation(); actions.toggleSolo(channel.id); }} title={t('ui.solo')}>S</button>
                 <input
                     type="range" min={0} max={1} step={0.01} value={channel.intensity}
                     className="timeline-intensity"
@@ -197,7 +200,7 @@ const TrackHeader = ({ channel, height }) => {
                             >y</button>
                             <button
                                 className="timeline-icon-btn timeline-dac-remove"
-                                title="Remove this DAC from the zone"
+                                title={t('ui.remove_this_dac_from_the_zone')}
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     actions.setChannelDacs(
@@ -211,7 +214,7 @@ const TrackHeader = ({ channel, height }) => {
                         </span>
                     ))
                 ) : (
-                    <span className="timeline-dac-placeholder">drop DAC here</span>
+                    <span className="timeline-dac-placeholder">{t('ui.drop_dac_here')}</span>
                 )}
                 {outputs.length > 0 && (
                     <span className="timeline-dac-hint">{outputs.length > 1 ? 'zone · shift-drag adds' : 'shift-drag adds'}</span>

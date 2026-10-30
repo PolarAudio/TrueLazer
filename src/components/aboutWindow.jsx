@@ -1,3 +1,4 @@
+import { useTranslation } from '../i18n';
 import React, { useState, useEffect } from 'react';
 
 // The DAC protocols the app can drive. Kept here as plain data so the About
@@ -41,6 +42,7 @@ const Section = ({ title, children }) => (
 );
 
 const AboutWindow = ({ show, onClose }) => {
+    const { t } = useTranslation();
     const [info, setInfo] = useState(null);
 
     useEffect(() => {
@@ -68,22 +70,22 @@ const AboutWindow = ({ show, onClose }) => {
                 </div>
                 <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
 
-                    <Section title="Application">
+                    <Section title={t('ui.application')}>
                         <Row label="Name" value={info?.name || 'TrueLazer'} />
                         <Row label="Version" value={info?.version || '—'} />
-                        {info?.author ? <Row label="Author" value={info.author} /> : null}
-                        {info?.license ? <Row label="License" value={info.license} /> : null}
+                        {info?.author ? <Row label={t('ui.author')} value={info.author} /> : null}
+                        {info?.license ? <Row label={t('ui.license')} value={info.license} /> : null}
                     </Section>
 
-                    <Section title="Runtime">
-                        <Row label="Electron" value={info?.electron || '—'} mono />
-                        <Row label="Chromium" value={info?.chrome || '—'} mono />
+                    <Section title={t('ui.runtime')}>
+                        <Row label={t('ui.electron')} value={info?.electron || '—'} mono />
+                        <Row label={t('ui.chromium')} value={info?.chrome || '—'} mono />
                         <Row label="Node.js" value={info?.node || '—'} mono />
-                        <Row label="V8" value={info?.v8 || '—'} mono />
-                        <Row label="Platform" value={[info?.platform, info?.arch].filter(Boolean).join(' · ') || '—'} mono />
+                        <Row label={t('ui.v8')} value={info?.v8 || '—'} mono />
+                        <Row label={t('ui.platform')} value={[info?.platform, info?.arch].filter(Boolean).join(' · ') || '—'} mono />
                     </Section>
 
-                    <Section title="Project Formats">
+                    <Section title={t('ui.project_formats')}>
                         {PROJECT_FORMATS.map((f) => (
                             <Row
                                 key={f.ext}
@@ -93,18 +95,18 @@ const AboutWindow = ({ show, onClose }) => {
                         ))}
                     </Section>
 
-                    <Section title="DAC Backends">
+                    <Section title={t('ui.dac_backends')}>
                         {DAC_BACKENDS.map((d) => (
                             <Row key={d.name} label={d.name} value={d.detail} />
                         ))}
                     </Section>
 
-                    <Section title="Locations">
-                        <Row label="Documents" value={info?.documentsPath || '—'} mono />
-                        <Row label="App data" value={info?.userDataPath || '—'} mono />
+                    <Section title={t('ui.locations')}>
+                        <Row label={t('ui.documents')} value={info?.documentsPath || '—'} mono />
+                        <Row label={t('ui.app_data')} value={info?.userDataPath || '—'} mono />
                     </Section>
 
-                    <Section title="Project">
+                    <Section title={t('ui.project')}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
                             <div style={{ color: '#e8eaed', fontFamily: 'monospace', wordBreak: 'break-all' }}>
                                 https://github.com/PolarAudio/TrueLazer

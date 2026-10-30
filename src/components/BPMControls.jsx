@@ -58,7 +58,7 @@ const BPMControls = ({ bpm, onBpmChange, onTap, bpmSource = 'tap', onBpmSourceCh
         <button
           className={`bpm-source-toggle ${bpmSource === 'tcnet' ? 'active' : ''}`}
           onClick={handleBpmSourceChange}
-          title="Switch BPM source: manual TapTempo vs TCNet Beat Grid vs ProDJ Link vs StageLinq"
+          title={t('ui.switch_bpm_source_manual_taptempo_vs_tcnet_beat_grid_vs_prod')}
         >
           {bpmSource === 'prolink' ? 'ProDJ' : bpmSource === 'tcnet' ? 'TCNet' : bpmSource === 'stagelinq' ? 'StLq' : 'Tap'}
         </button>

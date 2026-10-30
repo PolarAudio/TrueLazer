@@ -103,7 +103,7 @@ const ClipSettingsPanel = ({
   if (selectedLayerIndex === null || selectedColIndex === null) {
     return (
       <div className="clip-settings-panel settings-panel-base">
-        <p className="info-text">Select a clip to view settings.</p>
+        <p className="info-text">{t('ui.select_a_clip_to_view_settings')}</p>
       </div>
     );
   }
@@ -234,7 +234,7 @@ const ClipSettingsPanel = ({
                     </div>
                 </div>
             ) : (
-                <button className="assign-audio-btn" onClick={onAssignAudio}>Assign Audio File</button>
+                <button className="assign-audio-btn" onClick={onAssignAudio}>{t('ui.assign_audio_file')}</button>
             )}
       </CollapsiblePanel>
 
@@ -276,13 +276,13 @@ const ClipSettingsPanel = ({
                         className="dac-order-btn"
                         disabled={index === 0}
                         onClick={() => onReorderDacs(selectedLayerIndex, selectedColIndex, index, index - 1)}
-                        title="Move Up"
+                        title={t('ui.move_up')}
                     >▲</button>
                     <button
                         className="dac-order-btn"
                         disabled={index === assignedDacs.length - 1}
                         onClick={() => onReorderDacs(selectedLayerIndex, selectedColIndex, index, index + 1)}
-                        title="Move Down"
+                        title={t('ui.move_down')}
                     >▼</button>
                   </div>
                   <div className="dac-info-block">
@@ -299,12 +299,12 @@ const ClipSettingsPanel = ({
                     <button 
                         className={`mirror-btn ${dac.mirrorX ? 'active' : ''}`}
                         onClick={() => onToggleDacMirror(selectedLayerIndex, selectedColIndex, index, 'x')}
-                        title="Mirror X Axis"
+                        title={t('ui.mirror_x_axis')}
                     >X</button>
                     <button 
                         className={`mirror-btn ${dac.mirrorY ? 'active' : ''}`}
                         onClick={() => onToggleDacMirror(selectedLayerIndex, selectedColIndex, index, 'y')}
-                        title="Mirror Y Axis"
+                        title={t('ui.mirror_y_axis')}
                     >Y</button>
                   </div>
                   <button className="remove-dac-btn" onClick={() => onRemoveDac(index)}>×</button>
@@ -371,7 +371,7 @@ const ClipSettingsPanel = ({
                         draggable
                         onDragStart={() => handleEffectDragStart(effectIndex)}
                         style={{ cursor: 'grab', marginRight: '5px', display: 'flex', alignItems: 'center', color: '#666' }}
-                        title="Drag to reorder"
+                        title={t('ui.drag_to_reorder')}
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
                             <path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/>

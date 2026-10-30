@@ -137,11 +137,11 @@ const ClipDjLinkSettings = ({
     return (
       <CollapsiblePanel title={t('clipDjLink.title')} isCollapsed={!!collapsedPanels['djlink']} onToggle={handleToggle}>
         <div className="djlink-empty">
-          <strong>No song linked to this clip yet.</strong>
+          <strong>{t('ui.no_song_linked_to_this_clip_yet')}</strong>
           <ol>
             <li>Load a track on a DJ deck (Pro DJ Link or StageLinq) — the song appears in the DJ-Link display in the middle bar, right.</li>
             <li>Drag that song onto this clip&hellip; or select this clip and just <em>click</em> the song.</li>
-            <li>Arm <em>Clip Transport</em> in Link/Sync Settings so linked clips actually fire.</li>
+            <li>Arm <em>{t('ui.clip_transport')}</em> in Link/Sync Settings so linked clips actually fire.</li>
           </ol>
         </div>
       </CollapsiblePanel>
@@ -164,13 +164,13 @@ const ClipDjLinkSettings = ({
             {[link.artist, link.source === 'stagelinq' ? 'StageLinq' : 'Pro DJ Link'].filter(Boolean).join(' — ')}
           </div>
         </div>
-        <button className="small-btn djlink-unlink" onClick={onUnlink} title="Remove this song link">Unlink</button>
+        <button className="small-btn djlink-unlink" onClick={onUnlink} title={t('ui.remove_this_song_link')}>{t('ui.unlink')}</button>
       </div>
 
       {!transportArmed && (
         <div className="djlink-warn">
           Clip Transport is disarmed in Link/Sync Settings — this link will not fire.{' '}
-          <button className="small-btn" onClick={onArmTransport}>Arm it</button>
+          <button className="small-btn" onClick={onArmTransport}>{t('ui.arm_it')}</button>
         </div>
       )}
 
@@ -187,29 +187,29 @@ const ClipDjLinkSettings = ({
       </div>
 
       <div className="control-group">
-        <label>Trigger</label>
+        <label>{t('ui.trigger')}</label>
         <div className="radio-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <label title="Fire as soon as the track is cued in a deck" style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+          <label title={t('ui.fire_as_soon_as_the_track_is_cued_in_a_deck')} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="radio" checked={link.trigger === 'load'} onChange={() => onUpdate({ trigger: 'load' })} /> On Load
           </label>
-          <label title="Wait until the deck is actually rolling" style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+          <label title={t('ui.wait_until_the_deck_is_actually_rolling')} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="radio" checked={link.trigger === 'play'} onChange={() => onUpdate({ trigger: 'play' })} /> On Play
           </label>
         </div>
       </div>
 
       <div className="control-group">
-        <label>Follow</label>
+        <label>{t('ui.follow')}</label>
         <div className="playback-mode-selector">
           <button
             className={isLoop ? 'button_inactive' : 'active'}
             onClick={() => onUpdate({ follow: 'position' })}
             title="The clip covers the trim window; the deck's playhead scrubs the animation"
-          >Deck Position</button>
+          >{t('ui.deck_position')}</button>
           <button
             className={isLoop ? 'active' : 'button_inactive'}
             onClick={() => onUpdate({ follow: 'loop' })}
-            title="The clip loops for the whole track, phase-locked to the deck's beat"
+            title={t('ui.the_clip_loops_for_the_whole_track_phase_locked_to_the_deck_')}
           >Loop</button>
         </div>
       </div>
@@ -217,7 +217,7 @@ const ClipDjLinkSettings = ({
       {isLoop ? (
         <>
           <div className="control-group">
-            <label>Loop Length (beats)</label>
+            <label>{t('ui.loop_length_beats')}</label>
             <div className="value-adjuster">
               <button onClick={() => onUpdate({ loopBeats: Math.max(1, loopBeats - 1) })}>-1</button>
               <input
@@ -236,7 +236,7 @@ const ClipDjLinkSettings = ({
             </div>
           </div>
           <div className="control-group">
-            <label>Snap to bars</label>
+            <label>{t('ui.snap_to_bars')}</label>
             <div className="radio-group" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {BAR_OPTIONS.map((n) => (
                 <button
@@ -252,7 +252,7 @@ const ClipDjLinkSettings = ({
       ) : (
         <>
           <div className="control-group">
-            <label>Window</label>
+            <label>{t('ui.window')}</label>
             <div className="djlink-window">
               <ClockField
                 value={link.startSec || 0}
@@ -276,7 +276,7 @@ const ClipDjLinkSettings = ({
       )}
 
       <div className="control-group">
-        <label title="Jogging the deck backward plays the clip backward">
+        <label title={t('ui.jogging_the_deck_backward_plays_the_clip_backward')}>
           <input
             type="checkbox"
             checked={link.followDirection !== false}
@@ -288,7 +288,7 @@ const ClipDjLinkSettings = ({
 
       <div className="djlink-readout">
         <div className="djlink-readout-row">
-          <span className="djlink-readout-label">Deck</span>
+          <span className="djlink-readout-label">{t('ui.deck')}</span>
           <span className="djlink-readout-value">
             {deck ? `${formatClock(clock.positionSec)}${deck.trackDurationMs ? ` / ${formatClock(deck.trackDurationMs / 1000)}` : ''}` : '—'}
             {deck && clock.direction !== 0 ? <span className="djlink-arrow">{clock.direction > 0 ? '▶' : '◀'}</span> : null}

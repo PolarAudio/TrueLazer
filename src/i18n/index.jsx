@@ -19,7 +19,9 @@ export function LanguageProvider({ children }) {
     const [locale, setLocaleState] = useState(readStoredLocale);
 
     const setLocale = useCallback((nextLocale) => {
-        setLocaleState(TRANSLATIONS[nextLocale] ? nextLocale : DEFAULT_LOCALE);
+        const resolved = TRANSLATIONS[nextLocale] ? nextLocale : DEFAULT_LOCALE;
+        setLocaleState(resolved);
+        try { if (typeof window !== 'undefined' && window.electronAPI?.setLocale) window.electronAPI.setLocale(resolved); } catch { /* ignore */ }
     }, []);
 
     useEffect(() => {
@@ -34,6 +36,10 @@ export function LanguageProvider({ children }) {
     }, [locale]);
 
     const t = useCallback((key, params) => translate(locale, key, params), [locale]);
+
+    useEffect(() => {
+        try { if (typeof window !== 'undefined' && window.electronAPI?.setLocale) window.electronAPI.setLocale(locale); } catch { /* ignore */ }
+    }, [locale]);
 
     const value = useMemo(() => ({
         locale,

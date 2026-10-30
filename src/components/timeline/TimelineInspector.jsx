@@ -1,3 +1,4 @@
+import { useTranslation } from '../../i18n';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useTimeline, getChannelDisplayName, getChannelOutputs, getOverlappingCueIds } from '../../contexts/TimelineContext';
 import getRelativePath from '../../utils/pathUtils';
@@ -25,7 +26,9 @@ import TimelinePreview from './TimelinePreview';
  * swatch because "default" is a real state (cues saved before this field
  * existed have no colour and rely on it).
  */
-const ClipColorField = ({ cues, onChange }) => {
+const ClipColorField = ({
+    cues, onChange }) => {
+    const { t } = useTranslation();
     const list = Array.isArray(cues) ? cues.filter(Boolean) : [cues].filter(Boolean);
     if (list.length === 0) return null;
 
@@ -36,21 +39,21 @@ const ClipColorField = ({ cues, onChange }) => {
     const hasCustom = list.some((c) => !!c.color);
 
     return (
-        <label className="timeline-field" title="Colour of this clip on the track. Does not change the laser's output colour.">
-            <span>Clip colour</span>
+        <label className="timeline-field" title={t('ui.colour_of_this_clip_on_the_track_does_not_change_the_laser_s')}>
+            <span>{t('ui.clip_colour')}</span>
             <div className="timeline-color-row">
                 <input
                     type="color"
                     value={shown}
                     onChange={(e) => onChange(e.target.value)}
-                    aria-label="Clip colour"
+                    aria-label={t('ui.clip_colour')}
                 />
                 {list.length > 1 && <span className="timeline-inspector-hint">{list.length} clips</span>}
                 <button
                     className="timeline-btn"
                     disabled={!hasCustom}
                     onClick={() => onChange(null)}
-                    title="Clear the custom colour and fall back to the default for each clip's type"
+                    title={t('ui.clear_the_custom_colour_and_fall_back_to_the_default_for_eac')}
                 >
                     Default
                 </button>
@@ -88,6 +91,7 @@ const NumberField = ({ label, value, onCommit, step = 0.01, min = 0 }) => {
 
 const GeneratorParams = ({ cue }) => {
     const { actions } = useTimeline();
+    const { t } = useTranslation();
     const def = generatorDefinitions.find((d) => d.id === cue.generatorId);
     const params = cue.generatorParams || {};
 
@@ -132,7 +136,7 @@ const GeneratorParams = ({ cue }) => {
                             <span
                                 className="timeline-gen-drag"
                                 draggable
-                                title="Drag onto a channel automation lane to animate this param over time"
+                                title={t('ui.drag_onto_a_channel_automation_lane_to_animate_this_param_ov')}
                                 onDragStart={(e) => dragGenParam(e, ctrl)}
                             >✥</span>
                         </label>
@@ -201,6 +205,7 @@ function optionDecode(o) {
  */
 const CueEffectToggles = ({ cues }) => {
     const { state, actions } = useTimeline();
+    const { t } = useTranslation();
     const list = (Array.isArray(cues) ? cues : [cues]).filter(Boolean);
     if (list.length === 0) return null;
     const anchor = list[list.length - 1];
@@ -297,7 +302,7 @@ const CueEffectToggles = ({ cues }) => {
 
     return (
         <div className="timeline-inspector-section timeline-cue-effect-toggles">
-            <div className="timeline-inspector-subhead">Clip effect toggles</div>
+            <div className="timeline-inspector-subhead">{t('ui.clip_effect_toggles')}</div>
             <div className="timeline-inspector-hint">
                 Per-clip settings for this track's effects. Curves drive the range sliders only;
                 these toggle values are copied with the clip.
@@ -321,6 +326,7 @@ const CueEffectToggles = ({ cues }) => {
  */
 const AutoClipPanel = ({ lane, clip, playheadSec }) => {
     const { actions } = useTimeline();
+    const { t } = useTranslation();
     const def = getLaneEffectDef(clip);
     const genDef = clip?.genId ? getLaneGenDef(clip) : null;
     const ctrl = getLaneParam(clip);
@@ -419,7 +425,7 @@ const AutoClipPanel = ({ lane, clip, playheadSec }) => {
 
                     {rangeControls.length > 0 && (
                         <label className="timeline-field">
-                            <span>Curve drives</span>
+                            <span>{t('ui.curve_drives')}</span>
                             <select
                                 value={automated ? automated.id : ''}
                                 onChange={(e) => setCurveParam(e.target.value || null)}
@@ -474,11 +480,12 @@ const AutoClipPanel = ({ lane, clip, playheadSec }) => {
  * lane-level summary — pick a clip to edit its full settings.
  */
 const AutomationLaneInfo = ({ lane }) => {
+    const { t } = useTranslation();
     const clips = Array.isArray(lane.clips) && lane.clips.length > 0 ? lane.clips : [];
     const effectNames = [...new Set(clips.map((c) => {
         if (!c?.effectId) return null;
         const d = getLaneEffectDef(c);
-        return d ? d.name : c.effectId;
+        return d ? t(`effect.${d.id}.name`) : c.effectId;
     }).filter(Boolean))];
     const genClips = clips.some((c) => c?.genId);
     const isLegacy = !!lane.targetProperty && clips.length === 0
@@ -486,7 +493,7 @@ const AutomationLaneInfo = ({ lane }) => {
 
     return (
         <div className="timeline-inspector-section timeline-lane-info">
-            <div className="timeline-inspector-subhead">Automation Track</div>
+            <div className="timeline-inspector-subhead">{t('ui.automation_track')}</div>
 
             {isLegacy ? (
                 <div className="timeline-inspector-hint">
@@ -516,6 +523,7 @@ const AutomationLaneInfo = ({ lane }) => {
 
 const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec }) => {
     const { state, actions, dacOutputSettings, updateDacOutputSetting } = useTimeline();
+    const { t } = useTranslation();
     const selectedIds = state.settings.selectedCueIds || [];
     const cue = state.cues[state.settings.selectedCueId];
     const overlapIds = useMemo(() => getOverlappingCueIds(state), [state]);
@@ -594,7 +602,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
                 <button
                     className="timeline-btn"
                     onClick={() => actions.trimOverlaps(selectedIds)}
-                    title="Cut every selected clip to end where the next clip starts (loop off where looping), so none can shadow another"
+                    title={t('ui.cut_every_selected_clip_to_end_where_the_next_clip_starts_lo')}
                 >
                     ✂ Cut Overlaps
                 </button>
@@ -614,7 +622,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
 
     return (
         <div className="timeline-inspector">
-            <h3>Inspector</h3>
+            <h3>{t('ui.inspector')}</h3>
             {previewFrame && <TimelinePreview previewFrame={previewFrame} getCompiledFrame={getCompiledFrame} playheadSec={playheadSec} />}
 
             {multiAutoClips ? (
@@ -654,7 +662,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
                     <CueEffectToggles cues={[cue]} />
                     <div className={`timeline-cue-type ${cue.type === 'ILDA' ? 'ilda' : 'generator'}`}>
                         {cue.type === 'ILDA' ? '◈ ILDA File' : '✦ Generator'}
-                        {cue.isLooping && <span className="timeline-loop-badge">LOOP</span>}
+                        {cue.isLooping && <span className="timeline-loop-badge">{t('ui.loop')}</span>}
                     </div>
 
             <label className="timeline-field">
@@ -666,7 +674,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
                 />
             </label>
 
-            <NumberField label="Start (s)" value={cue.startTime} min={0}
+            <NumberField label={t('ui.start_s')} value={cue.startTime} min={0}
                 onCommit={(v) => actions.updateCue(cue.id, { startTime: Math.max(0, v) })} />
             <NumberField label="Duration (s)" value={cue.duration} min={0.1}
                 onCommit={(v) => actions.updateCue(cue.id, { duration: Math.max(0.1, v) })} />
@@ -684,7 +692,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
             <button
                 className="timeline-btn"
                 onClick={() => actions.trimOverlaps([cue.id])}
-                title="Cut this clip to end exactly where the next clip starts (loop off if looping)"
+                title={t('ui.cut_this_clip_to_end_exactly_where_the_next_clip_starts_loop')}
             >
                 ✂ Trim to prevent overlap
             </button>
@@ -695,12 +703,12 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
                     checked={!!cue.isLooping}
                     onChange={(e) => actions.updateCue(cue.id, { isLooping: e.target.checked })}
                 />
-                <span>Loop while playing</span>
+                <span>{t('ui.loop_while_playing')}</span>
             </label>
 
             {cue.type === 'ILDA' && (
                 <div className="timeline-inspector-section">
-                    <div className="timeline-inspector-subhead">Source file</div>
+                    <div className="timeline-inspector-subhead">{t('ui.source_file')}</div>
                     <div className="timeline-filepath" title={cue.filePath}>{getRelativePath(cue.filePath) || ''}</div>
                     <button className="timeline-btn" onClick={handleReloadIlda}>Replace File…</button>
                     {cue.totalFrames > 0 && (
@@ -713,7 +721,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
 
             {cue.type === 'GENERATOR' && (
                 <div className="timeline-inspector-section">
-                    <div className="timeline-inspector-subhead">Generator</div>
+                    <div className="timeline-inspector-subhead">{t('ui.generator')}</div>
                     <select
                         value={cue.generatorId || 'circle'}
                         onChange={(e) => actions.updateCue(cue.id, { generatorId: e.target.value })}
@@ -744,7 +752,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
                         Shared per-output settings — also edited in the main app's Output Settings. Dimmer/zoom/zones below are applied live by this timeline's DAC fan-out and preview.
                     </div>
                     <div className="timeline-field">
-                        <span>Dimmer</span>
+                        <span>{t('ui.dimmer')}</span>
                         <input
                             type="range" min={0} max={1} step={0.01}
                             value={outSettings.dimmer !== undefined ? outSettings.dimmer : 1}
@@ -774,7 +782,7 @@ const TimelineInspector = ({ onSeek, previewFrame, getCompiledFrame, playheadSec
             )}
 
             <div className="timeline-inspector-section timeline-effect-library">
-                <div className="timeline-inspector-subhead">Automation Effects</div>
+                <div className="timeline-inspector-subhead">{t('ui.automation_effects')}</div>
                 <div className="timeline-inspector-hint">
                     Drag an effect onto an automation track to add an automation clip; select the clip to edit its settings.
                 </div>

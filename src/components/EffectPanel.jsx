@@ -1,7 +1,9 @@
 import React from 'react';
 import { effectDefinitions } from '../utils/effectDefinitions';
+import { useTranslation } from '../i18n';
 
 const EffectPanel = () => {
+  const { t } = useTranslation();
   const handleDragStart = (e, effect) => {
     e.dataTransfer.setData('application/json', JSON.stringify(effect));
   };
@@ -15,7 +17,7 @@ const EffectPanel = () => {
           onDragStart={(e) => handleDragStart(e, effect)}
           className="effect-item"
         >
-          {effect.name}
+          {t(`effect.${effect.id}.name`)}
         </div>
       ))}
     </div>

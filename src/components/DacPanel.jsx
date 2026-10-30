@@ -130,7 +130,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
 
   return (
     <div className="dac-panel">
-      <div className="settings-card-header"><h4>DACs</h4></div>
+      <div className="settings-card-header"><h4>{t('ui.dacs')}</h4></div>
       <div className="network-interface-selector" style={{display:'flex', gap:5, padding: '5px 10px', alignItems: 'center'}}>
         <div style={{flex:1, display:'flex', gap: '2px'}}>
             <select onChange={handleNetworkInterfaceChange} value={selectedNetworkInterface?.address || ''} style={{flex: 1, background:'#2a2a2a', color:'#aaa',borderRadius:'5px', cursor: 'pointer', fontSize: '11px', padding: '2px 5px', border: '1px solid #444'}}>
@@ -153,7 +153,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                      }
                 }}
                 style={{fontSize: '9px', padding: '2px 5px', background: '#333', border: '1px solid #555', color: '#ccc', cursor: 'pointer', borderRadius: '3px'}}
-                title="Refresh Interfaces"
+                title={t('ui.refresh_interfaces')}
             >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
 					<path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
@@ -214,7 +214,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                   );
                 })
               ) : (
-                <div className="dac-channel-item no-channels">No channels found</div>
+                <div className="dac-channel-item no-channels">{t('ui.no_channels_found')}</div>
               )}
             </div>
           </div>
@@ -222,12 +222,12 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
       </div>
 
       <div className="dac-groups-section" style={{ padding: '10px', borderTop: '1px solid #444', marginTop: '10px' }}>
-        <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#888' }}>DAC Groups</h4>
+        <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#888' }}>{t('ui.dac_groups')}</h4>
         
         <div className="new-group-form" style={{ display: 'flex', gap: '5px', marginBottom: '10px' }}>
             <input 
                 type="text" 
-                placeholder="Group Name..." 
+                placeholder={t('ui.group_name')} 
                 value={newGroupName} 
                 onChange={(e) => setNewGroupName(e.target.value)}
                 style={{ flex: 1, background: '#111', border: '1px solid #444', color: '#fff', fontSize: '11px', padding: '2px 5px', borderRadius: '3px' }}
@@ -272,7 +272,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
       
       {dacs.length > 0 && (
           <div className="dac-dimmers-section">
-            <h4>Channel Dimmers</h4>
+            <h4>{t('ui.channel_dimmers')}</h4>
             <div className="dac-dimmers-grid">
                 {dacs.flatMap(dac => (dac.channels || []).map(ch => ({ dac, ch }))).map(({ dac, ch }) => {
                     const id = `${dac.ip}:${ch.serviceID}`;
@@ -299,7 +299,7 @@ const DacPanel = ({ dacs = [], onDacSelected, onDacsDiscovered, dacSettings = {}
                                     className="draggable-param-label dac-dimmer-drag-handle"
                                     draggable
                                     onDragStart={handleDragStart}
-                                    title="Drag to a Quick-Assign knob"
+                                    title={t('ui.drag_to_a_quick_assign_knob')}
                                 >≡</div>
                                 <RadialKnob
                                     label={settings.name || `${dac.hostName || dac.ip} Ch${ch.serviceID}`}

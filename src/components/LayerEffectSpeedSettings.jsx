@@ -37,7 +37,7 @@ const LayerEffectSpeedSettings = ({ enabled, settings, globalBpm, globalFps, onT
 
   return (
     <CollapsiblePanel
-      title="Effect Speed Control"
+      title={t('ui.effect_speed_control')}
       isCollapsed={!!collapsedPanels['effectSpeed']}
       onToggle={handleToggle}
     >

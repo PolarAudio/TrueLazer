@@ -1,3 +1,4 @@
+import { useTranslation } from '../../i18n';
 import React, { useCallback, useMemo, useRef } from 'react';
 import { useTimeline, getAdjacentCues } from '../../contexts/TimelineContext';
 import { timeToPx, pxToTime, snapToGrid } from '../../utils/timelineTime';
@@ -16,13 +17,15 @@ import { clipBlockStyle } from '../../utils/timelineClipColor';
  * at pointer-down, so live re-renders (e.g. the move commands themselves) can
  * never make it "jump".
  *
- * `trimMode` ("Trim" edit, vs "Stretch"): resize edges are clamped to the
+ * `trimMode` (t('ui.trim') edit, vs "Stretch"): resize edges are clamped to the
  * neighbouring cue's boundary so dragging a clip can never make it overlap the
  * next/previous clip; a looping clip that gets its tail clamped is un-looped
  * (an endless loop can't honor a finite cut). `overlapping` paints the block
  * red — its frame play is silently shadowed by another clip on the channel.
  */
-const TimelineBlock = ({ cue, selected, pxPerSecond, snapMode, bpm, fps, trimMode, overlapping }) => {
+const TimelineBlock = ({
+    cue, selected, pxPerSecond, snapMode, bpm, fps, trimMode, overlapping }) => {
+    const { t } = useTranslation();
     const { state, actions } = useTimeline();
     const dragRef = useRef(null);
 

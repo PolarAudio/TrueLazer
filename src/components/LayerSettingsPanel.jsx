@@ -69,7 +69,7 @@ const LayerSettingsPanel = ({
 
     if (selectedLayerIndex === null) return (
         <div className="settings-panel-base">
-            <p className="info-text">Select a layer to edit settings</p>
+            <p className="info-text">{t('ui.select_a_layer_to_edit_settings')}</p>
         </div>
     );
 
@@ -135,13 +135,13 @@ const LayerSettingsPanel = ({
                                 className="dac-order-btn"
                                 disabled={index === 0}
                                 onClick={() => onReorderDacs(selectedLayerIndex, index, index - 1)}
-                                title="Move Up"
+                                title={t('ui.move_up')}
                             >▲</button>
                             <button
                                 className="dac-order-btn"
                                 disabled={index === assignedDacs.length - 1}
                                 onClick={() => onReorderDacs(selectedLayerIndex, index, index + 1)}
-                                title="Move Down"
+                                title={t('ui.move_down')}
                             >▼</button>
                         </div>
                         <div className="dac-info-block">
@@ -158,12 +158,12 @@ const LayerSettingsPanel = ({
                             <button 
                                 className={`mirror-btn ${dac.mirrorX ? 'active' : ''}`}
                                 onClick={() => onToggleDacMirror(selectedLayerIndex, index, 'x')}
-                                title="Mirror X Axis"
+                                title={t('ui.mirror_x_axis')}
                             >X</button>
                             <button 
                                 className={`mirror-btn ${dac.mirrorY ? 'active' : ''}`}
                                 onClick={() => onToggleDacMirror(selectedLayerIndex, index, 'y')}
-                                title="Mirror Y Axis"
+                                title={t('ui.mirror_y_axis')}
                             >Y</button>
                         </div>
                         <button className="remove-dac-btn" onClick={() => onRemoveDac(selectedLayerIndex, index)}>×</button>
@@ -175,7 +175,7 @@ const LayerSettingsPanel = ({
 
              {/* Autopilot Section */}
              <CollapsiblePanel 
-                title={`Layer ${selectedLayerIndex + 1} Autopilot`}
+                title={t('layer.autopilotTitle', { index: selectedLayerIndex + 1 })}
                 isCollapsed={!!collapsedPanels['autopilot']}
                 onToggle={(val) => togglePanel('autopilot', val)}
              >
@@ -253,7 +253,7 @@ syncSettings={layerSyncSettings}
                                             }));
                                         }}
                                         style={{ cursor: 'grab', marginRight: '5px', display: 'flex', alignItems: 'center', color: '#666' }}
-                                        title="Drag to reorder"
+                                        title={t('ui.drag_to_reorder')}
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
                                             <path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/>

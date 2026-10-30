@@ -131,7 +131,7 @@ const AnimationControls = ({ animSettings, onChange }) => {
                         <button className={`speed-control-button ${syncMode === 'fps' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'fps' ? null : 'fps')} style={{flex:1, padding:0, fontSize:'10px'}}>F</button>
                         <button className={`speed-control-button ${syncMode === 'timeline' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'timeline' ? null : 'timeline')} style={{flex:1, padding:0, fontSize:'10px'}}>T</button>
                         <button className={`speed-control-button ${syncMode === 'bpm' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'bpm' ? null : 'bpm')} style={{flex:1, padding:0, fontSize:'10px'}}>B</button>
-                        <button className={`speed-control-button ${syncMode === 'fft' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'fft' ? null : 'fft')} style={{flex:1, padding:0, fontSize:'10px'}}>FFT</button>
+                        <button className={`speed-control-button ${syncMode === 'fft' ? 'active' : ''}`} onClick={() => update('syncMode', syncMode === 'fft' ? null : 'fft')} style={{flex:1, padding:0, fontSize:'10px'}}>{t('ui.fft')}</button>
                     </div>
             </div>
 

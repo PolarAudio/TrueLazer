@@ -12,6 +12,8 @@ import { redactPrivateInfo } from './src/utils/redact.js';
 import { isAllowedExternalUrl } from './src/utils/externalUrl.js';
 import { shouldAutoCheck, shouldOfferVersion } from './src/utils/updatePolicy.js';
 import { buildWindowTitle } from './src/utils/windowTitle.js';
+import { translate } from './src/i18n/translate.js';
+import { TRANSLATIONS } from './src/i18n/translations.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { decodeProlinkPacket } = require('./src/utils/prodjBeats.js');
@@ -61,6 +63,11 @@ app.commandLine.appendSwitch('disable-http-cache');
 app.commandLine.appendSwitch('disable-autofill');
 
 const isDev = process.env.NODE_ENV === 'development';
+let currentLocale = 'en';
+const m = (key, fallback, params) => {
+    const v = translate(currentLocale, key, params);
+    return v === key ? (fallback ?? key) : v;
+};
 
 // Persistent main-process log. Packaged Electron apps have no visible console,
 // so on a silent crash everything is lost. Mirror console output to
@@ -1438,37 +1445,37 @@ function buildApplicationMenu(mode) {
 
   const menuTemplate = [
     {
-      label: 'TrueLazer',
+      label: m('menu.truelazer', 'TrueLazer'),
       submenu: [
-        { label: 'About', click: () => act('about') },
+        { label: m('menu.about', 'About'), click: () => act('about') },
         { type: 'separator' },
-        { label: 'Shape Builder', click: () => act('shapeBuilder') },
+        { label: m('menu.shape_builder', 'Shape Builder'), click: () => act('shapeBuilder') },
         { type: 'separator' },
-        { label: 'Timeline Editor', click: () => act('timeline') },
+        { label: m('menu.timeline_editor', 'Timeline Editor'), click: () => act('timeline') },
         { type: 'separator' },
         // The accelerators below are DISPLAY ONLY (registerAccelerator: false). The
         // keys are handled by the renderer in App.jsx so that New/Open/Save
         // behave identically no matter what currently has focus. Registering
         // them here as well meant two handlers for one keypress, which is how
         // Ctrl+S ended up saving twice and writing a stray .tlp.
-        { label: 'New Project', accelerator: 'CmdOrCtrl+N', registerAccelerator: false, click: projectNew },
-        { label: `Open ${noun}`, accelerator: 'CmdOrCtrl+O', registerAccelerator: false, click: projectOpen },
-        { label: `Save ${noun}`, accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => projectSave(false) },
-        { label: `Save ${noun} As...`, accelerator: 'CmdOrCtrl+Shift+S', registerAccelerator: false, click: () => projectSave(true) },
+        { label: m('menu.new_project', 'New Project'), accelerator: 'CmdOrCtrl+N', registerAccelerator: false, click: projectNew },
+        { label: m('menu.open_project', `Open ${noun}`, { noun }), accelerator: 'CmdOrCtrl+O', registerAccelerator: false, click: projectOpen },
+        { label: m('menu.save_project', `Save ${noun}`, { noun }), accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => projectSave(false) },
+        { label: m('menu.save_project_as', `Save ${noun} As...`, { noun }), accelerator: 'CmdOrCtrl+Shift+S', registerAccelerator: false, click: () => projectSave(true) },
         { type: 'separator' },
-        { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => { app.quit(); } },
+        { label: m('menu.quit', 'Quit'), accelerator: 'CmdOrCtrl+Q', click: () => { app.quit(); } },
       ],
     },
     {
-      label: 'Settings',
+      label: m('menu.settings', 'Settings'),
       submenu: [
-        { label: 'General Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
-        { label: 'Link/Sync Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'link-sync-settings'); } },
+        { label: m('menu.general_settings', 'General Settings...'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-general'); } },
+        { label: m('menu.link_sync_settings', 'Link/Sync Settings...'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'link-sync-settings'); } },
         {
-          label: 'Audio Settings',
+          label: m('menu.audio_settings', 'Audio Settings'),
           submenu: [
             {
-              label: 'Audio Output',
+              label: m('menu.audio_output', 'Audio Output'),
               submenu: audioDevices.length > 0
                 ? [
                   ...audioDevices.map(device => ({
@@ -1481,15 +1488,15 @@ function buildApplicationMenu(mode) {
                     }
                   })),
                   { type: 'separator' },
-                  { label: 'Audio Output Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-output'); } }
+                  { label: m('menu.audio_output_settings', 'Audio Output Settings...'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-output'); } }
                 ]
-                : [{ label: 'No devices found', enabled: false }]
+                : [{ label: m('menu.no_devices_found', 'No devices found'), enabled: false }]
             },
-            { label: 'FFT Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-fft'); } }
+            { label: m('menu.fft_settings', 'FFT Settings...'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'settings-audio-fft'); } }
           ]
         },
         { type: 'separator' },
-        { label: 'Clear Thumbnail Cache', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clear-thumbnail-cache'); } }
+        { label: m('menu.clear_thumbnail_cache', 'Clear Thumbnail Cache'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'clear-thumbnail-cache'); } }
       ],
     },
     // Layer / Column / Clip operate on the show editor's clip deck. The
@@ -1497,45 +1504,45 @@ function buildApplicationMenu(mode) {
     // rather than shown as dead entries.
     ...(isShowEditor ? [
       {
-        label: 'Layer',
+        label: m('menu.layer', 'Layer'),
         submenu: [
-          { label: 'Rename', click: () => act('layer-rename') },
-          { label: 'Clear Clips', click: () => act('layer-clear-clips') },
+          { label: m('menu.rename', 'Rename'), click: () => act('layer-rename') },
+          { label: m('menu.clear_clips', 'Clear Clips'), click: () => act('layer-clear-clips') },
         ],
       },
       {
-        label: 'Column',
+        label: m('menu.column', 'Column'),
         submenu: [
-          { label: 'Duplicate', click: () => act('column-duplicate') },
-          { label: 'Rename', click: () => act('column-rename') },
-          { label: 'Clear Clips', click: () => act('column-clear-clips') },
+          { label: m('menu.duplicate', 'Duplicate'), click: () => act('column-duplicate') },
+          { label: m('menu.rename', 'Rename'), click: () => act('column-rename') },
+          { label: m('menu.clear_clips', 'Clear Clips'), click: () => act('column-clear-clips') },
         ],
       },
       {
-        label: 'Clip',
+        label: m('menu.clip', 'Clip'),
         submenu: [
-          { label: 'Trigger Style', click: () => act('clip-trigger-style') },
-          { label: 'Thumbnail', click: () => act('clip-thumbnail') },
-          { label: 'Cut', click: () => act('clip-cut') },
-          { label: 'Copy', click: () => act('clip-copy') },
-          { label: 'Paste', click: () => act('clip-paste') },
-          { label: 'Rename', click: () => act('clip-rename') },
-          { label: 'Clear', click: () => act('clip-clear') },
+          { label: m('menu.trigger_style', 'Trigger Style'), click: () => act('clip-trigger-style') },
+          { label: m('menu.thumbnail', 'Thumbnail'), click: () => act('clip-thumbnail') },
+          { label: m('menu.cut', 'Cut'), click: () => act('clip-cut') },
+          { label: m('menu.copy', 'Copy'), click: () => act('clip-copy') },
+          { label: m('menu.paste', 'Paste'), click: () => act('clip-paste') },
+          { label: m('menu.rename', 'Rename'), click: () => act('clip-rename') },
+          { label: m('menu.clear', 'Clear'), click: () => act('clip-clear') },
         ],
       },
     ] : []),
     {
-      label: 'Output',
+      label: m('menu.output', 'Output'),
       submenu: [
-        { label: 'Open Output Settings', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'output-settings'); } },
-        { label: 'Processing Settings...', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'output-processing'); } },
+        { label: m('menu.open_output_settings', 'Open Output Settings'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'output-settings'); } },
+        { label: m('menu.processing_settings', 'Processing Settings...'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'output-processing'); } },
       ],
     },
     {
-      label: 'Shortcuts',
+      label: m('menu.shortcuts', 'Shortcuts'),
       submenu: [
         {
-          label: 'MIDI',
+          label: m('menu.midi', 'MIDI'),
           type: 'checkbox',
           checked: shortcutsState.midi,
           click: () => {
@@ -1546,13 +1553,13 @@ function buildApplicationMenu(mode) {
           }
         },
         {
-          label: 'MIDI Settings...',
+          label: m('menu.midi_settings', 'MIDI Settings...'),
           visible: shortcutsState.midi,
           click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'open-midi-settings'); }
         },
         { type: 'separator' },
         {
-          label: 'ArtNet',
+          label: m('menu.artnet', 'ArtNet'),
           type: 'checkbox',
           checked: shortcutsState.artnet,
           click: () => {
@@ -1563,13 +1570,13 @@ function buildApplicationMenu(mode) {
           }
         },
         {
-          label: 'ArtNet Settings...',
+          label: m('menu.artnet_settings', 'ArtNet Settings...'),
           visible: shortcutsState.artnet,
           click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'open-artnet-settings'); }
         },
         { type: 'separator' },
         {
-          label: 'OSC',
+          label: m('menu.osc', 'OSC'),
           type: 'checkbox',
           checked: shortcutsState.osc,
           click: () => {
@@ -1580,13 +1587,13 @@ function buildApplicationMenu(mode) {
           }
         },
         {
-          label: 'OSC Settings...',
+          label: m('menu.osc_settings', 'OSC Settings...'),
           visible: shortcutsState.osc,
           click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'open-osc-settings'); }
         },
         { type: 'separator' },
         {
-          label: 'Keyboard',
+          label: m('menu.keyboard', 'Keyboard'),
           type: 'checkbox',
           checked: shortcutsState.keyboard,
           click: () => {
@@ -1597,64 +1604,64 @@ function buildApplicationMenu(mode) {
           }
         },
         {
-          label: 'Keyboard Settings...',
+          label: m('menu.keyboard_settings', 'Keyboard Settings...'),
           visible: shortcutsState.keyboard,
           click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'open-keyboard-settings'); }
         },
       ],
     },
     {
-      label: 'View',
+      label: m('menu.view', 'View'),
       submenu: [
         // Predefined layouts and the thumbnail render mode describe the show
         // editor's clip deck only.
         ...(isShowEditor ? [
-          { label: 'Predefined Layouts', click: () => act('view-layouts') },
+          { label: m('menu.predefined_layouts', 'Predefined Layouts'), click: () => act('view-layouts') },
           { type: 'separator' },
         ] : []),
-        { label: 'Toggle Developer Tools', accelerator: 'CommandOrControl+Shift+I', click: () => { if (mainWindow) mainWindow.webContents.toggleDevTools(); } },
+        { label: m('menu.toggle_developer_tools', 'Toggle Developer Tools'), accelerator: 'CommandOrControl+Shift+I', click: () => { if (mainWindow) mainWindow.webContents.toggleDevTools(); } },
         {
-          label: 'Color Theme',
+          label: m('menu.color_theme', 'Color Theme'),
           submenu: [
-            { label: 'Orange', type: 'radio', checked: true, click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-orange'); } },
-            { label: 'Yellow', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-yellow'); } },
-            { label: 'Cyan', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-cyan'); } },
-            { label: 'Light Blue', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-light-blue'); } },
-            { label: 'Blue', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-blue'); } },
-            { label: 'Magenta', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-magenta'); } },
-            { label: 'Red', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-red'); } },
-            { label: 'Green', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-green'); } },
-            { label: 'White', type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-white'); } },
+            { label: m('menu.orange', 'Orange'), type: 'radio', checked: true, click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-orange'); } },
+            { label: m('menu.yellow', 'Yellow'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-yellow'); } },
+            { label: m('menu.cyan', 'Cyan'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-cyan'); } },
+            { label: m('menu.light_blue', 'Light Blue'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-light-blue'); } },
+            { label: m('menu.blue', 'Blue'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-blue'); } },
+            { label: m('menu.magenta', 'Magenta'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-magenta'); } },
+            { label: m('menu.red', 'Red'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-red'); } },
+            { label: m('menu.green', 'Green'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-green'); } },
+            { label: m('menu.white', 'White'), type: 'radio', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'set-theme-white'); } },
           ]
         },
         // Thumbnail render mode + beam display describe how the show editor
         // draws its clip-deck thumbnails and preview, not the other pages.
         ...(isShowEditor ? [
         {
-          label: 'Render Mode',
+          label: m('menu.render_mode', 'Render Mode'),
           submenu: [
-            { label: 'Thumbnail Still Frame', type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
-            { label: 'Thumbnail Live Render', type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
-            { label: 'Thumbnail Hover Render', type: 'radio', checked: mode === 'hover', click: () => { sendThumbnailModeToRenderer('hover'); } },
+            { label: m('menu.thumbnail_still_frame', 'Thumbnail Still Frame'), type: 'radio', checked: mode === 'still', click: () => { sendThumbnailModeToRenderer('still'); } },
+            { label: m('menu.thumbnail_live_render', 'Thumbnail Live Render'), type: 'radio', checked: mode === 'active', click: () => { sendThumbnailModeToRenderer('active'); } },
+            { label: m('menu.thumbnail_hover_render', 'Thumbnail Hover Render'), type: 'radio', checked: mode === 'hover', click: () => { sendThumbnailModeToRenderer('hover'); } },
             { type: 'separator' },
-            { label: 'Show Beam Effect', type: 'checkbox', checked: true, click: (menuItem) => { send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
+            { label: m('menu.show_beam_effect', 'Show Beam Effect'), type: 'checkbox', checked: true, click: (menuItem) => { send('render-settings-command', { setting: 'showBeamEffect', value: menuItem.checked }); } },
             { type: 'separator' },
             {
-              label: 'Display Mode',
+              label: m('menu.display_mode', 'Display Mode'),
               submenu: [
-                { label: 'Points', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
-                { label: 'Lines', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
-                { label: 'Points & Lines', type: 'radio', checked: true, click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
+                { label: m('menu.points', 'Points'), type: 'radio', click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'points' }); } },
+                { label: m('menu.lines', 'Lines'), type: 'radio', click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'lines' }); } },
+                { label: m('menu.points_lines', 'Points & Lines'), type: 'radio', checked: true, click: () => { send('render-settings-command', { setting: 'beamRenderMode', value: 'both' }); } },
               ]
             },
             { type: 'separator' },
             {
-              label: 'Beam Alpha',
+              label: m('menu.beam_alpha', 'Beam Alpha'),
               submenu: [
-                { label: '0.1', type: 'radio', checked: true, click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
-                { label: '0.2', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
-                { label: '0.5', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.5 }); } },
-                { label: '1.0', type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 1.0 }); } },
+                { label: m('menu.0_1', '0.1'), type: 'radio', checked: true, click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.1 }); } },
+                { label: m('menu.0_2', '0.2'), type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.2 }); } },
+                { label: m('menu.0_5', '0.5'), type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 0.5 }); } },
+                { label: m('menu.1_0', '1.0'), type: 'radio', click: () => { send('render-settings-command', { setting: 'beamAlpha', value: 1.0 }); } },
               ]
             },
           ]
@@ -1663,16 +1670,16 @@ function buildApplicationMenu(mode) {
       ],
     },
     {
-      label: 'Help',
+      label: m('menu.help', 'Help'),
       submenu: [
-        { label: 'User Manual', accelerator: 'F1', click: () => act('user-manual') },
+        { label: m('menu.user_manual', 'User Manual'), accelerator: 'F1', click: () => act('user-manual') },
         { type: 'separator' },
-        { label: 'Report a Bug...', click: () => act('report-bug') },
-        { label: 'Request a Feature...', click: () => act('request-feature') },
+        { label: m('menu.report_a_bug', 'Report a Bug...'), click: () => act('report-bug') },
+        { label: m('menu.request_a_feature', 'Request a Feature...'), click: () => act('request-feature') },
         { type: 'separator' },
-        { label: 'Check for Updates...', click: () => act('check-for-updates') },
-        { label: 'Open Logs Folder', click: () => act('open-logs-folder') },
-        { label: 'Project Page on GitHub', click: () => act('open-project-page') },
+        { label: m('menu.check_for_updates', 'Check for Updates...'), click: () => act('check-for-updates') },
+        { label: m('menu.open_logs_folder', 'Open Logs Folder'), click: () => act('open-logs-folder') },
+        { label: m('menu.project_page_on_github', 'Project Page on GitHub'), click: () => act('open-project-page') },
       ],
     },
   ];
@@ -1972,7 +1979,7 @@ function createWindow() {
 
   ipcMain.on('show-layer-context-menu', (event, index) => {
     const layerContextMenu = Menu.buildFromTemplate([
-      { label: 'Rename Layer', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-layer', index: index }); } },
+      { label: m('menu.rename_layer', 'Rename Layer'), click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-layer', index: index }); } },
     ]);
     layerContextMenu.popup({ window: mainWindow });
   });
@@ -1980,10 +1987,10 @@ function createWindow() {
   ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
     const layerFullContextMenu = Menu.buildFromTemplate([
       {
-        label: 'Set Thumbnail Mode',
+        label: m('menu.set_thumbnail_mode', 'Set Thumbnail Mode'),
         submenu: [
           {
-            label: 'Still Frame',
+            label: m('menu.still_frame', 'Still Frame'),
             type: 'radio',
             checked: currentThumbnailRenderMode === 'still',
             click() {
@@ -1994,7 +2001,7 @@ function createWindow() {
             }
           },
           {
-            label: 'Live Render',
+            label: m('menu.live_render', 'Live Render'),
             type: 'radio',
             checked: currentThumbnailRenderMode === 'active',
             click() {
@@ -2007,49 +2014,49 @@ function createWindow() {
         ]
       },
       { type: 'separator' },
-      { label: 'Rename', click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-rename', layerIndex); } },
-      { label: 'Clear Clips', click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex); } },
+      { label: m('menu.rename', 'Rename'), click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-rename', layerIndex); } },
+      { label: m('menu.clear_clips', 'Clear Clips'), click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex); } },
     ]);
     layerFullContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-page-context-menu', (event, pageIndex) => {
     const pageContextMenu = Menu.buildFromTemplate([
-      { label: 'Clear Clips', click: () => { if (mainWindow) mainWindow.webContents.send('page-context-command', 'page-clear-clips', pageIndex); } },
+      { label: m('menu.clear_clips', 'Clear Clips'), click: () => { if (mainWindow) mainWindow.webContents.send('page-context-command', 'page-clear-clips', pageIndex); } },
       { type: 'separator' },
-      { label: 'Rename Page', click: () => { if (mainWindow) mainWindow.webContents.send('page-context-command', 'page-rename', pageIndex); } },
+      { label: m('menu.rename_page', 'Rename Page'), click: () => { if (mainWindow) mainWindow.webContents.send('page-context-command', 'page-rename', pageIndex); } },
     ]);
     pageContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-column-context-menu', (event, index) => {
     const columnContextMenu = Menu.buildFromTemplate([
-      { label: 'Duplicate', click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'column-duplicate'); } },
-      { label: 'Rename Column', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-column', index: index }); } },
+      { label: m('menu.duplicate', 'Duplicate'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'column-duplicate'); } },
+      { label: m('menu.rename_column', 'Rename Column'), click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-column', index: index }); } },
     ]);
     columnContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex, currentTriggerStyle = 'normal') => {
     const clipContextMenu = Menu.buildFromTemplate([
-      { label: 'Update Thumbnail', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
-      { label: 'Export as ILDA', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'export-ilda', layerIndex, colIndex); } },
+      { label: m('menu.update_thumbnail', 'Update Thumbnail'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'update-thumbnail', layerIndex, colIndex); } },
+      { label: m('menu.export_as_ilda', 'Export as ILDA'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'export-ilda', layerIndex, colIndex); } },
       { type: 'separator' },
       {
-        label: 'Trigger Style',
+        label: m('menu.trigger_style', 'Trigger Style'),
         submenu: [
-          { label: 'Normal', type: 'radio', checked: currentTriggerStyle === 'normal', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } },
-          { label: 'Toggle', type: 'radio', checked: currentTriggerStyle === 'toggle', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } },
-          { label: 'Flash', type: 'radio', checked: currentTriggerStyle === 'flash', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); }, toolTip: '⚠ Flash clips run continuously in background. Use sparingly.' },
-          { label: 'Temp', type: 'radio', checked: currentTriggerStyle === 'temp', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-temp', layerIndex, colIndex); } },
+          { label: m('menu.normal', 'Normal'), type: 'radio', checked: currentTriggerStyle === 'normal', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-normal', layerIndex, colIndex); } },
+          { label: m('menu.toggle', 'Toggle'), type: 'radio', checked: currentTriggerStyle === 'toggle', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-toggle', layerIndex, colIndex); } },
+          { label: m('menu.flash', 'Flash'), type: 'radio', checked: currentTriggerStyle === 'flash', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-flash', layerIndex, colIndex); }, toolTip: '⚠ Flash clips run continuously in background. Use sparingly.' },
+          { label: m('menu.temp', 'Temp'), type: 'radio', checked: currentTriggerStyle === 'temp', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'set-trigger-style-temp', layerIndex, colIndex); } },
         ]
       },
       { type: 'separator' },
       {
-        label: 'Set Thumbnail Mode',
+        label: m('menu.set_thumbnail_mode', 'Set Thumbnail Mode'),
         submenu: [
           {
-            label: 'Still Frame',
+            label: m('menu.still_frame', 'Still Frame'),
             type: 'radio',
             checked: currentThumbnailRenderMode === 'still',
             click() {
@@ -2060,7 +2067,7 @@ function createWindow() {
             }
           },
           {
-            label: 'Live Render',
+            label: m('menu.live_render', 'Live Render'),
             type: 'radio',
             checked: currentThumbnailRenderMode === 'active',
             click() {
@@ -2073,26 +2080,26 @@ function createWindow() {
         ]
       },
       { type: 'separator' },
-      { label: 'Cut', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'cut-clip', layerIndex, colIndex); } },
-      { label: 'Copy', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'copy-clip', layerIndex, colIndex); } },
-      { label: 'Paste', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'paste-clip', layerIndex, colIndex); } },
+      { label: m('menu.cut', 'Cut'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'cut-clip', layerIndex, colIndex); } },
+      { label: m('menu.copy', 'Copy'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'copy-clip', layerIndex, colIndex); } },
+      { label: m('menu.paste', 'Paste'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'paste-clip', layerIndex, colIndex); } },
       { type: 'separator' },
-      { label: 'Rename', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'rename-clip', layerIndex, colIndex); } },
-      { label: 'Clear', click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'clear-clip', layerIndex, colIndex); } },
+      { label: m('menu.rename', 'Rename'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'rename-clip', layerIndex, colIndex); } },
+      { label: m('menu.clear', 'Clear'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'clear-clip', layerIndex, colIndex); } },
     ]);
     clipContextMenu.popup({ window: mainWindow });
   });
 
   ipcMain.on('show-column-header-clip-context-menu', (event, colIndex) => {
     const columnHeaderClipContextMenu = Menu.buildFromTemplate([
-      { label: 'Update Thumbnail', click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'update-thumbnail', colIndex }); } },
+      { label: m('menu.update_thumbnail', 'Update Thumbnail'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'update-thumbnail', colIndex }); } },
       { type: 'separator' },
-      { label: 'Cut', click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'cut-clip', colIndex }); } },
-      { label: 'Copy', click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'copy-clip', colIndex }); } },
-      { label: 'Paste', click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'paste-clip', colIndex }); } },
+      { label: m('menu.cut', 'Cut'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'cut-clip', colIndex }); } },
+      { label: m('menu.copy', 'Copy'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'copy-clip', colIndex }); } },
+      { label: m('menu.paste', 'Paste'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'paste-clip', colIndex }); } },
       { type: 'separator' },
-      { label: 'Rename', click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'rename-clip', colIndex }); } },
-      { label: 'Clear', click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'clear-column-clips', colIndex }); } },
+      { label: m('menu.rename', 'Rename'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'rename-clip', colIndex }); } },
+      { label: m('menu.clear', 'Clear'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'clear-column-clips', colIndex }); } },
     ]);
     columnHeaderClipContextMenu.popup({ window: mainWindow });
   });
@@ -2114,7 +2121,7 @@ function createWindow() {
       menuItems.push({ type: 'separator' });
     }
     menuItems.push(
-      { label: 'Reset Value', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); } },
+      { label: m('menu.reset_value', 'Reset Value'), click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); } },
       { label: (assignments && assignments.length > 0) ? 'Clear All Assignments' : 'Clear Assignment', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); } }
     );
     const quickAssignMenu = Menu.buildFromTemplate(menuItems);
@@ -4548,6 +4555,13 @@ if (!gotSingleInstanceLock) {
     mainWindow.focus();
   });
 }
+
+// Locale sync for the native application menu.
+ipcMain.handle('get-locale', () => currentLocale);
+ipcMain.on('set-locale', (event, locale) => {
+    currentLocale = TRANSLATIONS && TRANSLATIONS[locale] ? locale : 'en';
+    try { buildApplicationMenu(currentThumbnailRenderMode); } catch (e) { /* ignore */ }
+});
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;

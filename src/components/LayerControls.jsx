@@ -1,14 +1,20 @@
+import { useTranslation } from '../i18n';
+import { translate } from '../i18n/translate';
+import { TRANSLATIONS } from '../i18n/translations';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import IldaThumbnail from './IldaThumbnail';
 import StaticIldaThumbnail from './StaticIldaThumbnail';
 import Mappable from './Mappable';
 
-const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects,
+const LayerControls = ({
+  layerName, index, onDropEffect, onDropDac, layerEffects,
   activeClipData, onDeactivateLayerClips, onShowLayerFullContextMenu,
   thumbnailRenderMode, intensity, onIntensityChange, liveFrame, liveProgress = 0, isBlackout, isSolo,
   onToggleBlackout, onToggleSolo, onLayerSelect, ildaParserWorker, blendMode, onBlendModeChange,
   layerSyncSettings, thumbBpm, thumbClipDuration, fftLevels, liveFramesRef, progressRef,
   cycleFrames, cycleInterval, cycleEnabled }) => {
+  const { t } = useTranslation();
+  const displayName = (!layerName || Object.keys(TRANSLATIONS).some(loc => translate(loc, 'layer.defaultName', { index: index + 1 }) === layerName)) ? t('layer.defaultName', { index: index + 1 }) : layerName;
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [thumbError, setThumbError] = useState(false);
@@ -191,11 +197,11 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
         </div>
 		<select className="layer-blend-dropdown"
             value={blendMode || 'normal'}
-            title="Layer blend / z-order priority"
+            title={t('ui.layer_blend_z_order_priority')}
             onChange={(e) => onBlendModeChange && onBlendModeChange(index, e.target.value)}>
-          <option value="normal">Normal</option>
+          <option value="normal">{t('ui.normal')}</option>
           <option value="add">Add</option>
-          <option value="subtract">Subtract</option>
+          <option value="subtract">{t('ui.subtract')}</option>
         </select>
       </div>
 		<div className="layer-control-row">
@@ -216,7 +222,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
                     activeClipData.thumbnailPath && !thumbError ? (
                         <img 
                             src={`file://${activeClipData.thumbnailPath}?t=${activeClipData.thumbnailVersion || Date.now()}`}
-                            alt="layer-thumbnail"
+                            alt={t('ui.layer_thumbnail')}
                             onError={() => {
                                 console.warn(`LayerControls: Thumbnail not found: ${activeClipData.thumbnailPath}`);
                                 setThumbError(true);
@@ -236,7 +242,7 @@ const LayerControls = ({ layerName, index, onDropEffect, onDropDac, layerEffects
                 </div>
             )}
               </div>
-              <span className="layer-name-label" onClick={handleLayerSelectLocal}>{layerName}</span>
+              <span className="layer-name-label" onClick={handleLayerSelectLocal}>{displayName}</span>
             </div>
           );
         };

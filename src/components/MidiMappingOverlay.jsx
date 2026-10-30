@@ -126,7 +126,7 @@ const MidiMappingOverlay = () => {
                     style={{ width: '50px', background: '#000', color: '#fff', border: '1px solid #444', textAlign: 'center', fontSize: '11px' }}
                   />
               </div>
-              <span style={{ fontSize: '9px', color: '#666' }}>Showing only mappings for U{universeFilter}</span>
+              <span style={{ fontSize: '9px', color: '#666' }}>{t('midiMapping.showingUniverse', { universe: universeFilter })}</span>
           </div>
       )}
 
@@ -144,7 +144,7 @@ const MidiMappingOverlay = () => {
             if (linkedHardware.length > 0) {
                 const first = linkedHardware[0][1].find(a => a.controlId === overlay.id);
                 mappingLabel = first.label;
-                if (linkedHardware.length > 1) mappingLabel += ` (+${linkedHardware.length - 1})`;
+                if (linkedHardware.length > 1) mappingLabel += t('midiMapping.plusMore', { count: linkedHardware.length - 1 });
             }
         } else if (isArtnet) {
             const artnetMapping = artnetMappings ? artnetMappings[overlay.id] : null;
@@ -201,7 +201,7 @@ const MidiMappingOverlay = () => {
                     }}
                 >
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                        <h4 style={{ margin: 0, fontSize: '0.9rem' }}>MIDI Assignments</h4>
+                        <h4 style={{ margin: 0, fontSize: '0.9rem' }}>{t('midiMapping.assignments')}</h4>
                         <button onClick={() => setMidiLearningId(null)} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer' }}>×</button>
                     </div>
 
@@ -213,86 +213,86 @@ const MidiMappingOverlay = () => {
                                     <button 
                                         onClick={() => removeAssignment(a.key, a.controlId)}
                                         style={{ background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '12px' }}
-                                    >Remove</button>
+                                    >{t('common.remove')}</button>
                                 </div>
 
                                 <div className="setting-group" style={{ marginBottom: '5px' }}>
-                                    <label style={{ fontSize: '10px', color: '#888', display: 'block' }}>Target</label>
+                                    <label style={{ fontSize: '10px', color: '#888', display: 'block' }}>{t('midiMapping.target')}</label>
                                     <select 
                                         value={a.targetType || 'position'} 
                                         onChange={(e) => updateAssignment(a.key, a.controlId, 'targetType', e.target.value)}
                                         style={{ width: '100%', background: '#111', color: '#fff', border: '1px solid #333', fontSize: '10px' }}
                                     >
-                                        <option value="position">By Position (Static)</option>
-                                        <option value="thisClip">This Clip (Contextual)</option>
-                                        <option value="selectedLayer">Selected Layer (Dynamic)</option>
+                                        <option value="position">{t('midiMapping.targetPosition')}</option>
+                                        <option value="thisClip">{t('midiMapping.targetThisClip')}</option>
+                                        <option value="selectedLayer">{t('midiMapping.targetSelectedLayer')}</option>
                                     </select>
                                 </div>
 
                                 <div className="setting-group">
-                                    <label style={{ fontSize: '10px', color: '#888', display: 'block' }}>Input Device</label>
+                                    <label style={{ fontSize: '10px', color: '#888', display: 'block' }}>{t('midiMapping.inputDevice')}</label>
                                     <select 
                                         value={a.inputDeviceId || 'any'} 
                                         onChange={(e) => updateAssignment(a.key, a.controlId, 'inputDeviceId', e.target.value)}
                                         style={{ width: '100%', background: '#111', color: '#fff', border: '1px solid #333', fontSize: '10px' }}
                                     >
-                                        <option value="any">Any Device</option>
+                                        <option value="any">{t('midiMapping.anyDevice')}</option>
                                         {midiInputs.map(input => <option key={input.id} value={input.id}>{input.name}</option>)}
                                     </select>
                                 </div>
 
                                 <div className="feedback-settings" style={{ marginTop: '10px', padding: '5px', background: '#111', borderRadius: '3px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
-                                        <span style={{ fontSize: '9px', color: 'var(--theme-color)', fontWeight: 'bold' }}>CONTROL MODE</span>
+                                        <span style={{ fontSize: '9px', color: 'var(--theme-color)', fontWeight: 'bold' }}>{t('midiMapping.controlMode')}</span>
                                         <select 
                                             value={a.controlMode || 'absolute'}
                                             onChange={(e) => updateAssignment(a.key, a.controlId, 'controlMode', e.target.value)}
                                             style={{ background: '#000', color: '#fff', border: '1px solid #444', fontSize: '9px' }}
                                         >
-                                            <option value="absolute">Absolute</option>
-                                            <option value="relative">Relative (Encoder)</option>
-                                            <option value="fake_relative">Fake Relative (Knob)</option>
+                                            <option value="absolute">{t('midiMapping.modeAbsolute')}</option>
+                                            <option value="relative">{t('midiMapping.modeRelative')}</option>
+                                            <option value="fake_relative">{t('midiMapping.modeFakeRelative')}</option>
                                         </select>
                                     </div>
 
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
-                                        <span style={{ fontSize: '9px', color: 'var(--theme-color)', fontWeight: 'bold' }}>FEEDBACK (MIDI OUT)</span>
+                                        <span style={{ fontSize: '9px', color: 'var(--theme-color)', fontWeight: 'bold' }}>{t('midiMapping.feedback')}</span>
                                         <select 
                                             value={a.feedbackMode || 'toggle'}
                                             onChange={(e) => updateAssignment(a.key, a.controlId, 'feedbackMode', e.target.value)}
                                             style={{ background: '#000', color: '#fff', border: '1px solid #444', fontSize: '9px' }}
                                         >
-                                            <option value="toggle">Toggle</option>
-                                            <option value="clip">Clip</option>
-                                            <option value="slider">Slider</option>
-                                            <option value="dropdown">Dropdown</option>
+                                            <option value="toggle">{t('midiMapping.feedbackToggle')}</option>
+                                            <option value="clip">{t('midiMapping.feedbackClip')}</option>
+                                            <option value="slider">{t('midiMapping.feedbackSlider')}</option>
+                                            <option value="dropdown">{t('midiMapping.feedbackDropdown')}</option>
                                         </select>
                                     </div>
 
                                     {/* Blink Mode Selector */}
                                     <div className="setting-group" style={{ marginBottom: '8px' }}>
-                                        <label style={{ fontSize: '9px', color: '#888', display: 'block' }}>Blink Mode</label>
+                                        <label style={{ fontSize: '9px', color: '#888', display: 'block' }}>{t('midiMapping.blinkMode')}</label>
                                         <select 
                                             value={a.blinkMode || 0}
                                             onChange={(e) => updateAssignment(a.key, a.controlId, 'blinkMode', parseInt(e.target.value))}
                                             style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #333', fontSize: '9px' }}
                                         >
-                                            <option value={0}>Static (Primary Color)</option>
-                                            <option value={1}>Oneshot 1/24 (Secondary Color)</option>
-                                            <option value={2}>Oneshot 1/16</option>
-                                            <option value={3}>Oneshot 1/8</option>
-                                            <option value={4}>Oneshot 1/4</option>
-                                            <option value={5}>Oneshot 1/2</option>
-                                            <option value={6}>Pulsing 1/24</option>
-                                            <option value={7}>Pulsing 1/16</option>
-                                            <option value={8}>Pulsing 1/8</option>
-                                            <option value={9}>Pulsing 1/4</option>
-                                            <option value={10}>Pulsing 1/2</option>
-                                            <option value={11}>Blinking 1/24</option>
-                                            <option value={12}>Blinking 1/16</option>
-                                            <option value={13}>Blinking 1/8</option>
-                                            <option value={14}>Blinking 1/4</option>
-                                            <option value={15}>Blinking 1/2</option>
+                                            <option value={0}>{t('midiMapping.blinkStatic')}</option>
+                                            <option value={1}>{t('midiMapping.blinkOneshot124')}</option>
+                                            <option value={2}>{t('midiMapping.blinkOneshot116')}</option>
+                                            <option value={3}>{t('midiMapping.blinkOneshot18')}</option>
+                                            <option value={4}>{t('midiMapping.blinkOneshot14')}</option>
+                                            <option value={5}>{t('midiMapping.blinkOneshot12')}</option>
+                                            <option value={6}>{t('midiMapping.blinkPulsing124')}</option>
+                                            <option value={7}>{t('midiMapping.blinkPulsing116')}</option>
+                                            <option value={8}>{t('midiMapping.blinkPulsing18')}</option>
+                                            <option value={9}>{t('midiMapping.blinkPulsing14')}</option>
+                                            <option value={10}>{t('midiMapping.blinkPulsing12')}</option>
+                                            <option value={11}>{t('midiMapping.blinkBlinking124')}</option>
+                                            <option value={12}>{t('midiMapping.blinkBlinking116')}</option>
+                                            <option value={13}>{t('midiMapping.blinkBlinking18')}</option>
+                                            <option value={14}>{t('midiMapping.blinkBlinking14')}</option>
+                                            <option value={15}>{t('midiMapping.blinkBlinking12')}</option>
                                         </select>
                                     </div>
 
@@ -300,12 +300,12 @@ const MidiMappingOverlay = () => {
                                         {(!a.feedbackMode || a.feedbackMode === 'toggle' || a.feedbackMode === 'dropdown') && (
                                             <>
                                                 <MidiColorPicker 
-                                                    label="On Color"
+                                                    label={t('midiMapping.onColor')}
                                                     value={a.feedbackConfig?.onVelocity ?? currentColors.full}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, onVelocity: v })}
                                                 />
                                                 <MidiColorPicker 
-                                                    label="Off Color"
+                                                    label={t('midiMapping.offColor')}
                                                     value={a.feedbackConfig?.offVelocity ?? currentColors.dim}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, offVelocity: v })}
                                                 />
@@ -314,22 +314,22 @@ const MidiMappingOverlay = () => {
                                         {a.feedbackMode === 'clip' && (
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
                                                 <MidiColorPicker 
-                                                    label="Active"
+                                                    label={t('midiMapping.colorActive')}
                                                     value={a.feedbackConfig?.activeVelocity ?? currentColors.full}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, activeVelocity: v })}
                                                 />
                                                 <MidiColorPicker 
-                                                    label="Preview"
+                                                    label={t('midiMapping.colorPreview')}
                                                     value={a.feedbackConfig?.previewVelocity ?? 64}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, previewVelocity: v })}
                                                 />
                                                 <MidiColorPicker 
-                                                    label="Inactive"
+                                                    label={t('midiMapping.colorInactive')}
                                                     value={a.feedbackConfig?.inactiveVelocity ?? currentColors.dim}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, inactiveVelocity: v })}
                                                 />
                                                 <MidiColorPicker 
-                                                    label="Empty"
+                                                    label={t('midiMapping.colorEmpty')}
                                                     value={a.feedbackConfig?.emptyVelocity ?? 0}
                                                     onChange={(v) => updateAssignment(a.key, a.controlId, 'feedbackConfig', { ...a.feedbackConfig, emptyVelocity: v })}
                                                 />
@@ -341,13 +341,13 @@ const MidiMappingOverlay = () => {
                         ))
                     ) : (
                         <div style={{ textAlign: 'center', padding: '10px', color: '#666', fontSize: '0.8rem' }}>
-                            Press a button or move a fader on your MIDI controller to add an assignment.
+                            {t('midiMapping.pressHint')}
                         </div>
                     )}
                     
                     {currentAssignments.length > 0 && (
                         <div style={{ fontSize: '9px', color: '#555', marginTop: '5px', textAlign: 'center' }}>
-                            Press another MIDI control to add more links.
+                            {t('midiMapping.pressMore')}
                         </div>
                     )}
                 </div>

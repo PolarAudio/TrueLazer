@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld(
     ipcRenderer.on('menu-action', listener);
     return () => ipcRenderer.removeListener('menu-action', listener);
   },
+  setLocale: (locale) => ipcRenderer.send('set-locale', locale),
+  getLocale: () => ipcRenderer.invoke('get-locale'),
   showLayerContextMenu: (index) => ipcRenderer.send('show-layer-context-menu', index),
   showLayerFullContextMenu: (index) => ipcRenderer.send('show-layer-full-context-menu', index),
   showColumnContextMenu: (index) => ipcRenderer.send('show-column-context-menu', index),

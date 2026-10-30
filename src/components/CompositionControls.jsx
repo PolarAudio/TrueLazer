@@ -68,7 +68,7 @@ const CompositionControls = ({
 
     return (
         <div className="composition-controls">
-            <span className="layer-control-button">Comp</span>
+            <span className="layer-control-button">{t('ui.comp')}</span>
             <Mappable id="comp_clear">
                 <span
                     className="layer-control-button"

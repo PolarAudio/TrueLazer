@@ -119,28 +119,29 @@ const OptField = ({ label, value, min, max, step = 1, unit = '', onSet }) => (
 const OptimizerSettingsEditor = ({ settings = {}, onSetRenderSetting }) => {
   const S = (k, v) => onSetRenderSetting(`opt.${k}`, v);
   const num = (k) => settings[k] !== undefined ? settings[k] : 0;
+  const { t } = useTranslation();
 
   return (
     <div style={{ marginTop: '8px', borderTop: '1px solid #333', paddingTop: '8px' }}>
-      <div style={{ fontSize: '9px', color: '#888', marginBottom: '4px' }}>Blanking</div>
-      <OptField label="Blanking Start" value={num('blankingStart')} min={0} max={30} step={1} onSet={(v) => S('blankingStart', v)} />
-      <OptField label="Blanking End" value={num('blankingEnd')} min={0} max={30} step={1} onSet={(v) => S('blankingEnd', v)} />
-      <OptField label="Color Shift" value={num('shift')} min={-20} max={20} step={1} onSet={(v) => S('shift', v)} />
-      <OptField label="Shift R" value={num('shiftR')} min={-20} max={20} step={1} onSet={(v) => S('shiftR', v)} />
-      <OptField label="Shift G" value={num('shiftG')} min={-20} max={20} step={1} onSet={(v) => S('shiftG', v)} />
-      <OptField label="Shift B" value={num('shiftB')} min={-20} max={20} step={1} onSet={(v) => S('shiftB', v)} />
-      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>Anchors</div>
-      <OptField label="Start Anchor" value={num('anchorStart')} min={0} max={20} step={1} onSet={(v) => S('anchorStart', v)} />
-      <OptField label="End Anchor" value={num('anchorEnd')} min={0} max={20} step={1} onSet={(v) => S('anchorEnd', v)} />
-      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>Lit Dwell</div>
-      <OptField label="Start Lit Dwell" value={num('litDwellStart')} min={0} max={10} step={1} onSet={(v) => S('litDwellStart', v)} />
-      <OptField label="End Lit Dwell" value={num('litDwellEnd')} min={0} max={10} step={1} onSet={(v) => S('litDwellEnd', v)} />
-      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>Interpolation / Corners</div>
-      <OptField label="Lit Interp Dist" value={num('interpDistance')} min={0} max={1000} step={5} onSet={(v) => S('interpDistance', v)} />
-      <OptField label="Corner Dwell" value={num('cornerDwell')} min={0} max={30} step={1} onSet={(v) => S('cornerDwell', v)} />
-      <OptField label="Corner Threshold" value={num('cornerThreshold')} min={0} max={120} step={1} unit="°" onSet={(v) => S('cornerThreshold', v)} />
-      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>Frame</div>
-      <OptField label="Min Points/Frame" value={num('minPadding')} min={0} max={1000} step={10} onSet={(v) => S('minPadding', v)} />
+      <div style={{ fontSize: '9px', color: '#888', marginBottom: '4px' }}>{t('ui.blanking')}</div>
+      <OptField label={t('ui.blanking_start')} value={num('blankingStart')} min={0} max={30} step={1} onSet={(v) => S('blankingStart', v)} />
+      <OptField label={t('ui.blanking_end')} value={num('blankingEnd')} min={0} max={30} step={1} onSet={(v) => S('blankingEnd', v)} />
+      <OptField label={t('ui.color_shift')} value={num('shift')} min={-20} max={20} step={1} onSet={(v) => S('shift', v)} />
+      <OptField label={t('ui.shift_r')} value={num('shiftR')} min={-20} max={20} step={1} onSet={(v) => S('shiftR', v)} />
+      <OptField label={t('ui.shift_g')} value={num('shiftG')} min={-20} max={20} step={1} onSet={(v) => S('shiftG', v)} />
+      <OptField label={t('ui.shift_b')} value={num('shiftB')} min={-20} max={20} step={1} onSet={(v) => S('shiftB', v)} />
+      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>{t('ui.anchors')}</div>
+      <OptField label={t('ui.start_anchor')} value={num('anchorStart')} min={0} max={20} step={1} onSet={(v) => S('anchorStart', v)} />
+      <OptField label={t('ui.end_anchor')} value={num('anchorEnd')} min={0} max={20} step={1} onSet={(v) => S('anchorEnd', v)} />
+      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>{t('ui.lit_dwell')}</div>
+      <OptField label={t('ui.start_lit_dwell')} value={num('litDwellStart')} min={0} max={10} step={1} onSet={(v) => S('litDwellStart', v)} />
+      <OptField label={t('ui.end_lit_dwell')} value={num('litDwellEnd')} min={0} max={10} step={1} onSet={(v) => S('litDwellEnd', v)} />
+      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>{t('ui.interpolation_corners')}</div>
+      <OptField label={t('ui.lit_interp_dist')} value={num('interpDistance')} min={0} max={1000} step={5} onSet={(v) => S('interpDistance', v)} />
+      <OptField label={t('ui.corner_dwell')} value={num('cornerDwell')} min={0} max={30} step={1} onSet={(v) => S('cornerDwell', v)} />
+      <OptField label={t('ui.corner_threshold')} value={num('cornerThreshold')} min={0} max={120} step={1} unit="°" onSet={(v) => S('cornerThreshold', v)} />
+      <div style={{ fontSize: '9px', color: '#888', margin: '8px 0 4px' }}>{t('ui.frame')}</div>
+      <OptField label={t('ui.min_points_frame')} value={num('minPadding')} min={0} max={1000} step={10} onSet={(v) => S('minPadding', v)} />
       <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '10px' }}>
         Optimizes geometry for the target PPS/FPS before applying effects. Hardware presets
         pre-load these values per scanner class.

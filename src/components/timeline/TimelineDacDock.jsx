@@ -1,3 +1,4 @@
+import { useTranslation } from '../../i18n';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useTimeline } from '../../contexts/TimelineContext';
 
@@ -6,6 +7,7 @@ import { useTimeline } from '../../contexts/TimelineContext';
  * to route that track to the DAC channel.
  */
 const TimelineDacDock = () => {
+    const { t } = useTranslation();
     const { discoverChannels, dacOutputSettings, openOutputSettings, state, actions } = useTimeline();
 
     // Prefer the name the user assigned in Output Settings over the raw
@@ -87,21 +89,21 @@ const TimelineDacDock = () => {
     return (
         <div className="timeline-dac-dock">
             <div className="timeline-dac-dock-toolbar">
-                <span className="timeline-dac-dock-title">DAC Outputs</span>
+                <span className="timeline-dac-dock-title">{t('ui.dac_outputs')}</span>
                 <button className="timeline-btn-sm" onClick={scan} disabled={scanning}>
                     {scanning ? 'Scanning…' : `Rescan (${dacs.length})`}
                 </button>
                 <button
                     className="timeline-btn-sm"
                     onClick={openOutputSettings}
-                    title="Open the Output Settings for the discovered channels (dimmer, output area, safety zones)"
+                    title={t('ui.open_the_output_settings_for_the_discovered_channels_dimmer_')}
                 >
                     Output Settings…
                 </button>
                 <button
                     className="timeline-btn-sm"
                     onClick={loadGroups}
-                    title="Reload saved DAC groups"
+                    title={t('ui.reload_saved_dac_groups')}
                 >
                     Reload Groups ({Object.keys(groups).length})
                 </button>
@@ -135,7 +137,7 @@ const TimelineDacDock = () => {
 
             {Object.keys(groups).length > 0 && (
                 <div className="timeline-dac-dock-groups">
-                    <div className="timeline-dac-dock-groups-title">DAC Groups</div>
+                    <div className="timeline-dac-dock-groups-title">{t('ui.dac_groups')}</div>
                     <div className="timeline-dac-dock-list">
                         {Object.entries(groups).map(([name, groupDacs]) => (
                             <div
@@ -150,7 +152,7 @@ const TimelineDacDock = () => {
                                 onClick={() => applyGroupToSelectedTrack(groupDacs)}
                                 title={`Drag onto a track header to assign all ${groupDacs.length} channels. Click to assign to the selected track.`}
                             >
-                                <span className="timeline-dac-chip-type">GRP</span>
+                                <span className="timeline-dac-chip-type">{t('ui.grp')}</span>
                                 <span className="timeline-dac-chip-label">{name} ({groupDacs.length})</span>
                             </div>
                         ))}

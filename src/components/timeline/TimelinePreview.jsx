@@ -1,3 +1,4 @@
+import { useTranslation } from '../../i18n';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTimeline, getChannelOutputs, getChannelDisplayName } from '../../contexts/TimelineContext';
 import { flipPoints } from '../../hooks/useTimelinePlayback';
@@ -26,7 +27,9 @@ function scaleRgb(points, factor) {
  * Paused transport still previews: compile is transport-independent and only
  * needs the playhead time.
  */
-const TimelinePreview = ({ previewFrame, getCompiledFrame, playheadSec }) => {
+const TimelinePreview = ({
+    previewFrame, getCompiledFrame, playheadSec }) => {
+    const { t } = useTranslation();
     const { state, dacOutputSettings } = useTimeline();
     const canvasRef = useRef(null);
     const wrapRef = useRef(null);
@@ -247,7 +250,7 @@ const TimelinePreview = ({ previewFrame, getCompiledFrame, playheadSec }) => {
                         </span>
                     </>
                 ) : (
-                    <span className="timeline-preview-track muted">no track</span>
+                    <span className="timeline-preview-track muted">{t('ui.no_track')}</span>
                 )}
             </div>
             <div className="timeline-preview-canvas" ref={wrapRef}>

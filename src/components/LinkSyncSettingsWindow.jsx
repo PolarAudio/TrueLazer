@@ -133,11 +133,11 @@ const LinkSyncSettingsWindow = ({
   };
 
   const protocols = [
-    { value: 'none', label: 'None' },
+    { value: 'none', label: t('linkSync.protoNone') },
     { value: 'prolink', label: 'ProDJ Link' },
     { value: 'stagelinq', label: 'StageLinq (Denon)' },
     { value: 'artnet', label: 'Art-Net' },
-    { value: 'midi', label: 'MIDI Clock' },
+    { value: 'midi', label: t('linkSync.protoMidiClock') },
     { value: 'osc', label: 'OSC' },
   ];
 
@@ -151,9 +151,9 @@ const LinkSyncSettingsWindow = ({
           </div>
           <div className="modal-body">
             <div className="general-settings-section">
-              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>Sync Protocol</h4>
+              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('linkSync.syncProtocol')}</h4>
               <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <label className="param-label" style={{ fontSize: '11px' }}>Protocol</label>
+                <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.protocol')}</label>
                 <select
                   className="param-select"
                   value={settings.syncProtocol}
@@ -168,83 +168,83 @@ const LinkSyncSettingsWindow = ({
                 </select>
               </div>
               <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
-                Select the synchronization protocol for timeline playback position and transport speed.
+                {t('linkSync.protocolHelp')}
               </p>
             </div>
 
             {settings.syncProtocol !== 'none' && (
               <div className="general-settings-section" style={{ marginTop: '12px' }}>
-                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>Sync Mode</h4>
+                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('linkSync.syncMode')}</h4>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Mode</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.mode')}</label>
                   <select
                     className="param-select"
                     style={{ width: '180px', fontSize: '11px' }}
                   >
-                    <option value='master'>Master (this system drives)</option>
-                    <option value='slave'>Slave (this system follows)</option>
+                    <option value='master'>{t('linkSync.modeMaster')}</option>
+                    <option value='slave'>{t('linkSync.modeSlave')}</option>
                   </select>
                 </div>
                 <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
-                  Master: this system generates sync signals; Slave: this system follows an external source.
+                  {t('linkSync.modeHelp')}
                 </p>
               </div>
             )}
 
             {settings.syncProtocol !== 'none' && (
               <div className="general-settings-section" style={{ marginTop: '12px' }}>
-                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>Sync Status</h4>
+                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('linkSync.syncStatus')}</h4>
                 <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
                   <span className="param-label" style={{ fontSize: '11px', marginRight: '8px' }}>
-                    {' '}{settings.isSyncing ? 'Syncing...' : 'Not syncing'}
+                    {' '}{settings.isSyncing ? t('linkSync.syncing') : t('linkSync.notSyncing')}
                   </span>
                   <button
                     className="small-btn"
                     style={{ padding: '4px 8px', fontSize: '11px' }}
                     onClick={() => handleUpdate({ ...settings, isSyncing: !settings.isSyncing })}
                   >
-                    {settings.isSyncing ? 'Stop' : 'Start'}
+                    {settings.isSyncing ? t('linkSync.stop') : t('linkSync.start')}
                   </button>
                 </div>
                 <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
-                  Toggle synchronization state for the selected protocol.
+                  {t('linkSync.statusHelp')}
                 </p>
               </div>
             )}
 
             {settings.syncProtocol === 'prolink' && (
               <div className="general-settings-section" style={{ marginTop: '12px' }}>
-                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>PRO DJ LINK Settings</h4>
+                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('linkSync.prolinkSettings')}</h4>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Connection</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.connection')}</label>
                   <span style={{ fontSize: '11px', color: prolinkStatus.started ? '#6f6' : '#f66' }}>
-                    {prolinkStatus.started ? '● Connected' : '○ Disconnected'}
-                    {prolinkStatus.deviceCount > 0 ? ` (${prolinkStatus.deviceCount} device${prolinkStatus.deviceCount !== 1 ? 's' : ''})` : ''}
+                    {prolinkStatus.started ? t('linkSync.connected') : t('linkSync.disconnected')}
+                    {prolinkStatus.deviceCount > 0 ? t(prolinkStatus.deviceCount === 1 ? 'linkSync.deviceCountOne' : 'linkSync.deviceCountMany', { count: prolinkStatus.deviceCount }) : ''}
                   </span>
                 </div>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Enabled</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.enabled')}</label>
                   <button
                     className="small-btn"
                     style={{ padding: '4px 8px', fontSize: '11px', background: prolinkStatus.started ? '#2a7a2a' : '#555' }}
                     onClick={() => handleProlinkToggle()}
                   >
-                    {prolinkStatus.started ? 'Stop Listener' : 'Start Listener'}
+                    {prolinkStatus.started ? t('linkSync.stopListener') : t('linkSync.startListener')}
                   </button>
                 </div>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Selected Device</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.selectedDevice')}</label>
                   <input
                     className="param-input"
                     type="text"
                     value={prolinkSettings.selectedDevice}
-                    placeholder="Auto (master/playing)"
+                    placeholder={t('linkSync.autoSelect')}
                     style={{ width: '180px', fontSize: '11px' }}
                     onChange={(e) => handleProlinkSettingChange({ selectedDevice: e.target.value })}
                   />
                 </div>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Deck BPM Source</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.deckBpmSource')}</label>
                   <select
                     className="param-select"
                     value={bpmSource}
@@ -254,29 +254,29 @@ const LinkSyncSettingsWindow = ({
                       handleProlinkSettingChange({ bpmSource: e.target.value });
                     }}
                   >
-                    <option value="prolink">ProDJ Link (CDJ beat grid)</option>
-                    <option value="tcnet">TCNet L1 beat grid</option>
-                    <option value="tap">Tap tempo / manual</option>
+                    <option value="prolink">{t('linkSync.bpmProlink')}</option>
+                    <option value="tcnet">{t('linkSync.bpmTcnet')}</option>
+                    <option value="tap">{t('linkSync.bpmTap')}</option>
                   </select>
                 </div>
                 <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
-                  Connect to Pioneer CDJs via prolink-connect. BPM and timecode are derived from the CDJ beat grid.
+                  {t('linkSync.prolinkHelp')}
                 </p>
               </div>
             )}
 
             {settings.syncProtocol === 'stagelinq' && (
               <div className="general-settings-section" style={{ marginTop: '12px' }}>
-                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>STAGELINQ (Denon DJ) Settings</h4>
+                <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('linkSync.stagelinqSettings')}</h4>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Connection</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.connection')}</label>
                   <span style={{ fontSize: '11px', color: stagelinqStatus.started ? '#6f6' : '#f66' }}>
-                    {stagelinqStatus.started ? '● Listener' : '○ Idle'}
+                    {stagelinqStatus.started ? t('linkSync.listener') : t('linkSync.idle')}
                     {stagelinqStatus.deckCount > 0 ? ` (${stagelinqStatus.deckCount} deck${stagelinqStatus.deckCount !== 1 ? 's' : ''})` : ''}
                   </span>
                 </div>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Enabled</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.enabled')}</label>
                   <button
                     className="small-btn"
                     style={{ padding: '4px 8px', fontSize: '11px', background: stagelinqStatus.started ? '#2a7a2a' : '#555' }}
@@ -286,18 +286,18 @@ const LinkSyncSettingsWindow = ({
                   </button>
                 </div>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Selected Device</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.selectedDevice')}</label>
                   <input
                     className="param-input"
                     type="text"
                     value={stagelinqSettings.selectedDevice}
-                    placeholder="Auto (master/playing)"
+                    placeholder={t('linkSync.autoSelect')}
                     style={{ width: '180px', fontSize: '11px' }}
                     onChange={(e) => handleStagelinqSettingChange({ selectedDevice: e.target.value })}
                   />
                 </div>
                 <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label className="param-label" style={{ fontSize: '11px' }}>Deck BPM Source</label>
+                  <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.deckBpmSource')}</label>
                   <select
                     className="param-select"
                     value={bpmSource}
@@ -307,13 +307,13 @@ const LinkSyncSettingsWindow = ({
                       handleStagelinqSettingChange({ bpmSource: e.target.value });
                     }}
                   >
-                    <option value="stagelinq">StageLinq (Denon deck BPM)</option>
-                    <option value="tcnet">TCNet L1 beat grid</option>
-                    <option value="tap">Tap tempo / manual</option>
+                    <option value="stagelinq">{t('ui.stagelinq_denon_deck_bpm')}</option>
+                    <option value="tcnet">{t('linkSync.bpmTcnet')}</option>
+                    <option value="tap">{t('linkSync.bpmTap')}</option>
                   </select>
                 </div>
                 <p className="info-text" style={{ fontSize: '9px', color: '#666', marginTop: '4px' }}>
-                  Connect to Denon players (SC5000/SC6000, Prime 4/2/Go, LC6000) over StageLinq. Timecode is derived from the deck's absolute sample position; BPM from the deck's current tempo.
+                  {t('linkSync.stagelinqHelp')}
                 </p>
               </div>
             )}
@@ -325,25 +325,24 @@ const LinkSyncSettingsWindow = ({
                 every clip link disarmed, and vice versa.
             ----------------------------------------------------------- */}
             <div className="general-settings-section" style={{ marginTop: '16px' }}>
-              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>DJ-Link Clip Transport</h4>
+              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>{t('linkSync.clipTransport')}</h4>
               <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <label className="param-label" style={{ fontSize: '11px' }}>Arm</label>
+                <label className="param-label" style={{ fontSize: '11px' }}>{t('linkSync.arm')}</label>
                 <button
                   className="small-btn"
                   style={{ padding: '4px 8px', fontSize: '11px', background: djLinkArmed ? '#2a7a2a' : '#555' }}
                   onClick={() => onDjLinkTransportChange?.({ enabled: !djLinkArmed })}
                 >
-                  {djLinkArmed ? 'Armed' : 'Disarmed'}
+                  {djLinkArmed ? t('linkSync.armed') : t('linkSync.disarmed')}
                 </button>
               </div>
               <p className="info-text" style={{ fontSize: '9px', color: '#666', margin: '2px 0 8px' }}>
-                When armed, any clip linked to a song (drag the song info from the DJ-Link display onto a clip)
-                takes over its layer when that track is loaded in ANY deck, and plays from the deck&apos;s position.
+                {t('linkSync.armHelp')}
               </p>
 
               {djLinkDecks.length === 0 ? (
                 <p className="info-text" style={{ fontSize: '10px', color: '#666' }}>
-                  No decks reporting. Start a Pro DJ Link or StageLinq listener above.
+                  {t('linkSync.noDecks')}
                 </p>
               ) : (
                 <div className="djlink-deck-list">
@@ -358,25 +357,25 @@ const LinkSyncSettingsWindow = ({
                         <span className="djlink-deck-dot" style={dot ? { background: dot } : undefined} />
                         <div className="djlink-deck-info">
                           <div className="djlink-deck-title">
-                            {deck.title || (deck.loaded ? 'Track (no metadata yet)' : 'No track loaded')}
+                            {deck.title || (deck.loaded ? t('linkSync.trackNoMeta') : t('linkSync.noTrackLoaded'))}
                           </div>
                           <div className="djlink-deck-sub">
                             {[
                               deck.source === 'stagelinq' ? 'StageLinq' : 'ProDJ',
-                              `Deck ${deck.deckId}`,
-                              deck.playing ? 'playing' : 'stopped',
+                              t('linkSync.deckLabel', { id: deck.deckId }),
+                              deck.playing ? t('linkSync.playing') : t('linkSync.stopped'),
                               typeof deck.seconds === 'number' ? formatClock(deck.seconds) : null,
-                              deck.bpm > 0 ? `${Math.round(deck.bpm)} BPM` : null,
+                              deck.bpm > 0 ? `${Math.round(deck.bpm)} ${t('bpm.label')}` : null,
                             ].filter(Boolean).join(' · ')}
                           </div>
                         </div>
                         <div className="djlink-deck-right">
-                          <span className="djlink-deck-count">{linked} clip{linked !== 1 ? 's' : ''}</span>
+                          <span className="djlink-deck-count">{t(linked !== 1 ? 'linkSync.clipsMany' : 'linkSync.clipsOne', { count: linked })}</span>
                           <button
                             className="small-btn"
                             style={{ padding: '2px 6px', fontSize: '10px' }}
                             disabled={linked === 0}
-                            title={linked === 0 ? 'No clips are linked to this deck' : blocked ? 'Arm this deck' : 'Disarm this deck'}
+                            title={linked === 0 ? t('linkSync.noClipsLinked') : blocked ? t('linkSync.armThisDeck') : t('linkSync.disarmThisDeck')}
                             onClick={() => {
                               const next = blocked
                                 ? djLinkBlocked.filter((k) => k !== deck.deckKey)
@@ -384,7 +383,7 @@ const LinkSyncSettingsWindow = ({
                               onDjLinkTransportChange?.({ blockedDecks: next });
                             }}
                           >
-                            {blocked ? 'Arm' : 'Disarm'}
+                            {blocked ? t('linkSync.arm') : t('linkSync.disarm')}
                           </button>
                         </div>
                       </div>
@@ -402,7 +401,7 @@ const LinkSyncSettingsWindow = ({
                   handleUpdate(updated);
                 }}
               >
-                Reset to Default
+                {t('linkSync.resetToDefault')}
               </button>
               <button
                 className="small-btn"

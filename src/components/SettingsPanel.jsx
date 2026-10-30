@@ -128,7 +128,7 @@ const SettingsPanel = ({
 
   return (
     <div className="settings-panel settings-panel-base">
-      <div className="settings-card-header"><h4>Global Settings</h4></div>
+      <div className="settings-card-header"><h4>{t('ui.global_settings')}</h4></div>
 
       {quickAssigns && (
           <CollapsiblePanel 
@@ -151,8 +151,8 @@ const SettingsPanel = ({
         isCollapsed={!!collapsedStates['dacSettings']}
         onToggle={(val) => handleToggle('dacSettings', val)}
       >
-          <p className="info-text">Output routing and safety zones configuration.</p>
-          <button className="small-btn" style={{width:'100%', marginTop:'5px'}} onClick={onOpenOutputSettings}>Open Output Settings</button>
+          <p className="info-text">{t('ui.output_routing_and_safety_zones_configuration')}</p>
+          <button className="small-btn" style={{width:'100%', marginTop:'5px'}} onClick={onOpenOutputSettings}>{t('ui.open_output_settings')}</button>
       </CollapsiblePanel>
 
       {/* Shortcuts Settings Section */}
@@ -173,10 +173,10 @@ const SettingsPanel = ({
                       >
                           {isKeyboardMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                       </button>
-                      <button className="small-btn" onClick={saveKeyboardMappings}>Save Default</button>
+                      <button className="small-btn" onClick={saveKeyboardMappings}>{t('ui.save_default')}</button>
                       <button className="small-btn" onClick={exportKeyboardMappings}>Export</button>
                       <button className="small-btn" onClick={importKeyboardMappings}>Import</button>
-                      <button className="small-btn clear" onClick={() => setKeyboardMappings({})}>Clear</button>
+                      <button className="small-btn clear" onClick={() => setKeyboardMappings({})}>{t('ui.clear')}</button>
                     </div>
                     <p className="info-text" style={{fontSize: '9px', color: '#666', marginTop: '5px'}}>
                         Assign keys to buttons/sliders by activating "Start Mapping" and clicking a control.
@@ -191,7 +191,7 @@ const SettingsPanel = ({
                 onToggle={(val) => handleToggle('midi', val)}
             >
                 {!midiInitialized ? (
-                  <p className="loading-text">Initializing MIDI...</p>
+                  <p className="loading-text">{t('ui.initializing_midi')}</p>
                 ) : (
                   <div className="midi-config">
                     <select className="param-select" value={selectedMidiInputId} onChange={handleMidiInputChange} style={{ marginBottom: '8px', width: '100%' }}>
@@ -207,10 +207,10 @@ const SettingsPanel = ({
                       >
                           {isMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                       </button>
-                      <button className="small-btn" onClick={saveMappings}>Save Default</button>
+                      <button className="small-btn" onClick={saveMappings}>{t('ui.save_default')}</button>
                       <button className="small-btn" onClick={exportMidiMappings}>Export</button>
                       <button className="small-btn" onClick={importMidiMappings}>Import</button>
-                      <button className="small-btn clear" onClick={() => setMappings({})}>Clear</button>
+                      <button className="small-btn clear" onClick={() => setMappings({})}>{t('ui.clear')}</button>
                     </div>
                     {lastMidiEvent && (
                         <div className="last-event-status">
@@ -229,7 +229,7 @@ const SettingsPanel = ({
                 onToggle={(val) => handleToggle('artnet', val)}
             >
                 {!artnetInitialized ? (
-                  <p className="loading-text">Initializing Art-Net...</p>
+                  <p className="loading-text">{t('ui.initializing_art_net')}</p>
                 ) : (
                   <div className="artnet-config">
                     <select 
@@ -254,11 +254,11 @@ const SettingsPanel = ({
                       >
                           {isArtnetMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                       </button>
-                      <button className="small-btn" onClick={autoPatchFixedFootprint} title={t('settingsPanel.autoPatch')}>Auto-Patch</button>
-                      <button className="small-btn" onClick={saveArtnetMappings}>Save Default</button>
+                      <button className="small-btn" onClick={autoPatchFixedFootprint} title={t('settingsPanel.autoPatch')}>{t('ui.auto_patch')}</button>
+                      <button className="small-btn" onClick={saveArtnetMappings}>{t('ui.save_default')}</button>
                       <button className="small-btn" onClick={exportArtnetMappings}>Export</button>
                       <button className="small-btn" onClick={importArtnetMappings}>Import</button>
-                      <button className="small-btn clear" onClick={() => setArtnetMappings({})}>Clear</button>
+                      <button className="small-btn clear" onClick={() => setArtnetMappings({})}>{t('ui.clear')}</button>
                     </div>
                     {lastDmxEvent && (
                         <div className="last-event-status">

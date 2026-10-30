@@ -1,7 +1,12 @@
 import React from 'react';
+import { useTranslation } from '../i18n';
+import { translate } from '../i18n/translate';
+import { TRANSLATIONS } from '../i18n/translations';
 import Mappable from './Mappable';
 
 const ColumnHeader = ({ name, index, onTrigger, onShowColumnHeaderContextMenu }) => {
+  const { t } = useTranslation();
+  const displayName = (!name || Object.keys(TRANSLATIONS).some(loc => translate(loc, 'column.defaultName', { index: index + 1 }) === name)) ? t('column.defaultName', { index: index + 1 }) : name;
   const handleContextMenu = (e) => {
     e.preventDefault();
     if (onShowColumnHeaderContextMenu) {
@@ -24,7 +29,7 @@ const ColumnHeader = ({ name, index, onTrigger, onShowColumnHeaderContextMenu })
         onContextMenu={handleContextMenu}
         style={{ cursor: 'pointer' }}
         >
-        {name}
+        {displayName}
         </div>
     </Mappable>
   );

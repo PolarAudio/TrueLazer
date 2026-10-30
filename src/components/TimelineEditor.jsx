@@ -1,3 +1,4 @@
+import { useTranslation } from '../i18n';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTimeline, getTimelineDuration, getSortedCues, getOverlappingCueIds } from '../contexts/TimelineContext';
 import { useTimelinePlayback } from '../hooks/useTimelinePlayback';
@@ -22,7 +23,9 @@ import { HEADER_W, RULER_H, BLOCK_ROW_H, AUTO_ROW_H, END_PAD, ZOOM_MIN, ZOOM_MAX
  * empty-click (clear selection) and double-click (add generator) gestures.
  * Block presses stopPropagation so they never start a marquee.
  */
-const TimelineBlockLane = ({ channel, cues, rowH, gridW, pxPerSecond, snapMode, bpm, fps, selectedCueIds, trimMode, suppressClickRef, onDrop, onDoubleClick }) => {
+const TimelineBlockLane = ({
+    channel, cues, rowH, gridW, pxPerSecond, snapMode, bpm, fps, selectedCueIds, trimMode, suppressClickRef, onDrop, onDoubleClick }) => {
+    const { t } = useTranslation();
     const { state, actions } = useTimeline();
     const overlapIds = useMemo(() => getOverlappingCueIds(state), [state]);
     return (
@@ -61,6 +64,7 @@ const TimelineBlockLane = ({ channel, cues, rowH, gridW, pxPerSecond, snapMode, 
 
 const TimelineEditor = ({ onBack }) => {
     const { state, actions, loadTimelineAudio } = useTimeline();
+    const { t } = useTranslation();
     const pb = useTimelinePlayback();
 
     const gridRef = useRef(null);
@@ -426,12 +430,12 @@ const TimelineEditor = ({ onBack }) => {
                                             <span className="timeline-corner-audio">♪ Audio</span>
                                             <button
                                                 className="timeline-btn-sm danger"
-                                                title="Remove audio track"
+                                                title={t('ui.remove_audio_track')}
                                                 onClick={() => actions.clearAudio()}
                                             >✕</button>
                                         </>
                                     ) : (
-                                        <button className="timeline-btn-sm" title="Load timeline audio"
+                                        <button className="timeline-btn-sm" title={t('ui.load_timeline_audio')}
                                             onClick={async () => {
                                                 if (window.electronAPI?.showAudioFileDialog) {
                                                     const fp = await window.electronAPI.showAudioFileDialog();
@@ -502,7 +506,7 @@ const TimelineEditor = ({ onBack }) => {
                                         <div className="timeline-row" style={{ height: ADD_LANE_ROW_H }}>
                                             <div className="timeline-header-cell timeline-add-lane-cell">
                                                 <button className="timeline-lane-add"
-                                                    title="Add another automation lane (multiple per channel/zone)"
+                                                    title={t('ui.add_another_automation_lane_multiple_per_channel_zone')}
                                                     onClick={() => actions.addLane(chId, {})}>
                                                     + Automation lane
                                                 </button>

@@ -197,17 +197,17 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                 <div className="modal-body report-body">
                     {tab === 'bug' ? (
                         <>
-                            <Field label="Summary">
+                            <Field label={t('ui.summary')}>
                                 <input
                                     className="report-input"
                                     value={bug.title}
-                                    placeholder="What went wrong?"
+                                    placeholder={t('ui.what_went_wrong')}
                                     onChange={e => setBugField('title', e.target.value)}
                                 />
                             </Field>
                             <div style={{ display: 'flex', gap: '12px' }}>
                                 <div style={{ flex: 1 }}>
-                                    <Field label="Severity">
+                                    <Field label={t('ui.severity')}>
                                         <select
                                             className="report-input"
                                             value={bug.severity}
@@ -220,7 +220,7 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                                     </Field>
                                 </div>
                                 <div style={{ flex: 1 }}>
-                                    <Field label="Area">
+                                    <Field label={t('ui.area')}>
                                         <select
                                             className="report-input"
                                             value={bug.area}
@@ -233,16 +233,16 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                                     </Field>
                                 </div>
                             </div>
-                            <Field label="What happened">
+                            <Field label={t('ui.what_happened')}>
                                 <textarea
                                     className="report-input report-textarea"
                                     rows={4}
                                     value={bug.whatHappened}
-                                    placeholder="What did you see? Include any error message."
+                                    placeholder={t('ui.what_did_you_see_include_any_error_message')}
                                     onChange={e => setBugField('whatHappened', e.target.value)}
                                 />
                             </Field>
-                            <Field label="What did you expect instead?">
+                            <Field label={t('ui.what_did_you_expect_instead')}>
                                 <textarea
                                     className="report-input report-textarea"
                                     rows={2}
@@ -250,7 +250,7 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                                     onChange={e => setBugField('expected', e.target.value)}
                                 />
                             </Field>
-                            <Field label="Steps to reproduce" hint="One step per line.">
+                            <Field label={t('ui.steps_to_reproduce')} hint="One step per line.">
                                 <textarea
                                     className="report-input report-textarea"
                                     rows={4}
@@ -262,15 +262,15 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                         </>
                     ) : (
                         <>
-                            <Field label="Summary">
+                            <Field label={t('ui.summary')}>
                                 <input
                                     className="report-input"
                                     value={feature.title}
-                                    placeholder="What would you like TrueLazer to do?"
+                                    placeholder={t('ui.what_would_you_like_truelazer_to_do')}
                                     onChange={e => setFeatureField('title', e.target.value)}
                                 />
                             </Field>
-                            <Field label="Area">
+                            <Field label={t('ui.area')}>
                                 <select
                                     className="report-input"
                                     value={feature.area}
@@ -281,39 +281,39 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                                     ))}
                                 </select>
                             </Field>
-                            <Field label="The problem you are trying to solve">
+                            <Field label={t('ui.the_problem_you_are_trying_to_solve')}>
                                 <textarea
                                     className="report-input report-textarea"
                                     rows={4}
                                     value={feature.problem}
-                                    placeholder="What are you trying to do that is awkward or impossible today?"
+                                    placeholder={t('ui.what_are_you_trying_to_do_that_is_awkward_or_impossible_toda')}
                                     onChange={e => setFeatureField('problem', e.target.value)}
                                 />
                             </Field>
-                            <Field label="Proposed solution">
+                            <Field label={t('ui.proposed_solution')}>
                                 <textarea
                                     className="report-input report-textarea"
                                     rows={3}
                                     value={feature.proposal}
-                                    placeholder="What would a good solution look like?"
+                                    placeholder={t('ui.what_would_a_good_solution_look_like')}
                                     onChange={e => setFeatureField('proposal', e.target.value)}
                                 />
                             </Field>
-                            <Field label="Why it matters">
+                            <Field label={t('ui.why_it_matters')}>
                                 <textarea
                                     className="report-input report-textarea"
                                     rows={2}
                                     value={feature.why}
-                                    placeholder="How would this change your show workflow?"
+                                    placeholder={t('ui.how_would_this_change_your_show_workflow')}
                                     onChange={e => setFeatureField('why', e.target.value)}
                                 />
                             </Field>
-                            <Field label="Alternatives you considered" hint="Optional.">
+                            <Field label={t('ui.alternatives_you_considered')} hint="Optional.">
                                 <textarea
                                     className="report-input report-textarea"
                                     rows={2}
                                     value={feature.alternatives}
-                                    placeholder="Workarounds you have used, or other tools that do this."
+                                    placeholder={t('ui.workarounds_you_have_used_or_other_tools_that_do_this')}
                                     onChange={e => setFeatureField('alternatives', e.target.value)}
                                 />
                             </Field>
@@ -321,14 +321,14 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                     )}
 
                     <div className="report-section">
-                        <div className="report-section-title">Details to include</div>
+                        <div className="report-section-title">{t('ui.details_to_include')}</div>
                         <label className="report-check">
                             <input
                                 type="checkbox"
                                 checked={includeEnvironment}
                                 onChange={e => setIncludeEnvironment(e.target.checked)}
                             />
-                            <span>Environment details (version, OS, CPU, GPU, page, DAC)</span>
+                            <span>{t('ui.environment_details_version_os_cpu_gpu_page_dac')}</span>
                         </label>
                         <label className="report-check">
                             <input
@@ -336,7 +336,7 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                                 checked={includeLogs}
                                 onChange={e => setIncludeLogs(e.target.checked)}
                             />
-                            <span>Recent log tail</span>
+                            <span>{t('ui.recent_log_tail')}</span>
                         </label>
                         <label className="report-check">
                             <input
@@ -344,7 +344,7 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                                 checked={redact}
                                 onChange={e => setRedact(e.target.checked)}
                             />
-                            <span>Redact personal paths, e-mail addresses and MAC addresses</span>
+                            <span>{t('ui.redact_personal_paths_e_mail_addresses_and_mac_addresses')}</span>
                         </label>
                         <div className="report-note">
                             Reports are posted to the public GitHub issue tracker. Nothing is sent
@@ -380,8 +380,8 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
                 </div>
 
                 <div className="report-footer">
-                    <button className="report-button" onClick={handleOpenLogs}>Open logs folder</button>
-                    <button className="report-button" onClick={handleCopy}>Copy report</button>
+                    <button className="report-button" onClick={handleOpenLogs}>{t('ui.open_logs_folder')}</button>
+                    <button className="report-button" onClick={handleCopy}>{t('ui.copy_report')}</button>
                     <button
                         className="report-button primary"
                         disabled={!canSubmit}

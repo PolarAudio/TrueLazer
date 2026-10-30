@@ -51,7 +51,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
 
   return (
     <CollapsiblePanel
-      title="Clip Playback"
+      title={t('ui.clip_playback')}
       isCollapsed={!!collapsedPanels['playback']}
       onToggle={handleToggle}
     >
@@ -88,7 +88,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
               </div>
             </div>
             <div className="control-group">
-              <label>Duration (s) (for effects)</label>
+              <label>{t('ui.duration_s_for_effects')}</label>
               <div className="value-adjuster">
                 <input
                   type="number"
@@ -150,7 +150,7 @@ const ClipPlaybackSettings = ({ settings, onUpdate, uiState, onUpdateUiState }) 
         )}
 
         <div className="playback-direction-style" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #333' }}>
-          <label>In Development (Experimental)</label>
+          <label>{t('ui.in_development_experimental')}</label>
           <div className="control-group">
             <label>{t('clipPlayback.direction')}</label>
             <div className="radio-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>

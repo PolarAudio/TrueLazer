@@ -200,11 +200,11 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
         {enabledShortcuts.midi && (
         <div className="shortcuts-section">
           <h3>{t('shortcuts.midi')}</h3>
-          {!midiInitialized && <p>Initializing MIDI...</p>}
+          {!midiInitialized && <p>{t('ui.initializing_midi')}</p>}
           {midiInitialized && (
             <div>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
-                  <label htmlFor="midiInputSelect">Input:</label>
+                  <label htmlFor="midiInputSelect">{t('ui.input')}</label>
                   <select id="midiInputSelect" value={selectedMidiInputId} onChange={handleMidiInputChange} className="param-select" style={{ flex: 1 }}>
                     {midiInputs.map(input => (
                       <option key={input.id} value={input.id}>{input.name}</option>
@@ -225,27 +225,27 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
             <h3>{t('shortcuts.artnet')}</h3>
           
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '15px', background: '#111', padding: '10px', borderRadius: '5px' }}>
-              <label style={{ fontSize: '11px', color: '#888' }}>Network Interface:</label>
+              <label style={{ fontSize: '11px', color: '#888' }}>{t('ui.network_interface')}</label>
               <select 
                 value={artnetInterface} 
                 onChange={handleArtnetInterfaceChange} 
                 className="param-select" 
                 style={{ flex: 1 }}
               >
-                  <option value="">All Interfaces (Default)</option>
+                  <option value="">{t('ui.all_interfaces_default')}</option>
                   {networkInterfaces.map(iface => (
                       <option key={iface.address} value={iface.address}>{iface.name} ({iface.address})</option>
                   ))}
               </select>
-              <button onClick={handleRefreshInterfaces} className="small-btn" title="Refresh Interface List">↻</button>
+              <button onClick={handleRefreshInterfaces} className="small-btn" title={t('ui.refresh_interface_list')}>↻</button>
           </div>
 
           {!globalArtnetInitialized ? (
-            <p>Initializing Art-Net...</p>
+            <p>{t('ui.initializing_art_net')}</p>
           ) : (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', gap: '10px' }}>
-                <label htmlFor="artnetUniverseSelect">Universe:</label>
+                <label htmlFor="artnetUniverseSelect">{t('ui.universe')}</label>
                 <select id="artnetUniverseSelect" value={selectedArtnetUniverseId} onChange={handleArtnetUniverseChange} className="param-select" style={{ flex: 1 }}>
                   {artnetUniverses.map(universe => (
                     <option key={universe.id} value={universe.id}>{universe.name}</option>
@@ -268,11 +268,11 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                           <input type="number" min="0" max="511" value={artnetChannel} onChange={handleArtnetChannelChange} style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #444', padding: '4px', borderRadius: '3px' }} />
                       </div>
                       <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '10px', color: '#888' }}>Value</label>
+                          <label style={{ fontSize: '10px', color: '#888' }}>{t('ui.value')}</label>
                           <input type="number" min="0" max="255" value={artnetValue} onChange={handleArtnetValueChange} style={{ width: '100%', background: '#000', color: '#fff', border: '1px solid #444', padding: '4px', borderRadius: '3px' }} />
                       </div>
                     </div>
-                    <button onClick={handleSendArtnetData} style={{ width: '100%' }}>Send Data</button>
+                    <button onClick={handleSendArtnetData} style={{ width: '100%' }}>{t('ui.send_data')}</button>
                 </div>
                 <div style={{ minHeight: '200px' }}>
                     <DmxMonitor />
@@ -286,31 +286,31 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
         {enabledShortcuts.osc && (
         <div className="shortcuts-section">
           <h3>{t('shortcuts.osc')}</h3>
-          {!oscInitialized ? <p>Initializing OSC...</p> : (
+          {!oscInitialized ? <p>{t('ui.initializing_osc')}</p> : (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
               <div>
-                  <h4>Configuration</h4>
+                  <h4>{t('ui.configuration')}</h4>
                   <div className="param-editor">
-                    <label>Local Port</label>
+                    <label>{t('ui.local_port')}</label>
                     <input type="number" value={oscLocalPort} onChange={(e) => setOscLocalPort(parseInt(e.target.value))} />
                   </div>
                   <div className="param-editor">
-                    <label>Remote IP</label>
+                    <label>{t('ui.remote_ip')}</label>
                     <input type="text" value={oscRemoteAddress} onChange={(e) => setOscRemoteAddress(e.target.value)} />
                   </div>
                   <div className="param-editor">
-                    <label>Remote Port</label>
+                    <label>{t('ui.remote_port')}</label>
                     <input type="number" value={oscRemotePort} onChange={(e) => setOscRemotePort(parseInt(e.target.value))} />
                   </div>
               </div>
               <div>
-                  <h4>Test Send</h4>
+                  <h4>{t('ui.test_send')}</h4>
                   <div className="param-editor">
-                    <label>Address</label>
+                    <label>{t('ui.address')}</label>
                     <input type="text" value={oscSendMessageAddress} onChange={(e) => setOscSendMessageAddress(e.target.value)} />
                   </div>
                   <div className="param-editor">
-                    <label>Args</label>
+                    <label>{t('ui.args')}</label>
                     <input type="text" value={oscSendMessageArgs} onChange={(e) => setOscSendMessageArgs(e.target.value)} />
                   </div>
                     <button onClick={handleOscSendMessage} style={{ width: '100%' }}>{t('shortcuts.send')} OSC</button>

@@ -1,3 +1,4 @@
+import { useTranslation } from '../../i18n';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useTimeline, getAdjacentCues } from '../../contexts/TimelineContext';
 import {
@@ -64,7 +65,21 @@ function clipLaneLabel(c) {
     return 'Automation';
 }
 
+function translatedClipLaneLabel(c, t) {
+    if (c?.effectId) {
+        const d = effectDefinitions.find((x) => x.id === c.effectId);
+        return d ? t(`effect.${d.id}.name`) : c.effectId;
+    }
+    if (c?.genId) {
+        const d = generatorDefinitions.find((x) => x.id === c.genId);
+        return `GEN ${d ? t(`generator.${d.id}.name`) : c.genId}`;
+    }
+    if (c?.targetProperty) return getLaneTarget(c.targetProperty).label;
+    return 'Automation';
+}
+
 const AutomationHeader = ({ lane, rowH = AUTO_ROW_H }) => {
+    const { t } = useTranslation();
     const { state, actions } = useTimeline();
     const isSelected = state.settings.selectedLaneId === lane.id
         || (state.settings.selectedKeyframe?.laneId === lane.id)
@@ -72,7 +87,7 @@ const AutomationHeader = ({ lane, rowH = AUTO_ROW_H }) => {
 
     const summary = useMemo(() => {
         const clips = Array.isArray(lane.clips) ? lane.clips : [];
-        const names = [...new Set(clips.map(clipLaneLabel).filter((n) => n && n !== 'Automation'))];
+        const names = [...new Set(clips.map((c) => translatedClipLaneLabel(c, t)).filter((n) => n && n !== 'Automation'))];
         if (names.length > 1) return `${names.slice(0, 2).join(' + ')}${names.length > 2 ? ` +${names.length - 2}` : ''}`;
         if (names.length === 1) return names[0];
         if (clips.length > 0) return `${clips.length} clip${clips.length > 1 ? 's' : ''}`;
@@ -80,7 +95,7 @@ const AutomationHeader = ({ lane, rowH = AUTO_ROW_H }) => {
             return getLaneTarget(lane.targetProperty).label;
         }
         return 'Automation';
-    }, [lane]);
+    }, [lane, t]);
 
     const newClip = () => {
         const bar = beatDuration(state.settings.bpm || 120) * 4;
@@ -105,9 +120,9 @@ const AutomationHeader = ({ lane, rowH = AUTO_ROW_H }) => {
                 {summary}
             </span>
             <div className="timeline-auto-header-buttons">
-                <button className="timeline-icon-btn" title="Add an empty automation clip at the track start"
+                <button className="timeline-icon-btn" title={t('ui.add_an_empty_automation_clip_at_the_track_start')}
                     onClick={newClip}>+ Clip</button>
-                <button className="timeline-icon-btn danger" title="Remove automation lane"
+                <button className="timeline-icon-btn danger" title={t('ui.remove_automation_lane')}
                     onClick={() => actions.removeLane(lane.id)}>✕</button>
             </div>
         </div>
@@ -124,6 +139,7 @@ function getLaneRange(laneOrClip) {
 
 const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, rowH = AUTO_ROW_H, trimMode }) => {
     const { state, actions } = useTimeline();
+    const { t } = useTranslation();
     const dragRef = useRef(null); // active keyframe drag
     const tensionRef = useRef(null); // active segment-curve (tension) drag
     const clipDragRef = useRef(null); // active clip move / resize drag
@@ -589,7 +605,7 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
                                 onPointerCancel={endClipDrag}
                                 onContextMenu={(e) => deleteClip(e, c)}
                             >
-                                <span className="timeline-auto-clip-label">{clipLaneLabel(c)}</span>
+                                <span className="timeline-auto-clip-label">{translatedClipLaneLabel(c, t)}</span>
                                 {c.id != null && (
                                     <button
                                         className={`timeline-clip-mute small${c.muted ? ' active' : ''}`}
@@ -611,7 +627,7 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
                                 <>
                                     <div
                                         className="timeline-auto-clip-resize left"
-                                        title="Drag to trim the clip start"
+                                        title={t('ui.drag_to_trim_the_clip_start')}
                                         onPointerDown={(e) => startClipDrag(e, c, 'resize-start')}
                                         onPointerMove={onClipDragMove}
                                         onPointerUp={endClipDrag}
@@ -619,7 +635,7 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
                                     />
                                     <div
                                         className="timeline-auto-clip-resize right"
-                                        title="Drag to extend/trim the clip end"
+                                        title={t('ui.drag_to_extend_trim_the_clip_end')}
                                         onPointerDown={(e) => startClipDrag(e, c, 'resize-end')}
                                         onPointerMove={onClipDragMove}
                                         onPointerUp={endClipDrag}
@@ -701,8 +717,8 @@ const TimelineAutomationLane = ({ lane, gridW, pxPerSecond, snapMode, bpm, fps, 
                                 );
                             })()}
                             <div className="timeline-kf-menu-sep" />
-                            <button className="timeline-kf-menu-item" onClick={deleteFromMenu}>Delete keyframe</button>
-                            <button className="timeline-kf-menu-item" onClick={deleteAllFromMenu}>Delete all keyframes on lane</button>
+                            <button className="timeline-kf-menu-item" onClick={deleteFromMenu}>{t('ui.delete_keyframe')}</button>
+                            <button className="timeline-kf-menu-item" onClick={deleteAllFromMenu}>{t('ui.delete_all_keyframes_on_lane')}</button>
                         </div>
                     </>
                 )}

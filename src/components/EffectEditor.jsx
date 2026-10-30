@@ -171,6 +171,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
 
 const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], dacSettings = {}, onChange }) => {
     const [draggedKey, setDraggedKey] = useState(null);
+    const { t } = useTranslation();
     const keyOf = (d) => (d && d.ip !== undefined) ? `${d.ip}:${d.channel !== undefined ? d.channel : ''}` : null;
     const resolveDacLabel = (d) => {
         const k = keyOf(d);
@@ -232,7 +233,7 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], dacSettings = 
 
     return (
         <div className="custom-order-editor" style={{ marginBottom: '10px', padding: '5px', background: '#222', borderRadius: '4px' }}>
-            <label style={{fontSize: '10px', color: '#888'}}>Channel Order (drag or use arrows)</label>
+            <label style={{fontSize: '10px', color: '#888'}}>{t('ui.channel_order_drag_or_use_arrows')}</label>
             <ul style={{ listStyle: 'none', padding: 0, margin: '5px 0' }}>
                 {items.map((item, index) => {
                     const itemKey = keyOf(item);
@@ -261,8 +262,8 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], dacSettings = 
                             {item.label || (itemKey ? dacSettings[itemKey]?.name : null) || `Ch ${item.channel} ${item.ip ? `(${item.ip})` : ''}`}
                         </span>
                         <span className="custom-order-controls" style={{ display: 'flex', gap: '2px' }}>
-                            <button className="dac-order-btn" disabled={index === 0} onClick={() => moveItem(index, index - 1)} title="Move up">▲</button>
-                            <button className="dac-order-btn" disabled={index === items.length - 1} onClick={() => moveItem(index, index + 1)} title="Move down">▼</button>
+                            <button className="dac-order-btn" disabled={index === 0} onClick={() => moveItem(index, index - 1)} title={t('ui.move_up_2')}>▲</button>
+                            <button className="dac-order-btn" disabled={index === items.length - 1} onClick={() => moveItem(index, index + 1)} title={t('ui.move_down_2')}>▼</button>
                         </span>
                     </li>
                     );
@@ -275,6 +276,7 @@ const CustomOrderEditor = ({ customOrder = [], assignedDacs = [], dacSettings = 
 const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync, context, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState }) => {
     const { mode, color, paletteColors = [], paletteSize = 4 } = effect.params;
     const [activePaletteIndex, setActivePaletteIndex] = useState(0);
+    const { t } = useTranslation();
 
     // Track advanced HSV visibility in clip UI state
     const showHsv = !!uiState?.showHsv?.[effect.instanceId || effect.id];
@@ -368,12 +370,12 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
             {mode === 'solid' && (
                 <div style={{ marginTop: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
-                        <label style={{ fontSize: '11px', color: '#aaa' }}>Pick Color</label>
+                        <label style={{ fontSize: '11px', color: '#aaa' }}>{t('ui.pick_color')}</label>
                         <button 
                             className={`anim-toggle-btn ${showHsv ? 'active' : ''}`}
                             style={{ background: 'none', border: 'none', color: showHsv ? 'var(--theme-color)' : '#666', cursor: 'pointer', padding: 0, fontSize: '14px' }}
                             onClick={() => setShowHsv(!showHsv)}
-                            title="Advanced HSV Controls"
+                            title={t('ui.advanced_hsv_controls')}
                         >⚙</button>
                     </div>
                     
@@ -397,7 +399,7 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
                     {renderParam('cycleSpeed')}
                     {renderParam('rainbowOffset')}
 
-                    <label style={{ fontSize: '11px', color: '#aaa', display: 'block', margin: '10px 0 5px' }}>Presets</label>
+                    <label style={{ fontSize: '11px', color: '#aaa', display: 'block', margin: '10px 0 5px' }}>{t('ui.presets')}</label>
                     <div className="preset-row" style={{ display: 'flex', gap: '4px', marginBottom: '10px' }}>
                         {presets.map(p => (
                             <button 
@@ -411,7 +413,7 @@ const ColorEffectEditor = ({ effect, onParamChange, syncSettings, onSetParamSync
                         ))}
                     </div>
 
-                    <label style={{ fontSize: '11px', color: '#aaa', display: 'block', margin: '10px 0 5px' }}>Palette Colors</label>
+                    <label style={{ fontSize: '11px', color: '#aaa', display: 'block', margin: '10px 0 5px' }}>{t('ui.palette_colors')}</label>
                     <div className="palette-grid" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '10px' }}>
                         {Array.from({ length: paletteSize }).map((_, i) => (
                             <div 
@@ -478,14 +480,14 @@ const EffectEditor = ({ effect, assignedDacs = [], dacSettings = {}, onParamChan
     e.dataTransfer.setData('application/x-truelazer-param', JSON.stringify({
         type: 'toggle',
         paramName: 'enabled',
-        label: `${effect.name} ON`,
+        label: `${t(`effect.${effect.id}.name`)} ON`,
         ...context
     }));
   };
 
   return (
     <CollapsiblePanel 
-        title={effect.name} 
+        title={t(`effect.${effect.id}.name`)} 
         isCollapsed={isCollapsed}
         onToggle={handleToggle}
         dragHandle={dragHandle}
@@ -498,7 +500,7 @@ const EffectEditor = ({ effect, assignedDacs = [], dacSettings = {}, onParamChan
                         draggable
                         onDragStart={handleBlackoutDragStart}
                         style={{ padding: '2px', background: !isEnabled ? 'red' : 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex' }}
-                        title="Toggle Effect"
+                        title={t('ui.toggle_effect')}
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
                             <path d="m10.79 12.912-1.614-1.615a3.5 3.5 0 0 1-4.474-4.474l-2.06-2.06C.938 6.278 0 8 0 8s3 5.5 8 5.5a7 7 0 0 0 2.79-.588M5.21 3.088A7 7 0 0 1 8 2.5c5 0 8 5.5 8 5.5s-.939 1.721-2.641 3.238l-2.062-2.062a3.5 3.5 0 0 0-4.474-4.474z"/>

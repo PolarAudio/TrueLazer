@@ -4277,8 +4277,8 @@ const ShapeBuilder = ({ onBack, ref }) => {
           
           {tool === 'select' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: '#222', padding: '4px', borderRadius: '4px', border: '1px solid #333' }}>
-                  <button onClick={selectOddPoints} title={t('shapeBuilder.selectOdd')} style={{ padding: '4px', fontSize: '0.7rem' }}>ODD</button>
-                  <button onClick={selectEvenPoints} title={t('shapeBuilder.selectEven')} style={{ padding: '4px', fontSize: '0.7rem' }}>EVN</button>
+                  <button onClick={selectOddPoints} title={t('shapeBuilder.selectOdd')} style={{ padding: '4px', fontSize: '0.7rem' }}>{t('ui.odd')}</button>
+                  <button onClick={selectEvenPoints} title={t('shapeBuilder.selectEven')} style={{ padding: '4px', fontSize: '0.7rem' }}>{t('ui.evn')}</button>
                   <button onClick={invertPointSelection} title={t('shapeBuilder.invertSelection')} style={{ padding: '4px' }}><i className="bi bi-arrow-left-right"></i></button>
                   <button onClick={expandPointSelection} title={t('shapeBuilder.expandSelection')} style={{ padding: '4px' }}><i className="bi bi-plus-lg"></i></button>
                   <button onClick={shrinkPointSelection} title={t('shapeBuilder.shrinkSelection')} style={{ padding: '4px' }}><i className="bi bi-dash-lg"></i></button>
@@ -4881,7 +4881,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
                     <div style={{ display: 'flex', gap: '3px' }}>
                         <ModeButton active={syncMode === 'fps'} onClick={() => handleSetSyncMode('fps')}>FPS</ModeButton>
                         <ModeButton active={syncMode === 'bpm'} onClick={() => handleSetSyncMode('bpm')}>BPM</ModeButton>
-                        <ModeButton active={syncMode === 'time'} onClick={() => handleSetSyncMode('time')}>TIME</ModeButton>
+                        <ModeButton active={syncMode === 'time'} onClick={() => handleSetSyncMode('time')}>{t('ui.time')}</ModeButton>
                     </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', minWidth: '190px' }}>

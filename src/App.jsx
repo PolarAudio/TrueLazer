@@ -64,11 +64,13 @@ import { throttle, debounce } from './utils/throttle';
 import { advanceDjProgress, linkedClipDurationSec, makeLinkFromDeck } from './utils/djLinkTracks';
 import { useDjLinkClipTransport } from './hooks/useDjLinkClipTransport';
 import { useTranslation } from './i18n';
+import { translate } from './i18n/translate';
+import { TRANSLATIONS } from './i18n/translations';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 // Resolve the real-time duration (seconds) that layer effects animate over from
-// the layer's "Effect Speed Control" settings. Returns null when disabled so
+// the layer's t('ui.effect_speed_control') settings. Returns null when disabled so
 // callers fall back to the clip's own timing.
 function resolveLayerEffectDuration(effectSpeed, bpm, fps, totalFrames) {
     if (!effectSpeed || !effectSpeed.mode) return null;
@@ -1738,6 +1740,7 @@ const StatsDisplay = React.memo(({ type, previewFrameCountRef, totalPointsSentRe
     const [stats, setStats] = useState({ cpu: '0.0', ram: '0', fps: 0, pps: 0, avgPps: 0, frameBudget: null });
     const cpuTextRef = useRef(null);
     const ramTextRef = useRef(null);
+    const { t } = useTranslation();
 
     useEffect(() => {
         if (type === 'system') {
@@ -1830,7 +1833,7 @@ const StatsDisplay = React.memo(({ type, previewFrameCountRef, totalPointsSentRe
     if (type === 'system') {
         return (
             <div className="systemStats">
-                <p ref={cpuTextRef} className="sysStats">CPU: ...</p><p ref={ramTextRef} className="sysStats">RAM: ...</p>
+                <p ref={cpuTextRef} className="sysStats">{t('ui.cpu')}</p><p ref={ramTextRef} className="sysStats">{t('ui.ram')}</p>
             </div>
         );
     }
@@ -7703,6 +7706,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
     const MidiFeedbackHandler = React.memo(({ isPlaying, globalBlackout, layerBlackouts, layerSolos, isWorldOutputActive, clipContents, activeClipIndexes, selectedLayerIndex, selectedColIndex, quickAssigns, activePageId, theme }) => {
         const { sendFeedback } = useMidi();
+        const { t } = useTranslation();
 
         useEffect(() => {
             if (!sendFeedback) return;
@@ -7804,9 +7808,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             <div className="bottom-panel">
                 <div className="bottom-panel-tabs-container-1">
                     <div className="bottom-panel-tabs-1">
-                        <button className={`tab-button-1 ${activeBottomTab_1 === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('files')}>Files</button>
-                        <button className={`tab-button-1 ${activeBottomTab_1 === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('generators')}>Generators</button>
-                        <button className={`tab-button-1 ${activeBottomTab_1 === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('effects')}>Effects</button>
+                        <button className={`tab-button-1 ${activeBottomTab_1 === 'files' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('files')}>{t('ui.files')}</button>
+                        <button className={`tab-button-1 ${activeBottomTab_1 === 'generators' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('generators')}>{t('ui.generators')}</button>
+                        <button className={`tab-button-1 ${activeBottomTab_1 === 'effects' ? 'active' : ''}`} onClick={() => setActiveBottomTab_1('effects')}>{t('ui.effects')}</button>
                     </div>
                     <div className="bottom-panel-tab-content-1">
                         {activeBottomTab_1 === 'files' && <FileBrowser
@@ -7824,8 +7828,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
                 <div className="bottom-panel-tabs-container-2">
                     <div className="bottom-panel-tabs-2">
-                        <button className={`tab-button-2 ${activeBottomTab_2 === 'clip' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('clip')}>Clip-Settings</button>
-                        <button className={`tab-button-2 ${activeBottomTab_2 === 'layer' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('layer')}>Layer-Settings</button>
+                        <button className={`tab-button-2 ${activeBottomTab_2 === 'clip' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('clip')}>{t('ui.clip_settings')}</button>
+                        <button className={`tab-button-2 ${activeBottomTab_2 === 'layer' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('layer')}>{t('ui.layer_settings')}</button>
                     </div>
                     <div className="bottom-panel-tab-content-2">
                         {activeBottomTab_2 === 'clip' && <ClipSettingsPanel
@@ -7948,7 +7952,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 />
             </div>
         </>
-    ), [activeBottomTab_1, activeBottomTab_2, fileBrowserViewMode, fileBrowserPath, ildaParserWorker, activePageId, setActiveBottomTab_1, setActiveBottomTab_2, dispatch, selectedLayerIndex, selectedColIndex, selectedClip, getAudioInfo, bpm, getFftLevels, stopAudio, setClipVolume, handleEffectParameterChange, handleAddEffect, handleRemoveEffect, handleReorderEffects, handleAddLayerEffect, handleRemoveLayerEffect, handleSetParamSync, handleSetLayerParamSync, handleToggleDacMirror, handleRemoveDac, handleReorderDacs, handleAudioError, handleRegisterPreset, liveFramesRef, layerAutopilots, layerEffects, layerUiStates, layerEffectSpeeds, layerSyncSettings, layerAssignedDacs, dacs, dacOutputSettings, handleDacSelected, handleDacsDiscovered, handleUpdateDacSettings, handleApplyDacGroup, enabledShortcuts, quickAssigns, setShowOutputSettingsWindow, setShowShortcutsWindow, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, worldShowBeamEffect, worldBeamRenderMode, state.settingsPanelCollapsed, optimizationEnabled, optimizationMaxDist, optimizationPathDwell, optimizationSettings, handleUpdateQuickControl, handleToggleQuickButton, handleOpenOutputSettings, handleOpenShortcutsSettings, handleSetRenderSetting, handleAssignQuickControl, handleClearThumbnailCache, settingsPanelRenderSettings, playbackFps, progressRef, selectedLayerActiveClip, committedPlaybackSettings, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef]);
+    ), [activeBottomTab_1, activeBottomTab_2, fileBrowserViewMode, fileBrowserPath, ildaParserWorker, activePageId, setActiveBottomTab_1, setActiveBottomTab_2, dispatch, selectedLayerIndex, selectedColIndex, selectedClip, getAudioInfo, bpm, getFftLevels, stopAudio, setClipVolume, handleEffectParameterChange, handleAddEffect, handleRemoveEffect, handleReorderEffects, handleAddLayerEffect, handleRemoveLayerEffect, handleSetParamSync, handleSetLayerParamSync, handleToggleDacMirror, handleRemoveDac, handleReorderDacs, handleAudioError, handleRegisterPreset, liveFramesRef, layerAutopilots, layerEffects, layerUiStates, layerEffectSpeeds, layerSyncSettings, layerAssignedDacs, dacs, dacOutputSettings, handleDacSelected, handleDacsDiscovered, handleUpdateDacSettings, handleApplyDacGroup, enabledShortcuts, quickAssigns, setShowOutputSettingsWindow, setShowShortcutsWindow, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, worldShowBeamEffect, worldBeamRenderMode, state.settingsPanelCollapsed, optimizationEnabled, optimizationMaxDist, optimizationPathDwell, optimizationSettings, handleUpdateQuickControl, handleToggleQuickButton, handleOpenOutputSettings, handleOpenShortcutsSettings, handleSetRenderSetting, handleAssignQuickControl, handleClearThumbnailCache, settingsPanelRenderSettings, playbackFps, progressRef, selectedLayerActiveClip, committedPlaybackSettings, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef, t]);
 
     // Memoized middle-bar subtree: none of its inputs change on a clip trigger, so
     // React reuses this element and skips diffing it, reducing per-trigger work.
@@ -7971,7 +7975,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                 className={`page-btn ${activePageId === i ? 'active' : ''}`}
                                 onClick={() => dispatch({ type: 'SET_ACTIVE_PAGE', payload: i })}
                                 onContextMenu={(e) => { e.preventDefault(); if (window.electronAPI && window.electronAPI.showPageContextMenu) window.electronAPI.showPageContextMenu(i); }}
-                                title={pageNames && pageNames[i] ? pageNames[i] : `Page ${i + 1}`}
+                                title={pageNames && pageNames[i] && !Object.keys(TRANSLATIONS).some(loc => translate(loc, 'page.defaultName', { index: i + 1 }) === pageNames[i]) ? pageNames[i] : t('page.defaultName', { index: i + 1 })}
                                 style={{
                                     background: activePageId === i ? 'var(--theme-color)' : '#333',
                                     color: activePageId === i ? '#000' : '#ccc',
@@ -7988,7 +7992,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                     whiteSpace: 'nowrap'
                                 }}
                             >
-                                {pageNames && pageNames[i] ? pageNames[i] : i + 1}
+                                {pageNames && pageNames[i] && !Object.keys(TRANSLATIONS).some(loc => translate(loc, 'page.defaultName', { index: i + 1 }) === pageNames[i]) ? pageNames[i] : t('page.defaultName', { index: i + 1 })}
                             </button>
                         </Mappable>
                     ))}
@@ -7999,7 +8003,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
             </div>
         </div>
-    ), [bpm, dispatch, numPages, activePageId, pageNames, handleTapTempo, bpmSource, handleBpmSourceChange]);
+    ), [bpm, dispatch, numPages, activePageId, pageNames, handleTapTempo, bpmSource, handleBpmSourceChange, t]);
 
     return (
         <MidiProvider onMidiCommand={handleMidiCommand} theme={theme} enabledShortcuts={enabledShortcuts}>
@@ -8269,7 +8273,13 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                                                 layerIndex={layerIndex}
                                                                 colIndex={colIndex}
                                                                 pageId={pageIdx}
-                                                                clipName={clipNames?.[pageIdx]?.[layerIndex]?.[colIndex] || `Clip ${layerIndex + 1}-${colIndex + 1}`}
+                                                                clipName={(() => {
+                                                const raw = clipNames?.[pageIdx]?.[layerIndex]?.[colIndex];
+                                                if (!raw || Object.keys(TRANSLATIONS).some(loc => translate(loc, 'clip.defaultName', { row: layerIndex + 1, col: colIndex + 1 }) === raw)) {
+                                                    return t('clip.defaultName', { row: layerIndex + 1, col: colIndex + 1 });
+                                                }
+                                                return raw;
+                                            })()}
                                                                 clipContent={currentClipContent}
                                                                 thumbnailFrameIndex={thumbnailFrameIndexes[pageIdx]?.[layerIndex]?.[colIndex] || 0}
                                                                 thumbnailRenderMode={thumbnailRenderMode} // Add this prop

@@ -46,7 +46,7 @@ const IldaPlayer = ({ frame, effects, showBeamEffect, beamAlpha, fadeAlpha, prev
 	
   return (
     <div className="ilda-player">
-      <h3>Selected Preview</h3>
+      <h3>{t('ui.selected_preview')}</h3>
 		<div className="renderSettingToggle">
             <button onClick={onToggleBeamEffect} title={t('worldPreview.toggleBeam')} style={{background:'transparent', border:'none', cursor:'pointer', color:'#aaa'}}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-badge-3d" viewBox="0 0 16 16">

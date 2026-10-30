@@ -1,3 +1,4 @@
+import { useTranslation } from '../../i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import { useTimeline } from '../../contexts/TimelineContext';
 import { useMidi } from '../../contexts/MidiContext';
@@ -5,7 +6,8 @@ import { formatClock, SNAP_MODES, snapInterval } from '../../utils/timelineTime'
 import { formatTimecode } from '../../utils/timecodeSync';
 import { ZOOM_MIN, ZOOM_MAX } from './layout';
 
-const SNAP_LABELS = { off: 'Snap: Off', frame: 'Snap: Frame', beat: 'Snap: Beat', eighth: 'Snap: 1/8', sixteenth: 'Snap: 1/16' };
+const SNAP_LABELS = {
+    off: 'Snap: Off', frame: 'Snap: Frame', beat: 'Snap: Beat', eighth: 'Snap: 1/8', sixteenth: 'Snap: 1/16' };
 
 const SYNC_LABELS = {
     internal: 'Internal',
@@ -26,6 +28,7 @@ const FRAME_SOURCES = ['mtc', 'ltc', 'artnet', 'tcnet'];
  * BPM clamped to [20, 300] would lock the field the moment "1" is pressed.
  */
 const DraftNumber = ({ value, min, max, step = 1, onCommit, title }) => {
+    const { t } = useTranslation();
     const [draft, setDraft] = useState(null);
     const commit = () => {
         const raw = draft != null && String(draft).trim() !== '' ? draft : value;
@@ -71,6 +74,7 @@ const TimelineTransport = ({
     sync,
 }) => {
     const { state, actions } = useTimeline();
+    const { t } = useTranslation();
     const { midiInputs: ctxMidiInputs } = useMidi();
     const s = state.settings;
 
@@ -133,19 +137,19 @@ const TimelineTransport = ({
             <div className="timeline-transport-left">
                 <button className="timeline-btn" onClick={onBack}>← Show Control</button>
                 <h2 className="timeline-title">Timeline</h2>
-                <button className={`timeline-btn ${isPlaying ? 'play' : ''}`} onClick={onPlay} title="Play / Pause">
+                <button className={`timeline-btn ${isPlaying ? 'play' : ''}`} onClick={onPlay} title={t('ui.play_pause')}>
                     {isPlaying ? '❚❚ Pause' : '▶ Play'}
                 </button>
-                <button className="timeline-btn" onClick={onStop} title="Stop (return to cursor)"
+                <button className="timeline-btn" onClick={onStop} title={t('ui.stop_return_to_cursor')}
                     disabled={!isPlaying && playheadSec <= 0}>■ Stop</button>
                 <button
                     className={`timeline-btn laser ${laserOn ? 'on' : ''}`}
                     onClick={() => onToggleLaser(!laserOn)}
-                    title="Toggle laser DAC output"
+                    title={t('ui.toggle_laser_dac_output')}
                 >
                     {laserOn ? '● LASER ON' : '○ LASER OFF'}
                 </button>
-                <span className="timeline-timecode" title="Playhead timecode">{formatClock(playheadSec)}</span>
+                <span className="timeline-timecode" title={t('ui.playhead_timecode')}>{formatClock(playheadSec)}</span>
                 <span className="timeline-total">/ {formatClock(getTotal(state))}</span>
                 <input
                     type="text"
@@ -156,7 +160,7 @@ const TimelineTransport = ({
                         if (parts.length === 2 && parts.every(isFinite)) onSeek(parts[0] * 60 + parts[1]);
                         else if (parts.length === 3 && parts.every(isFinite)) onSeek(parts[0] * 3600 + parts[1] * 60 + parts[2]);
                     }}
-                    title="Type mm:ss or hh:mm:ss to seek"
+                    title={t('ui.type_mm_ss_or_hh_mm_ss_to_seek')}
                 />
             </div>
 
@@ -182,7 +186,7 @@ const TimelineTransport = ({
                     ))}
                 </select>
                 <label className="timeline-tool">
-                    <span>Zoom</span>
+                    <span>{t('ui.zoom')}</span>
                     <DraftNumber
                         value={Math.round(s.zoom)}
                         min={ZOOM_MIN}
@@ -191,28 +195,28 @@ const TimelineTransport = ({
                         onCommit={setZoom}
                     />
                 </label>
-                <button className="timeline-btn-sm" title="Zoom out" onClick={() => setZoom(s.zoom / 1.2)}>−</button>
-                <button className="timeline-btn-sm" title="Zoom in" onClick={() => setZoom(s.zoom * 1.2)}>+</button>
-                <button className="timeline-btn-sm" title="Fit the whole timeline to the window" onClick={onFit}>Fit</button>
+                <button className="timeline-btn-sm" title={t('ui.zoom_out')} onClick={() => setZoom(s.zoom / 1.2)}>−</button>
+                <button className="timeline-btn-sm" title={t('ui.zoom_in')} onClick={() => setZoom(s.zoom * 1.2)}>+</button>
+                <button className="timeline-btn-sm" title={t('ui.fit_the_whole_timeline_to_the_window')} onClick={onFit}>{t('ui.fit')}</button>
             </div>
 
             <div className="timeline-transport-right">
                 <label className="timeline-tool timeline-sync">
-                    <span>Sync</span>
-                    <select value={src} onChange={(e) => setSync({ source: e.target.value })} title="External timecode source">
+                    <span>{t('ui.sync')}</span>
+                    <select value={src} onChange={(e) => setSync({ source: e.target.value })} title={t('ui.external_timecode_source')}>
                         {Object.entries(SYNC_LABELS).map(([v, label]) => (
                             <option key={v} value={v}>{label}</option>
                         ))}
                     </select>
                 </label>
                 {(src === 'mtc' || src === 'midiClock') && (
-                    <label className="timeline-tool" title="MIDI input device for timecode / clock. Default prefers the GS Wavetable synthesizer, else the app's selected MIDI input.">
-                        <span>In</span>
+                    <label className="timeline-tool" title={t('ui.midi_input_device_for_timecode_clock_default_prefers_the_gs_')}>
+                        <span>{t('ui.in')}</span>
                         <select
                             value={midiChosen || midiBound || ''}
                             onChange={(e) => setSync({ inputDeviceId: e.target.value })}
                         >
-                            <option value="">Default (auto)</option>
+                            <option value="">{t('ui.default_auto')}</option>
                             {midiInputs.map((i) => (
                                 <option key={i.id} value={i.id}>{i.name}</option>
                             ))}
@@ -220,7 +224,7 @@ const TimelineTransport = ({
                     </label>
                 )}
                 {FRAME_SOURCES.includes(src) && (
-                    <label className="timeline-tool" title="Frame rate used when decoding & generating for the source">
+                    <label className="timeline-tool" title={t('ui.frame_rate_used_when_decoding_generating_for_the_source')}>
                         <span>fps</span>
                         <DraftNumber
                             value={s.sync?.fps ?? 30}
@@ -250,7 +254,7 @@ const TimelineTransport = ({
                         checked={s.clipEditTrim}
                         onChange={(e) => actions.setSettings({ clipEditTrim: e.target.checked })}
                     />
-                    <span>Trim</span>
+                    <span>{t('ui.trim')}</span>
                 </label>
                 <label
                     className="timeline-checkbox"
@@ -261,7 +265,7 @@ const TimelineTransport = ({
                         checked={!!s.optimizeOnPlayback}
                         onChange={(e) => actions.setSettings({ optimizeOnPlayback: e.target.checked })}
                     />
-                    <span>Optimize Output</span>
+                    <span>{t('ui.optimize_output')}</span>
                 </label>
                 <button
                     className="timeline-btn"
@@ -276,7 +280,7 @@ const TimelineTransport = ({
                             value={s.loop?.start ?? 0}
                             min={0}
                             step={0.1}
-                            title="Loop start (s)"
+                            title={t('ui.loop_start_s')}
                             onCommit={(v) => actions.setSettings({ loop: { start: v, end: s.loop?.end ?? 60 } })}
                         />
                         –
@@ -284,7 +288,7 @@ const TimelineTransport = ({
                             value={s.loop?.end ?? 60}
                             min={0}
                             step={0.1}
-                            title="Loop end (s)"
+                            title={t('ui.loop_end_s')}
                             onCommit={(v) => actions.setSettings({ loop: { start: s.loop?.start ?? 0, end: v } })}
                         />
                     </span>

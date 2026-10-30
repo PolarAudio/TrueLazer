@@ -1,7 +1,9 @@
+import { useTranslation } from '../i18n';
 import React, { useState, useEffect } from 'react';
 import { generatorDefinitions } from '../utils/generatorDefinitions'; // Import generatorDefinitions
 
 const GeneratorPanel = () => {
+    const { t } = useTranslation();
   const [ndiSources, setNdiSources] = useState([]);
 
   useEffect(() => {
@@ -44,12 +46,12 @@ const GeneratorPanel = () => {
             draggable
             onDragStart={(e) => handleDragStart(e, generator)}
           >
-            {generator.name}
+            {t(`generator.${generator.id}.name`)}
           </div>
         ))}
       </div>
 
-      <h3 style={{ marginTop: '10px' }}>NDI Sources</h3>
+      <h3 style={{ marginTop: '10px' }}>{t('ui.ndi_sources')}</h3>
       <div className="generator-list">
         {ndiSources.length > 0 ? (
           ndiSources.map((source, idx) => (
@@ -63,7 +65,7 @@ const GeneratorPanel = () => {
             </div>
           ))
         ) : (
-          <div className="empty-msg">No NDI sources found</div>
+          <div className="empty-msg">{t('ui.no_ndi_sources_found')}</div>
         )}
       </div>
     </div>

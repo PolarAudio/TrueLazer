@@ -175,7 +175,7 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
   const [loadingSystemFonts, setLoadingSystemFonts] = useState(false);
 
   if (!selectedGeneratorId) {
-    return <div className="generator-settings-panel">No generator selected.</div>;
+    return <div className="generator-settings-panel">{t('ui.no_generator_selected')}</div>;
   }
 
   const generatorDefinition = generatorDefinitions.find(def => def.id === selectedGeneratorId);
@@ -242,7 +242,7 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
 
   return (
     <CollapsiblePanel 
-        title={`${generatorDefinition.name} Settings`}
+        title={`${t(`generator.${generatorDefinition.id}.name`)} Settings`}
         isCollapsed={!!collapsedPanels['generator']}
         onToggle={handleToggle}
     >
@@ -285,19 +285,19 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
                             value={currentFont}
                         >
                             {projectFonts.length > 0 ? (
-                                <optgroup label="Project Fonts">
+                                <optgroup label={t('ui.project_fonts')}>
                                     {projectFonts.map(f => (
                                         <option key={f.path} value={f.path}>{f.name}</option>
                                     ))}
                                 </optgroup>
                             ) : (
-                                <optgroup label="Default Fonts">
-                                     <option value="src/fonts/Geometr415 Blk BT Black.ttf">Geometr415</option>
+                                <optgroup label={t('ui.default_fonts')}>
+                                     <option value="src/fonts/Geometr415 Blk BT Black.ttf">{t('ui.geometr415')}</option>
                                 </optgroup>
                             )}
                             
                             {systemFonts.length > 0 ? (
-                                <optgroup label="System Fonts">
+                                <optgroup label={t('ui.system_fonts')}>
                                     {systemFonts.map(f => (
                                         <option key={f.path} value={f.path}>{f.name}</option>
                                     ))}
@@ -306,7 +306,7 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
                                 <option value="load-system">{loadingSystemFonts ? t('common.loading') : t('generator.loadSystemFonts')}</option>
                             )}
                             
-                            <optgroup label="Actions">
+                            <optgroup label={t('ui.actions')}>
                                 <option value="browse">{t('common.browse')} File...</option>
                             </optgroup>
                         </select>

@@ -364,7 +364,7 @@ const Clip = ({
                     className="clip_link_dot"
                     style={djLinkDot ? { background: djLinkDot, boxShadow: `0 0 5px ${djLinkDot}` } : undefined}
                   />
-                  {djLink.follow === 'position' ? 'POS' : 'LOOP'}
+                  {djLink.follow === 'position' ? 'POS' : t('ui.loop')}
                 </p>
               )}
             </>
