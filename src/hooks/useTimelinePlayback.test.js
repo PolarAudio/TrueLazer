@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOutputFlip, flipPoints, padFrameToCount } from './useTimelinePlayback';
+import { decimatePoints } from '../../main/dac-budget.cjs';
+import {
+    resolveOutputFlip,
+    flipPoints,
+    padFrameToCount,
+    padFrameForOutput,
+    isShowbridgeOutput,
+} from './useTimelinePlayback';
 
 describe('resolveOutputFlip', () => {
     it('mirrors an output when only the track asks for it', () => {
@@ -102,5 +109,55 @@ describe('padFrameToCount', () => {
         expect(out[1].x).toBeCloseTo(0.1);
         expect(out[1].blanking).toBe(true);
         expect(points.length).toBe(1);
+    });
+});
+
+describe('isShowbridgeOutput', () => {
+    it('matches Showbridge regardless of case', () => {
+        expect(isShowbridgeOutput('Showbridge')).toBe(true);
+        expect(isShowbridgeOutput('showbridge')).toBe(true);
+        expect(isShowbridgeOutput('SHOWBRIDGE')).toBe(true);
+    });
+
+    it('does not match other DAC types or missing types', () => {
+        expect(isShowbridgeOutput('EtherDream')).toBe(false);
+        expect(isShowbridgeOutput('idn')).toBe(false);
+        expect(isShowbridgeOutput(null)).toBe(false);
+    });
+});
+
+describe('padFrameForOutput', () => {
+    const makeFrame = (count) => {
+        const frame = new Float32Array(count * 8);
+        for (let i = 0; i < count; i++) {
+            frame[i * 8] = (i / Math.max(1, count - 1)) * 2 - 1;
+            frame[i * 8 + 3] = frame[i * 8 + 4] = frame[i * 8 + 5] = 255;
+        }
+        frame[(count - 1) * 8 + 7] = 1;
+        return frame;
+    };
+
+    it('leaves Showbridge frames unpadded so the wire budget keeps their lit points', () => {
+        const frame = makeFrame(500);
+
+        // Timeline used to pad this to 1000, and Showbridge then decimated the
+        // blanked hold tail down to 575 before it ever sampled the lit content.
+        // The backend builds its own PTS_FULL wire frame, so no pre-padding is
+        // needed here.
+        expect(padFrameForOutput(frame, 'Showbridge', 1000)).toBe(frame);
+        expect(decimatePoints(frame, 575)).toBe(frame);
+    });
+
+    it('still pads EtherDream / IDN frames to their fixed playback length', () => {
+        const frame = makeFrame(2);
+        const out = padFrameForOutput(frame, 'EtherDream', 5);
+
+        expect(out.length).toBe(5 * 8);
+        expect(out[4 * 8 + 6]).toBe(1);
+    });
+
+    it('does nothing for a non-positive target count', () => {
+        const frame = makeFrame(2);
+        expect(padFrameForOutput(frame, 'EtherDream', 0)).toBe(frame);
     });
 });

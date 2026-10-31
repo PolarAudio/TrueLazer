@@ -73,10 +73,24 @@ export function flipPoints(points, flipX, flipY) {
     return out;
 }
 
+// Showbridge builds every wire frame to its fixed PTS_FULL length in the main
+// process. Pre-padding its source here would add a large blanked hold tail that
+// the hardware budget decimator has to preserve before it reaches the lit
+// points, so most ILDA geometry would be dropped on the wire.
+export function isShowbridgeOutput(type) {
+    return String(type || '').toLowerCase() === 'showbridge';
+}
+
 // Pad a frame with blanked hold points at its last position so every output of
 // a track can be handed the same number of points. A DAC turns a frame into
 // playback time from the frame itself (point count and/or duration), so equal
 // lengths are what keeps two channels of one device advancing together.
+// Showbridge is exempt because its backend already performs the fill/padding.
+export function padFrameForOutput(points, outputType, count) {
+    if (!(count > 0) || isShowbridgeOutput(outputType)) return points;
+    return padFrameToCount(points, count);
+}
+
 export function padFrameToCount(points, count) {
     if (!points || !(count > 0)) return points;
     const typed = points instanceof Float32Array;
@@ -886,7 +900,7 @@ export function useTimelinePlayback() {
             // budget so each frame lasts the same 1/fps, whatever the content.
             if (!distributed) {
                 for (const entry of outFrames) {
-                    entry.outFrame = padFrameToCount(entry.outFrame, entry.budget);
+                    entry.outFrame = padFrameForOutput(entry.outFrame, entry.out.type, entry.budget);
                 }
             }
 
@@ -899,10 +913,15 @@ export function useTimelinePlayback() {
             // rates and visibly drift apart within seconds. Pad the shorter
             // frames with blanked hold points at the last position so all
             // channels play for exactly the same time.
-            const counts = outFrames.map(({ outFrame }) =>
+            // Showbridge frames are always built to PTS_FULL in the main
+            // process, so they do not need renderer-side length matching.
+            const padTargets = !distributed
+                ? outFrames.filter(({ out }) => !isShowbridgeOutput(out.type))
+                : [];
+            const counts = padTargets.map(({ outFrame }) =>
                 outFrame ? Math.floor((outFrame.length || 0) / (Array.isArray(outFrame) ? 1 : 8)) : 0
             );
-            const targetCount = !distributed && outFrames.length > 1 ? Math.max(0, ...counts) : 0;
+            const targetCount = counts.length > 1 ? Math.max(0, ...counts) : 0;
             if (targetCount > 0 && counts.some((c) => c !== targetCount) && !paddedChannelsLogged.has(chId)) {
                 paddedChannelsLogged.add(chId);
                 console.log(`[TimelinePlayback] channel ${chId}: outputs produced different frame lengths [${counts.join(', ')}] points - padding to ${targetCount} so they stay in sync`);
@@ -932,7 +951,7 @@ export function useTimelinePlayback() {
 
             for (const { out, outFrame, options } of outFrames) {
                 frames[`${out.ip}:${out.channel}`] = {
-                    points: targetCount > 0 ? padFrameToCount(outFrame, targetCount) : outFrame,
+                    points: padFrameForOutput(outFrame, out.type, targetCount),
                     ip: out.ip,
                     channel: out.channel,
                     type: out.type || 'EtherDream',
