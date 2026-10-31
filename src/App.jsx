@@ -6634,9 +6634,24 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             dispatch({ type: 'SET_DACS', payload: list });
         };
         timelineBridge.onOpenOutputSettings = () => setShowOutputSettingsWindow(true);
+        // The Timeline reports a missing audio track through the bridge. Keep a
+        // single entry per request id and replace it when a new project points
+        // at a different (also missing) file.
+        timelineBridge.onMissingFile = (entry) => {
+            if (!entry || !entry.filePath) return;
+            setMissingFiles((prev) => [
+                ...prev.filter((f) => f.requestId !== entry.requestId),
+                entry,
+            ]);
+        };
+        timelineBridge.onMissingFileResolved = (requestId) => {
+            setMissingFiles((prev) => prev.filter((f) => f.requestId !== requestId));
+        };
         return () => {
             timelineBridge.onDacList = null;
             timelineBridge.onOpenOutputSettings = null;
+            timelineBridge.onMissingFile = null;
+            timelineBridge.onMissingFileResolved = null;
         };
     }, []);
 
@@ -7473,10 +7488,14 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         if (!window.electronAPI || !window.electronAPI.showOpenDialog) return;
 
         try {
+            const isAudio = fileEntry.type === 'audio' || fileEntry.type === 'timeline-audio'
+                || /\.(wav|mp3|ogg|flac|m4a|aac|aiff?)$/i.test(fileEntry.fileName || '');
             const response = await window.electronAPI.showOpenDialog({
                 title: `Locate missing file: ${fileEntry.fileName}`,
                 defaultPath: fileEntry.filePath,
-                filters: [{ name: 'ILDA Files', extensions: ['ild'] }, { name: 'All Files', extensions: ['*'] }],
+                filters: isAudio
+                    ? [{ name: 'Audio Files', extensions: ['wav', 'mp3', 'ogg', 'flac', 'm4a', 'aac', 'aif', 'aiff'] }, { name: 'All Files', extensions: ['*'] }]
+                    : [{ name: 'ILDA Files', extensions: ['ild'] }, { name: 'All Files', extensions: ['*'] }],
                 properties: ['openFile']
             });
 
@@ -7504,8 +7523,12 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     }
                 }
 
-                // Remove from missing list
-                setMissingFiles(prev => prev.filter(f => f.requestId !== fileEntry.requestId));
+                // Remove from missing list. The timeline track is removed only
+                // after its new path is actually bound (below), so a failed
+                // decode keeps the prompt around.
+                if (fileEntry.type !== 'timeline-audio') {
+                    setMissingFiles(prev => prev.filter(f => f.requestId !== fileEntry.requestId));
+                }
 
                 // 2. Auto-resolve others by scanning ALL clips
                 // We infer the old directory from the fileEntry
@@ -7606,16 +7629,33 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         }
                     }
 
-                    // Timeline audio file in the same directory
-                    const tlAudio = tlState.audio;
-                    if (tlAudio?.path && getDir(tlAudio.path) === oldDirectory) {
+                    // Timeline audio track (stored under settings.audio, not at
+                    // the state root). Bind the exact file the user picked,
+                    // even when they had to rename it while relocating.
+                    const tlAudio = tlState.settings?.audio;
+                    if (fileEntry.type === 'timeline-audio' || (tlAudio?.path && tlAudio.path === fileEntry.filePath)) {
+                        if (timelineBridge.loadAudio) {
+                            await timelineBridge.loadAudio(newPath);
+                        } else {
+                            tlActions.setAudio({ ...tlAudio, path: newPath });
+                        }
+                        setMissingFiles(prev => prev.filter(f =>
+                            f.requestId !== fileEntry.requestId && f.filePath !== tlAudio?.path
+                        ));
+                    } else if (tlAudio?.path && getDir(tlAudio.path) === oldDirectory) {
+                        // Another file from the same folder moved with it:
+                        // follow the same directory rename.
                         const fileName = getFile(tlAudio.path);
                         const potentialPath = `${newDirectory}${sep}${fileName}`;
                         if (tlAudio.path !== potentialPath) {
                             const exists = await window.electronAPI.checkFileExists(potentialPath);
                             if (exists) {
                                 console.log(`[Relocate] Auto-resolving timeline audio: ${fileName}`);
-                                tlActions.setAudio({ ...tlAudio, path: potentialPath });
+                                if (timelineBridge.loadAudio) {
+                                    await timelineBridge.loadAudio(potentialPath);
+                                } else {
+                                    tlActions.setAudio({ ...tlAudio, path: potentialPath });
+                                }
                                 processedOldPaths.add(tlAudio.path);
                                 setMissingFiles(prev => prev.filter(f => f.filePath !== tlAudio.path));
                             }

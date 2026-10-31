@@ -28,7 +28,17 @@ const STORAGE_KEY = 'truelazer:timeline:v1';
 // `onDacList` lets the timeline hand its discovered DACs to the app, so the
 // Output Settings window sees the same channels the timeline routed.
 // `onOpenOutputSettings` lets the timeline open that window.
-export const timelineBridge = { stateRef: null, actionsRef: null, onDacList: null, onOpenOutputSettings: null };
+export const timelineBridge = {
+    stateRef: null,
+    actionsRef: null,
+    onDacList: null,
+    onOpenOutputSettings: null,
+    // The app shell owns the shared RelocateModal, so the timeline reports a
+    // missing track through the bridge and later asks it to bind the new path.
+    onMissingFile: null,
+    onMissingFileResolved: null,
+    loadAudio: null,
+};
 
 export const generateId = (prefix = 'tl') =>
     `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1486,6 +1496,9 @@ export const TimelineProvider = ({ children }) => {
     const { audioCtx } = useAudio();
     const [state, baseDispatch] = useReducer(reducer, null, () => createInitialTimelineState());
     const [hydrated, setHydrated] = useState(false);
+    // Bumped whenever a project/local snapshot is loaded, so the audio check
+    // runs again even when the new project happens to use the same path.
+    const [projectLoadTick, setProjectLoadTick] = useState(0);
     const hydrateTimer = useRef(null);
     const hasStoredData = useRef(false);
     const [histTick, setHistTick] = useState(0);
@@ -1584,6 +1597,7 @@ export const TimelineProvider = ({ children }) => {
         if (data) {
             historyRef.current = { past: [], future: [] };
             dispatch({ type: 'HYDRATE', payload: data });
+            setProjectLoadTick((t) => t + 1);
         }
         return data;
     }, []);
@@ -1601,6 +1615,41 @@ export const TimelineProvider = ({ children }) => {
         }
         setHydrated(true);
     }, []);
+
+    // A timeline project is portable between machines, but its audio track is
+    // referenced by absolute path. Flag a track that no longer exists so the
+    // shared RelocateModal can offer to locate it (ILDA cues already do this).
+    const checkedAudioRef = useRef({ path: null, loadTick: -1 });
+    useEffect(() => {
+        const audioPath = state.settings?.audio?.path || null;
+        if (checkedAudioRef.current.path === audioPath && checkedAudioRef.current.loadTick === projectLoadTick) return;
+        checkedAudioRef.current = { path: audioPath, loadTick: projectLoadTick };
+
+        if (!audioPath) {
+            timelineBridge.onMissingFileResolved?.('timeline-audio');
+            return undefined;
+        }
+        if (!window.electronAPI?.checkFileExists) return undefined;
+
+        let cancelled = false;
+        window.electronAPI.checkFileExists(audioPath)
+            .then((exists) => {
+                if (cancelled) return;
+                if (exists) {
+                    timelineBridge.onMissingFileResolved?.('timeline-audio');
+                    return;
+                }
+                timelineBridge.onMissingFile?.({
+                    filePath: audioPath,
+                    fileName: audioPath.split(/[/\\]/).pop(),
+                    requestId: 'timeline-audio',
+                    type: 'timeline-audio',
+                });
+            })
+            .catch(() => { /* a failed check is not proof the file is gone */ });
+
+        return () => { cancelled = true; };
+    }, [state.settings?.audio?.path, projectLoadTick]);
 
     // Debounced persistence
     useEffect(() => {
@@ -1862,6 +1911,13 @@ export const TimelineProvider = ({ children }) => {
         timelineBridge.actionsRef = actionsRef;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Relocating the track must re-decode it (peaks/duration), not just swap
+    // the path, so the waveform and transport length follow the new file.
+    useEffect(() => {
+        timelineBridge.loadAudio = loadTimelineAudio;
+        return () => { timelineBridge.loadAudio = null; };
+    }, [loadTimelineAudio]);
 
     const value = useMemo(
         () => ({

@@ -691,6 +691,10 @@ export function useTimelinePlayback() {
         if (effects.length > 0) {
             const res = applyEffects({ points: frame, isTypedArray: true }, effects, {
                 time: t * 1000,
+                // Chase runs from the cue's start, not from the absolute timeline
+                // position: otherwise the same cue showed a different chase step
+                // every time it was placed later on the timeline.
+                chaseTime: pick ? Math.max(0, t - pick.startTime) : t,
                 effectStates: effectStatesRef.current,
                 // Channel-mode Delay/Chase distribute across the zone's actually
                 // assigned DAC channels — the timeline's equivalent of the main

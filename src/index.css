@@ -3092,10 +3092,11 @@ input[type="checkbox"].tl-checkbox:after {
   display: flex;
   align-items: center;
   gap: 14px;
+  row-gap: 6px;
   padding: 8px 12px;
   background: #23262e;
   border-bottom: 1px solid #33373f;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .timeline-transport-left,
@@ -3104,13 +3105,14 @@ input[type="checkbox"].tl-checkbox:after {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.timeline-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--theme-color);
+.timeline-transport-right {
+  flex: 0 1 auto;
+  max-width: 100%;
+  justify-content: flex-end;
 }
 
 .timeline-timecode {
@@ -4632,17 +4634,18 @@ input[type="checkbox"].tl-checkbox:after {
   display: block;
 }
 
-/* File drawer overlay */
+/* File drawer: a side panel next to the inspector, not an overlay. It used to
+   be absolutely positioned at a fixed 44px top, which overlapped the transport
+   as soon as the transport wrapped on a narrow window. */
 .timeline-file-drawer {
-  position: absolute;
-  right: 0;
-  top: 44px;
-  bottom: 0;
-  width: 340px;
+  flex: 0 0 auto;
+  width: clamp(240px, 24vw, 340px);
+  height: 100%;
   background: #23262e;
   border-left: 1px solid #33373f;
   z-index: 200;
   overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .timeline-page {

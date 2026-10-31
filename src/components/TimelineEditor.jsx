@@ -553,20 +553,20 @@ const TimelineEditor = ({ onBack }) => {
                     getCompiledFrame={pb.getCompiledFrame}
                     playheadSec={pb.playheadSec}
                 />
+
+                {drawerOpen && (
+                    <div className="timeline-file-drawer">
+                        <FileBrowser
+                            viewMode={fbViewMode}
+                            onViewModeChange={setFbViewMode}
+                            path={fbPath}
+                            onPathChange={setFbPath}
+                        />
+                    </div>
+                )}
             </div>
 
             <TimelineDacDock />
-
-            {drawerOpen && (
-                <div className="timeline-file-drawer">
-                    <FileBrowser
-                        viewMode={fbViewMode}
-                        onViewModeChange={setFbViewMode}
-                        path={fbPath}
-                        onPathChange={setFbPath}
-                    />
-                </div>
-            )}
         </div>
     );
 };

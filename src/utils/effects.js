@@ -1441,91 +1441,131 @@ function applyDelay(points, numPoints, params, effectStates, instanceId, context
     }
 }
 
+// Chase phases move continuously through a ring of N steps. Distance is always
+// measured the short way around that ring so the head wraps seamlessly from the
+// last step back to the first (left→right) or from the outer ring back to the
+// middle (center→out).
+function chaseStepDistance(phase, stepIndex, period) {
+    const p = Math.max(1, period);
+    const raw = Math.abs(phase - stepIndex) % p;
+    return Math.min(raw, p - raw);
+}
+
+// How bright a step is at the current phase.
+//
+// - `window` is how many steps the light covers (the user's overlap).
+// - `decay` must DARKEN the trail as it rises. The old `pow(base, 1 - decay)`
+//   did the opposite (0.8 lifted a 50% step to 87%), which flattened the chase
+//   so only decay=0 looked like a fade.
+function chaseStepIntensity(stepIndex, phase, period, window, decay) {
+    if (!(window > 0)) return 0;
+    const distance = chaseStepDistance(phase, stepIndex, period);
+    if (distance >= window) return 0;
+    const base = 1 - distance / window;
+    const amount = Number.isFinite(decay) ? Math.max(0, Math.min(1, decay)) : 0;
+    return Math.pow(base, 1 + amount * 2);
+}
+
+// Step index of a point/segment: a normalized position 0..1 is remapped by the
+// direction and then quantized into `steps` buckets. Keeping this in one helper
+// makes segment-mode point mapping and the blanking bridge use exactly the same
+// boundaries (center-out used to duplicate the formula in two places).
+function chaseSegmentStep(norm, steps, direction) {
+    let pos = norm;
+    if (direction === 'right_to_left') pos = 1 - norm;
+    else if (direction === 'center_to_out') pos = Math.abs(norm - 0.5) * 2;
+    else if (direction === 'out_to_center') pos = 1 - Math.abs(norm - 0.5) * 2;
+    return Math.min(steps - 1, Math.max(0, Math.floor(pos * steps)));
+}
+
+// Resolve how the chase advances. A caller that renders a clip can pass
+// `chaseTime` in seconds (cue-local time). Older callers pass progress +
+// clipDuration; if only progress exists it remains a normalized 0..1 cycle for
+// thumbnail/legacy compatibility. Without any clip clock the effect runs on the
+// free-running wall clock. This is what lets the timeline reset the chase at the
+// cue start instead of using the absolute timeline position.
+function chasePhaseAt(context, time, cycleLength, clockRate, speed) {
+    const { progress, clipDuration, chaseTime } = context;
+    const speedMult = Number.isFinite(speed) ? Math.max(0, speed) : 1;
+    const rate = Number.isFinite(clockRate) ? Math.max(0, clockRate) : 1;
+
+    let phase;
+    if (Number.isFinite(chaseTime)) {
+        phase = Math.max(0, chaseTime) * rate * speedMult;
+    } else if (progress !== undefined && progress !== null && Number.isFinite(progress)
+        && Number.isFinite(clipDuration) && clipDuration > 0) {
+        phase = Math.max(0, progress) * clipDuration * rate * speedMult;
+    } else if (progress !== undefined && progress !== null && Number.isFinite(progress)) {
+        phase = progress * cycleLength * speedMult;
+    } else {
+        const ms = Number.isFinite(time) ? time : 0;
+        phase = (ms * 0.001) * rate * speedMult;
+    }
+    return phase;
+}
+
+function wrapChasePhase(rawPhase, cycleLength, playstyle, holdStep = cycleLength - 1) {
+    const span = Math.max(1, cycleLength);
+    if (playstyle === 'bounce') {
+        const cycle = ((rawPhase % (span * 2)) + span * 2) % (span * 2);
+        return cycle > span ? (span * 2) - cycle : cycle;
+    }
+    if (playstyle === 'once') {
+        // A "once" chase runs one full pass and holds the LAST real step.
+        // Clamping to `span` made the ring wrap back to step 0, so the effect
+        // never ended on the far end.
+        return Math.min(Math.max(0, rawPhase), Math.max(0, holdStep));
+    }
+    return ((rawPhase % span) + span) % span;
+}
+
 export function applyChase(points, numPoints, params, time, context = {}) {
     const { mode = 'segment', steps: paramSteps, decay, speed, overlap, emptyStep, direction, useCustomOrder, customOrder, playstyle = 'loop', clock: chaseClock = 'time' } = params;
-    const { progress, clipDuration, syncSettings = {}, fps = 30, bpm = 120 } = context;
+    const { assignedDacs, fps = 30, bpm = 120 } = context;
 
-    // Check if THIS specific parameter ('speed') is synced
-    const instancePrefix = params.instanceId ? `${params.instanceId}.` : 'chase.';
-    const isSpeedSynced = !!syncSettings[instancePrefix + 'speed'];
-    // A caller that renders a clip (Showeditor, preview, WebGL) provides a frame
-    // clock through progress + clipDuration. Without one the chase must advance on
-    // the free-running clock instead of being pinned to step 0 — the timeline
-    // editor's compile has no clip-render context, so `progress` stays undefined
-    // there (applyEffects' `progress = 0` default must not count as a clock).
-    const useSync = (progress !== undefined && progress !== null && (clipDuration === undefined || clipDuration > 0)) || isSpeedSynced;
-
-    // Driving clock: how many steps the chase advances per second. Mirrors the
-    // Showeditor "clip playback" speed pick (which the timeline editor lacks), so
-    // users choose the clock directly on the effect. 'time' = 1 step per second
-    // (historical default), 'fps' = 1 step per rendered frame at the timeline
-    // framerate, 'bpm' = 1 step per musical beat.
+    // Driving clock: how many steps the chase advances per second. 'time' = 1
+    // step per second (historical default), 'fps' = 1 step per rendered frame at
+    // the timeline framerate, 'bpm' = 1 step per musical beat.
     const clockRate =
         chaseClock === 'fps' ? Math.max(1, fps)
         : chaseClock === 'bpm' ? Math.max(0, bpm) / 60
         : 1;
 
     if (mode === 'segment') {
-        // 1 step = the chase's floor: a single step over the whole segment maps
-        // every point to step 0 and the t-clock always lands on it, so the effect
-        // is a no-op. Curves that dip below 1 clamp here instead of producing
-        // negative/ghost step indices, keeping the slider minimum authoritative.
-        const steps = Math.max(1, paramSteps);
-        // Synced maps 0..1 progress to 0..steps; free time advances `clockRate`
-        // steps per second.
-        let t = (useSync ? (progress * steps) : (time * 0.001 * clockRate)) * speed;
-
-        if (playstyle === 'bounce') {
-            const range = steps;
-            const cycle = t % (range * 2);
-            t = cycle > range ? (range * 2) - cycle : cycle;
-        } else if (playstyle === 'once') {
-            t = Math.min(t, steps);
-        } else {
-            t = t % steps;
-        }
+        // A single step is the no-effect floor: every point maps to step 0 and
+        // the phase always lands on it. Curves that dip below 1 clamp here
+        // instead of producing negative/ghost step indices.
+        const steps = Math.max(1, Math.round(Number.isFinite(paramSteps) ? paramSteps : 1));
+        const rawPhase = chasePhaseAt(context, time, steps, clockRate, speed);
+        const t = wrapChasePhase(rawPhase, steps, playstyle);
+        const overlapWidth = Number.isFinite(overlap) ? Math.max(1, overlap) : 1;
+        const window = Math.max(0.5, Math.min(overlapWidth, steps / 2));
 
         const newPoints = new Float32Array(numPoints * 8);
         for (let i = 0; i < numPoints; i++) {
-            const norm = i / numPoints;
-            let stepIndex = 0;
-            if (direction === 'left_to_right') stepIndex = Math.min(steps - 1, Math.floor(norm * steps));
-            else if (direction === 'right_to_left') stepIndex = Math.min(steps - 1, Math.floor((1 - norm) * steps));
-            else if (direction === 'center_to_out') stepIndex = Math.min(steps - 1, Math.floor(Math.abs(norm - 0.5) * 2 * steps));
-            else if (direction === 'out_to_center') stepIndex = Math.min(steps - 1, Math.floor((1 - Math.abs(norm - 0.5) * 2) * steps));
-
-            let dist = Math.abs(t - stepIndex);
-            if (dist > steps / 2) dist = steps - dist;
-            let intensity = (dist < overlap) ? (1.0 - (dist / overlap)) : 0;
-            if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
+            const stepIndex = chaseSegmentStep(i / numPoints, steps, direction);
+            const intensity = chaseStepIntensity(stepIndex, t, steps, window, decay);
 
             const off = i * 8;
             newPoints.set(points.subarray(off, off + 8), off);
 
-            // Apply chase intensity
             newPoints[off + 3] *= intensity; newPoints[off + 4] *= intensity; newPoints[off + 5] *= intensity;
 
-            // CRITICAL: Preserve blanking if the current point is already blanked (e.g. Mirror bridge)
+            // Preserve blanking if the current point is already blanked (e.g. a
+            // Mirror bridge) and blank the fully-unlit tail of each step.
             if (intensity < 0.05 || points[off + 6] > 0.5) {
                 newPoints[off + 6] = 1;
                 newPoints[off + 3] = 0; newPoints[off + 4] = 0; newPoints[off + 5] = 0;
             }
 
-            // 2-POINT BLANKING BRIDGE for chase step transitions
+            // 2-POINT BLANKING BRIDGE for chase step transitions: never draw a
+            // lit line between two spatial steps that are in different states.
             if (i > 0) {
-                const prevNorm = (i - 1) / numPoints;
-                let prevStepIndex = 0;
-                if (direction === 'left_to_right') prevStepIndex = Math.min(steps - 1, Math.floor(prevNorm * steps));
-                else if (direction === 'right_to_left') prevStepIndex = Math.min(steps - 1, Math.floor((1 - prevNorm) * steps));
-                else if (direction === 'center_to_out') prevStepIndex = Math.min(steps - 1, Math.floor(Math.abs(prevNorm - 0.5) * 2 * steps));
-                else if (direction === 'out_to_center') prevStepIndex = Math.min(steps - 1, Math.floor((1 - Math.abs(prevNorm - 0.5) * 2) * steps));
-
+                const prevStepIndex = chaseSegmentStep((i - 1) / numPoints, steps, direction);
                 if (prevStepIndex !== stepIndex) {
-                    // 1. Blank the destination point
                     newPoints[off + 6] = 1;
                     newPoints[off + 3] = 0; newPoints[off + 4] = 0; newPoints[off + 5] = 0;
 
-                    // 2. Blank the source point (previous point)
                     const prevOff = (i - 1) * 8;
                     newPoints[prevOff + 6] = 1;
                     newPoints[prevOff + 3] = 0; newPoints[prevOff + 4] = 0; newPoints[prevOff + 5] = 0;
@@ -1535,12 +1575,17 @@ export function applyChase(points, numPoints, params, time, context = {}) {
         if (points._channelDistributions) newPoints._channelDistributions = points._channelDistributions;
         return newPoints;
     } else {
-        const { assignedDacs } = context || {};
-        let channelStepMap = new Map();
+        const channelStepMap = new Map();
         let numChannels = 0;
+        let maxStep = 0;
+        const assignStep = (dacIndex, stepIndex) => {
+            channelStepMap.set(dacIndex, stepIndex);
+            if (stepIndex > maxStep) maxStep = stepIndex;
+        };
         if (useCustomOrder) {
             const list = resolveChannelStepOrder(customOrder, assignedDacs);
-            list.forEach((dacIdx, stepIndex) => { channelStepMap.set(dacIdx, stepIndex); numChannels++; });
+            list.forEach((dacIdx, stepIndex) => assignStep(dacIdx, stepIndex));
+            numChannels = list.length;
         } else {
             numChannels = (assignedDacs ? assignedDacs.length : 1) || 1;
             for (let i = 0; i < numChannels; i++) {
@@ -1548,23 +1593,23 @@ export function applyChase(points, numPoints, params, time, context = {}) {
                 if (direction === 'right_to_left') step = numChannels - 1 - i;
                 else if (direction === 'center_to_out') step = Math.floor(Math.abs(i - (numChannels - 1) / 2));
                 else if (direction === 'out_to_center') step = Math.min(i, numChannels - 1 - i);
-                channelStepMap.set(i, step);
+                assignStep(i, step);
             }
         }
-        const cycleLength = numChannels;
-        // Synced maps 0..1 progress to 0..numChannels; free time advances
-        // `clockRate` steps per second.
-        let t = (useSync ? (progress * cycleLength) : (time * 0.001 * clockRate)) * speed;
+        // The real cycle is the number of DISTINCT steps, not the number of
+        // channels: center-out / out-to-center map symmetric channels onto the
+        // same ring, so a 6-channel rig has 3 chase steps, not 6.
+        const realCycleLength = Math.max(1, maxStep + 1);
+        // Empty Step adds ONE virtual step after the last real one. The phase
+        // runs through that blank step (the beam travels in black) before it
+        // wraps to step 0. Turning it off only removes that virtual step, so the
+        // chase loops directly from the last step back to the first. It does NOT
+        // change the overlap/decay look.
+        const cycleSpan = realCycleLength + (emptyStep === false ? 0 : 1);
+        const rawPhase = chasePhaseAt(context, time, cycleSpan, clockRate, speed);
+        const t = wrapChasePhase(rawPhase, cycleSpan, playstyle, realCycleLength - 1);
 
-        if (playstyle === 'bounce') {
-            const range = cycleLength;
-            const cycle = t % (range * 2);
-            t = cycle > range ? (range * 2) - cycle : cycle;
-        } else if (playstyle === 'once') {
-            t = Math.min(t, cycleLength);
-        } else {
-            t = t % cycleLength;
-        }
+        const window = Number.isFinite(overlap) ? Math.max(1, overlap) : 1;
 
         // If the input is already a per-channel concatenation (e.g. it came from a
         // channel-mode Delay), chase should modulate each channel's OWN slice by its
@@ -1573,21 +1618,17 @@ export function applyChase(points, numPoints, params, time, context = {}) {
         // other channel's echoes ("double delay" / trailing shapes within a channel).
         const sourceDists = points._channelDistributions;
         if (sourceDists && sourceDists.size > 0) {
-            // "Empty Step" (default) keeps a hard all-off plateau between beats;
-            // switching it off widens the effective overlap to the full cycle so
-            // the chase crossfades continuously with no channel ever blanked.
-            const effOverlap = emptyStep === false ? Math.max(cycleLength, overlap) : overlap;
             const newBuffer = new Float32Array(points);
             for (const [dacIndex, dist] of sourceDists.entries()) {
                 const stepIndex = channelStepMap.get(dacIndex) || 0;
-                let chaseDist = Math.abs(t - stepIndex);
-                if (chaseDist > cycleLength / 2) chaseDist = cycleLength - chaseDist;
-                let intensity = (chaseDist < effOverlap) ? (1.0 - (chaseDist / effOverlap)) : 0;
-                if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
+                const intensity = chaseStepIntensity(stepIndex, t, cycleSpan, window, decay);
                 for (let i = 0; i < dist.length; i += 8) {
                     const dstOff = dist.start + i;
                     newBuffer[dstOff + 3] *= intensity; newBuffer[dstOff + 4] *= intensity; newBuffer[dstOff + 5] *= intensity;
-                    if (intensity < 0.05) newBuffer[dstOff + 6] = 1;
+                    if (intensity < 0.05 || newBuffer[dstOff + 6] > 0.5) {
+                        newBuffer[dstOff + 6] = 1;
+                        newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0;
+                    }
                 }
             }
             newBuffer._channelDistributions = sourceDists;
@@ -1597,25 +1638,21 @@ export function applyChase(points, numPoints, params, time, context = {}) {
         const totalPoints = numPoints * numChannels;
         const newBuffer = new Float32Array(totalPoints * 8);
         const distributions = new Map();
-        // "Empty Step" (default) keeps a hard all-off plateau between beats;
-        // switching it off widens the effective overlap to the full cycle so
-        // the chase crossfades continuously with no channel ever blanked.
-        const effOverlap = emptyStep === false ? Math.max(cycleLength, overlap) : overlap;
         let offset = 0;
         const dacIndices = Array.from(channelStepMap.keys());
         if (dacIndices.length === 0) dacIndices.push(0);
         for (const dacIndex of dacIndices) {
             const stepIndex = channelStepMap.get(dacIndex) || 0;
-            let dist = Math.abs(t - stepIndex);
-            if (dist > cycleLength / 2) dist = cycleLength - dist;
-            let intensity = (dist < effOverlap) ? (1.0 - (dist / effOverlap)) : 0;
-            if (decay > 0) intensity = Math.pow(intensity, 1 - decay);
+            const intensity = chaseStepIntensity(stepIndex, t, cycleSpan, window, decay);
             const startOffset = offset;
             for (let i = 0; i < numPoints; i++) {
                 const srcOff = i * 8; const dstOff = offset + i * 8;
                 newBuffer.set(points.subarray(srcOff, srcOff + 8), dstOff);
                 newBuffer[dstOff + 3] *= intensity; newBuffer[dstOff + 4] *= intensity; newBuffer[dstOff + 5] *= intensity;
-                if (intensity < 0.05) newBuffer[dstOff + 6] = 1;
+                if (intensity < 0.05 || newBuffer[dstOff + 6] > 0.5) {
+                    newBuffer[dstOff + 6] = 1;
+                    newBuffer[dstOff + 3] = 0; newBuffer[dstOff + 4] = 0; newBuffer[dstOff + 5] = 0;
+                }
             }
             distributions.set(dacIndex, { start: startOffset, length: numPoints * 8 });
             offset += numPoints * 8;

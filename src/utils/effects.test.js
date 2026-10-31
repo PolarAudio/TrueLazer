@@ -273,30 +273,129 @@ describe('applyChase', () => {
       instanceId: 'c-empty',
       params: { mode: 'channel', emptyStep: true, decay: 0.8, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
     }];
-    const context = { assignedDacs: ['a', 'b', 'c', 'd'], progress: 0.5, time: 0, clipDuration: 1, effectStates: new Map() };
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], chaseTime: 2, time: 0, effectStates: new Map() };
     const result = applyEffects(frame, effects, context);
-    expect(result.points._channelDistributions).toBeDefined();
-    let anyBlanked = false;
-    for (let i = 0; i < result.points.length / 8; i++) {
-      if (result.points[i * 8 + 6] > 0.5) anyBlanked = true;
-    }
-    expect(anyBlanked).toBe(true);
+    const dists = result.points._channelDistributions;
+    expect(dists).toBeDefined();
+    // Channel 2 is the head; channels 0/1 are outside the one-step window.
+    expect(result.points[dists.get(2).start + 3]).toBe(255);
+    expect(result.points[dists.get(0).start + 6]).toBe(1);
+    expect(result.points[dists.get(1).start + 6]).toBe(1);
   });
 
-  it('should crossfade continuously (no channel ever blanked) when emptyStep is off', () => {
+  it('loops directly from the last step to the first when emptyStep is off', () => {
     const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
     const effects = [{
       id: 'chase',
       instanceId: 'c-cont',
-      params: { mode: 'channel', emptyStep: false, decay: 0.8, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+      params: { mode: 'channel', emptyStep: false, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
     }];
-    const context = { assignedDacs: ['a', 'b', 'c', 'd'], progress: 0.5, time: 0, clipDuration: 1, effectStates: new Map() };
+    // 4 real steps, so t = 3.5 is halfway from the last step back to step 0.
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], chaseTime: 3.5, time: 0, effectStates: new Map() };
     const result = applyEffects(frame, effects, context);
-    expect(result.points._channelDistributions).toBeDefined();
-    for (let i = 0; i < result.points.length / 8; i++) {
-      expect(result.points[i * 8 + 6]).toBe(0);
-      expect(result.points[i * 8 + 3]).toBeGreaterThan(0);
+    const dists = result.points._channelDistributions;
+    expect(dists).toBeDefined();
+    // Both ends of the ring are lit: no extra black step between them.
+    expect(result.points[dists.get(3).start + 3]).toBeGreaterThan(120);
+    expect(result.points[dists.get(0).start + 3]).toBeGreaterThan(120);
+    expect(result.points[dists.get(3).start + 6]).toBe(0);
+    expect(result.points[dists.get(0).start + 6]).toBe(0);
+  });
+
+  it('adds one virtual dark step at the end when emptyStep is on', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
+    const effects = [{
+      id: 'chase',
+      instanceId: 'c-virtual',
+      params: { mode: 'channel', emptyStep: true, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], chaseTime: 3.5, time: 0, effectStates: new Map() };
+    const result = applyEffects(frame, effects, context);
+    const dists = result.points._channelDistributions;
+    // At 3.5 the last step is still moving out; step 0 is NOT crossfading in
+    // yet because the chase has to travel through the virtual step first.
+    expect(result.points[dists.get(3).start + 3]).toBeGreaterThan(120);
+    expect(result.points[dists.get(0).start + 6]).toBe(1);
+    // At t = 4 the head is inside the virtual step: the whole output is black.
+    const virtualContext = { ...context, chaseTime: 4 };
+    const virtual = applyEffects(frame, effects, virtualContext);
+    const virtualDists = virtual.points._channelDistributions;
+    for (let dacIndex = 0; dacIndex < 4; dacIndex++) {
+      expect(virtual.points[virtualDists.get(dacIndex).start + 6]).toBe(1);
     }
+  });
+
+  it('produces the same chase as emptyStep off everywhere except the virtual step', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
+    const make = (emptyStep, instanceId) => [{
+      id: 'chase',
+      instanceId,
+      params: { mode: 'channel', emptyStep, decay: 0.8, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], chaseTime: 1.5, time: 0, effectStates: new Map() };
+    const withEmpty = applyEffects(frame, make(true, 'c-with'), context);
+    const withoutEmpty = applyEffects(frame, make(false, 'c-without'), context);
+    expect(withEmpty.points).toEqual(withoutEmpty.points);
+  });
+
+  it('cycles the distinct steps of center-out and out-to-center directions', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
+    const lit = (result) => {
+      const out = [];
+      for (const [dacIndex, dist] of result.points._channelDistributions.entries()) {
+        if (result.points[dist.start + 3] >= 254) out.push(dacIndex);
+      }
+      return out;
+    };
+    const chase = (direction) => [{
+      id: 'chase',
+      instanceId: `c-${direction}`,
+      params: { mode: 'channel', emptyStep: true, decay: 0, speed: 1, overlap: 1, direction, useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], chaseTime: 0, time: 0, effectStates: new Map() };
+
+    // center_to_out: middle channels first, then the outer pair one step later.
+    const centerOut = chase('center_to_out');
+    const ctx0 = { ...context, chaseTime: 0 };
+    const ctx1 = { ...context, chaseTime: 1 };
+    expect(lit(applyEffects(frame, centerOut, ctx0))).toEqual([1, 2]);
+    expect(lit(applyEffects(frame, centerOut, ctx1))).toEqual([0, 3]);
+
+    // out_to_center is the same sequence reversed.
+    const outCenter = chase('out_to_center');
+    expect(lit(applyEffects(frame, outCenter, ctx0))).toEqual([0, 3]);
+    expect(lit(applyEffects(frame, outCenter, ctx1))).toEqual([1, 2]);
+  });
+
+  it('decay darkens the trail instead of flattening it', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
+    const make = (decay) => [{
+      id: 'chase',
+      instanceId: `c-decay-${decay}`,
+      params: { mode: 'channel', emptyStep: true, decay, speed: 1, overlap: 2, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], chaseTime: 0, time: 0, effectStates: new Map() };
+    const linear = applyEffects(frame, make(0), context);
+    const decayed = applyEffects(frame, make(0.8), context);
+    const linearTrail = linear.points[linear.points._channelDistributions.get(1).start + 3];
+    const decayedTrail = decayed.points[decayed.points._channelDistributions.get(1).start + 3];
+    // One step behind the head is 50% with decay=0; decay must push it DOWN.
+    expect(linearTrail).toBeGreaterThan(decayedTrail);
+    expect(decayedTrail).toBeLessThan(linearTrail / 2);
+  });
+
+  it('once holds the last step instead of wrapping back to the first', () => {
+    const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }]);
+    const effects = [{
+      id: 'chase',
+      instanceId: 'c-once',
+      params: { mode: 'channel', emptyStep: true, playstyle: 'once', decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+    }];
+    const context = { assignedDacs: ['a', 'b', 'c', 'd'], chaseTime: 99, time: 0, effectStates: new Map() };
+    const result = applyEffects(frame, effects, context);
+    const dists = result.points._channelDistributions;
+    expect(result.points[dists.get(3).start + 3]).toBe(255);
+    expect(result.points[dists.get(0).start + 6]).toBe(1);
   });
 });
 
@@ -334,6 +433,20 @@ describe('applyChase driving clock (time / fps / bpm)', () => {
     expect(peakSteps(applyEffects(segFrame(), [def], { time: 3000 }))).toEqual([3]);
   });
 
+  it('progress + clipDuration advances on real clip seconds (not one fixed cycle)', () => {
+    const effects = [{ id: 'chase', instanceId: 'c-cd', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'time' } }];
+    // Half of a 2 s clip = 1 s = 1 step on the time clock. Treating progress as
+    // a normalized 0..1 cycle would incorrectly land on step 2.
+    expect(peakSteps(applyEffects(segFrame(), effects, { progress: 0.5, clipDuration: 2, time: 9999 }))).toEqual([1]);
+  });
+
+  it('chaseTime (cue-local seconds) takes priority over absolute timeline time', () => {
+    const effects = [{ id: 'chase', instanceId: 'c-local', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'time' } }];
+    // At timeline position 3 s the chase's cue started 1 s ago, so it must show
+    // step 1, not step 3.
+    expect(peakSteps(applyEffects(segFrame(), effects, { chaseTime: 1, time: 3000 }))).toEqual([1]);
+  });
+
   it('fps clock advances one step per rendered frame', () => {
     const effects = [{ id: 'chase', instanceId: 'c-f', params: { mode: 'segment', steps: 4, decay: 0, speed: 1, overlap: 1, direction: 'left_to_right', clock: 'fps' } }];
     // 3 s at 30 fps = 90 frames -> 90 % 4 = step 2
@@ -363,7 +476,7 @@ describe('applyChase driving clock (time / fps / bpm)', () => {
     const effects = [{
       id: 'chase',
       instanceId: 'c-ch',
-      params: { mode: 'channel', clock: 'fps', decay: 0, speed: 1, overlap: 1, emptyStep: true, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
+      params: { mode: 'channel', clock: 'fps', decay: 0, speed: 1, overlap: 1, emptyStep: false, direction: 'left_to_right', useCustomOrder: false, customOrder: [] }
     }];
     const context = { assignedDacs: ['dac-a', 'dac-b', 'dac-c', 'dac-d'], time: 1000, fps: 30 };
     const res = applyEffects(frame, effects, context);
@@ -491,7 +604,7 @@ describe('applyDelay channel mode regression', () => {
     const effectStates = new Map();
     const effects = [
       { id: 'delay', instanceId: 'd1', params: { mode: 'channel', delayAmount: 1, decay: 1.0, delayDirection: 'left_to_right' } },
-      { id: 'chase', instanceId: 'c1', params: { mode: 'channel', steps: 2, decay: 0.8, speed: 1, overlap: 1, direction: 'left_to_right' } }
+      { id: 'chase', instanceId: 'c1', params: { mode: 'channel', steps: 2, decay: 0.8, speed: 1, overlap: 1, emptyStep: false, direction: 'left_to_right' } }
     ];
     const frame = mockFrame([{ x: 1, y: 0 }, { x: 0, y: 0 }, { x: -1, y: 0 }, { x: 0.5, y: 0 }]);
     const context = { effectStates, assignedDacs: ['a', 'b'], progress: 0.5, time: 100, syncSettings: {} };
@@ -1052,5 +1165,3 @@ describe('runaway point cap', () => {
     expect(reduced.length).toBeGreaterThan(0);
   });
 });
-
-

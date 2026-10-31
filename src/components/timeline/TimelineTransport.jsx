@@ -136,7 +136,6 @@ const TimelineTransport = ({
         <div ref={transportRef} className="timeline-transport" style={{ gap: transportGap }}>
             <div className="timeline-transport-left">
                 <button className="timeline-btn" onClick={onBack}>← Show Control</button>
-                <h2 className="timeline-title">Timeline</h2>
                 <button className={`timeline-btn ${isPlaying ? 'play' : ''}`} onClick={onPlay} title={t('ui.play_pause')}>
                     {isPlaying ? '❚❚ Pause' : '▶ Play'}
                 </button>
