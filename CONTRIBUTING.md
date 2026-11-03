@@ -23,7 +23,7 @@ To ensure a smooth process, please follow these steps:
 
     Develop & Test: Make your changes in a new branch.
 
-    Submit a Pull Request (PR): Open a PR against our main branch. Provide a clear description of what you changed and why.
+    Submit a Pull Request (PR): Open a PR against our dev branch. Provide a clear description of what you changed and why.
 
 3. Contributor License Agreement (CLA)
 
