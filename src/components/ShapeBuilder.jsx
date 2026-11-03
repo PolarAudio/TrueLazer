@@ -5011,8 +5011,10 @@ const ShapeBuilder = ({ onBack, ref }) => {
         .context-menu { background: #222; border: 1px solid #444; border-radius: 4px; padding: 5px 0; box-shadow: 0 5px 15px rgba(0,0,0,0.5); min-width: 120px; }
         .context-menu .menu-item { padding: 8px 15px; font-size: 0.8rem; cursor: pointer; color: #ccc; }
         .context-menu .menu-item:hover { background: var(--theme-color); color: black; }
-        input[type="range"] { -webkit-appearance: none; background: #333; height: 4px; border-radius: 2px; width: 100%; }
-        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--theme-color); border-radius: 50%; cursor: pointer; }
+input[type="range"] { -webkit-appearance: none; background: #333; height: 4px; border-radius: 2px; width: 100%; }
+input[type="range"]::-moz-range-track { height: 4px; background: #333; border-radius: 2px; border: none; }
+input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: var(--theme-color); border-radius: 50%; cursor: pointer; border: none; }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--theme-color); border-radius: 50%; cursor: pointer; }
         
         .sb-checkbox {
             appearance: none !important;

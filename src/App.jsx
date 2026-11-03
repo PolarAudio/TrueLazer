@@ -2200,6 +2200,17 @@ const SidePanelContainer = React.memo(({
 
 function App() {
     const { t } = useTranslation();
+    const [showBrowserWarning, setShowBrowserWarning] = useState(false);
+    useEffect(() => {
+        const ua = navigator.userAgent || '';
+        const isChromium = /Chrome|Chromium|Edg\//.test(ua) && !/OPR\//.test(ua);
+        const isFirefox = /Firefox\//.test(ua);
+        const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+        if ((isFirefox || isSafari) && !isChromium) {
+            const dismissed = sessionStorage.getItem('truelazer-browser-warning-dismissed');
+            if (!dismissed) setShowBrowserWarning(true);
+        }
+    }, []);
     const ildaParserWorker = useIldaParserWorker();
     const thumbnailWorker = useThumbnailWorker();
     const generatorWorker = useGeneratorWorker();
@@ -8414,6 +8425,15 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     )}
                 </KeyboardProvider>
             </ArtnetProvider>
+            {showBrowserWarning && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
+                    <div style={{ background: '#222', color: '#fff', padding: '24px', borderRadius: '8px', maxWidth: '420px', border: '1px solid #444' }}>
+                        <h3 style={{ marginTop: 0 }}>Browser Compatibility Warning</h3>
+                        <p>TrueLazer is developed and tested for Chromium-based browsers (Chrome, Edge). You are using a non-Chromium browser, so some features (sliders, audio, etc.) may not work correctly.</p>
+                        <button onClick={() => { sessionStorage.setItem('truelazer-browser-warning-dismissed', '1'); setShowBrowserWarning(false); }} style={{ marginTop: '12px', padding: '6px 12px' }}>OK</button>
+                    </div>
+                </div>
+            )}
         </MidiProvider>
     );
 }

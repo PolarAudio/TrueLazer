@@ -28,13 +28,18 @@ body {
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   background-color: #282c34;
   color: white;
   overflow: hidden;
   scrollbar-color: var(--theme-color) #1a1a1a;
   scrollbar-width: thin;
   height: 100vh;
+}
+
+@supports (-moz-osx-font-smoothing: grayscale) {
+  body {
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 #root {
@@ -402,8 +407,7 @@ body {
   overflow: hidden;
 }
 
-@supports (max-height: -webkit-fill-available) {
-
+@supports (-webkit-touch-callout: none) {
   .ilda-player,
   .world-preview {
     max-height: -webkit-fill-available;
@@ -506,6 +510,23 @@ body {
   background: var(--theme-color);
   border-radius: 50%;
   cursor: pointer;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+.slider_hor::-moz-range-track {
+  height: 4px;
+  background: #333;
+  border-radius: 2px;
+  border: none;
+}
+
+.slider_hor::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--theme-color);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
   box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
 }
 
@@ -674,6 +695,22 @@ h3 {
   background: var(--theme-color);
   border-radius: 50%;
   cursor: pointer;
+}
+
+.param-slider::-moz-range-track {
+  height: 4px;
+  background: #444;
+  border-radius: 2px;
+  border: none;
+}
+
+.param-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--theme-color);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
 }
 
 .param-number-input,
