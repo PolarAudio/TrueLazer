@@ -71,8 +71,8 @@ const AboutWindow = ({ show, onClose }) => {
                 <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
 
                     <Section title={t('ui.application')}>
-                        <Row label="Name" value={info?.name || 'TrueLazer'} />
-                        <Row label="Version" value={info?.version || '—'} />
+                        <Row label={t('ui.name')} value={info?.name || 'TrueLazer'} />
+                        <Row label={t('about.version')} value={info?.version || '—'} />
                         {info?.author ? <Row label={t('ui.author')} value={info.author} /> : null}
                         {info?.license ? <Row label={t('ui.license')} value={info.license} /> : null}
                     </Section>

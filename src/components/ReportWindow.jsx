@@ -176,7 +176,7 @@ const ReportWindow = ({ show, mode = 'bug', onClose, page = 'main', dacs = [] })
             <div className="modal-content report-window" style={{ minWidth: '520px', maxWidth: '760px' }}>
                 <div className="modal-header">
                     <h3 style={{ margin: 0, fontSize: '15px' }}>{t('report.title')}</h3>
-                    <button className="close-btn" onClick={onClose} title="Close">×</button>
+                    <button className="close-btn" onClick={onClose} title={t('common.close')}>×</button>
                 </div>
 
                 <div className="report-tabs">

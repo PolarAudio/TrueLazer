@@ -11,6 +11,12 @@ import { ThumbnailWorkerProvider } from './contexts/ThumbnailWorkerContext.jsx';
 import { AudioProvider } from './contexts/AudioContext.jsx';
 import { TimelineProvider } from './contexts/TimelineContext.jsx';
 import { LanguageProvider } from './i18n';
+import { installInputDiagnostics } from './utils/inputDiagnostics';
+
+// Records the evidence needed to diagnose the "UI stops responding" reports
+// (clicks land outside React, presses get cancelled, or the window lost focus
+// to a native popup). Observational only - it never changes behaviour.
+installInputDiagnostics();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <LanguageProvider>

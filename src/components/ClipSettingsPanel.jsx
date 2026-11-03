@@ -261,7 +261,7 @@ const ClipSettingsPanel = ({
 
       {hasAssignedDacs && (
         <CollapsiblePanel 
-            title="Assigned DACs"
+            title={t('layerSettings.assignedDacs')}
             isCollapsed={!!collapsedPanels['dacs']}
             onToggle={(val) => togglePanel('dacs', val)}
         >

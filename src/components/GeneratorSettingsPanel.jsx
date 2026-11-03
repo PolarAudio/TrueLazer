@@ -60,7 +60,7 @@ const GeneratorParameter = ({ control, value, onChange, syncSettings, onSetParam
                 onDragStart={handleDragStart}
                 className="param-label"
                 style={{fontSize: '11px', color: '#aaa', cursor: 'grab'}}
-              >{control.label}</label>
+>{t(`ui.${control.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`)}</label>
             </div>
 
             <div className="control-row" style={{ display: 'grid', gridTemplateColumns: '20px 1fr 50px', gap: '5px', alignItems: 'center' }}>
@@ -277,7 +277,7 @@ const GeneratorSettingsPanel = ({ selectedGeneratorId, selectedGeneratorParams, 
               
               return (
                 <div key={control.id} className="param-editor">
-                    <label className="param-label">{control.label}</label>
+                    <label className="param-label">{t(`ui.${control.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`)}</label>
                     <div className="font-selector-container">
                         <select 
                             className="param-select"

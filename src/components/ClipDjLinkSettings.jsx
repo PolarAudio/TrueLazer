@@ -204,7 +204,7 @@ const ClipDjLinkSettings = ({
           <button
             className={isLoop ? 'button_inactive' : 'active'}
             onClick={() => onUpdate({ follow: 'position' })}
-            title="The clip covers the trim window; the deck's playhead scrubs the animation"
+            title={t('ui.clip_covers_trim_window')}
           >{t('ui.deck_position')}</button>
           <button
             className={isLoop ? 'active' : 'button_inactive'}

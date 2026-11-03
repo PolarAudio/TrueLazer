@@ -4,6 +4,7 @@ import { calculateSmoothHandles } from '../utils/geometry';
 import EnvelopeEditor from './EnvelopeEditor';
 import { DEFAULT_POINT_BUDGET } from '../utils/exportOptimizer';
 import { useTranslation } from '../i18n';
+import { reportInputProblem } from '../utils/inputDiagnostics';
 import {
   measureOutline, pointsInRun,
   resolveDashRuns, resolveDotStations, defaultBeamPointAllowance,
@@ -2611,6 +2612,21 @@ const ShapeBuilder = ({ onBack, ref }) => {
 
   const updateSelectedShape = (props) => { 
       if (selectedShapeIndexes.length === 0) return; 
+
+      // The panel only stores an index, so the index can outlive the shape it
+      // points at (frame switch, undo, deleted shape). Writing to a missing
+      // shape silently does nothing, which from the outside is indistinguishable
+      // from the UI being frozen - so say it in the log instead of failing mute.
+      const liveIndexes = selectedShapeIndexes.filter(idx => !!shapes[idx]);
+      if (liveIndexes.length === 0) {
+          reportInputProblem(
+              'shape-edit-ignored',
+              `shape property edit (${Object.keys(props).join(',')}) ignored: selection `
+              + `${JSON.stringify(selectedShapeIndexes)} has no shape in frame ${shapeSourceIndex} `
+              + `(${shapes.length} shapes)`
+          );
+          return;
+      }
       
       const applyPropsToShape = (shape, properties) => {
           let updated = { ...shape, ...properties };
@@ -2643,7 +2659,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
       setFrames(prev => {
           const newFrames = [...prev]; 
           const ns = [...newFrames[currentFrameIndex]]; 
-          selectedShapeIndexes.forEach(idx => {
+          liveIndexes.forEach(idx => {
               if (!ns[idx]) return;
               ns[idx] = applyPropsToShape(ns[idx], props);
           });
@@ -4025,6 +4041,29 @@ const ShapeBuilder = ({ onBack, ref }) => {
     }
     wasPlayingRef.current = isPlaying;
   }, [isPlaying]);
+
+  // A selection index is only meaningful in the frame it was made in, and it is
+  // not re-validated anywhere: switching frames, undoing, deleting a shape or
+  // pointing the shape effect at another source frame can all leave it pointing
+  // at nothing. The properties panel would keep rendering (with default-looking
+  // values) while every edit went nowhere, so the whole panel reads as frozen.
+  // Drop the dead indexes instead, and log it once so the report shows how.
+  useEffect(() => {
+    if (isPlaying || selectedShapeIndexes.length === 0) return;
+    const source = frames[shapeSourceIndex] || [];
+    const live = selectedShapeIndexes.filter(idx => !!source[idx]);
+    if (live.length === selectedShapeIndexes.length) return;
+    reportInputProblem(
+      'stale-selection',
+      `shape selection ${JSON.stringify(selectedShapeIndexes)} no longer resolves in frame `
+      + `${shapeSourceIndex} (${source.length} shapes); dropping it so the panel cannot go dead`
+    );
+    setSelectedShapeIndexes(live);
+    if (live.length === 0) {
+      setSelectedPointIndexes([]);
+      setSelectedSegmentIndexes([]);
+    }
+  }, [frames, shapeSourceIndex, isPlaying, selectedShapeIndexes]);
   
   useEffect(() => {
     const h = (e) => {
@@ -4472,7 +4511,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
               </div>)}
           </div>
 
-          <div className="properties-scroll-container" style={{ flex: 1, overflowY: 'auto', padding: '15px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="properties-scroll-container" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '15px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <h3 style={{ fontSize: '0.9rem', color: '#888', margin: '0 0 10px 0', borderBottom: '1px solid #333', paddingBottom: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   {t('shapeBuilder.properties')}
                   <button onClick={() => togglePanel('props')} title={collapsedPanels.props ? t('common.expand') : t('common.collapse')} style={{ padding: '2px 5px', fontSize: '0.7rem' }}><i className={`bi ${collapsedPanels.props ? 'bi-chevron-right' : 'bi-chevron-down'}`}></i></button>
@@ -4674,7 +4713,7 @@ const ShapeBuilder = ({ onBack, ref }) => {
               )}
 
               {selectedShapeIndexes.length > 0 ? (
-                  <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div className="shape-properties" style={{ display: 'flex', flexDirection: 'column', gap: '15px', flexShrink: 0 }}>
                       <label style={{ fontSize: '0.8rem', color: '#666', display: 'block' }}>
                           {selectedShapeIndexes.length === 1 ? `${t('shapeBuilder.typePrefix')} ${t('shapeBuilder.type.' + (shapes[selectedShapeIndexes[0]]?.type || 'shape'))}` : t('shapeBuilder.shapesSelected', { count: selectedShapeIndexes.length })}
                       </label>

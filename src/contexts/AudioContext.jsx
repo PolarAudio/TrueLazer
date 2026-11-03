@@ -140,7 +140,9 @@ export const AudioProvider = ({ children }) => {
         }
 
         // Use 3 slashes for Windows local file support
-        const audio = new Audio(`file:///${filePath}`);
+        const normalizedPath = filePath.replace(/\\/g, '/');
+        const fileUrl = 'file:///' + normalizedPath.split('/').map((seg, idx) => idx === 0 ? seg : encodeURIComponent(seg)).join('/');
+        const audio = new Audio(fileUrl);
         audio.volume = volume * globalVolume;
 
         if (selectedDeviceId && audio.setSinkId) {

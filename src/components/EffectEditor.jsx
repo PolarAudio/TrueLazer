@@ -11,6 +11,7 @@ import { PresetSelector } from './PresetSelector';
 
 const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange, effectId, context, progressRef, workerId, clipDuration, bpm, getFftLevels, uiState, onUpdateUiState, paramKey, link = null }) => {
 // ... existing EffectParameter ...
+    const { t } = useTranslation();
     const [hovered, setHovered] = useState(false);
 
     const expanded = !!uiState?.expandedParams?.[paramKey];
@@ -70,7 +71,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                     <button
                         className={`link-xy-btn ${link.linked ? 'active' : ''}`}
                         onClick={link.onToggle}
-                        title={link.linked ? 'Linked – Y follows X exactly (click to unlink)' : 'Unlinked – click to link Y to X'}
+                        title={link.linked ? t('ui.linked_y_follows_x') : t('ui.unlinked_click_to_link')}
                         style={{ background: 'none', border: 'none', padding: 0, display: 'flex', cursor: 'pointer', fontSize: '11px', color: link.linked ? 'var(--theme-color, #4c8bf5)' : '#666' }}
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="currentColor" viewBox="0 0 16 16">
@@ -79,7 +80,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                         </svg>
                     </button>
                 )}
-                <label className="param-label" draggable onDragStart={handleDragStart} style={{fontSize: '11px', color: '#aaa'}}>{control.label}</label>
+                <label className="param-label" draggable onDragStart={handleDragStart} style={{fontSize: '11px', color: '#aaa'}}>{t(`ui.${control.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`)}</label>
              </div>
 
              {/* Row 2: Gear | RangeSlider | Value Input */}
@@ -92,7 +93,7 @@ const EffectParameter = ({ control, value, onChange, animSettings, onAnimChange,
                         background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 0, fontSize: '14px'
                     }}
                     onClick={() => setExpanded(!expanded)}
-                    title="Animate"
+                    title={t('generator.animate')}
                 >
 					⚙
 				</button>

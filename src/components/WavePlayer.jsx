@@ -49,7 +49,9 @@ const WavePlayer = ({ audioFile, layerIndex, onSeek, onLoadError }) => {
                 }
 
                 // Fetch local file
-                const response = await fetch(`file:///${audioFile.path}`);
+                const normalizedPath = audioFile.path.replace(/\\/g, '/');
+                const fileUrl = 'file:///' + normalizedPath.split('/').map((seg, idx) => idx === 0 ? seg : encodeURIComponent(seg)).join('/');
+                const response = await fetch(fileUrl);
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const arrayBuffer = await response.arrayBuffer();
                 

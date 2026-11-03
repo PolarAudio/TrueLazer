@@ -254,7 +254,7 @@ const ShortcutsWindow = ({ show, onClose, enabledShortcuts = {} }) => {
                 <button onClick={toggleArtnetLearnMode} style={{ backgroundColor: isArtnetMapping ? 'var(--theme-color)' : '', color: isArtnetMapping ? '#000' : '#fff' }}>
                   {isArtnetMapping ? t('shortcuts.stopMapping') : t('shortcuts.startMapping')}
                 </button>
-                <button onClick={autoPatchFixedFootprint} className="small-btn" title="Auto-patch standard 110-channel layout">
+                <button onClick={autoPatchFixedFootprint} className="small-btn" title={t('settingsPanel.autoPatch')}>
                     Auto-Patch
                 </button>
               </div>

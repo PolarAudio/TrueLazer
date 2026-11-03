@@ -1842,7 +1842,7 @@ const StatsDisplay = React.memo(({ type, previewFrameCountRef, totalPointsSentRe
         <div className="performanceStats">
             <p className="perfStats">UI-FPS: {stats.fps}</p><p className="perfStats">Out-PPS: {stats.avgPps} (Avg)</p>
             {stats.frameBudget ? (
-                <p className={`perfStats${stats.frameBudget.warn ? ' perfStatsWarn' : ''}`} title="PPS utilization of the channel with the lowest set point budget (used points/sec vs scan rate)">
+                <p className={`perfStats${stats.frameBudget.warn ? ' perfStatsWarn' : ''}`} title={t('perfStats.ppsUtilization')}>
                     PT: {stats.frameBudget.used}/{stats.frameBudget.budget} ({stats.frameBudget.pct}%)
                 </p>
             ) : null}
