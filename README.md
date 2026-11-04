@@ -7,6 +7,10 @@ software, drawing inspiration from the intuitive workflow and extensive features
 Built with JavaScript, TrueLazer is designed to provide artists and technicians with a versatile tool for live
 ILDA mixing, generative content, and advanced laser projection.
 
+**Documentation:** the [TrueLazer wiki](https://github.com/PolarAudio/TrueLazer/wiki) is the user guide —
+getting started, the three editors, effects, outputs and DACs, MIDI/Art-Net/OSC, DAC protocols and
+troubleshooting.
+
 ## What Makes TrueLazer Special?
 
 While many software solutions exist for video mixing, TrueLazer carves its niche by focusing specifically on
@@ -387,6 +391,10 @@ time. Nothing is sent anywhere else.
 5. Push your branch to your forked repository.
 6. Open a Pull Request to the main branch of the original TrueLazer repository, describing your changes in
    detail.
+
+Documentation is a contribution too: the [wiki](https://github.com/PolarAudio/TrueLazer/wiki) is plain Markdown
+and can be edited directly on GitHub, or by cloning
+`https://github.com/PolarAudio/TrueLazer.wiki.git`.
 
 We appreciate your help in making TrueLazer the ultimate Laser Show Software!
 

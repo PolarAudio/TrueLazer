@@ -61,6 +61,7 @@ import { THEME_COLORS } from './utils/midiColors';
 import { sendNote } from './utils/midi';
 import { generateCircle, generateSquare, generateLine, generateStar, generateText, generateSinewave } from './utils/generators'; // Import generator functions
 import { throttle, debounce } from './utils/throttle';
+import { normalizeToObjectPoints, dropOffCanvasPoints } from './utils/ilda-writer';
 import { advanceDjProgress, linkedClipDurationSec, makeLinkFromDeck } from './utils/djLinkTracks';
 import { useDjLinkClipTransport } from './hooks/useDjLinkClipTransport';
 import { useTranslation } from './i18n';
@@ -3020,11 +3021,39 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
                 if (layerIndex === undefined || colIndex === undefined) return;
 
+                const clip = clipContentsRef.current?.[pageId]?.[layerIndex]?.[colIndex];
+
+                // Bake the clip's effects into the exported frames so the file
+                // reflects the Chase / Translate / Mirror (etc.) stack the user
+                // actually hears. The raw parsed frames alone would export the
+                // un-effected source — which is what made stacked-effect exports
+                // come out with no effects applied at all.
+                const effectsToApply = (clip?.effects || []).filter((eff) => {
+                    if ((eff.id === 'delay' || eff.id === 'chase') && eff.params?.mode === 'channel') return false;
+                    return true;
+                });
+                const exportEffectStates = new Map();
+                const exportFps = clip?.playbackSettings?.fps || 30;
+                const bakedFrames = frames.map((frame, i) => {
+                    const totalFrames = frame.totalFrames || frames.length || 1;
+                    const progress = frame.frameNumber != null ? frame.frameNumber / totalFrames : i / Math.max(1, frames.length - 1);
+                    const processedFrame = applyEffects(frame, effectsToApply, {
+                        time: i * (1000 / exportFps),
+                        progress: progress,
+                        effectStates: exportEffectStates,
+                        syncSettings: clip?.syncSettings || {},
+                        bpm: state.bpm,
+                        clipDuration: clip?.playbackSettings?.duration || totalFrames / exportFps,
+                        assignedDacs: clip?.assignedDacs || []
+                    });
+                    const objectPoints = dropOffCanvasPoints(normalizeToObjectPoints(processedFrame));
+                    return { ...processedFrame, points: objectPoints, frameName: frame.frameName, companyName: frame.companyName };
+                });
+
                 // Use dynamic import for writer
                 import('./utils/ilda-writer.js').then(({ framesToIlda }) => {
-                    const buffer = framesToIlda(frames);
-                    const clip = clipContentsRef.current[pageId]?.[layerIndex]?.[colIndex];
-                    const defaultName = clip.fileName || 'export.ild';
+                    const buffer = framesToIlda(bakedFrames);
+                    const defaultName = clip?.fileName || 'export.ild';
 
                     if (window.electronAPI && window.electronAPI.saveIldaFile) {
                         window.electronAPI.saveIldaFile(buffer, defaultName).then(res => {
@@ -4441,18 +4470,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                             assignedDacs: clipToExport.assignedDacs || []
                                         });
 
-                                        // 4. Convert to Object Points for writer
-                                        const pts = processedFrame.points;
-                                        const numPts = pts.length / 8;
-                                        const objectPoints = [];
-                                        for (let k = 0; k < numPts; k++) {
-                                            objectPoints.push({
-                                                x: pts[k * 8], y: pts[k * 8 + 1], z: pts[k * 8 + 2],
-                                                r: pts[k * 8 + 3], g: pts[k * 8 + 4], b: pts[k * 8 + 5],
-                                                blanking: pts[k * 8 + 6] > 0.5,
-                                                lastPoint: pts[k * 8 + 7] > 0.5
-                                            });
-                                        }
+                                        // 4. Convert to Object Points for writer, then drop anything
+                                        // a transform pushed outside the canvas (no canvas-edge clamping).
+                                        const objectPoints = dropOffCanvasPoints(normalizeToObjectPoints(processedFrame));
 
                                         bakedFrames.push({
                                             ...processedFrame,

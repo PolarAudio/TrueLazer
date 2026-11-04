@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { framesToIlda } from './ilda-writer.js';
+import { framesToIlda, normalizeToObjectPoints, dropOffCanvasPoints } from './ilda-writer.js';
 import { parseIldaFile } from './ilda-parser.js';
 
 describe('framesToIlda', () => {
@@ -79,5 +79,44 @@ describe('framesToIlda', () => {
         const buffer = framesToIlda([{ points: [], frameName: 'EMPTY' }]);
         const { frames } = parseIldaFile(buffer);
         expect(frames).toHaveLength(0);
+    });
+
+    it('normalizes typed frames to object points for export', () => {
+        // 8 floats per point: [x, y, z, r, g, b, blanking, lastPoint]
+        const points = new Float32Array([
+            -0.5, 0.25, 0, 255, 0, 0, 0, 0,
+            0.5, -0.25, 0, 0, 128, 255, 1, 0,
+        ]);
+        const normalized = normalizeToObjectPoints({ points, isTypedArray: true });
+        expect(normalized).toHaveLength(2);
+        expect(normalized[0]).toMatchObject({ x: -0.5, y: 0.25, r: 255, g: 0, b: 0, blanking: false });
+        expect(normalized[1]).toMatchObject({ x: 0.5, y: -0.25, r: 0, g: 128, b: 255, blanking: true });
+    });
+
+    it('normalizes object point frames untouched', () => {
+        const normalized = normalizeToObjectPoints({
+            points: [
+                { x: -0.5, y: 0.25, r: 255, g: 0, b: 0, blanking: false },
+                { x: 0.5, y: -0.25, r: 0, g: 128, b: 255, blanking: true },
+            ],
+        });
+        expect(normalized).toHaveLength(2);
+        expect(normalized[0]).toMatchObject({ x: -0.5, y: 0.25, r: 255, blanking: false });
+        expect(normalized[1]).toMatchObject({ x: 0.5, y: -0.25, r: 0, g: 128, b: 255, blanking: true });
+    });
+
+    it('drops points pushed off canvas by translate instead of clamping to the edge', () => {
+        const normalized = normalizeToObjectPoints({
+            points: [
+                { x: -0.5, y: 0, r: 255, g: 255, b: 255, blanking: false },
+                { x: 1.5, y: 0.25, r: 255, g: 255, b: 255, blanking: false }, // translate pushed past +1
+                { x: -2, y: -0.25, r: 255, g: 255, b: 255, blanking: false }, // translate pushed past -1
+            ],
+        });
+        const dropped = dropOffCanvasPoints(normalized);
+        expect(dropped).toHaveLength(3);
+        expect(dropped[0]).toMatchObject({ x: -0.5, y: 0, blanking: false });
+        expect(dropped[1]).toMatchObject({ x: 1.5, y: 0.25, blanking: true, r: 0 });
+        expect(dropped[2]).toMatchObject({ x: -2, y: -0.25, blanking: true, r: 0 });
     });
 });

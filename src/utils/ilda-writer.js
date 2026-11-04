@@ -75,7 +75,44 @@ function colorTo255(value) {
     return Math.round(n);
 }
 
-function framesToIlda(frames) {
+// Normalize ANY supported frame layout into object points, whatever shape the
+// effect pipeline happened to return. The export bakes this BEFORE handing the
+// frames to the writer: effects that yield object-point arrays (generator
+// clips with zero effects) must not be read as if they were flat floats -
+// treating them as floats was what produced all-zero, invisible exports.
+export function normalizeToObjectPoints(frame) {
+    const points = frame && frame.points;
+    if (!points) return [];
+    return normalizeFramePoints(points);
+}
+
+// Translate (or any transform) can push a point outside the canvas (normalized
+// -1..1). The ILDA int16 wire range tops out at the canvas edge, so anything a
+// transform moved beyond it must be DROPPED (blacked) rather than clamped onto
+// the edge — clamping is what made translated animations come out pinned at the
+// canvas border instead of leaving the frame.
+export function dropOffCanvasPoints(objectPoints) {
+    if (!objectPoints || objectPoints.length === 0) return [];
+    const out = [];
+    for (const p of objectPoints) {
+        const x = Number(p.x) || 0;
+        const y = Number(p.y) || 0;
+        const offCanvas = x < -1 || x > 1 || y < -1 || y > 1;
+        out.push({
+            x,
+            y,
+            z: p.z || 0,
+            r: offCanvas ? 0 : (p.r || 0),
+            g: offCanvas ? 0 : (p.g || 0),
+            b: offCanvas ? 0 : (p.b || 0),
+            blanking: offCanvas || !!p.blanking,
+            lastPoint: !!p.lastPoint,
+        });
+    }
+    return out;
+}
+
+export function framesToIlda(frames) {
     // Build chunked frames, splitting any frame that is too dense to fit the
     // 16-bit point-count header field.
     const chunks = [];
@@ -183,5 +220,3 @@ function framesToIlda(frames) {
 
     return buffer;
 }
-
-export { framesToIlda };

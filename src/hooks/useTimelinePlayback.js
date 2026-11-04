@@ -886,9 +886,12 @@ export function useTimelinePlayback() {
 
             // A channel-mode Delay/Chase intentionally gives each DAC a shifted
             // slice of the buffer, so its per-output lengths are part of the
-            // effect and are left alone - including the fixed-length padding
-            // below and the cross-output padding after it.
-            const distributed = !!(frame && frame._channelDistributions && frame._channelDistributions.size > 0);
+            // effect. The budget padding below still applies: padFrameForOutput
+            // only APPENDS blanked hold points to the tail (never shrinks or
+            // shifts content), so short slices (e.g. a 34-point ILDA frame
+            // chopped into per-DAC shares) get the same fixed budget as any
+            // full frame. Without it, those slices reached the IDN unpadded and
+            // the laser never lit with a chase active.
 
             // A frame's LENGTH is its playback time. An IDN player consumes the
             // points of a frame at the scanner rate, so a frame of 480 points
@@ -898,10 +901,8 @@ export function useTimelinePlayback() {
             // carry the same points, stay in sync while animated generators
             // slowly walk out of time. Pad every frame to the same fixed
             // budget so each frame lasts the same 1/fps, whatever the content.
-            if (!distributed) {
-                for (const entry of outFrames) {
-                    entry.outFrame = padFrameForOutput(entry.outFrame, entry.out.type, entry.budget);
-                }
+            for (const entry of outFrames) {
+                entry.outFrame = padFrameForOutput(entry.outFrame, entry.out.type, entry.budget);
             }
 
             // Every output of one track must receive the SAME number of points
@@ -915,9 +916,7 @@ export function useTimelinePlayback() {
             // channels play for exactly the same time.
             // Showbridge frames are always built to PTS_FULL in the main
             // process, so they do not need renderer-side length matching.
-            const padTargets = !distributed
-                ? outFrames.filter(({ out }) => !isShowbridgeOutput(out.type))
-                : [];
+            const padTargets = outFrames.filter(({ out }) => !isShowbridgeOutput(out.type));
             const counts = padTargets.map(({ outFrame }) =>
                 outFrame ? Math.floor((outFrame.length || 0) / (Array.isArray(outFrame) ? 1 : 8)) : 0
             );
