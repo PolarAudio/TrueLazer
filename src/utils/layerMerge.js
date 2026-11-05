@@ -147,6 +147,39 @@ function composeCombine(clips, budget) {
   return reduceFramePoints(out, totalPoints, budget);
 }
 
+// An ILDA frame loops into itself: the next frame starts where this one ends.
+// Hardware that cycles closed frames (the Showbridge interpolation fill
+// re-draws the source until its slot is full) therefore shows them at full
+// brightness, while a frame left open is written only once per frame — a
+// composite of two closed shapes (chase onto a wave) is always open, ends up
+// an order of magnitude dimmer, and reads as "the channel went dark". Close
+// every composed frame with a blanked return from the last point back to the
+// first point: blanks are never culled, so the loop survives the budget
+// reducer, and the retrace is invisible. The return is not counted against
+// the point budget — it adds no drawing work. EtherDream/IDN just replay the
+// extra blanked samples invisibly.
+function closeFrameWithBlankedReturn(flat) {
+  const n = flat.length / 8;
+  if (n === 0) return flat;
+  const fx = flat[0], fy = flat[1];
+  const lx = flat[(n - 1) * 8], ly = flat[(n - 1) * 8 + 1];
+  const dist = Math.hypot(fx - lx, fy - ly);
+  if (dist < 0.02) return flat; // Already ends where it starts.
+  const steps = Math.min(160, Math.max(2, Math.ceil(dist / 0.05)));
+  const out = new Float32Array((n + steps) * 8);
+  out.set(flat, 0);
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    const o = (n + s - 1) * 8;
+    out[o] = lx + (fx - lx) * t;
+    out[o + 1] = ly + (fy - ly) * t;
+    out[o + 6] = 1; // blank
+  }
+  out[(n - 1) * 8 + 7] = 0; // lastPoint moves to the new final point
+  out[(n + steps - 1) * 8 + 7] = 1;
+  return out;
+}
+
 // --- Overlay mode ------------------------------------------------------------
 // Point-in-polygon culling (option a): a lit point of a lower-priority layer
 // (higher layerIndex) that lands INSIDE the closed outline of any higher-priority
@@ -268,7 +301,8 @@ function composeOverlay(clips, budget) {
     flat[o + 7] = 0;
   });
   flat[(result.length - 1) * 8 + 7] = 1;
-  return reduceFramePoints(flat, result.length, budget, computeLitSegments(flat, result.length));
+  const reduced = reduceFramePoints(flat, result.length, budget, computeLitSegments(flat, result.length));
+  return closeFrameWithBlankedReturn(reduced);
 }
 
 /**
@@ -288,11 +322,56 @@ export function composeChannelFrame(clips, budget, mode) {
     return composeOverlay(normClips, budget);
   }
   if (mode === MERGE_MODE.COMBINE) {
-    return composeCombine(normClips, budget);
+    return closeFrameWithBlankedReturn(composeCombine(normClips, budget));
   }
   // PRIORITY (default)
   const winner = composePriority(normClips);
   return winner || new Float32Array(0);
+}
+
+/**
+ * Strip the trailing blank hold-tail a frame was padded with. Padding only
+ * APPENDS blank points at the last content position, so dropping trailing
+ * blanks returns the frame to its content length — exactly what the merger
+ * needs. Merging pre-padded frames made the composite almost entirely dead
+ * air, and the budget reducer (which never drops blanks) then deleted every
+ * lit point: an all-blank frame on the DAC.
+ */
+export function trimTrailingBlanks(points) {
+  if (!(points instanceof Float32Array)) return points;
+  let n = points.length / 8;
+  while (n > 0 && points[(n - 1) * 8 + 6] === 1) n--;
+  return n === points.length / 8 ? points : points.slice(0, n * 8);
+}
+
+/** True when at least one point in the frame is lit (blanking === 0). */
+export function hasLitPoints(points) {
+  if (!points) return false;
+  const n = points.length / 8;
+  for (let i = 0; i < n; i++) {
+    if (points[i * 8 + 6] === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Compose frames from several sources that were routed to the SAME DAC output
+ * into a single frame. This is the "two tracks, one channel" merge: instead of
+ * letting a later track silently overwrite an earlier one's shape, both shapes
+ * are composed (overlay = lower layerIndex on top, cut + blend; combine =
+ * sequential with blanking transitions; priority = first/lowest wins).
+ *
+ * @param {Array<{points: *, layerIndex?: number, blend?: string}>} frames
+ *        source frames destined for one DAC output (flat 8-float typed layout)
+ * @param {number} [budget]  per-channel point budget (PPS/FPS); overflow is
+ *        reduced shape-preservingly at this merge step
+ * @param {string} [mode]    MERGE_MODE over the sources
+ * @returns {Float32Array} flat frame (empty when there is nothing to send)
+ */
+export function mergeSourceFrames(frames, budget, mode = MERGE_MODE.OVERLAY) {
+  const srcs = (frames || []).filter((f) => f && f.points);
+  if (srcs.length <= 1) return srcs.length === 1 ? srcs[0].points : new Float32Array(0);
+  return composeChannelFrame(srcs, budget || 1000, mode);
 }
 
 export default composeChannelFrame;

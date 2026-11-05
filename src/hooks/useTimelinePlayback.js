@@ -4,11 +4,12 @@ import { useIldaParserWorker } from '../contexts/IldaParserWorkerContext';
 import { useAudio } from '../contexts/AudioContext.jsx';
 import { applyLanesToPoints, buildChannelEffects, buildGeneratorOverrides, applyCueEffectOverrides } from '../utils/timelineAutomation';
 import { applyEffects, applyOutputProcessingWithDwell } from '../utils/effects';
+import { mergeSourceFrames, composeChannelFrame, MERGE_MODE, BLEND, trimTrailingBlanks, hasLitPoints } from '../utils/layerMerge';
 import { optimizePoints } from '../utils/optimizer';
 import { resampleFrameToStep, DEFAULT_MAX_STEP } from '../utils/pointResample';
 import { resolveTransportTime } from '../utils/timelineTransport';
 import { getPreset, DEFAULT_PRESET, resolvePointBudget } from '../utils/hardwarePresets';
-import { selectActiveCue, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
+import { selectActiveCue, getActiveCues, buildGeneratorFrame, blankFrame } from '../utils/timelineCompile';
 import { useTimelineSync } from './useTimelineSync';
 
 /**
@@ -58,6 +59,9 @@ const MAX_PARSE_RETRIES = 3;
 // Channels whose outputs were logged once for differing frame lengths (avoids
 // repeating the diagnostic every frame of playback).
 const paddedChannelsLogged = new Set();
+// Merged outputs logged once per session (avoids log spam) so a broken merge is
+// visible in the dev console without running at 30 Hz.
+const mergedOutputsLogged = new Set();
 // Channels whose outputs asked for different point rates (logged once).
 const unifiedPpsLogged = new Set();
 
@@ -678,7 +682,8 @@ export function useTimelinePlayback() {
         const active = (ch.cues || [])
             .map((id) => store.cues[id])
             .filter(Boolean);
-        const pick = selectActiveCue(active, t);
+        const activeCues = getActiveCues(active, t);
+        const pick = activeCues.length > 0 ? activeCues[activeCues.length - 1].c : null;
         let frame = null;
         if (pick) {
             // Generator clips are animated by per-channel gen lanes: curves
@@ -692,6 +697,29 @@ export function useTimelinePlayback() {
             frame = buildCueFrame(pick, t, genOverrides);
         }
         if (!frame) return null;
+
+        // Two or more cues active at once on one channel (e.g. a chase running
+        // while a wave fades in): compose their frames instead of letting only
+        // the top-priority cue reach the DAC — the other shapes were silently
+        // dropped. Single-cue channels keep the untouched winner path above.
+        if (activeCues.length > 1) {
+            const clips = [];
+            for (const { c: cue } of activeCues) {
+                // Content frames only — legacy lanes / effects / intensity are
+                // applied ONCE to the composed frame below, so they cannot run
+                // twice over a merge.
+                let f = buildCueFrame(cue, t, cue.type === 'GENERATOR'
+                    ? buildGeneratorOverrides(chLanes, t, cue.generatorId, cue.generatorParams)
+                    : null);
+                if (f) {
+                    clips.push({ points: f, layerIndex: -(cue.layerPriority || 0), blend: BLEND.NORMAL });
+                }
+            }
+            const composed = composeChannelFrame(clips, resolvePointBudget(null, store.settings.fps || 30) || 1000, store.settings?.layerMergeMode || MERGE_MODE.OVERLAY);
+            // Never drop a channel to a blank frame because composition came
+            // back empty: fall back to the top source's frame.
+            frame = composed && composed.length > 0 ? composed : (clips.length > 0 ? clips[clips.length - 1].points : null);
+        }
 
         // Legacy scalar lanes (saved with a bare targetProperty) keep the old
         // fixed transform path. Modern effect-linked lanes are collected into a
@@ -739,7 +767,17 @@ export function useTimelinePlayback() {
         const optimizeOnPlayback = !!s.optimizeOnPlayback;
 
         for (const chId of order) {
-            const frame = compileChannelFrame(chId, t);
+            // One channel's compile must never take down the whole frame: if the
+            // merge or any per-channel step throws, skip just that channel and
+            // keep the rest flowing — an unguarded throw here killed the entire
+            // DAC push and every channel went dark at once.
+            let frame;
+            try {
+                frame = compileChannelFrame(chId, t);
+            } catch (e) {
+                console.error('[TimelinePlayback] channel compile failed — skipping channel', chId, e);
+                continue;
+            }
             if (!frame) continue;
             // Keep the channel frame (before the per-output fan-out) so the
             // editor preview can show the very same picture the DAC gets
@@ -763,6 +801,15 @@ export function useTimelinePlayback() {
             // area scale/crop, safety-zone blanking, PPS target) — the same
             // `applyOutputProcessing`/PPS resolution the grid path uses, so the
             // timeline drives the same hardware behavior the main app promises.
+            // Layer priority of this channel's winning cue, in the layerMerge
+            // convention (lower layerIndex = on top). Sources that merge into
+            // the same DAC output use it to decide who draws over whom.
+            const chCues = (store.channels[chId]?.cues || [])
+                .map((id) => store.cues[id])
+                .filter(Boolean);
+            const activeForMerge = getActiveCues(chCues, t);
+            const topCue = activeForMerge.length > 0 ? activeForMerge[activeForMerge.length - 1].c : null;
+            const channelLayerIndex = topCue ? -(topCue.layerPriority || 0) : 0;
             const outFrames = [];
             for (const out of uniq) {
                 // A channel-mode Delay/Chase produces a concatenated buffer plus a
@@ -881,7 +928,7 @@ export function useTimelinePlayback() {
                 };
                 if (settings?.targetMode) options.targetMode = settings.targetMode;
 
-                outFrames.push({ out, outFrame, options, budget });
+                outFrames.push({ out, outFrame, options, budget, layerIndex: channelLayerIndex });
             }
 
             // A channel-mode Delay/Chase intentionally gives each DAC a shifted
@@ -948,21 +995,94 @@ export function useTimelinePlayback() {
                 }
             }
 
-            for (const { out, outFrame, options } of outFrames) {
-                frames[`${out.ip}:${out.channel}`] = {
+            for (const { out, outFrame, options, budget, layerIndex: srcLayerIndex } of outFrames) {
+                const key = `${out.ip}:${out.channel}`;
+                const entry = {
                     points: padFrameForOutput(outFrame, out.type, targetCount),
                     ip: out.ip,
                     channel: out.channel,
                     type: out.type || 'EtherDream',
                     options,
+                    layerIndex: srcLayerIndex ?? channelLayerIndex,
+                    blend: BLEND.NORMAL,
                 };
+                const prev = frames[key];
+                frames[key] = prev
+                    ? {
+                        ...entry,
+                        // A second timeline track resolved to the same DAC output
+                        // (two shapes aimed at one channel). MERGE the frames here
+                        // instead of letting the later one overwrite and drop the
+                        // earlier track's shape — the same composition the grid /
+                        // Show-Control path already does for stacked clips. If the
+                        // composition ever comes back empty we keep the first source
+                        // so the channel is never left without content.
+                        points: (() => {
+                            try {
+                                // The source frames are padded to their full frame
+                                // length BEFORE this merge (blank hold tails). Feeding
+                                // those padded frames into the composer would fill the
+                                // budget with dead air — the reducer keeps blanks
+                                // unconditionally and then deletes every lit point,
+                                // leaving a fully dark frame. Merge the content only;
+                                // the result is padded back up below.
+                                const trimmedPrev = trimTrailingBlanks(prev.points);
+                                const trimmedEntry = trimTrailingBlanks(entry.points);
+                                const merged = mergeSourceFrames(
+                                    [
+                                        { points: trimmedPrev, layerIndex: prev.layerIndex, blend: prev.blend },
+                                        { points: trimmedEntry, layerIndex: entry.layerIndex, blend: entry.blend },
+                                    ],
+                                    budget,
+                                    store.settings?.layerMergeMode || MERGE_MODE.OVERLAY,
+                                );
+                                // If composition came back empty or fully blanked we
+                                // keep the first track's frame — better one shape than
+                                // none.
+                                const base = merged && hasLitPoints(merged) ? merged : prev.points;
+                                // Composition re-layers points and can change the point
+                                // count outright (overlay culling drops covered samples),
+                                // so the merged frame must be re-padded to the frame
+                                // length the sources had before composing. Shipping a
+                                // composed frame that is shorter than a regular frame
+                                // desynchronizes the DAC's frame timing and the channel
+                                // ends up dark — the "merged channels go blank" case.
+                                const sourceCount = Math.max(1, Math.floor(prev.points.length / 8));
+                                const finalFrame = padFrameForOutput(base, out.type, sourceCount);
+                                if (!mergedOutputsLogged.has(key)) {
+                                    mergedOutputsLogged.add(key);
+                                    let lit = 0;
+                                    for (let i = 0; i < finalFrame.length / 8; i++) {
+                                        if (finalFrame[i * 8 + 6] === 0) lit++;
+                                    }
+                                    console.log(`[TimelinePlayback] merged output ${key}: ${lit} lit points / ${finalFrame.length / 8} total (mode=${store.settings?.layerMergeMode || 'overlay'}, budget=${budget})`);
+                                }
+                                return finalFrame;
+                            } catch (e) {
+                                // Never let a merge failure take the output down: fall back
+                                // to the first track's frame.
+                                console.error('[TimelinePlayback] merge failed for output', key, e);
+                                return prev.points;
+                            }
+                        })(),
+                    }
+                    : entry;
             }
         }
         return frames;
     }, [compileChannelFrame]);
 
     const push = useCallback((t) => {
-        const frames = compile(t);
+        // A failure anywhere in frame compilation must never kill the render
+        // loop — without this the DAC push died silently and every channel went
+        // dark until the page was reloaded.
+        let frames;
+        try {
+            frames = compile(t);
+        } catch (e) {
+            console.error('[TimelinePlayback] compile failed — skipping frame', e);
+            return;
+        }
         if (!window.electronAPI) return;
         if (Object.keys(frames).length > 0) {
             window.electronAPI.send('dac-frame-update', frames);

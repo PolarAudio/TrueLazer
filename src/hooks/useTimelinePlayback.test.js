@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { decimatePoints } from '../../main/dac-budget.cjs';
+import { mergeSourceFrames, MERGE_MODE, BLEND } from '../../src/utils/layerMerge';
 import {
     resolveOutputFlip,
     flipPoints,
@@ -159,5 +160,51 @@ describe('padFrameForOutput', () => {
     it('does nothing for a non-positive target count', () => {
         const frame = makeFrame(2);
         expect(padFrameForOutput(frame, 'EtherDream', 0)).toBe(frame);
+    });
+});
+
+describe('merged frames keep the source frame length', () => {
+    // Flat 8-float layout: x,y,z,r,g,b,blanking(0/1),lastPoint(0/1)
+    const flat = (pts) => {
+        const arr = new Float32Array(pts.length * 8);
+        pts.forEach((p, i) => {
+            const o = i * 8;
+            arr[o] = p.x; arr[o + 1] = p.y; arr[o + 2] = 0;
+            arr[o + 3] = p.r || 0; arr[o + 4] = p.g || 0; arr[o + 5] = p.b || 0;
+            arr[o + 6] = p.blanking ? 1 : 0; arr[o + 7] = p.lastPoint ? 1 : 0;
+        });
+        arr[(pts.length - 1) * 8 + 7] = 1;
+        return arr;
+    };
+    const clip = (pts, layerIndex = 0) => ({ points: flat(pts), layerIndex, blend: BLEND.NORMAL });
+
+    it('re-pads a composed overlay frame back to the source frame length', () => {
+        // Two simultaneous sources merge into one composed frame whose point
+        // count differs from the sources (overlay culling drops covered samples).
+        // The merge result must be re-padded to the source frame length before it
+        // reaches the DAC — a short composed frame desynchronizes frame timing and
+        // the affected channel goes dark after the second source activates.
+        const bg = clip([
+            { x: 0.2, y: 0.2, r: 255, g: 255, b: 255 },
+            { x: 0.35, y: 0.2, r: 255, g: 255, b: 255 },
+            { x: 0.275, y: 0.275, r: 255, g: 255, b: 255, lastPoint: true },
+        ], 1);
+        const top = clip([
+            { x: 0, y: 0, r: 255, g: 0, b: 0 },
+            { x: 1, y: 0, r: 255, g: 0, b: 0 },
+            { x: 0, y: 1, r: 255, g: 0, b: 0, lastPoint: true },
+        ], 0);
+
+        const merged = mergeSourceFrames([bg, top], 1000, MERGE_MODE.OVERLAY);
+        const sourceCount = Math.floor(bg.points.length / 8);
+        const finalFrame = padFrameForOutput(merged, 'EtherDream', sourceCount);
+
+        expect(finalFrame.length).toBeGreaterThanOrEqual(sourceCount * 8);
+        // The composite is closed with a blanked return (closed-frame hardware
+        // replays it at full brightness), and ends at the first point.
+        const n = finalFrame.length / 8;
+        expect(finalFrame[(n - 1) * 8]).toBeCloseTo(finalFrame[0]);
+        expect(finalFrame[(n - 1) * 8 + 1]).toBeCloseTo(finalFrame[1]);
+        expect(finalFrame[(n - 1) * 8 + 6]).toBe(1);
     });
 });

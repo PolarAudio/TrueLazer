@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toFlat8, blankFrame, selectActiveCue, buildGeneratorFrame } from './timelineCompile';
+import { toFlat8, blankFrame, selectActiveCue, getActiveCues, buildGeneratorFrame } from './timelineCompile';
 
 const cue = (patch) => ({
     id: 'c',
@@ -61,6 +61,33 @@ describe('selectActiveCue', () => {
         const older = cue({ id: 'older', startTime: 0 });
         const newer = cue({ id: 'newer', startTime: 1 });
         expect(selectActiveCue([older, newer], 2).id).toBe('newer');
+    });
+});
+
+describe('getActiveCues', () => {
+    it('returns every active cue, ordered background → foreground', () => {
+        const wave = cue({ id: 'wave', startTime: 0, layerPriority: 0 });
+        const chase = cue({ id: 'chase', startTime: 2, layerPriority: 9 });
+        expect(getActiveCues([wave, chase], 3).map((c) => c.c.id)).toEqual(['wave', 'chase']);
+    });
+
+    it('excludes muted cues and cues outside their window', () => {
+        const a = cue({ id: 'a', startTime: 0, duration: 4 });
+        const b = cue({ id: 'b', startTime: 10, duration: 4 });
+        expect(getActiveCues([a, b], 2).map((c) => c.c.id)).toEqual(['a']);
+    });
+
+    it('treats a looping cue as active forever', () => {
+        const loop = cue({ id: 'loop', startTime: 0, duration: 4, isLooping: true });
+        expect(getActiveCues([loop], 999).map((c) => c.c.id)).toEqual(['loop']);
+    });
+
+    it('is the background→foreground order behind the top-priority winner', () => {
+        const low = cue({ id: 'low', startTime: 0, layerPriority: 0 });
+        const high = cue({ id: 'high', startTime: 1, layerPriority: 5 });
+        const active = getActiveCues([low, high], 2);
+        expect(active[active.length - 1].c.id).toBe('high');
+        expect(selectActiveCue([low, high], 2).id).toBe('high');
     });
 });
 

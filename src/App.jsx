@@ -7836,6 +7836,13 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     const handleOpenOutputSettings = useCallback(() => setShowOutputSettingsWindow(true), [setShowOutputSettingsWindow]);
     const handleOpenShortcutsSettings = useCallback(() => setShowShortcutsWindow(true), [setShowShortcutsWindow]);
     const handleSetRenderSetting = useCallback((setting, value) => {
+        if (setting === 'layerMergeMode') {
+            // Keep the Timeline playback merge in step with the Output
+            // Processing layer-merge selector so both editors compose
+            // simultaneous shapes the same way instead of the timeline
+            // hardcoding its own merge strategy.
+            timelineBridge.actionsRef?.current?.setSettings?.({ layerMergeMode: value });
+        }
         if (setting === 'optimizationEnabled' || setting === 'optimizationMaxDist' || setting === 'optimizationPathDwell') {
             const actionType = `SET_${setting.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
             dispatch({ type: actionType, payload: Number(value) });
@@ -8171,6 +8178,12 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                             layerMergeMode: layerMergeMode
                         }}
                         onSetRenderSetting={(setting, value) => {
+                            if (setting === 'layerMergeMode') {
+                                // Keep the Timeline playback merge in step with
+                                // this selector instead of the timeline hardcoding
+                                // its own merge strategy.
+                                timelineBridge.actionsRef?.current?.setSettings?.({ layerMergeMode: value });
+                            }
                             if (setting === 'optimizationEnabled' || setting === 'optimizationMaxDist' || setting === 'optimizationPathDwell') {
                                 const actionType = `SET_${setting.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
                                 dispatch({ type: actionType, payload: Number(value) });

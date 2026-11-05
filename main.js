@@ -137,6 +137,50 @@ let currentThumbnailRenderMode = 'still'; // Global variable to store the curren
 let audioDevices = []; // Global variable to store audio devices
 let currentAudioDeviceId = 'default';
 
+// Native OS popups (native context menus, file dialogs) can keep the window's
+// activation even after they close — the renderer keeps painting but pointer
+// events never reach it, so buttons/selects look dead until the user
+// re-activates the window. Any native popup must be followed by a focus
+// restore for the main window, or the app appears broken until the user
+// clicks elsewhere and back.
+const restoreWindowFocus = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const win = mainWindow;
+  // Defer so the OS finishes dismissing the popup/dialog before we reclaim
+  // activation (focusing while it still holds activation just no-ops).
+  setTimeout(() => {
+    if (!win.isDestroyed()) win.focus();
+  }, 80);
+};
+
+// Open a native popup menu and hand activation back to the main window when
+// it closes. Use this INSTEAD of menu.popup({ window: mainWindow }) directly.
+const popupWithFocusRestore = (menu) => {
+  if (!menu) return;
+  menu.once('menu-will-close', restoreWindowFocus);
+  menu.popup({ window: mainWindow });
+};
+
+// Same guarantee for the native file dialogs: patch the shared dialog object
+// once so every showOpenDialog/showSaveDialog call (all 16 sites, present and
+// future) restores window activation after the dialog resolves.
+try {
+  const origShowOpenDialog = dialog.showOpenDialog.bind(dialog);
+  const origShowSaveDialog = dialog.showSaveDialog.bind(dialog);
+  dialog.showOpenDialog = async (...args) => {
+    const r = await origShowOpenDialog(...args);
+    restoreWindowFocus();
+    return r;
+  };
+  dialog.showSaveDialog = async (...args) => {
+    const r = await origShowSaveDialog(...args);
+    restoreWindowFocus();
+    return r;
+  };
+} catch (e) {
+  console.warn('[focus] native dialog focus restore not installed:', e);
+}
+
 // Define the schema for settings
 const schema = {
   renderSettings: {
@@ -1981,7 +2025,7 @@ function createWindow() {
     const layerContextMenu = Menu.buildFromTemplate([
       { label: m('menu.rename_layer', 'Rename Layer'), click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-layer', index: index }); } },
     ]);
-    layerContextMenu.popup({ window: mainWindow });
+    popupWithFocusRestore(layerContextMenu);
   });
 
   ipcMain.on('show-layer-full-context-menu', (event, layerIndex) => {
@@ -2017,7 +2061,7 @@ function createWindow() {
       { label: m('menu.rename', 'Rename'), click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-rename', layerIndex); } },
       { label: m('menu.clear_clips', 'Clear Clips'), click: () => { if (mainWindow) mainWindow.webContents.send('layer-full-context-command', 'layer-clear-clips', layerIndex); } },
     ]);
-    layerFullContextMenu.popup({ window: mainWindow });
+    popupWithFocusRestore(layerFullContextMenu);
   });
 
   ipcMain.on('show-page-context-menu', (event, pageIndex) => {
@@ -2026,7 +2070,7 @@ function createWindow() {
       { type: 'separator' },
       { label: m('menu.rename_page', 'Rename Page'), click: () => { if (mainWindow) mainWindow.webContents.send('page-context-command', 'page-rename', pageIndex); } },
     ]);
-    pageContextMenu.popup({ window: mainWindow });
+    popupWithFocusRestore(pageContextMenu);
   });
 
   ipcMain.on('show-column-context-menu', (event, index) => {
@@ -2034,7 +2078,7 @@ function createWindow() {
       { label: m('menu.duplicate', 'Duplicate'), click: () => { if (mainWindow) mainWindow.webContents.send('menu-action', 'column-duplicate'); } },
       { label: m('menu.rename_column', 'Rename Column'), click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action', { type: 'rename-column', index: index }); } },
     ]);
-    columnContextMenu.popup({ window: mainWindow });
+    popupWithFocusRestore(columnContextMenu);
   });
 
   ipcMain.on('show-clip-context-menu', (event, layerIndex, colIndex, currentTriggerStyle = 'normal') => {
@@ -2087,7 +2131,7 @@ function createWindow() {
       { label: m('menu.rename', 'Rename'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'rename-clip', layerIndex, colIndex); } },
       { label: m('menu.clear', 'Clear'), click: () => { if (mainWindow) mainWindow.webContents.send('clip-context-command', 'clear-clip', layerIndex, colIndex); } },
     ]);
-    clipContextMenu.popup({ window: mainWindow });
+    popupWithFocusRestore(clipContextMenu);
   });
 
   ipcMain.on('show-column-header-clip-context-menu', (event, colIndex) => {
@@ -2101,7 +2145,7 @@ function createWindow() {
       { label: m('menu.rename', 'Rename'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'rename-clip', colIndex }); } },
       { label: m('menu.clear', 'Clear'), click: () => { if (mainWindow) mainWindow.webContents.send('column-header-clip-context-command', { command: 'clear-column-clips', colIndex }); } },
     ]);
-    columnHeaderClipContextMenu.popup({ window: mainWindow });
+    popupWithFocusRestore(columnHeaderClipContextMenu);
   });
 
   ipcMain.on('set-audio-devices', (event, devices) => {
@@ -2125,7 +2169,7 @@ function createWindow() {
       { label: (assignments && assignments.length > 0) ? 'Clear All Assignments' : 'Clear Assignment', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'clear-quick-assign', controlType: type, index: index }); } }
     );
     const quickAssignMenu = Menu.buildFromTemplate(menuItems);
-    quickAssignMenu.popup({ window: mainWindow });
+    popupWithFocusRestore(quickAssignMenu);
   });
 
   ipcMain.on('context-menu-action', (event, action) => {

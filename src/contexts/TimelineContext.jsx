@@ -89,6 +89,11 @@ export const DEFAULT_TIMELINE_SETTINGS = Object.freeze({
     // optimizes), including interpolation, corner dwell and safety-zone
     // boundary dwell.
     optimizeOnPlayback: false,
+    // How simultaneous timeline shapes on one channel / DAC output are
+    // composed: 'priority' (one winning shape), 'combine' (sequential with
+    // blanking transitions) or 'overlay' (lower layerIndex on top, cut+blend).
+    // Driven from the Output Processing window's Layer Merge selector.
+    layerMergeMode: 'overlay',
 });
 
 export function createInitialTimelineState() {

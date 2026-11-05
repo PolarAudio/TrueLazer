@@ -48,23 +48,34 @@ export function blankFrame() {
 }
 
 /**
- * Pick the winning cue among `cues` at timeline time `t`. Ignores cues that
- * haven't started or already finished (unless looping). Higher layerPriority
- * wins; ties go to the cue that started most recently.
+ * Every cue active at timeline time `t`, ordered background → foreground:
+ * lowest layerPriority first, highest last (the merge order). Ties on
+ * layerPriority keep the most recently started cue last, so the last entry is
+ * always the winner `selectActiveCue` would pick.
  */
-export function selectActiveCue(cues, t) {
+export function getActiveCues(cues, t) {
     const active = (cues || [])
         .filter(Boolean)
         .filter((c) => !c.muted)
         .map((c) => ({ c, rel: t - c.startTime }))
         .filter(({ c, rel }) => rel >= -1e-6 && (c.isLooping || rel < c.duration));
-    if (active.length === 0) return null;
-    active.sort((a, b) => {
-        const prio = (b.c.layerPriority || 0) - (a.c.layerPriority || 0);
-        if (prio !== 0) return prio;
-        return b.c.startTime - a.c.startTime;
+    return active.sort((a, b) => {
+        const pa = a.c.layerPriority || 0;
+        const pb = b.c.layerPriority || 0;
+        if (pa !== pb) return pa - pb;
+        return (a.c.startTime || 0) - (b.c.startTime || 0);
     });
-    return active[0].c;
+}
+
+/**
+ * Pick the winning cue among `cues` at timeline time `t`. Ignores cues that
+ * haven't started or already finished (unless looping). Higher layerPriority
+ * wins; ties go to the cue that started most recently.
+ */
+export function selectActiveCue(cues, t) {
+    const active = getActiveCues(cues, t);
+    const top = active[active.length - 1];
+    return top ? top.c : null;
 }
 
 /**
