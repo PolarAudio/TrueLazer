@@ -279,3 +279,45 @@ English.
   output is started, and the master intensity is above zero.
 - **Something crashed** – *Help > Report a Bug* attaches the redacted
   application log so the problem can be diagnosed.
+
+---
+
+## 12. Laser Zone Tool (phone companion)
+
+For venues where the desk cannot see the projection, the **Laser Zone Tool**
+lets a phone or tablet on the same LAN open a browser page served by the
+desktop app and adjust projector zones from where the beam lands.
+
+### Enable it
+
+1. **General Settings > Laser Zone Tool (phone companion) > Enable companion**.
+2. The panel shows a **QR code**, a **6-digit PIN** (rotates on every enable)
+   and the **LAN link**.
+3. On the phone: join the **same Wi-Fi** (e.g. ShowNet), disable VPN, scan the
+   QR. Enter the PIN if asked. No app to install.
+4. Pick an output, drag the red safety zones / blue output area, toggle
+   outlines / test lines, then **Release** or switch output. The laser moves
+   as you drag.
+5. **Disable** (or close TrueLazer) stops the server, discovery and PIN.
+
+Remotely editable: safety zones, output area, transformation (Crop/Scale),
+zone outlines, horizontal/vertical test lines, flips, dimmer, name. **PPS and
+timing stay desktop-only** — the server rejects them.
+
+### Two devices, one output
+
+Each output has a **10 second edit lock**: the first phone to drag owns it,
+others see *Locked by … — view only*. The desktop can always edit through a
+lock. Disconnecting keeps the laser at its last zones (fail-safe). The
+desktop panel lists the last remote edits; **shrinks** (less blanked area,
+i.e. more beam) are flagged amber, and every edit is logged in `main.log`.
+
+### Pre-show checklist
+
+- Reserve a static IP for the TrueLazer laptop on ShowNet.
+- **Windows Firewall (Private)** allows TrueLazer.
+- Router **client isolation off**; mDNS advertises
+  `TrueLazer Zones._truelazer._tcp.local.` (QR/IP fallback if blocked).
+- Enable the companion **per show** (fresh PIN), disable between shows.
+
+Full reference, API notes and troubleshooting: [COMPANION.md](COMPANION.md).

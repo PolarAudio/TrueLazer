@@ -52,3 +52,38 @@ describe('full DAC chain: generator -> optimizer -> safety zone -> wire decimati
         expect(s.pts).toBeLessThanOrEqual(600);
     });
 });
+
+describe('applyOutputProcessing with scale: zones follow the scaled area', () => {
+    // Area shrinks content to the centre half: u' = 0.25 + u*0.5.
+    // Content centre (u=0.5) lands at field 0.5, inside field 0.45..0.55.
+    const settings = {
+        transformationEnabled: true,
+        transformationMode: 'scale',
+        outputArea: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 },
+        safetyZones: [{ x: 0.4, y: 0.4, w: 0.2, h: 0.2 }],
+    };
+    function frameAt(u, v) {
+        const x = u * 2 - 1, y = 1 - v * 2;
+        return { points: new Float32Array([x, y, 0, 255, 255, 255, 0, 0]), isTypedArray: true };
+    }
+    function blanked(u, v) {
+        const out = applyOutputProcessingWithDwell(frameAt(u, v), settings, 2);
+        return out.points[6] > 0.5;
+    }
+    it('blanks content centre where the scaled zone sits', () => {
+        expect(blanked(0.5, 0.5)).toBe(true); // field 0.5,0.5 inside 0.45..0.55
+        expect(blanked(0.41, 0.5)).toBe(true); // field 0.455
+        expect(blanked(0.59, 0.5)).toBe(true); // field 0.545
+    });
+    it('leaves content outside the scaled zone lit', () => {
+        expect(blanked(0.1, 0.5)).toBe(false); // field 0.30
+        expect(blanked(0.9, 0.5)).toBe(false); // field 0.70
+        expect(blanked(0.5, 0.1)).toBe(false);
+    });
+    it('does not treat the zone as absolute field coords', () => {
+        // Field 0.42,0.42 would be inside an absolute 0.4..0.6 zone but is
+        // outside the scaled 0.45..0.55 zone. Content mapping to field 0.42
+        // is u=(0.42-0.25)/0.5=0.34 -> must stay lit.
+        expect(blanked(0.34, 0.34)).toBe(false);
+    });
+});

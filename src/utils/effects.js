@@ -1819,11 +1819,22 @@ export function applyOutputProcessing(frame, settings, inPlace = false) {
         }
 
         // 2. Apply Safety Zones (Check against TRANSFORMED coordinates)
+        // Scale mode: zones are content-relative and follow the scaled
+        // output area (same mapping as the canvas + laser outline), so a
+        // zone dragged over the shrunk content blanks that content.
+        // Crop / no transform: zones are absolute field coordinates.
         if (safetyZones && safetyZones.length > 0) {
             let u = (x + 1) / 2;
             let v = (1 - y) / 2;
             for (const zone of safetyZones) {
-                if (u >= zone.x && u <= zone.x + zone.w && v >= zone.y && v <= zone.y + zone.h) {
+                let zx = zone.x, zy = zone.y, zw = zone.w, zh = zone.h;
+                if (transformationEnabled && outputArea && transformationMode === 'scale') {
+                    zx = outputArea.x + zx * outputArea.w;
+                    zy = outputArea.y + zy * outputArea.h;
+                    zw = zw * outputArea.w;
+                    zh = zh * outputArea.h;
+                }
+                if (u >= zx && u <= zx + zw && v >= zy && v <= zy + zh) {
                     r = 0; g = 0; b = 0; blanking = 1; break;
                 }
             }

@@ -83,6 +83,10 @@ software. Here's what sets us apart:
 - **Control Integration**
   - MIDI mapping (pre-made & custom), HOTKEYS mapping, DMX/Artnet mapping.
   - General Settings, Output Settings and Output Processing windows, Shortcuts window.
+  - **Laser Zone Tool (phone companion)** — adjust safety zones, output area, test
+    lines, flips and dimmer from a phone/tablet on the same LAN with live laser
+    feedback, per-output edit locks and a desktop audit trail. LAN-only, PIN-gated,
+    off by default; PPS stays desktop-only. See [docs/COMPANION.md](docs/COMPANION.md).
 
 ## Editors
 
@@ -104,6 +108,26 @@ project, so a new project clears them; a `.tlo` lets one rig configuration be
 reused across shows and machines. Import **merges** — only outputs whose
 `ip:channel` address matches a currently detected DAC are updated, and entries
 with no detected output are reported rather than silently applied.
+
+### Laser Zone Tool (phone companion)
+
+Some venues put the operator nowhere near the projection, so a safety zone
+cannot be aimed from the desk. The **Laser Zone Tool** lets a phone or tablet
+on the same LAN (e.g. the internal ShowNet Wi-Fi) open a browser page served
+by the desktop app and drag zones from where the beam actually lands, with
+live laser feedback.
+
+**General Settings ▸ Laser Zone Tool (phone companion) ▸ Enable companion**
+shows a QR code, a 6-digit PIN (rotates on every enable) and the LAN link.
+No app to install. Remotely editable: safety zones, output area, zone
+outlines, test lines, flips, dimmer and name; PPS/timing stays desktop-only.
+One device edits an output at a time (10s lock, auto-release on disconnect),
+desktop edits always converge, and shrinks are flagged in the desktop audit
+list. Running is LAN-only and off by default; closing the app stops it.
+
+Full operator guide, pre-show checklist and troubleshooting:
+[docs/COMPANION.md](docs/COMPANION.md) and the
+[wiki Laser Zone Tool page](https://github.com/PolarAudio/TrueLazer/wiki/Laser-Zone-Tool).
 
 Because the editors share one window, they share one application menu and one set
 of modal dialogs:
@@ -253,8 +277,8 @@ Discovered NDI sources can be dragged from the Generator Panel onto the clip gri
    - ☒ Per-output Projector Setup (Channel name, Output Transformation, Timing Target, Safety Zones, Test
      Output) per channel/DAC.
    - ☑ Audio Settings (Input and Output).
-   - ☒ General Settings (currently ILDA Parsing mode + Master Speed / Target FPS; the Thumbnail render mode
-     lives under **View ▸ Render Mode**).
+   - ☑ General Settings (ILDA Parsing mode + Master Speed / Target FPS + Laser Zone
+     Tool phone companion; the Thumbnail render mode lives under **View ▸ Render Mode**).
     - ☐ Reset Functions (DAC assignment, Slider Value, Speed Value, Clip Deck, Effects etc.).
     - ☑ Bug report feature.
 
@@ -326,9 +350,12 @@ Before you begin, ensure you have the following installed:
 - `src/ILDA-FILE-FORMAT-FILES/` — Default ILDA files for testing/development (unpacked to the chosen install
   location during installation).
 - `main/` + `main.js` + `src/preload.js` — Electron main process and IPC.
+  - `main/companion-server.cjs` + `main/companion-mdns.cjs` — Laser Zone Tool
+    LAN server (HTTP + SSE, PIN, locks, mDNS) and Bonjour announcer.
+- `src/companion/` — Phone companion web app (second Vite entry → `dist/companion/`).
 - `native/` — Native addon source for the NDI wrapper (`build-native`).
 - `patches/` — `patch-package` patches applied on `postinstall`.
-- `docs/` — Feature documentation (`SHAPE_BUILDER.md`).
+- `docs/` — Feature documentation (`SHAPE_BUILDER.md`, `USER_MANUAL.md`, `COMPANION.md`).
 - `sdk/` — DAC/SDK information: EtherDream reference code, Showbridge driver & protocol docs, NDI 6 SDK.
 - `dist/` — Vite production build output.
 - `release/` — Packaged installers.

@@ -211,25 +211,41 @@ const OutputCanvas = ({
     }
 
     // Draw Safety Zones ON TOP
+    // Scale mode: zones are content-relative and follow the scaled output
+    // area (same mapping as applyOutputProcessing + the laser outline),
+    // so the red fill sits over the shrunk content it actually blanks.
+    const mapZone = (zone) => {
+        if (transformationEnabled && outputArea && transformationMode === 'scale') {
+            return {
+                x: outputArea.x + zone.x * outputArea.w,
+                y: outputArea.y + zone.y * outputArea.h,
+                w: zone.w * outputArea.w,
+                h: zone.h * outputArea.h,
+            };
+        }
+        return zone;
+    };
     const zones = Array.isArray(safetyZones) ? safetyZones : [];
+    const mappedZones = zones.map(mapZone);
     zones.forEach((zone, index) => {
-      drawRect(ctx, {
-        x: zone.x * width,
-        y: zone.y * height,
-        w: zone.w * width,
-        h: zone.h * height
-      }, 'rgba(255, 0, 0, 0.3)', index === selectedZoneIndex);
+        const m = mappedZones[index];
+        drawRect(ctx, {
+          x: m.x * width,
+          y: m.y * height,
+          w: m.w * width,
+          h: m.h * height
+        }, 'rgba(255, 0, 0, 0.3)', index === selectedZoneIndex);
 
-      // Optional crisp dashed outline so the zone boundary stays visible over
-      // busy frame-trace content (and on top of the translucent fill).
-      if (showZoneOutlines) {
-        ctx.save();
-        ctx.strokeStyle = '#ff4444';
-        ctx.lineWidth = index === selectedZoneIndex ? 2.5 : 1.5;
-        ctx.setLineDash([4, 3]);
-        ctx.strokeRect(zone.x * width, zone.y * height, zone.w * width, zone.h * height);
-        ctx.restore();
-      }
+        // Optional crisp dashed outline so the zone boundary stays visible over
+        // busy frame-trace content (and on top of the translucent fill).
+        if (showZoneOutlines) {
+            ctx.save();
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = index === selectedZoneIndex ? 2.5 : 1.5;
+            ctx.setLineDash([4, 3]);
+            ctx.strokeRect(m.x * width, m.y * height, m.w * width, m.h * height);
+            ctx.restore();
+        }
     });
 
     // Draw Test Line
@@ -260,7 +276,7 @@ const OutputCanvas = ({
           let segments = [[startPx, endPx]];
 
           if (zones && zones.length > 0) {
-              zones.forEach(zone => {
+              mappedZones.forEach(zone => {
                   const zY = zone.y * height;
                   const zH = zone.h * height;
                   const zX = zone.x * width;
@@ -332,7 +348,7 @@ const OutputCanvas = ({
           let segments = [[startPx, endPx]];
 
           if (zones && zones.length > 0) {
-              zones.forEach(zone => {
+              mappedZones.forEach(zone => {
                   const zY = zone.y * height;
                   const zH = zone.h * height;
                   const zX = zone.x * width;
@@ -434,17 +450,30 @@ const OutputCanvas = ({
     return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
   };
 
+  // Scale mode: zones follow the scaled area, so hit-testing happens in
+  // content (zone) space while output-area hit-testing uses canvas space.
+  const toZoneSpace = (cx, cy) => {
+      if (transformationEnabled && outputArea && transformationMode === 'scale') {
+          return {
+              x: (cx - outputArea.x) / outputArea.w,
+              y: (cy - outputArea.y) / outputArea.h,
+          };
+      }
+      return { x: cx, y: cy };
+  };
+
   const handleMouseDown = (e) => {
     const { x, y } = getMousePos(e);
+    const z = toZoneSpace(x, y);
     
     const zones = Array.isArray(safetyZones) ? safetyZones : [];
 
     // 1. PRIORITY: Check Safety Zones Handles (Selected first)
     if (selectedZoneIndex !== null && zones[selectedZoneIndex]) {
         const zone = zones[selectedZoneIndex];
-        const handle = isOverHandle(x, y, zone);
+        const handle = isOverHandle(z.x, z.y, zone);
         if (handle) {
-            setDragging({ type: 'zone', index: selectedZoneIndex, handle, startX: x, startY: y, originalRect: { ...zone } });
+            setDragging({ type: 'zone', index: selectedZoneIndex, handle, startX: z.x, startY: z.y, originalRect: { ...zone } });
             return;
         }
     }
@@ -452,10 +481,10 @@ const OutputCanvas = ({
     // 2. PRIORITY: Check Safety Zones Body (Select/Move)
     for (let i = zones.length - 1; i >= 0; i--) {
         const zone = zones[i];
-        if (zone && isInside(x, y, zone)) {
+        if (zone && isInside(z.x, z.y, zone)) {
             onSelectZone(i);
-            const handle = isOverHandle(x, y, zone); 
-            setDragging({ type: 'zone', index: i, handle: handle || 'move', startX: x, startY: y, originalRect: { ...zone } });
+            const handle = isOverHandle(z.x, z.y, zone); 
+            setDragging({ type: 'zone', index: i, handle: handle || 'move', startX: z.x, startY: z.y, originalRect: { ...zone } });
             return;
         }
     }
@@ -488,9 +517,10 @@ const OutputCanvas = ({
     if (!dragging) return;
     const { x, y } = getMousePos(e);
     
-    // Calculate raw delta
-    const dx = x - dragging.startX;
-    const dy = y - dragging.startY;
+    // Zone drags live in content space under scale; output drags in canvas space.
+    const cur = dragging.type === 'zone' ? toZoneSpace(x, y) : { x, y };
+    const dx = cur.x - dragging.startX;
+    const dy = cur.y - dragging.startY;
     
     const updateRect = (original, handle, dx, dy) => {
         let r = { ...original };

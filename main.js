@@ -25,6 +25,11 @@ const __dirname = dirname(__filename);
 import dacCommunication from './main/dac-communication.cjs';
 const { discoverDacs, sendFrame, sendIdleFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
 
+// Companion (Laser Zone Tool) — PIN-protected LAN server for phones/tablets.
+// Off by default; starts only via companion-start IPC (Settings toggle).
+import companionModule from './main/companion-server.cjs';
+const { createCompanionServer, generatePin } = companionModule;
+
 // Setup DAC Status Listener
 setDacStatusCallback((ip, status) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -567,6 +572,16 @@ ipcMain.handle('set-dac-output-settings', (event, dacOutputSettings) => {
   const merged = { ...current, ...incoming };
   store.set('dacOutputSettings', merged);
   broadcastDacOutputSettings(merged);
+  // Forward desktop edits live to any companion clients (phones).
+  try {
+    if (typeof companionServer !== 'undefined' && companionServer && companionServer.getStatus().running) {
+      for (const [key, settings] of Object.entries(incoming)) {
+        if (settings && typeof settings === 'object') {
+          companionServer.broadcastSettingsChanged(key, settings, null, 'desktop');
+        }
+      }
+    }
+  } catch { /* companion must never break the desktop save path */ }
 });
 
 // Push the current map to every open window.
@@ -576,6 +591,85 @@ function broadcastDacOutputSettings(settings) {
     if (!win.isDestroyed()) win.webContents.send('dac-output-settings-changed', payload);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Companion (Laser Zone Tool) — Step 3 IPC. Off by default. The server reads
+// via store.get and writes via the same merge + broadcast so desktop windows
+// and phones always converge on one map. PIN rotates on every start.
+// ---------------------------------------------------------------------------
+let companionServer = null;
+let companionStaticDir = null;
+function getCompanionStaticDir() {
+  if (companionStaticDir) return companionStaticDir;
+  // dist/companion ships inside the asar (see package.json files dist/**/*),
+  // so resolve relative to __dirname in both dev and packaged builds.
+  companionStaticDir = path.join(__dirname, 'dist', 'companion');
+  return companionStaticDir;
+}
+function ensureCompanionServer() {
+  if (!companionServer) {
+    companionServer = createCompanionServer({
+      getSettingsMap: () => store.get('dacOutputSettings') || {},
+      applySettingsPatch: (key, next, meta) => {
+        // Same merge semantic as set-dac-output-settings, single key.
+        const current = store.get('dacOutputSettings') || {};
+        store.set('dacOutputSettings', { ...current, [key]: next });
+        const merged = store.get('dacOutputSettings') || {};
+        broadcastDacOutputSettings(merged);
+        // Echo to phones so desktop edits appear live on the companion too.
+        companionServer && companionServer.broadcastSettingsChanged(key, next, meta.revision, 'desktop');
+      },
+      staticDir: getCompanionStaticDir(),
+    });
+  }
+  return companionServer;
+}
+ipcMain.handle('companion-start', async () => {
+  const srv = ensureCompanionServer();
+  // Fresh PIN per enable session: a stale printed QR can never reopen
+  // a phone from an older show.
+  try { srv.setPin(generatePin()); } catch {}
+  const status = await srv.start();
+  console.log(`[Companion] started at ${status.url} (mDNS ${status.mdns?.instance || ''})`);
+  return status;
+});
+ipcMain.handle('companion-stop', async () => {
+  if (!companionServer) return { running: false };
+  const status = await companionServer.stop();
+  console.log('[Companion] stopped');
+  return status;
+});
+ipcMain.handle('companion-status', async () => {
+  if (!companionServer) return { running: false };
+  return companionServer.getStatus();
+});
+ipcMain.handle('companion-rotate-pin', async () => {
+  if (!companionServer || !companionServer.getStatus().running) {
+    return { ok: false, error: 'Companion is not running.' };
+  }
+  companionServer.setPin(generatePin());
+  const status = companionServer.getStatus();
+  console.log(`[Companion] PIN rotated at ${status.url}`);
+  return { ok: true, status };
+});
+ipcMain.handle('companion-qr', async (_event, payload) => {
+  if (!companionServer) return { ok: false, error: 'Companion is not running.' };
+  const status = companionServer.getStatus();
+  if (!status.running) return { ok: false, error: 'Companion is not running.' };
+  // Prefer the caller's LAN pick, else the first non-loopback address.
+  const want = payload && typeof payload.address === 'string' ? payload.address : null;
+  const lane = want && (status.lan || []).some((l) => l.address === want)
+    ? want
+    : (status.lan && status.lan[0] ? status.lan[0].address : '127.0.0.1');
+  const url = `http://${lane}:${status.port}/?pin=${status.pin}`;
+  try {
+    const QRCode = require('qrcode');
+    const dataUrl = await QRCode.toDataURL(url, { width: 200, margin: 1, errorCorrectionLevel: 'M' });
+    return { ok: true, url, dataUrl };
+  } catch (e) {
+    return { ok: false, url, error: e.message };
+  }
+});
 
 ipcMain.handle('set-thumbnail-render-mode', (event, mode) => {
   store.set('thumbnailRenderMode', mode);
@@ -4645,10 +4739,15 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
   if (ndi) {
     ndi.destroyReceiver();
   }
+  // LAN companion must never outlive the app: phones would otherwise hold
+  // a PIN for a dead host. Stopped here and on explicit IPC stop.
+  try {
+    if (typeof companionServer !== 'undefined' && companionServer) await companionServer.stop();
+  } catch {}
   if (process.platform !== 'darwin') {
     app.quit();
   }

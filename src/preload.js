@@ -107,6 +107,13 @@ contextBridge.exposeInMainWorld(
   setThumbnailRenderMode: (mode) => ipcRenderer.invoke('set-thumbnail-render-mode', mode),
   setSelectedDac: (dac) => ipcRenderer.invoke('set-selected-dac', dac),
   saveDacOutputSettings: (settings) => ipcRenderer.invoke('set-dac-output-settings', settings),
+  // Companion (Laser Zone Tool) — Step 3: LAN server toggle + status (PIN + URL).
+  // Off by default; the Settings UI (Step 3) will drive these.
+  companionStart: () => ipcRenderer.invoke('companion-start'),
+  companionStop: () => ipcRenderer.invoke('companion-stop'),
+  companionStatus: () => ipcRenderer.invoke('companion-status'),
+  companionRotatePin: () => ipcRenderer.invoke('companion-rotate-pin'),
+  companionQr: (address) => ipcRenderer.invoke('companion-qr', { address }),
   getDacGroups: () => ipcRenderer.invoke('get-dac-groups'),
   saveDacGroups: (groups) => ipcRenderer.invoke('save-dac-groups', groups),
   getPresets: (type, subType) => ipcRenderer.invoke('get-presets', type, subType),

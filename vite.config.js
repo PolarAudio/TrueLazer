@@ -10,6 +10,10 @@ export default defineConfig({
     outDir: '../dist',
     emptyOutDir: true,
     rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'src/index.html'),
+        companion: path.resolve(__dirname, 'src/companion/index.html'),
+      },
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {

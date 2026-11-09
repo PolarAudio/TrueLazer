@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from '../i18n';
+import CompanionSettingsSection from './CompanionSettingsSection';
 
 const GeneralSettingsWindow = ({ show, onClose, masterSpeed }) => {
   const { t, locale, setLocale, locales } = useTranslation();
@@ -67,6 +68,7 @@ const GeneralSettingsWindow = ({ show, onClose, masterSpeed }) => {
               </p>
             </div>
             )}
+            <CompanionSettingsSection />
           </div>
         </div>
       </div>
