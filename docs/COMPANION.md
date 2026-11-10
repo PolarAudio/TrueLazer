@@ -30,6 +30,8 @@ Adjust projector zones from the floor instead of from a fixed desk position. A p
 
 The server rejects PPS fields outright (`400 PPS_NOT_ALLOWED`) so a misbehaving client can never change the scanner clock from a phone.
 
+The phone lists **only outputs available in the current project** — the DAC channels from the latest scan on the desktop (plus the channels of the open project). Older keys that linger in the shared store from previous scans/projects stay on disk (for `.tlo` matching) but never show on the phone; a PATCH to a missing output returns `404 UNKNOWN_OUTPUT`. The list is fed by the scan itself *and* the desktop's live DAC list, so a new project updates the phone as soon as the scan finishes — no need to save and reopen the project. If one output disappears (hardware removed), the phone drops just that entry instead of clearing the picker.
+
 ## Working two devices
 
 - **Presence:** the header shows connection state and how many devices are connected.

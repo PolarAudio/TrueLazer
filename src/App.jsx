@@ -63,6 +63,7 @@ import { generateCircle, generateSquare, generateLine, generateStar, generateTex
 import { throttle, debounce } from './utils/throttle';
 import { normalizeToObjectPoints, dropOffCanvasPoints } from './utils/ilda-writer';
 import { advanceDjProgress, linkedClipDurationSec, makeLinkFromDeck } from './utils/djLinkTracks';
+import { dacOutputRows } from './utils/dacDiscovery';
 import { useDjLinkClipTransport } from './hooks/useDjLinkClipTransport';
 import { useTranslation } from './i18n';
 import { translate } from './i18n/translate';
@@ -6655,6 +6656,15 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     const handleDacsDiscovered = useCallback((dacs) => {
         dispatch({ type: 'SET_DACS', payload: dacs });
     }, []);
+
+    // The companion (phone) shows only outputs available in the current
+    // project: the latest scan's channels, not every key ever written to
+    // the shared store. Report the list so the LAN server can filter.
+    useEffect(() => {
+        if (!window.electronAPI?.companionSetAvailable) return;
+        const keys = dacOutputRows(dacs).map((r) => r.key);
+        window.electronAPI.companionSetAvailable(keys).catch(() => {});
+    }, [dacs]);
 
     // The Timeline discovers its own DACs. Hand them over so the Output
     // Settings window - which is bound to this app's DAC list - lists the

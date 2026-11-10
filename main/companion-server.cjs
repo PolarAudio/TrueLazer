@@ -251,6 +251,41 @@ function sanitizePatch(raw) {
   return { ok: true, patch };
 }
 
+/**
+ * Channel keys a scanned DAC exposes: `${ip}:${serviceID}`.
+ *
+ * Mirrors dacOutputRows() in src/utils/dacDiscovery.js, because those keys
+ * are the ones the desktop uses for per-output settings. IDN service 0 is a
+ * management service rather than a laser output; a DAC that reports no
+ * channels at all is treated as a single channel 0.
+ */
+function scanChannelKeys(ip, type, services) {
+  const keys = new Set();
+  if (typeof ip !== 'string' || ip.length === 0) return keys;
+  const isIdn = String(type || '').toLowerCase() === 'idn';
+  for (const svc of Array.isArray(services) ? services : []) {
+    const id = svc && svc.serviceID;
+    if (isIdn && (id === 0 || id === undefined || id === null)) continue;
+    keys.add(`${ip}:${id ?? 0}`);
+  }
+  if (keys.size === 0) keys.add(`${ip}:0`);
+  return keys;
+}
+
+/**
+ * Union of the two availability sources: what the desktop reported and what
+ * the last scan found. null when neither source has reported yet (no filter).
+ */
+function unionAvailableKeys(reported, scanned) {
+  if (!reported && !scanned) return null;
+  const out = new Set();
+  for (const set of [reported, scanned]) {
+    if (!set) continue;
+    for (const key of set) out.add(String(key));
+  }
+  return out;
+}
+
 function settingsForKey(key, map) {
   const stored = (map && typeof map === 'object') ? map[key] : undefined;
   const base = { ...DEFAULT_SETTINGS };
@@ -348,6 +383,8 @@ function placeholderHtml(status) {
  * @param {string} [opts.pin] — 6 digits; generated when omitted.
  * @param {() => object} [opts.getSettingsMap]
  * @param {(key:string, next:object, meta:object) => void} [opts.applySettingsPatch]
+ * @param {() => (string[]|null)} [opts.getAvailableKeys] — keys the desktop
+ *   currently discovered (e.g. dacOutputRows). null/undefined = no filter.
  * @param {string} [opts.staticDir] — build output served at / (Step 2).
  * @param {{info:Function, warn:Function, error:Function}} [opts.logger]
  */
@@ -357,6 +394,7 @@ function createCompanionServer(opts = {}) {
   const logger = opts.logger || console;
   const getSettingsMap = typeof opts.getSettingsMap === 'function' ? opts.getSettingsMap : () => ({});
   const applySettingsPatch = typeof opts.applySettingsPatch === 'function' ? opts.applySettingsPatch : null;
+  const getAvailableKeys = typeof opts.getAvailableKeys === 'function' ? opts.getAvailableKeys : null;
   const staticDir = opts.staticDir ? path.resolve(opts.staticDir) : null;
 
   const revisions = new Map(); // output key -> integer revision
@@ -364,6 +402,7 @@ function createCompanionServer(opts = {}) {
   const locks = new Map();     // output key -> { clientId, since, expiresAt }
   const clients = new Set();   // { id, res, connectedAt, ip }
   const recentEdits = [];      // newest last, cap 20 — desktop audit trail
+  let availableKeys = null;    // Set<string>|null — null means "not reported yet"
   let pin = isValidPin(opts.pin) ? opts.pin : generatePin();
   let startedAt = null;
   let pruneTimer = null;
@@ -384,6 +423,62 @@ function createCompanionServer(opts = {}) {
 
   function getClients() {
     return [...clients].map((c) => ({ id: c.id, ip: c.ip, connectedAt: c.connectedAt }));
+  }
+
+  // Current-project availability: discovered DAC channels from the desktop.
+  // null = no availability report (no feed wired, e.g. tests) -> legacy
+  // unfiltered listing. Once the desktop reports (even with an empty list)
+  // only those keys are listed/editable.
+  function currentAvailableKeys() {
+    if (getAvailableKeys) {
+      const live = getAvailableKeys();
+      if (live != null) return new Set(Array.isArray(live) ? live.map(String) : []);
+    }
+    return availableKeys;
+  }
+
+  function isAvailable(key) {
+    const avail = currentAvailableKeys();
+    if (avail == null) return true; // filter not yet wired (tests/back-compat)
+    return avail.has(String(key));
+  }
+
+  function setAvailableKeys(keys) {
+    availableKeys = Array.isArray(keys) ? new Set(keys.map(String)) : null;
+    if (availableKeys && availableKeys.size === 0) {
+      // No outputs currently discovered: drop stale locks so phones don't
+      // get stuck showing "locked" for hardware that is gone.
+      if (locks.size) {
+        locks.clear();
+        broadcast('locks', { locks: {} });
+      }
+    } else if (availableKeys) {
+      for (const key of [...locks.keys()]) {
+        if (!availableKeys.has(key)) locks.delete(key);
+      }
+    }
+    broadcast('outputs', { outputs: listOutputs(), locks: snapshotLocks(), clientCount: clients.size });
+    return availableKeys ? [...availableKeys].sort() : null;
+  }
+
+  function listOutputs() {
+    const map = readMap();
+    const locksNow = snapshotLocks();
+    const avail = currentAvailableKeys();
+    // When the desktop has reported its available outputs, THAT list is the
+    // set of outputs - not the stored settings map. A channel that was just
+    // discovered in a new project has never been edited, so it has no entry
+    // in the settings map yet; deriving the keys from the map alone hid it.
+    // Its settings come from settingsForKey below (defaults + anything stored).
+    const keys = avail == null
+      ? [...new Set([...Object.keys(map || {}), ...memory.keys()])].sort()
+      : [...avail].sort();
+    return keys.map((key) => {
+      const settings = memory.has(key) && !(map && map[key])
+        ? memory.get(key)
+        : settingsForKey(key, map);
+      return { key, revision: getRevision(key), settings, lock: locksNow[key] || null };
+    });
   }
 
   function writeSse(client, event, data) {
@@ -615,17 +710,15 @@ function createCompanionServer(opts = {}) {
         sendJson(res, 401, { ok: false, code: 'BAD_PIN', error: 'Valid PIN required.' });
         return;
       }
-      const map = readMap();
       const locksNow = snapshotLocks();
-      const outputs = [];
-      const keys = new Set([...Object.keys(map || {}), ...memory.keys()]);
-      for (const key of [...keys].sort()) {
-        const settings = memory.has(key) && !(map && map[key])
-          ? memory.get(key)
-          : settingsForKey(key, map);
-        outputs.push({ key, revision: getRevision(key), settings, lock: locksNow[key] || null });
-      }
-      sendJson(res, 200, { ok: true, outputs, locks: locksNow, clientCount: clients.size, serverTime: new Date().toISOString() });
+      const outputs = listOutputs();
+      const avail = currentAvailableKeys();
+      sendJson(res, 200, {
+        ok: true, outputs, locks: locksNow,
+        clientCount: clients.size,
+        availableCount: avail ? outputs.length : null,
+        serverTime: new Date().toISOString(),
+      });
       return;
     }
 
@@ -642,6 +735,12 @@ function createCompanionServer(opts = {}) {
       }
       if (!checkPin(req, url, body)) {
         sendJson(res, 401, { ok: false, code: 'BAD_PIN', error: 'Valid PIN required.' });
+        return;
+      }
+      // Only outputs available in the current project are editable. Stale
+      // keys from earlier scans sit in the store but are not listed.
+      if (!isAvailable(key)) {
+        sendJson(res, 404, { ok: false, code: 'UNKNOWN_OUTPUT', error: `Output ${key} is not available in the current project.` });
         return;
       }
       const clientId = (req.headers['x-client-id']) ||
@@ -673,6 +772,10 @@ function createCompanionServer(opts = {}) {
       }
       if (!checkPin(req, url, body)) {
         sendJson(res, 401, { ok: false, code: 'BAD_PIN', error: 'Valid PIN required.' });
+        return;
+      }
+      if (!isAvailable(key)) {
+        sendJson(res, 404, { ok: false, code: 'UNKNOWN_OUTPUT', error: `Output ${key} is not available in the current project.` });
         return;
       }
       const rawPatch = (body && typeof body.patch === 'object' && body.patch !== null)
@@ -753,6 +856,7 @@ function createCompanionServer(opts = {}) {
       clients: clients.size,
       locks: snapshotLocks(),
       lastEdits: getRecentEdits(),
+      available: (() => { const a = currentAvailableKeys(); return a ? [...a].sort() : null; })(),
       mdns: { service: '_truelazer._tcp.local.', instance: 'TrueLazer Zones._truelazer._tcp.local.', active: !!mdns },
       startedAt: startedAt ? new Date(startedAt).toISOString() : null,
       lan: getLanAddresses(),
@@ -825,6 +929,11 @@ function createCompanionServer(opts = {}) {
     getClients,
     getLocks,
     getRecentEdits,
+    setAvailableKeys,
+    getAvailableKeys: () => {
+      const a = currentAvailableKeys();
+      return a ? [...a].sort() : null;
+    },
     getLanAddresses,
     broadcastSettingsChanged(key, settings, revision, source) {
       const rev = revision != null ? Number(revision) : getRevision(key);
@@ -847,5 +956,7 @@ module.exports = {
   sanitizeRect,
   totalZoneArea,
   settingsForKey,
+  scanChannelKeys,
+  unionAvailableKeys,
   getLanAddresses,
 };

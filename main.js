@@ -28,7 +28,7 @@ const { discoverDacs, sendFrame, sendIdleFrame, getNetworkInterfaces, getDacServ
 // Companion (Laser Zone Tool) — PIN-protected LAN server for phones/tablets.
 // Off by default; starts only via companion-start IPC (Settings toggle).
 import companionModule from './main/companion-server.cjs';
-const { createCompanionServer, generatePin } = companionModule;
+const { createCompanionServer, generatePin, scanChannelKeys, unionAvailableKeys } = companionModule;
 
 // Setup DAC Status Listener
 setDacStatusCallback((ip, status) => {
@@ -599,6 +599,62 @@ function broadcastDacOutputSettings(settings) {
 // ---------------------------------------------------------------------------
 let companionServer = null;
 let companionStaticDir = null;
+// Which outputs the phone may see/edit. Two sources feed this, unioned:
+//   companionReportedKeys — the desktop window's live DAC list (a scan or the
+//     open project), pushed from App.jsx via companion-set-available
+//   companionScanKeys     — what the last discovery in THIS process found,
+//     recorded straight from the discover/get-services IPC below
+// Keeping both means a phone does not depend on a single renderer effect
+// firing at the right moment; whichever source updates first makes the
+// hardware visible, and either one going stale cannot blank the list.
+let companionReportedKeys = null; // Set<string>|null
+let companionScanKeys = null;     // Set<string>|null
+let companionScanChannels = new Map(); // ip -> Set<string> from the latest scan
+let companionPublishedCount = null;
+
+function getCompanionAvailableKeys() {
+  return unionAvailableKeys(companionReportedKeys, companionScanKeys);
+}
+
+function publishCompanionAvailability(source) {
+  const keys = getCompanionAvailableKeys();
+  try {
+    if (companionServer && companionServer.getStatus().running) {
+      // null = no filter (no source has reported yet)
+      companionServer.setAvailableKeys(keys ? [...keys] : null);
+    }
+  } catch { /* availability must never break a scan */ }
+  const count = keys ? keys.size : null;
+  if (count !== companionPublishedCount) {
+    companionPublishedCount = count;
+    console.log(`[Companion] outputs offered to phones: ${count == null ? 'all' : count} (${source})`);
+  }
+  return count;
+}
+
+// A scan replaces the previous scan's channels: hardware that is gone must
+// disappear. The desktop-reported list is left alone until the renderer
+// pushes the new one, so the phone does not flicker mid-scan.
+function recordCompanionScanStart(dacs) {
+  companionScanChannels = new Map();
+  for (const dac of Array.isArray(dacs) ? dacs : []) {
+    if (dac && typeof dac.ip === 'string' && dac.ip) companionScanChannels.set(dac.ip, new Set());
+  }
+  companionScanKeys = new Set();
+  publishCompanionAvailability('scan');
+}
+
+function recordCompanionScanServices(ip, type, services) {
+  if (typeof ip !== 'string' || !ip) return;
+  companionScanChannels.set(ip, scanChannelKeys(ip, type, services));
+  const all = new Set();
+  for (const set of companionScanChannels.values()) {
+    for (const key of set) all.add(key);
+  }
+  companionScanKeys = all;
+  publishCompanionAvailability('scan');
+}
+
 function getCompanionStaticDir() {
   if (companionStaticDir) return companionStaticDir;
   // dist/companion ships inside the asar (see package.json files dist/**/*),
@@ -610,6 +666,10 @@ function ensureCompanionServer() {
   if (!companionServer) {
     companionServer = createCompanionServer({
       getSettingsMap: () => store.get('dacOutputSettings') || {},
+      getAvailableKeys: () => {
+        const keys = getCompanionAvailableKeys();
+        return keys ? [...keys] : null;
+      },
       applySettingsPatch: (key, next, meta) => {
         // Same merge semantic as set-dac-output-settings, single key.
         const current = store.get('dacOutputSettings') || {};
@@ -642,6 +702,12 @@ ipcMain.handle('companion-stop', async () => {
 ipcMain.handle('companion-status', async () => {
   if (!companionServer) return { running: false };
   return companionServer.getStatus();
+});
+ipcMain.handle('companion-set-available', async (_event, payload) => {
+  const keys = Array.isArray(payload?.keys) ? payload.keys.filter((k) => typeof k === 'string') : null;
+  companionReportedKeys = keys ? new Set(keys) : null;
+  const count = publishCompanionAvailability('desktop');
+  return { ok: true, count: count ?? 0 };
 });
 ipcMain.handle('companion-rotate-pin', async () => {
   if (!companionServer || !companionServer.getStatus().running) {
@@ -1923,11 +1989,25 @@ function createWindow() {
   });
 
   ipcMain.handle('discover-dacs', async (event, timeout, networkInterfaceIp) => {
-    return await discoverDacs(timeout, networkInterfaceIp);
+    const dacs = await discoverDacs(timeout, networkInterfaceIp);
+    // Feed the companion straight from the scan. Phones must not depend on
+    // the renderer's dacs state effect firing later (it can be missed while
+    // a project is still loading); the scan itself is the ground truth.
+    recordCompanionScanStart(dacs);
+    return dacs;
   });
 
   ipcMain.handle('get-dac-services', async (event, ip, localIp, type) => {
-    return await getDacServices(ip, localIp, 1000, type);
+    try {
+      const services = await getDacServices(ip, localIp, 1000, type);
+      recordCompanionScanServices(ip, type, services);
+      return services;
+    } catch (e) {
+      // The renderer treats an unanswered lookup as a single channel 0
+      // (dacOutputRows), so the phone must still offer that channel.
+      recordCompanionScanServices(ip, type, []);
+      throw e;
+    }
   });
 
   // DAC frame store + send loop — the renderer pushes frames at 60fps via

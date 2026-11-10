@@ -9,6 +9,8 @@ const {
   sanitizePatch,
   settingsForKey,
   totalZoneArea,
+  scanChannelKeys,
+  unionAvailableKeys,
 } = require('../main/companion-server.cjs');
 
 const PIN = '123456';
@@ -120,6 +122,59 @@ describe('companion-server.cjs / settingsForKey', () => {
     expect(totalZoneArea([{ x: 0, y: 0, w: 0.5, h: 0.2 }])).toBeCloseTo(0.1);
     expect(totalZoneArea([])).toBe(0);
     expect(totalZoneArea(null)).toBe(0);
+  });
+});
+
+describe('companion-server.cjs / availability helpers (scan + desktop union)', () => {
+  it('builds the same channel keys dacOutputRows does', () => {
+    // No services reported -> the DAC is one channel 0 (EtherDream/Truwave).
+    expect([...scanChannelKeys('10.0.0.5', 'etherdream', [])]).toEqual(['10.0.0.5:0']);
+    // IDN service 0 is management, not a laser output.
+    expect([...scanChannelKeys('10.0.0.5', 'idn', [{ serviceID: 0 }, { serviceID: 1 }, { serviceID: 2 }])])
+      .toEqual(['10.0.0.5:1', '10.0.0.5:2']);
+    // Showbridge channel 0 IS a laser output.
+    expect([...scanChannelKeys('10.0.0.5', 'showbridge', [{ serviceID: 0 }, { serviceID: 1 }])])
+      .toEqual(['10.0.0.5:0', '10.0.0.5:1']);
+    // IDN with only the management service falls back to channel 0.
+    expect([...scanChannelKeys('10.0.0.5', 'idn', [{ serviceID: 0 }])]).toEqual(['10.0.0.5:0']);
+    expect([...scanChannelKeys('', 'idn', [])]).toEqual([]);
+  });
+
+  it('unions reported and scanned keys, null when neither has data', () => {
+    expect(unionAvailableKeys(null, null)).toBeNull();
+    expect([...unionAvailableKeys(new Set(['a:1']), null)]).toEqual(['a:1']);
+    expect([...unionAvailableKeys(null, new Set(['b:0']))]).toEqual(['b:0']);
+    const merged = unionAvailableKeys(new Set(['a:1']), new Set(['a:1', 'b:0']));
+    expect([...merged].sort()).toEqual(['a:1', 'b:0']);
+    // An empty report still counts as data (a new project with no scan yet).
+    expect(unionAvailableKeys(new Set(), null)).toEqual(new Set());
+  });
+
+  it('reads availability live from the getAvailableKeys callback', async () => {
+    // This is how main.js wires the scan ∪ desktop union: no explicit
+    // setAvailableKeys call, the callback is consulted on every request.
+    const live = { keys: ['10.0.0.5:1'] };
+    const server = createCompanionServer({
+      port: 0,
+      pin: PIN,
+      getSettingsMap: () => ({ '10.0.0.5:1': { dimmer: 0.8 } }),
+      getAvailableKeys: () => live.keys,
+      logger: { info() {}, warn() {}, error() {} },
+    });
+    const status = await server.start();
+    try {
+      const base = origin(status.port);
+      const first = await fetch(`${base}/api/outputs?pin=${PIN}`).then((r) => r.json());
+      expect(first.outputs.map((o) => o.key)).toEqual(['10.0.0.5:1']);
+
+      // A new scan on the desktop swaps the list without a server restart.
+      live.keys = ['10.0.0.6:0'];
+      const second = await fetch(`${base}/api/outputs?pin=${PIN}`).then((r) => r.json());
+      expect(second.outputs.map((o) => o.key)).toEqual(['10.0.0.6:0']);
+      expect(second.outputs[0].settings.dimmer).toBe(1); // defaults, no stored entry
+    } finally {
+      await server.stop();
+    }
   });
 });
 
@@ -275,5 +330,48 @@ describe('companion-server.cjs / edit locks (Step 2)', () => {
     expect(edits[0].clientId).toBe('phone-a');
     expect(edits[0].shrink).toBe(true);
     expect(harness.server.getStatus().lastEdits[0].shrink).toBe(true);
+  });
+
+  it('lists only outputs reported as available in the current project', async () => {
+    const port = harness.status.port;
+    const base = origin(port);
+    // Stale key sits in the store but was never scanned in this session.
+    harness.store['10.0.0.99:0'] = { dimmer: 0.5 };
+    // Fresh hardware discovered in a NEW project has no stored settings entry
+    // yet - it must still be listed (regression: it used to be filtered out
+    // because the keys were derived from the settings map only).
+    const freshKey = '10.0.0.77:1';
+    harness.server.setAvailableKeys([KEY, freshKey]);
+    const list = await fetch(`${base}/api/outputs?pin=${PIN}`).then((r) => r.json());
+    const keys = list.outputs.map((o) => o.key);
+    expect(keys).toEqual([KEY, freshKey].sort());
+    expect(keys).not.toContain('10.0.0.99:0');
+    const fresh = list.outputs.find((o) => o.key === freshKey);
+    expect(fresh.settings.dimmer).toBe(1);
+    expect(fresh.settings.safetyZones).toEqual([]);
+
+    // Editing the fresh output creates its entry.
+    const freshPatch = await fetch(`${base}/api/outputs/${encodeURIComponent(freshKey)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Companion-Pin': PIN, 'X-Client-Id': 'phone-a' },
+      body: JSON.stringify({ patch: { dimmer: 0.4 }, baseRevision: fresh.revision }),
+    });
+    expect(freshPatch.status).toBe(200);
+    expect(harness.store[freshKey].dimmer).toBe(0.4);
+
+    // PATCH to a stale key is rejected.
+    const stale = await fetch(`${base}/api/outputs/${encodeURIComponent('10.0.0.99:0')}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Companion-Pin': PIN, 'X-Client-Id': 'phone-a' },
+      body: JSON.stringify({ patch: { dimmer: 0.2 }, baseRevision: 1 }),
+    });
+    expect(stale.status).toBe(404);
+    expect((await stale.json()).code).toBe('UNKNOWN_OUTPUT');
+
+    // Empty availability shows no outputs (scan on desktop first).
+    harness.server.setAvailableKeys([]);
+    const empty = await fetch(`${base}/api/outputs?pin=${PIN}`).then((r) => r.json());
+    expect(empty.outputs).toEqual([]);
+    expect(harness.server.getStatus().available).toEqual([]);
   });
 });

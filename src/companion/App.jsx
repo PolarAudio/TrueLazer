@@ -130,10 +130,27 @@ export default function App() {
     const handleLocks = (e) => {
       try { setLocks(JSON.parse(e.data).locks || {}); } catch {}
     };
+    // Desktop re-scanned: the available set changed. Replace the picker.
+    const handleOutputs = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        const next = new Map();
+        for (const o of d.outputs || []) next.set(o.key, { revision: o.revision, settings: o.settings });
+        setOutputsMap(next);
+        if (d.locks) setLocks(d.locks);
+        setSelectedKey((cur) => {
+          if (cur && next.has(cur)) return cur;
+          const first = (d.outputs || [])[0];
+          return first ? first.key : null;
+        });
+        showToast('Outputs updated from the desktop.');
+      } catch {}
+    };
     on('connected', handleConnected);
     on('settings-changed', handleSettings);
     on('clients', handleClients);
     on('locks', handleLocks);
+    on('outputs', handleOutputs);
     es.onopen = () => { if (!cancelled) setConn((c) => (c === 'connecting' ? 'connected' : c)); };
     es.onerror = () => { if (!cancelled) setConn('disconnected'); };
     return () => {
@@ -142,6 +159,7 @@ export default function App() {
       off('settings-changed', handleSettings);
       off('clients', handleClients);
       off('locks', handleLocks);
+      off('outputs', handleOutputs);
       es.close();
     };
   }, [pin, refreshOutputs]);
@@ -152,6 +170,18 @@ export default function App() {
       m.set(key, { revision, settings: nextSettings });
       return m;
     });
+  }, []);
+
+  // Drop a single output that the desktop no longer offers. Refreshing the
+  // whole picker here used to clear every channel after one rejected tap.
+  const dropOutput = useCallback((key) => {
+    setOutputsMap((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+    setSelectedKey((cur) => (cur === key ? null : cur));
   }, []);
 
   const ensureLock = useCallback(async (key) => {
@@ -166,12 +196,19 @@ export default function App() {
       if (body.locks) setLocks(body.locks);
       return true;
     } catch (e) {
-      if (e.code === 'LOCKED') showToast(`Locked by ${shortId(e.owner)} — view only.`);
-      else showToast(e.message || 'Lock failed.');
-      refreshOutputs();
+      if (e.code === 'UNKNOWN_OUTPUT') {
+        showToast('That output is no longer in the project.');
+        dropOutput(key);
+      } else if (e.code === 'LOCKED') {
+        showToast(`Locked by ${shortId(e.owner)} — view only.`);
+        refreshOutputs();
+      } else {
+        showToast(e.message || 'Lock failed.');
+        refreshOutputs();
+      }
       return false;
     }
-  }, [showToast, refreshOutputs]);
+  }, [showToast, refreshOutputs, dropOutput]);
 
   const releaseLock = useCallback(async (key) => {
     if (!key) return;
@@ -202,6 +239,9 @@ export default function App() {
       } else if (e.code === 'STALE_REVISION') {
         showToast('Changed elsewhere — refreshed.');
         refreshOutputs();
+      } else if (e.code === 'UNKNOWN_OUTPUT') {
+        showToast('That output is no longer in the project.');
+        dropOutput(key);
       } else if (e.status === 401) {
         showToast('PIN rejected — re-enter it.');
       } else {
@@ -212,7 +252,7 @@ export default function App() {
     } finally {
       setSaving(false);
     }
-  }, [applyLocal, ensureLock, refreshOutputs, showToast]);
+  }, [applyLocal, ensureLock, refreshOutputs, showToast, dropOutput]);
 
   const schedulePatch = useCallback((key, partial, immediate = false) => {
     if (!key) return;
@@ -429,7 +469,7 @@ export default function App() {
         </div>
       ) : (
         <div className="empty">
-          {conn === 'connected' ? 'No outputs yet. Add a DAC on the desktop, then pull to refresh.' : 'Loading outputs…'}
+          {conn === 'connected' ? 'No outputs in the current project. Run a DAC scan on the desktop.' : 'Loading outputs…'}
           <button className="link" onClick={refreshOutputs}>Refresh</button>
         </div>
       )}

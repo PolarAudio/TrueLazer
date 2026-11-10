@@ -112,6 +112,7 @@ contextBridge.exposeInMainWorld(
   companionStart: () => ipcRenderer.invoke('companion-start'),
   companionStop: () => ipcRenderer.invoke('companion-stop'),
   companionStatus: () => ipcRenderer.invoke('companion-status'),
+  companionSetAvailable: (keys) => ipcRenderer.invoke('companion-set-available', { keys }),
   companionRotatePin: () => ipcRenderer.invoke('companion-rotate-pin'),
   companionQr: (address) => ipcRenderer.invoke('companion-qr', { address }),
   getDacGroups: () => ipcRenderer.invoke('get-dac-groups'),
