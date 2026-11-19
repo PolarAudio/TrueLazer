@@ -64,6 +64,7 @@ import { throttle, debounce } from './utils/throttle';
 import { normalizeToObjectPoints, dropOffCanvasPoints } from './utils/ilda-writer';
 import { advanceDjProgress, linkedClipDurationSec, makeLinkFromDeck } from './utils/djLinkTracks';
 import { dacOutputRows } from './utils/dacDiscovery';
+import { resolveClipDacs } from './utils/dacRouting';
 import { useDjLinkClipTransport } from './hooks/useDjLinkClipTransport';
 import { useTranslation } from './i18n';
 import { translate } from './i18n/translate';
@@ -2590,7 +2591,6 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     const globalBlackoutRef = useRef(globalBlackout);
     const isPlayingRef = useRef(isPlaying);
     const isWorldOutputActiveRef = useRef(isWorldOutputActive);
-    const selectedDacRef = useRef(selectedDac);
     const bpmRef = useRef(state.bpm);
     const selectedLayerIndexRef = useRef(selectedLayerIndex);
     const selectedColIndexRef = useRef(selectedColIndex);
@@ -2617,7 +2617,6 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     const isTimelinePageActiveRef = useRef(currentPage === 'timeline');
     useEffect(() => { isTimelinePageActiveRef.current = currentPage === 'timeline'; }, [currentPage]);
 
-    useEffect(() => { selectedDacRef.current = selectedDac; }, [selectedDac]);
     useEffect(() => { bpmRef.current = state.bpm; }, [state.bpm]);
     useEffect(() => { selectedLayerIndexRef.current = selectedLayerIndex; }, [selectedLayerIndex]);
     useEffect(() => { selectedColIndexRef.current = selectedColIndex; }, [selectedColIndex]);
@@ -3210,24 +3209,16 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     // 1. Process Clip Content
                     activeClipsDataRef.current.forEach(clip => {
                         if (clip && liveFramesRef.current[clip.workerId]) {
-                            const layerDacs = layerAssignedDacsRef.current[clip.layerIndex] || [];
-                            const clipDacs = clip.assignedDacs || [];
-
-                            let combinedDacs = [...layerDacs, ...clipDacs];
-                            if (combinedDacs.length === 0 && selectedDacRef.current) {
-                                combinedDacs = [selectedDacRef.current];
-                            }
-
-                            const dacList = [];
-                            const seen = new Set();
-                            combinedDacs.forEach(d => {
-                                const ch = d.channel !== undefined ? d.channel : (d.channels && d.channels.length > 0 ? d.channels[0].serviceID : 0);
-                                const key = `${d.ip}:${ch}`;
-                                if (!seen.has(key)) {
-                                    seen.add(key);
-                                    dacList.push({ ...d, channel: ch });
-                                }
-                            });
+                            // Layer and clip assignments are additive. A clip with
+                            // neither is not routed at all: the channel selected in
+                            // the DAC panel is a settings/UI focus, not an output
+                            // route. Using it as a fallback sent every unassigned
+                            // clip to whichever channel was last clicked, and
+                            // mergeFrames() merged all of them onto that channel.
+                            const dacList = resolveClipDacs(
+                                layerAssignedDacsRef.current[clip.layerIndex],
+                                clip.assignedDacs
+                            );
 
                             if (dacList.length === 0) return;
 

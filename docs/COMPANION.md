@@ -16,6 +16,8 @@ Adjust projector zones from the floor instead of from a fixed desk position. A p
 4. Pick an output chip, drag the red safety zones / blue output area, toggle outlines / test lines, then release. The laser moves as you drag.
 5. Click **Disable** when done (stops the server, discovery, and PIN immediately). Closing TrueLazer also stops it.
 
+Zone edits support **Undo/Redo**: the toolbar buttons (↶ / ↷) step through add, delete, clear, nudge, resize and canvas drags; a whole drag counts as one step. Attach a keyboard to use `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`). History is per output and kept for the time the page stays open.
+
 > The PIN **rotates on every enable** and on **New PIN** (stale QRs cannot reopen a later show). Rotating disconnects phones — they re-scan the new QR.
 
 ## What you can change remotely

@@ -217,6 +217,11 @@ assigned a channel, grouped with other outputs, and given its own settings.
 Output settings can be exported and imported as a standalone `.tlo` document,
 so one projector configuration can be reused across shows and machines.
 
+While **Output Settings** is open, **Ctrl+Z** undoes the last change to the
+selected output and **Ctrl+Shift+Z** (or **Ctrl+Y**) redoes it. A whole zone or
+output-area drag counts as one step, and the header buttons show the same
+actions.
+
 ---
 
 ## 8. Audio, BPM and DJ-Link
@@ -298,7 +303,10 @@ desktop app and adjust projector zones from where the beam lands.
 4. Pick an output, drag the red safety zones / blue output area, toggle
    outlines / test lines, then **Release** or switch output. The laser moves
    as you drag.
-5. **Disable** (or close TrueLazer) stops the server, discovery and PIN.
+5. **Undo/Redo** in the zone toolbar steps back and forward through zone edits
+   (a whole drag counts as one step). `Ctrl+Z` / `Ctrl+Shift+Z` work too when a
+   keyboard is attached.
+6. **Disable** (or close TrueLazer) stops the server, discovery and PIN.
 
 Remotely editable: safety zones, output area, transformation (Crop/Scale),
 zone outlines, horizontal/vertical test lines, flips, dimmer, name. **PPS and

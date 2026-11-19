@@ -231,6 +231,8 @@ export const TRANSLATIONS = {
         'outputSettings.endLagComp': 'End Lag Comp',
         'outputSettings.startLagComp': 'Start Lag Comp',
         'outputSettings.selectOutput': 'Select an Output to configure settings',
+        'outputSettings.undoTitle': 'Undo the last change to this output (Ctrl+Z)',
+        'outputSettings.redoTitle': 'Redo the last undone change (Ctrl+Shift+Z or Ctrl+Y)',
         'outputSettings.save': 'Save Output Settings',
 
         'clipDjLink.title': 'DJ-Link Transport',
@@ -1359,6 +1361,8 @@ export const TRANSLATIONS = {
         'outputSettings.endLagComp': '结束滞后补偿',
         'outputSettings.startLagComp': '起始滞后补偿',
         'outputSettings.selectOutput': '请选择一个输出以配置设置',
+        'outputSettings.undoTitle': '撤销对此输出的上一次修改（Ctrl+Z）',
+        'outputSettings.redoTitle': '重做上一次撤销的修改（Ctrl+Shift+Z 或 Ctrl+Y）',
         'outputSettings.save': '保存输出设置',
 
         'clipDjLink.title': 'DJ-Link 传输',

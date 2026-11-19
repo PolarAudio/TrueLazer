@@ -103,6 +103,24 @@ describe('OutputSettingsWindow', () => {
         expect(html).toContain('Zone 2');
     });
 
+    it('renders Undo/Redo controls for zone adjustments', () => {
+        const html = renderToStaticMarkup(
+            React.createElement(OutputSettingsWindow, {
+                show: true,
+                onClose: () => {},
+                dacs: mockDacs,
+                dacSettings: {},
+                initialOutputId: '192.168.1.50:0'
+            })
+        );
+
+        expect(html).toContain('Undo');
+        expect(html).toContain('Redo');
+        // Nothing has been edited yet, so both start disabled.
+        expect(html).toMatch(/<button[^>]*disabled[^>]*>Undo<\/button>/);
+        expect(html).toMatch(/<button[^>]*disabled[^>]*>Redo<\/button>/);
+    });
+
     it('exports DEFAULT_OUTPUT_SETTINGS with expected array and object structures', () => {
         expect(Array.isArray(DEFAULT_OUTPUT_SETTINGS.safetyZones)).toBe(true);
         expect(DEFAULT_OUTPUT_SETTINGS.safetyZones.length).toBe(0);

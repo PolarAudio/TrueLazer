@@ -80,7 +80,7 @@ body {
   background: rgba(11,14,19,0.85); border: 1px solid var(--line);
   padding: 4px 10px; border-radius: 999px; font-size: 12px; pointer-events: none;
 }
-.toolbar { display: flex; gap: 8px; align-items: center; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; row-gap: 6px; }
 .toolbar button, .card button, .small-btn {
   min-height: 44px; padding: 10px 14px; border-radius: 10px;
   background: var(--panel); color: var(--text); border: 1px solid var(--line);

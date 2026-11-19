@@ -10,6 +10,15 @@ import {
   nudgeRect,
   resizeRect,
 } from './client.js';
+import {
+  createHistory,
+  pushHistory,
+  undoHistory,
+  redoHistory,
+  cloneOutputSettings,
+  outputSettingsEqual,
+  shouldCoalesceEdit,
+} from '../utils/outputSettingsHistory.js';
 
 function shortId(id) {
   if (!id) return '—';
@@ -46,6 +55,15 @@ export default function App() {
   const locksRef = useRef(locks);
   const selectedKeyRef = useRef(selectedKey);
   const pendingRef = useRef(new Map()); // key -> { patch, timer }
+  // Undo/redo for the zone tool. Entries hold the zone geometry (safety zones +
+  // output area) as it was before an edit, per output.
+  const historyRef = useRef(new Map());
+  const lastEditRef = useRef({ key: null, time: 0 });
+  const dragSnapshotRef = useRef(null);
+  const dragTouchedRef = useRef(false);
+  const undoZonesRef = useRef(() => {});
+  const redoZonesRef = useRef(() => {});
+  const [, setHistoryTick] = useState(0);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -63,6 +81,39 @@ export default function App() {
   const lock = selectedKey ? locks[selectedKey] : null;
   const lockedByOther = !!(lock && lock.clientId !== clientId);
   const editable = !!selectedKey && conn === 'connected' && !lockedByOther;
+
+  const editableRef = useRef(editable);
+  useEffect(() => { editableRef.current = editable; }, [editable]);
+
+  // Ctrl+Z / Ctrl+Shift+Z (Ctrl+Y) for tablets or desktops using the tool.
+  // Phones use the toolbar buttons.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = (event.key || '').toLowerCase();
+      const code = event.code || '';
+      const isZ = key === 'z' || code === 'KeyZ';
+      const isY = key === 'y' || code === 'KeyY';
+      const wantsUndo = isZ && !event.shiftKey;
+      const wantsRedo = (isZ && event.shiftKey) || isY;
+      if (!wantsUndo && !wantsRedo) return;
+
+      const target = event.target;
+      if (target && (
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable ||
+        (target.tagName === 'INPUT' && (target.type || 'text') !== 'range')
+      )) return;
+      if (!editableRef.current) return;
+
+      event.preventDefault();
+      if (wantsRedo) redoZonesRef.current();
+      else undoZonesRef.current();
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const refreshOutputs = useCallback(async () => {
     const p = pinRef.current;
@@ -276,6 +327,84 @@ export default function App() {
     }
   }, [sendNow]);
 
+  // --- Undo/redo for the zone tool -----------------------------------------
+  // Only the geometry the tool edits is snapshotted (safety zones + output
+  // area), so undo never clobbers a dimmer or name changed elsewhere.
+  const geometryOf = (settingsValue) => cloneOutputSettings({
+    safetyZones: Array.isArray(settingsValue?.safetyZones) ? settingsValue.safetyZones : [],
+    outputArea: settingsValue?.outputArea,
+  });
+
+  const historyFor = useCallback((key) => {
+    if (!historyRef.current.has(key)) historyRef.current.set(key, createHistory());
+    return historyRef.current.get(key);
+  }, []);
+
+  const recordGeometry = useCallback((key, snapshot, coalesceKey = null) => {
+    if (!key || !snapshot) return;
+    const now = Date.now();
+    const editKey = coalesceKey ? `${key}|${coalesceKey}` : null;
+
+    if (shouldCoalesceEdit(lastEditRef.current, editKey, now)) {
+      lastEditRef.current = { key: editKey, time: now };
+      return;
+    }
+
+    const added = pushHistory(historyFor(key), snapshot);
+    lastEditRef.current = { key: editKey, time: now };
+    if (added) setHistoryTick((v) => v + 1);
+  }, [historyFor]);
+
+  const applyGeometry = useCallback((key, geometry) => {
+    const entry = outputsRef.current.get(key);
+    if (!entry) return;
+    const patch = { safetyZones: geometry.safetyZones };
+    if (geometry.outputArea !== undefined) patch.outputArea = geometry.outputArea;
+    // Optimistic local update so the canvas reacts before the round trip.
+    applyLocal(key, entry.revision, { ...entry.settings, ...patch });
+    schedulePatch(key, patch, true);
+  }, [applyLocal, schedulePatch]);
+
+  const clampZoneIndex = (geometry) => {
+    const count = Array.isArray(geometry?.safetyZones) ? geometry.safetyZones.length : 0;
+    setSelectedZoneIndex((current) => {
+      if (current === null) return null;
+      if (count === 0) return null;
+      return Math.min(current, count - 1);
+    });
+  };
+
+  const undoZones = useCallback(() => {
+    const key = selectedKeyRef.current;
+    const entry = key && outputsRef.current.get(key);
+    if (!key || !entry) return;
+
+    const previous = undoHistory(historyFor(key), geometryOf(entry.settings));
+    if (!previous) return;
+
+    lastEditRef.current = { key: null, time: 0 };
+    applyGeometry(key, previous);
+    clampZoneIndex(previous);
+    setHistoryTick((v) => v + 1);
+  }, [applyGeometry, historyFor]);
+
+  const redoZones = useCallback(() => {
+    const key = selectedKeyRef.current;
+    const entry = key && outputsRef.current.get(key);
+    if (!key || !entry) return;
+
+    const next = redoHistory(historyFor(key), geometryOf(entry.settings));
+    if (!next) return;
+
+    lastEditRef.current = { key: null, time: 0 };
+    applyGeometry(key, next);
+    clampZoneIndex(next);
+    setHistoryTick((v) => v + 1);
+  }, [applyGeometry, historyFor]);
+
+  undoZonesRef.current = undoZones;
+  redoZonesRef.current = redoZones;
+
   // Flush pending edits before unload (best effort).
   useEffect(() => {
     const flush = () => {
@@ -307,11 +436,23 @@ export default function App() {
     setNameDraft(null);
   };
 
+  // Mark the in-progress drag as touched and, as a defensive fallback,
+  // start a snapshot lazily if the canvas moved a zone without having
+  // called onDragStart first (e.g. its down event was gated off while the
+  // lock/SSE was still settling, then the moves got through).
+  const touchDragTransaction = (key, entry) => {
+    if (!dragSnapshotRef.current) {
+      dragSnapshotRef.current = { key, geometry: geometryOf(entry?.settings) };
+    }
+    dragTouchedRef.current = true;
+  };
+
   const onUpdateZone = useCallback((index, rect) => {
     const key = selectedKeyRef.current;
     if (!key) return;
     const entry = outputsRef.current.get(key);
     if (!entry) return;
+    touchDragTransaction(key, entry);
     const zones = [...(entry.settings.safetyZones || [])];
     zones[index] = rect;
     schedulePatch(key, { safetyZones: zones });
@@ -320,12 +461,18 @@ export default function App() {
   const onUpdateArea = useCallback((rect) => {
     const key = selectedKeyRef.current;
     if (!key) return;
+    touchDragTransaction(key, outputsRef.current.get(key));
     schedulePatch(key, { outputArea: rect });
   }, [schedulePatch]);
 
   const onDragStart = useCallback(async () => {
     const key = selectedKeyRef.current;
-    if (key) await ensureLock(key);
+    if (!key) return;
+    // Snapshot before the pointer moves; the whole drag becomes one undo step.
+    const entry = outputsRef.current.get(key);
+    dragSnapshotRef.current = { key, geometry: geometryOf(entry?.settings) };
+    dragTouchedRef.current = false;
+    await ensureLock(key);
   }, [ensureLock]);
 
   const onDragCommit = useCallback(() => {
@@ -337,7 +484,18 @@ export default function App() {
       if (entry.timer) clearTimeout(entry.timer);
       sendNow(key, toSend);
     }
-  }, [sendNow]);
+
+    const transaction = dragSnapshotRef.current;
+    const touched = dragTouchedRef.current;
+    dragSnapshotRef.current = null;
+    dragTouchedRef.current = false;
+    // Anything that moved during the drag is one undo step. Recorded on the
+    // drag's own output key, so a mid-drag output switch still undoes the
+    // moved output.
+    if (transaction && touched) {
+      recordGeometry(transaction.key, transaction.geometry, null);
+    }
+  }, [sendNow, recordGeometry]);
 
   const toggle = (field) => {
     if (!editable || !selectedKey) return;
@@ -351,6 +509,7 @@ export default function App() {
 
   const addZone = () => {
     if (!editable || !selectedKey || !settings) return;
+    recordGeometry(selectedKey, geometryOf(settings));
     const zones = [...(settings.safetyZones || []), { x: 0.4, y: 0.4, w: 0.2, h: 0.2 }];
     setSelectedZoneIndex(zones.length - 1);
     schedulePatch(selectedKey, { safetyZones: zones }, true);
@@ -358,13 +517,15 @@ export default function App() {
 
   const deleteZone = () => {
     if (!editable || !selectedKey || selectedZoneIndex === null || !settings) return;
+    recordGeometry(selectedKey, geometryOf(settings));
     const zones = (settings.safetyZones || []).filter((_, i) => i !== selectedZoneIndex);
     setSelectedZoneIndex(null);
     schedulePatch(selectedKey, { safetyZones: zones }, true);
   };
 
   const clearZones = () => {
-    if (!editable || !selectedKey) return;
+    if (!editable || !selectedKey || !settings) return;
+    recordGeometry(selectedKey, geometryOf(settings));
     setSelectedZoneIndex(null);
     schedulePatch(selectedKey, { safetyZones: [] }, true);
   };
@@ -373,6 +534,7 @@ export default function App() {
     if (!editable || !selectedKey || selectedZoneIndex === null || !settings) return;
     const z = settings.safetyZones[selectedZoneIndex];
     if (!z) return;
+    recordGeometry(selectedKey, geometryOf(settings), 'nudge');
     const zones = [...settings.safetyZones];
     zones[selectedZoneIndex] = nudgeRect(z, dx, dy);
     schedulePatch(selectedKey, { safetyZones: zones }, true);
@@ -382,6 +544,7 @@ export default function App() {
     if (!editable || !selectedKey || selectedZoneIndex === null || !settings) return;
     const z = settings.safetyZones[selectedZoneIndex];
     if (!z) return;
+    recordGeometry(selectedKey, geometryOf(settings), 'resize');
     const zones = [...settings.safetyZones];
     zones[selectedZoneIndex] = resizeRect(z, dw, dh, 'se');
     schedulePatch(selectedKey, { safetyZones: zones }, true);
@@ -419,6 +582,9 @@ export default function App() {
   }
 
   const outputs = [...outputsMap.entries()].map(([key, v]) => ({ key, ...v }));
+  const selectedHistory = selectedKey ? historyRef.current.get(selectedKey) : null;
+  const canUndoZones = !!(selectedHistory && selectedHistory.undo.length > 0);
+  const canRedoZones = !!(selectedHistory && selectedHistory.redo.length > 0);
 
   return (
     <main className="companion">
@@ -491,6 +657,8 @@ export default function App() {
             <button onClick={addZone} disabled={!editable}>＋ Zone</button>
             <button onClick={deleteZone} disabled={!editable || selectedZoneIndex === null}>Delete</button>
             <button onClick={clearZones} disabled={!editable}>Clear</button>
+            <button onClick={undoZones} disabled={!editable || !canUndoZones} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+            <button onClick={redoZones} disabled={!editable || !canRedoZones} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
             <span className="spacer" />
             <span className="muted small">{(settings.safetyZones || []).length} zone(s)</span>
           </div>

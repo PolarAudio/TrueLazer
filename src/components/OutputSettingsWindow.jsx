@@ -8,6 +8,15 @@ import {
     matchOutputs,
     describeOutputKey,
 } from '../utils/dacOutputSettingsFile';
+import {
+    createHistory,
+    pushHistory,
+    undoHistory,
+    redoHistory,
+    cloneOutputSettings,
+    outputSettingsEqual,
+    shouldCoalesceEdit,
+} from '../utils/outputSettingsHistory';
 
 export const DEFAULT_OUTPUT_SETTINGS = Object.freeze({
   name: '',
@@ -33,6 +42,31 @@ export const DEFAULT_OUTPUT_SETTINGS = Object.freeze({
   targetFps: 0
 });
 
+// Merge a channel's stored settings over the defaults so partially stored
+// documents still render and snapshot consistently.
+const normalizeOutputSettings = (rawSettings) => ({
+    ...DEFAULT_OUTPUT_SETTINGS,
+    ...(rawSettings || {}),
+    safetyZones: Array.isArray(rawSettings?.safetyZones)
+        ? rawSettings.safetyZones
+        : [],
+    outputArea: (rawSettings?.outputArea && typeof rawSettings.outputArea === 'object')
+        ? { ...DEFAULT_OUTPUT_SETTINGS.outputArea, ...rawSettings.outputArea }
+        : { ...DEFAULT_OUTPUT_SETTINGS.outputArea }
+});
+
+// Fields whose Ctrl+Z is owned by the browser's own text editing. Ranges,
+// checkboxes and selects have no useful native undo, so the window's history
+// handles those instead.
+const isNativeTextUndoTarget = (target) => {
+    if (!target) return false;
+    if (target.isContentEditable) return true;
+    if (target.tagName === 'TEXTAREA') return true;
+    if (target.tagName !== 'INPUT') return false;
+    const type = (target.type || 'text').toLowerCase();
+    return !['range', 'checkbox', 'radio', 'button', 'color'].includes(type);
+};
+
 // Canvas component for the safety zones and output area interaction
 const OutputCanvas = ({ 
   safetyZones = [], 
@@ -53,11 +87,17 @@ const OutputCanvas = ({
   snapToGrid = false,
   showZoneOutlines = false,
   sentFramesRef,
-  channelId
+  channelId,
+  onInteractionStart,
+  onInteractionEnd
 }) => {
   const { t } = useTranslation();
   const canvasRef = useRef(null);
   const [dragging, setDragging] = useState(null); // { type, index, handle, startX, startY, originalRect }
+  // Keep the latest callback without re-binding the global mouseup listener on
+  // every parent render during a drag.
+  const onInteractionEndRef = useRef(onInteractionEnd);
+  onInteractionEndRef.current = onInteractionEnd;
 
   const drawGrid = (ctx, width, height) => {
     ctx.strokeStyle = '#333';
@@ -468,12 +508,19 @@ const OutputCanvas = ({
     
     const zones = Array.isArray(safetyZones) ? safetyZones : [];
 
+    // One drag = one undo step: the parent snapshots the channel when a drag
+    // begins and records it when the drag ends.
+    const beginDrag = (dragInfo) => {
+        setDragging(dragInfo);
+        if (onInteractionStart) onInteractionStart();
+    };
+
     // 1. PRIORITY: Check Safety Zones Handles (Selected first)
     if (selectedZoneIndex !== null && zones[selectedZoneIndex]) {
         const zone = zones[selectedZoneIndex];
         const handle = isOverHandle(z.x, z.y, zone);
         if (handle) {
-            setDragging({ type: 'zone', index: selectedZoneIndex, handle, startX: z.x, startY: z.y, originalRect: { ...zone } });
+            beginDrag({ type: 'zone', index: selectedZoneIndex, handle, startX: z.x, startY: z.y, originalRect: { ...zone } });
             return;
         }
     }
@@ -484,7 +531,7 @@ const OutputCanvas = ({
         if (zone && isInside(z.x, z.y, zone)) {
             onSelectZone(i);
             const handle = isOverHandle(z.x, z.y, zone); 
-            setDragging({ type: 'zone', index: i, handle: handle || 'move', startX: z.x, startY: z.y, originalRect: { ...zone } });
+            beginDrag({ type: 'zone', index: i, handle: handle || 'move', startX: z.x, startY: z.y, originalRect: { ...zone } });
             return;
         }
     }
@@ -493,12 +540,12 @@ const OutputCanvas = ({
     if (transformationEnabled && outputArea) {
        const handle = isOverHandle(x, y, outputArea);
        if (handle) {
-           setDragging({ type: 'output', handle, startX: x, startY: y, originalRect: { ...outputArea } });
+           beginDrag({ type: 'output', handle, startX: x, startY: y, originalRect: { ...outputArea } });
            onSelectZone(null); 
            return;
        }
        if (isInside(x, y, outputArea)) {
-           setDragging({ type: 'output', handle: 'move', startX: x, startY: y, originalRect: { ...outputArea } });
+           beginDrag({ type: 'output', handle: 'move', startX: x, startY: y, originalRect: { ...outputArea } });
            onSelectZone(null); 
            return;
        }
@@ -567,8 +614,29 @@ const OutputCanvas = ({
   };
 
   const handleMouseUp = () => {
+    const wasDragging = !!dragging;
     setDragging(null);
+    // Always report the end: the parent handler is idempotent and this clears
+    // an open history transaction even if its mouseup was lost to the window.
+    if (wasDragging && onInteractionEndRef.current) onInteractionEndRef.current();
   };
+
+  // A drag that is released outside the canvas (or after the window loses
+  // focus) must still close its history transaction, otherwise the next edits
+  // would be folded into it.
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const end = () => {
+      setDragging(null);
+      if (onInteractionEndRef.current) onInteractionEndRef.current();
+    };
+    window.addEventListener('mouseup', end);
+    window.addEventListener('blur', end);
+    return () => {
+      window.removeEventListener('mouseup', end);
+      window.removeEventListener('blur', end);
+    };
+  }, [dragging]);
 
   return (
     <div className="output-canvas-container" style={{ width: '100%', height: '100%' }}>
@@ -601,6 +669,18 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
   // previous render" the first time the window is opened.
   const [fileStatus, setFileStatus] = useState(null);
   const fileStatusTimerRef = useRef(null);
+
+  // Per-channel undo history. The window applies settings live, so a snapshot
+  // is taken before each change; drags are recorded once via the canvas
+  // interaction callbacks instead of on every mouse move.
+  const historyRef = useRef(new Map());
+  const presentRef = useRef({});
+  const lastEditRef = useRef({ key: null, time: 0 });
+  const dragSnapshotRef = useRef(null);
+  const undoRef = useRef(() => {});
+  const redoRef = useRef(() => {});
+  const [, setHistoryTick] = useState(0);
+  const bumpHistory = () => setHistoryTick((v) => v + 1);
 
   const handleSave = () => {
       const payload = dacSettings;
@@ -656,33 +736,189 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
     }
   }, [outputs, selectedOutputId]);
 
+  // History belongs to a single visit to the window: reopening it must not let
+  // Ctrl+Z restore settings from a session the user has already left.
+  useEffect(() => {
+    if (show) return;
+    historyRef.current.clear();
+    presentRef.current = {};
+    lastEditRef.current = { key: null, time: 0 };
+    dragSnapshotRef.current = null;
+  }, [show]);
+
+  // Keep the snapshot cache in step with settings the window did not write
+  // (project load, settings imported elsewhere). Such a replacement invalidates
+  // stored snapshots, so drop that channel's history.
+  useEffect(() => {
+    if (!show || !selectedOutputId) return;
+    const incoming = cloneOutputSettings(normalizeOutputSettings(dacSettings?.[selectedOutputId]));
+    const cached = presentRef.current[selectedOutputId];
+    if (cached && outputSettingsEqual(cached, incoming)) return;
+
+    presentRef.current[selectedOutputId] = incoming;
+    if (cached) {
+        historyRef.current.delete(selectedOutputId);
+        bumpHistory();
+    }
+  }, [show, selectedOutputId, dacSettings]);
+
+  // Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) while the window is open. Capture phase
+  // so the Timeline's own Ctrl+Z cannot undo a show edit behind the modal.
+  useEffect(() => {
+    if (!show) return undefined;
+
+    const onKeyDown = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = (event.key || '').toLowerCase();
+      const code = event.code || '';
+      const isZ = key === 'z' || code === 'KeyZ';
+      const isY = key === 'y' || code === 'KeyY';
+      const wantsUndo = isZ && !event.shiftKey;
+      const wantsRedo = (isZ && event.shiftKey) || isY;
+      if (!wantsUndo && !wantsRedo) return;
+      // Leave Ctrl+Z to the browser inside text fields; it already undoes
+      // typing there and still reports the change through onChange.
+      if (isNativeTextUndoTarget(event.target)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (wantsRedo) redoRef.current();
+      else undoRef.current();
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [show]);
+
   if (!show) return null;
 
   // Get current settings merged over defaults, guaranteeing safetyZones is always an Array
   // even if the stored settings for this channel are partial or missing fields.
   const rawSettings = (selectedOutputId && dacSettings) ? dacSettings[selectedOutputId] : null;
-  const currentSettings = {
-      ...DEFAULT_OUTPUT_SETTINGS,
-      ...(rawSettings || {}),
-      safetyZones: Array.isArray(rawSettings?.safetyZones)
-          ? rawSettings.safetyZones
-          : [],
-      outputArea: (rawSettings?.outputArea && typeof rawSettings.outputArea === 'object')
-          ? { ...DEFAULT_OUTPUT_SETTINGS.outputArea, ...rawSettings.outputArea }
-          : { ...DEFAULT_OUTPUT_SETTINGS.outputArea }
+  const currentSettings = normalizeOutputSettings(rawSettings);
+
+  const historyFor = (channelId) => {
+      if (!historyRef.current.has(channelId)) {
+          historyRef.current.set(channelId, createHistory());
+      }
+      return historyRef.current.get(channelId);
   };
 
-  const updateCurrentSettings = (updates) => {
-      if (!selectedOutputId) return;
-      if (onUpdateDacSettings) {
-          onUpdateDacSettings(selectedOutputId, { ...currentSettings, ...updates });
-      }
+  const readPresent = (channelId) => {
+      const cached = presentRef.current[channelId];
+      if (cached) return cached;
+      const seeded = cloneOutputSettings(normalizeOutputSettings(dacSettings?.[channelId]));
+      presentRef.current[channelId] = seeded;
+      return seeded;
   };
+
+  const applySettings = (channelId, settings) => {
+      if (!channelId || !onUpdateDacSettings) return;
+      const next = cloneOutputSettings(settings);
+      presentRef.current[channelId] = next;
+      onUpdateDacSettings(channelId, next);
+  };
+
+  const recordHistory = (channelId, snapshot, options = {}) => {
+      const fieldKey = options.coalesce === false
+          ? null
+          : `${channelId}|${options.coalesceKey || 'settings'}`;
+      const now = Date.now();
+
+      if (shouldCoalesceEdit(lastEditRef.current, fieldKey, now)) {
+          lastEditRef.current = { key: fieldKey, time: now };
+          return false;
+      }
+
+      const changed = pushHistory(historyFor(channelId), snapshot);
+      lastEditRef.current = { key: fieldKey, time: now };
+      return changed;
+  };
+
+  const updateCurrentSettings = (updates, options = {}) => {
+      if (!selectedOutputId) return;
+      const channelId = selectedOutputId;
+      const before = readPresent(channelId);
+      const next = { ...before, ...updates };
+      if (outputSettingsEqual(before, next)) return;
+
+      // A drag records one transaction in handleDragEnd instead of an entry per
+      // mouse move. The flag comes from the canvas callbacks explicitly, so a
+      // lost transaction can never suppress later edits.
+      const changed = options.duringDrag ? false : recordHistory(channelId, before, {
+          ...options,
+          coalesceKey: options.coalesceKey || Object.keys(updates).sort().join('|'),
+      });
+      applySettings(channelId, next);
+      if (changed) bumpHistory();
+  };
+
+  // A drag updates the settings on every mouse move. Snapshot once at the
+  // start and record it as a single undo step when the drag ends.
+  const handleDragStart = () => {
+      if (!selectedOutputId) return;
+      dragSnapshotRef.current = {
+          channelId: selectedOutputId,
+          settings: cloneOutputSettings(readPresent(selectedOutputId)),
+      };
+  };
+
+  const handleDragEnd = () => {
+      const transaction = dragSnapshotRef.current;
+      dragSnapshotRef.current = null;
+      if (!transaction) return;
+
+      const current = readPresent(transaction.channelId);
+      if (outputSettingsEqual(transaction.settings, current)) return;
+
+      lastEditRef.current = { key: null, time: 0 };
+      pushHistory(historyFor(transaction.channelId), transaction.settings);
+      bumpHistory();
+  };
+
+  const clampSelectedZone = (settings) => {
+      const count = Array.isArray(settings?.safetyZones) ? settings.safetyZones.length : 0;
+      setSelectedZoneIndex((current) => {
+          if (current === null) return null;
+          if (count === 0) return null;
+          return Math.min(current, count - 1);
+      });
+  };
+
+  const undo = () => {
+      if (!selectedOutputId) return;
+      const previous = undoHistory(historyFor(selectedOutputId), readPresent(selectedOutputId));
+      if (!previous) return;
+
+      lastEditRef.current = { key: null, time: 0 };
+      applySettings(selectedOutputId, previous);
+      clampSelectedZone(previous);
+      bumpHistory();
+  };
+
+  const redo = () => {
+      if (!selectedOutputId) return;
+      const next = redoHistory(historyFor(selectedOutputId), readPresent(selectedOutputId));
+      if (!next) return;
+
+      lastEditRef.current = { key: null, time: 0 };
+      applySettings(selectedOutputId, next);
+      clampSelectedZone(next);
+      bumpHistory();
+  };
+
+  // Handlers handed to the capture-phase listener above.
+  undoRef.current = undo;
+  redoRef.current = redo;
+
+  const selectedHistory = selectedOutputId ? historyRef.current.get(selectedOutputId) : null;
+  const canUndo = !!(selectedHistory && selectedHistory.undo.length > 0);
+  const canRedo = !!(selectedHistory && selectedHistory.redo.length > 0);
 
   const handleAddZone = () => {
       const newZone = { x: 0.4, y: 0.4, w: 0.2, h: 0.2 };
       const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
-      updateCurrentSettings({ safetyZones: [...currentZones, newZone] });
+      updateCurrentSettings({ safetyZones: [...currentZones, newZone] }, { coalesce: false });
       setSelectedZoneIndex(currentZones.length);
   };
 
@@ -690,12 +926,12 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       if (selectedZoneIndex === null) return;
       const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
       const newZones = currentZones.filter((_, i) => i !== selectedZoneIndex);
-      updateCurrentSettings({ safetyZones: newZones });
+      updateCurrentSettings({ safetyZones: newZones }, { coalesce: false });
       setSelectedZoneIndex(null);
   };
 
   const handleClearZones = () => {
-      updateCurrentSettings({ safetyZones: [] });
+      updateCurrentSettings({ safetyZones: [] }, { coalesce: false });
       setSelectedZoneIndex(null);
   };
 
@@ -703,7 +939,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
       const newZones = [...currentZones];
       newZones[index] = rect;
-      updateCurrentSettings({ safetyZones: newZones });
+      updateCurrentSettings({ safetyZones: newZones }, { duringDrag: true });
   };
 
   // --- Standalone Output Settings file (.tlo) ---
@@ -772,9 +1008,15 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
       // Merge rather than replace: outputs absent from the file are left alone.
       const next = { ...dacSettings };
       for (const [id, settings] of Object.entries(matched)) {
+          const before = readPresent(id);
           next[id] = settings;
-          onUpdateDacSettings(id, settings);
+          applySettings(id, settings);
+          if (!outputSettingsEqual(before, settings)) {
+              pushHistory(historyFor(id), before);
+          }
       }
+      lastEditRef.current = { key: null, time: 0 };
+      bumpHistory();
       // Persist the merged result so it survives a restart.
       api.saveDacOutputSettings?.(next);
       showFileStatus(
@@ -790,6 +1032,8 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
           <h2>{t('outputSettings.title')}</h2>
           <div className="output-settings-header-actions">
             {saveStatus && <span className="output-settings-save-status">{t('outputSettings.' + saveStatus)}</span>}
+            <button className="save-btn" onClick={undo} disabled={!canUndo} title={t('outputSettings.undoTitle')}>{t('common.undo')}</button>
+            <button className="save-btn" onClick={redo} disabled={!canRedo} title={t('outputSettings.redoTitle')}>{t('common.redo')}</button>
             <button className="save-btn" onClick={handleSave}>{t('outputSettings.save')}</button>
             <button className="save-btn" onClick={handleExportFile}
                 title={t('outputSettings.exportTitle')}>
@@ -884,7 +1128,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 flipX={currentSettings.flipX}
                 flipY={currentSettings.flipY}
                 onUpdateSafetyZones={handleUpdateZone}
-                onUpdateOutputArea={(rect) => updateCurrentSettings({ outputArea: rect })}
+                onUpdateOutputArea={(rect) => updateCurrentSettings({ outputArea: rect }, { duringDrag: true })}
                 selectedZoneIndex={selectedZoneIndex}
                 onSelectZone={setSelectedZoneIndex}
                 gridSize={gridSize}
@@ -892,6 +1136,8 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                 showZoneOutlines={!!currentSettings.zoneOutlineEnabled}
                 sentFramesRef={sentFramesRef}
                 channelId={selectedOutputId}
+                onInteractionStart={handleDragStart}
+                onInteractionEnd={handleDragEnd}
             />
           </div>
 
@@ -1020,7 +1266,7 @@ const OutputSettingsWindow = ({ show, onClose, dacs = [], dacSettings = {}, onUp
                                         if (selectedZoneIndex === i) setSelectedZoneIndex(null);
                                         const currentZones = Array.isArray(currentSettings.safetyZones) ? currentSettings.safetyZones : [];
                                         const nz = currentZones.filter((_, idx) => idx !== i);
-                                        updateCurrentSettings({ safetyZones: nz });
+                                        updateCurrentSettings({ safetyZones: nz }, { coalesce: false });
                                     }}>×</button>
                                 </div>
                             ))}
