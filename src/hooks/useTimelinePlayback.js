@@ -1338,6 +1338,13 @@ export function useTimelinePlayback() {
         }
         isPlayingRef.current = true;
         setIsPlaying(true);
+        // A fresh play start: the push-rate gate below (floor(t * fps) vs the
+        // last pushed frame index) must be re-armed, otherwise the first one
+        // or two frames are skipped when you press play at a playhead whose
+        // frame index was already pushed — e.g. pressing play right on top of
+        // a short clip.
+        lastPushedFrameRef.current = -1;
+        lastPushedT.current = Math.max(-1e100, playheadRef.current - 0.001);
 
         // Start (or restart) the timeline audio from the playhead. The rAF
         // wall clock owns the transport, so a slow/stalled element can't stall
