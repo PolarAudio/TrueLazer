@@ -2259,8 +2259,6 @@ function App() {
     const workerLoadedFontsRef = useRef(new Set()); // Track fonts already sent to worker
     const lastMidiValuesRef = useRef({}); // For 'fake_relative' mode mapping
     const tapTempoTimesRef = useRef([]); // Timestamps for tap tempo (shared by TAP button + mappings)
-    const quickAssignsRef = useRef(state.quickAssigns);
-    useEffect(() => { quickAssignsRef.current = state.quickAssigns; }, [state.quickAssigns]);
     const lastTapMidiValueRef = useRef(0); // Rising-edge guard for mapped tap triggers
 
     // DJ-Link Clip Transport clock: workerId -> { active, progress, bpm, deck, ... }.
@@ -2357,6 +2355,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     const channelPointCountsRef = useRef({}); // id -> points sent this stats window
 
     const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
+    const quickAssignsRef = useRef(state.quickAssigns);
+    useEffect(() => { quickAssignsRef.current = state.quickAssigns; }, [state.quickAssigns]);
 
     const throttledDispatchesRef = useRef(new Map()); // id -> throttled function
 
