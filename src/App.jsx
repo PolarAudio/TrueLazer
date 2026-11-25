@@ -2321,7 +2321,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     // afterwards, or a freshly started app would claim to have unsaved work.
     const [settingsLoaded, setSettingsLoaded] = useState(false);
     // The auto-updater's preferences (check automatically, skipped version).
-    const [updatePrefs, setUpdatePrefs] = useState({ autoCheck: true, skippedVersion: '' });
+    const [updatePrefs, setUpdatePrefs] = useState({ autoCheck: true, allowPrerelease: false, skippedVersion: '' });
     // null = closed, otherwise 'bug' or 'feature'. The report window is one
     // component with two shapes rather than two separate windows.
     const [reportWindowMode, setReportWindowMode] = useState(null);
@@ -8139,6 +8139,11 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         onToggleAutoCheck={(value) => {
                             setUpdatePrefs((prev) => ({ ...prev, autoCheck: value }));
                             window.electronAPI?.setUpdatePreferences?.({ autoCheck: value });
+                        }}
+                        allowPrerelease={updatePrefs.allowPrerelease}
+                        onToggleAllowPrerelease={(value) => {
+                            setUpdatePrefs((prev) => ({ ...prev, allowPrerelease: value }));
+                            window.electronAPI?.setUpdatePreferences?.({ allowPrerelease: value });
                         }}
                     />
                     <OutputSettingsWindow

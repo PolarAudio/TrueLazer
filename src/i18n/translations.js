@@ -729,6 +729,7 @@ export const TRANSLATIONS = {
         'update.installNextLaunch': 'Install on next launch',
         'update.restartAndInstall': 'Restart and install',
         'update.checkAutomatically': 'Check for updates automatically',
+        'update.checkPrerelease': 'Also check for -patch and -experimental versions (asks before use)',
         'update.close': 'Close',
         'update.of': 'of',
 
@@ -1848,6 +1849,7 @@ export const TRANSLATIONS = {
         'update.installNextLaunch': '下次启动时安装',
         'update.restartAndInstall': '重启并安装',
         'update.checkAutomatically': '自动检查更新',
+        'update.checkPrerelease': '同时检查 -patch 和 -experimental 版本（使用前会询问）',
         'update.close': '关闭',
         'update.of': '共',
 

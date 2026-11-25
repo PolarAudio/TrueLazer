@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from '../i18n';
 
 const OutputProcessingWindow = ({ show, onClose, renderSettings = {}, onSetRenderSetting }) => {
@@ -48,6 +48,10 @@ const OutputProcessingWindow = ({ show, onClose, renderSettings = {}, onSetRende
                 cut where they fall behind higher layers. The shape-preserving point
                 budget (PPS/FPS per channel) is enforced at this merge step.
               </p>
+            </div>
+            <div className="output-processing-section" style={{ marginTop: '16px' }}>
+              <h4 style={{ marginBottom: '10px', fontSize: '13px' }}>DAC timing (Showbridge)</h4>
+              <ShowbridgeTuningControls />
             </div>
           </div>
         </div>
@@ -146,6 +150,71 @@ const OptimizerSettingsEditor = ({ settings = {}, onSetRenderSetting }) => {
         Optimizes geometry for the target PPS/FPS before applying effects. Hardware presets
         pre-load these values per scanner class.
       </p>
+    </div>
+  );
+};
+
+const TuningField = ({ label, value, setValue, min, max, step, loaded, onSet, unit }) => (
+  <div className="param-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+    <label className="param-label" style={{ fontSize: '11px' }}>{label}{unit ? ` (${unit})` : ''}</label>
+    <input
+      type="number"
+      min={min} max={max} step={step}
+      value={value}
+      onChange={(e) => {
+        const v = Number(e.target.value);
+        if (!Number.isFinite(v)) return;
+        setValue(v);
+        try { onSet && onSet(v); } catch { /* ignore */ }
+      }}
+      className="param-number-input"
+      style={{ width: '60px', fontSize: '11px' }}
+      disabled={!loaded}
+    />
+  </div>
+);
+
+const ShowbridgeTuningControls = () => {
+  const [loaded, setLoaded] = useState(false);
+  const [stagger, setStagger] = useState(6);
+  const [leadIn, setLeadIn] = useState(10);
+  const [hold, setHold] = useState(20);
+  const [closeThr, setCloseThr] = useState(0.05);
+  const [interp, setInterp] = useState(0.05);
+  const [pps, setPps] = useState(30);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const api = window.electronAPI;
+      try {
+        if (api?.getShowbridgeChunkStagger) { const v = await api.getShowbridgeChunkStagger(); if (!cancelled && Number.isFinite(v)) setStagger(v); }
+        if (api?.getShowbridgeLeadIn) { const v = await api.getShowbridgeLeadIn(); if (!cancelled && Number.isFinite(v)) setLeadIn(v); }
+        if (api?.getShowbridgeHoldCount) { const v = await api.getShowbridgeHoldCount(); if (!cancelled && Number.isFinite(v)) setHold(v); }
+        if (api?.getShowbridgeCloseThreshold) { const v = await api.getShowbridgeCloseThreshold(); if (!cancelled && Number.isFinite(v)) setCloseThr(v); }
+        if (api?.getShowbridgeInterpStep) { const v = await api.getShowbridgeInterpStep(); if (!cancelled && Number.isFinite(v)) setInterp(v); }
+        if (api?.getShowbridgePps) { const v = await api.getShowbridgePps(); if (!cancelled && Number.isFinite(v)) setPps(v); }
+      } catch { /* ignore */ }
+      if (!cancelled) setLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const api = typeof window !== 'undefined' ? window.electronAPI : null;
+  return (
+    <div>
+      <TuningField label="Chunk stagger" unit="ms" value={stagger} setValue={setStagger} min={0} max={50} step={1} loaded={loaded}
+        onSet={(v) => api?.setShowbridgeChunkStagger?.(v)} />
+      <TuningField label="Lead-in points" value={leadIn} setValue={setLeadIn} min={0} max={60} step={1} loaded={loaded}
+        onSet={(v) => api?.setShowbridgeLeadIn?.(v)} />
+      <TuningField label="Hold count" value={hold} setValue={setHold} min={0} max={60} step={1} loaded={loaded}
+        onSet={(v) => api?.setShowbridgeHoldCount?.(v)} />
+      <TuningField label="Close-shape threshold" value={closeThr} setValue={setCloseThr} min={0} max={1} step={0.01} loaded={loaded}
+        onSet={(v) => api?.setShowbridgeCloseThreshold?.(v)} />
+      <TuningField label="Interp step size" value={interp} setValue={setInterp} min={0.001} max={1} step={0.01} loaded={loaded}
+        onSet={(v) => api?.setShowbridgeInterpStep?.(v)} />
+      <TuningField label="PPS (kpps)" value={pps} setValue={setPps} min={1} max={255} step={1} loaded={loaded}
+        onSet={(v) => api?.setShowbridgePps?.(v)} />
     </div>
   );
 };

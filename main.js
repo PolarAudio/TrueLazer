@@ -10,7 +10,7 @@ import { execFile } from 'child_process';
 import dgram from 'dgram';
 import { redactPrivateInfo } from './src/utils/redact.js';
 import { isAllowedExternalUrl } from './src/utils/externalUrl.js';
-import { shouldAutoCheck, shouldOfferVersion } from './src/utils/updatePolicy.js';
+import { shouldAutoCheck, shouldOfferVersion, isPrereleaseVersion } from './src/utils/updatePolicy.js';
 import { buildWindowTitle } from './src/utils/windowTitle.js';
 import { translate } from './src/i18n/translate.js';
 import { TRANSLATIONS } from './src/i18n/translations.js';
@@ -24,6 +24,7 @@ const __dirname = dirname(__filename);
 
 import dacCommunication from './main/dac-communication.cjs';
 const { discoverDacs, sendFrame, sendIdleFrame, getNetworkInterfaces, getDacServices, closeAll, stopSending, setDacStatusCallback } = dacCommunication;
+const showbridgeModule = require('./main/showbridge-communication.cjs');
 
 // Companion (Laser Zone Tool) — PIN-protected LAN server for phones/tablets.
 // Off by default; starts only via companion-start IPC (Settings toggle).
@@ -294,12 +295,14 @@ const schema = {
     type: 'object',
     properties: {
       autoCheck: { type: 'boolean', default: true },
+      allowPrerelease: { type: 'boolean', default: false },
       skippedVersion: { type: 'string', default: '' },
       lastCheckAt: { type: 'number', default: 0 },
       pendingVersion: { type: 'string', default: '' },
     },
     default: {
       autoCheck: true,
+      allowPrerelease: false,
       skippedVersion: '',
       lastCheckAt: 0,
       pendingVersion: '',
@@ -310,6 +313,18 @@ const schema = {
 // Initialize electron-store
 const store = new Store({ schema });
 // store.clear(); // Uncomment to clear store on startup for debugging
+
+// Apply persisted Showbridge tuning values (tunable for testing)
+const applyPersisted = (key, setterName) => {
+  const v = store.get(key);
+  if (typeof v === 'number' && showbridgeModule[setterName]) showbridgeModule[setterName](v);
+};
+applyPersisted('showbridgeChunkStaggerMs', 'setChunkStaggerMs');
+applyPersisted('showbridgeLeadInCount', 'setLeadInCount');
+applyPersisted('showbridgeHoldCount', 'setHoldCount');
+applyPersisted('showbridgeCloseShapeThreshold', 'setCloseShapeThreshold');
+applyPersisted('showbridgeInterpStepSize', 'setInterpStepSize');
+applyPersisted('showbridgePps', 'setShowbridgePps');
 
 let shortcutsState = store.get('shortcutsState');
 
@@ -547,6 +562,51 @@ ipcMain.handle('set-render-settings', (event, renderSettings) => {
 
 ipcMain.handle('set-fft-settings', (event, fftSettings) => {
   store.set('fftSettings', fftSettings);
+});
+
+// Showbridge chunk stagger (tunable inter-chunk spacing for testing)
+ipcMain.handle('get-showbridge-chunk-stagger', () => {
+  return showbridgeModule.getChunkStaggerMs ? showbridgeModule.getChunkStaggerMs() : 6;
+});
+ipcMain.handle('set-showbridge-chunk-stagger', (event, ms) => {
+  const v = Number(ms);
+  if (Number.isFinite(v) && v >= 0) {
+    if (showbridgeModule.setChunkStaggerMs) showbridgeModule.setChunkStaggerMs(v);
+    store.set('showbridgeChunkStaggerMs', v);
+  }
+  return showbridgeModule.getChunkStaggerMs ? showbridgeModule.getChunkStaggerMs() : 6;
+});
+
+// Showbridge tuning knobs (tunable for testing)
+ipcMain.handle('get-showbridge-lead-in', () => showbridgeModule.getLeadInCount ? showbridgeModule.getLeadInCount() : 10);
+ipcMain.handle('set-showbridge-lead-in', (event, v) => {
+  const n = Number(v);
+  if (Number.isFinite(n) && n >= 0) { if (showbridgeModule.setLeadInCount) showbridgeModule.setLeadInCount(n); store.set('showbridgeLeadInCount', n); }
+  return showbridgeModule.getLeadInCount ? showbridgeModule.getLeadInCount() : 10;
+});
+ipcMain.handle('get-showbridge-hold-count', () => showbridgeModule.getHoldCount ? showbridgeModule.getHoldCount() : 20);
+ipcMain.handle('set-showbridge-hold-count', (event, v) => {
+  const n = Number(v);
+  if (Number.isFinite(n) && n >= 0) { if (showbridgeModule.setHoldCount) showbridgeModule.setHoldCount(n); store.set('showbridgeHoldCount', n); }
+  return showbridgeModule.getHoldCount ? showbridgeModule.getHoldCount() : 20;
+});
+ipcMain.handle('get-showbridge-close-threshold', () => showbridgeModule.getCloseShapeThreshold ? showbridgeModule.getCloseShapeThreshold() : 0.05);
+ipcMain.handle('set-showbridge-close-threshold', (event, v) => {
+  const n = Number(v);
+  if (Number.isFinite(n) && n >= 0) { if (showbridgeModule.setCloseShapeThreshold) showbridgeModule.setCloseShapeThreshold(n); store.set('showbridgeCloseShapeThreshold', n); }
+  return showbridgeModule.getCloseShapeThreshold ? showbridgeModule.getCloseShapeThreshold() : 0.05;
+});
+ipcMain.handle('get-showbridge-interp-step', () => showbridgeModule.getInterpStepSize ? showbridgeModule.getInterpStepSize() : 0.05);
+ipcMain.handle('set-showbridge-interp-step', (event, v) => {
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0) { if (showbridgeModule.setInterpStepSize) showbridgeModule.setInterpStepSize(n); store.set('showbridgeInterpStepSize', n); }
+  return showbridgeModule.getInterpStepSize ? showbridgeModule.getInterpStepSize() : 0.05;
+});
+ipcMain.handle('get-showbridge-pps', () => showbridgeModule.getShowbridgePps ? showbridgeModule.getShowbridgePps() : 30);
+ipcMain.handle('set-showbridge-pps', (event, v) => {
+  const n = Number(v);
+  if (Number.isFinite(n) && n >= 1 && n <= 255) { if (showbridgeModule.setShowbridgePps) showbridgeModule.setShowbridgePps(n); store.set('showbridgePps', n); }
+  return showbridgeModule.getShowbridgePps ? showbridgeModule.getShowbridgePps() : 30;
 });
 
 ipcMain.handle('set-selected-audio-input', (event, deviceId) => {
@@ -1343,10 +1403,38 @@ const sendUpdateStatus = (payload) => {
   }
 };
 
-const updatePrefs = () => store.get('updatePreferences') || {};
+const updatePrefs = () => {
+  const raw = store.get('updatePreferences') || {};
+  // Normalise any of the alias names a caller may have used into the single
+  // canonical `allowPrerelease` flag.
+  const allow = raw.allowPrerelease === true || raw.includePrerelease === true ||
+    raw.includePrereleaseVersions === true || raw.allowPrereleaseVersions === true ||
+    raw.prerelease === true || raw.checkPrerelease === true ||
+    raw.includePatchAndExperimental === true || raw.allowPatchAndExperimental === true;
+  return { ...raw, allowPrerelease: raw.allowPrerelease === true || allow };
+};
 
 const setUpdatePrefs = (patch) => {
-  const next = { ...updatePrefs(), ...patch };
+  const next = { ...updatePrefs() };
+  if (patch && typeof patch === 'object') {
+    if (typeof patch.autoCheck === 'boolean') next.autoCheck = patch.autoCheck;
+    if (typeof patch.allowPrerelease === 'boolean') next.allowPrerelease = patch.allowPrerelease;
+    // Accept the same option under a few friendly names.
+    if (patch.includePrerelease === true || patch.includePrereleaseVersions === true ||
+        patch.allowPrereleaseVersions === true || patch.prerelease === true ||
+        patch.checkPrerelease === true || patch.includePatchAndExperimental === true ||
+        patch.allowPatchAndExperimental === true) next.allowPrerelease = true;
+    if (patch.includePrerelease === false || patch.allowPrerelease === false ||
+        patch.prerelease === false || patch.checkPrerelease === false) {
+      // Only force off when explicitly set false via the canonical flag.
+      if (patch.allowPrerelease === false) next.allowPrerelease = false;
+    }
+    if (typeof patch.skippedVersion === 'string') next.skippedVersion = patch.skippedVersion;
+    if (typeof patch.lastCheckAt === 'number') next.lastCheckAt = patch.lastCheckAt;
+    if (typeof patch.pendingVersion === 'string') next.pendingVersion = patch.pendingVersion;
+  } else if (patch) {
+    Object.assign(next, patch);
+  }
   store.set('updatePreferences', next);
   return next;
 };
@@ -1378,6 +1466,15 @@ const setupAutoUpdater = async () => {
   }
   autoUpdater = updater;
 
+  // Allow pre-release (-patch / -experimental) versions when the user opted in,
+  // or when the running build is itself a pre-release (so patch users keep
+  // receiving patch-channel updates).
+  try {
+    const prefs = updatePrefs();
+    autoUpdater.allowPrerelease = isPrereleaseVersion(app.getVersion()) || prefs.allowPrerelease === true;
+    autoUpdater.allowDowngrade = false;
+  } catch (e) { /* ignore */ }
+
   // The updater logs to stdout, which a packaged app does not have. Route it
   // into the same log the report window can attach.
   autoUpdater.logger = {
@@ -1395,11 +1492,18 @@ const setupAutoUpdater = async () => {
   });
   autoUpdater.on('update-available', (info) => {
     const version = info && info.version ? info.version : '';
-    if (!shouldOfferVersion({ version, currentVersion: app.getVersion(), skippedVersion: updatePrefs().skippedVersion })) {
+    const prefs = updatePrefs();
+    const allowed = prefs.allowPrerelease === true || isPrereleaseVersion(app.getVersion());
+    if (!shouldOfferVersion({ version, currentVersion: app.getVersion(), skippedVersion: prefs.skippedVersion, allowPrerelease: allowed })) {
       sendUpdateStatus({ phase: 'up-to-date', version: app.getVersion() });
       return;
     }
-    sendUpdateStatus({ phase: 'available', version });
+    sendUpdateStatus({
+      phase: 'available',
+      version,
+      prerelease: isPrereleaseVersion(version),
+      requiresApproval: isPrereleaseVersion(version),
+    });
   });
   autoUpdater.on('update-not-available', () => {
     sendUpdateStatus({ phase: 'up-to-date', version: app.getVersion() });
@@ -1437,6 +1541,9 @@ const checkForUpdates = async ({ manual = false } = {}) => {
     return { success: false, error: 'Auto-update is not available in this build.' };
   }
   const prefs = updatePrefs();
+  if (autoUpdater) {
+    autoUpdater.allowPrerelease = isPrereleaseVersion(app.getVersion()) || prefs.allowPrerelease === true;
+  }
   if (!manual && !shouldAutoCheck(prefs)) {
     return { success: true, skipped: true };
   }
@@ -1519,12 +1626,7 @@ ipcMain.handle('skip-update', async (_event, version) => {
 });
 ipcMain.handle('get-update-preferences', async () => updatePrefs());
 ipcMain.handle('set-update-preferences', async (_event, patch) => {
-  const next = { ...updatePrefs() };
-  if (patch && typeof patch === 'object') {
-    if (typeof patch.autoCheck === 'boolean') next.autoCheck = patch.autoCheck;
-    if (typeof patch.skippedVersion === 'string') next.skippedVersion = patch.skippedVersion;
-  }
-  store.set('updatePreferences', next);
+  const next = setUpdatePrefs(patch);
   return next;
 });
 

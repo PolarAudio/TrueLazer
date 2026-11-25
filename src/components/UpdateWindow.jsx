@@ -20,7 +20,7 @@ const PHASE_KEYS = {
     deferred: { title: 'update.deferred', body: 'update.deferredBody' },
 };
 
-const UpdateWindow = ({ state, onClose, onInstallNow, onInstallNextLaunch, onSkip, autoCheck, onToggleAutoCheck }) => {
+const UpdateWindow = ({ state, onClose, onInstallNow, onInstallNextLaunch, onSkip, autoCheck, onToggleAutoCheck, allowPrerelease, onToggleAllowPrerelease }) => {
     const { t } = useTranslation();
     if (!state) return null;
 
@@ -81,6 +81,14 @@ const UpdateWindow = ({ state, onClose, onInstallNow, onInstallNextLaunch, onSki
                             onChange={(e) => onToggleAutoCheck && onToggleAutoCheck(e.target.checked)}
                         />
                         <span>{t('update.checkAutomatically')}</span>
+                    </label>
+                    <label className="update-check">
+                        <input
+                            type="checkbox"
+                            checked={!!allowPrerelease}
+                            onChange={(e) => onToggleAllowPrerelease && onToggleAllowPrerelease(e.target.checked)}
+                        />
+                        <span>{t('update.checkPrerelease')}</span>
                     </label>
                 </div>
 

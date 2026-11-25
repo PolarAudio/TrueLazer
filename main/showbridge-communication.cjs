@@ -10,38 +10,43 @@ const NATIVE_RESPONSE_PORT = 8099;
 const UDP_PACKET_SIZE = 0x1204;          // 4612 bytes
 const HEADER_SIZE = 4;
 const POINT_SIZE = 8;
-const PTS_FULL = 575;                    // points per full chunk (chunk 0); also the bench-verified point cap
-const CHUNK_STAGGER_MS = 6;   // 3 chunks x 6ms = 18ms within 33ms (30fps) frame window
-const TOTAL_CHUNKS = 3; // 2 data chunks + 1 completion, matches Truwave behavior
-const MAX_CHUNKS = TOTAL_CHUNKS - 1;  // 2 data chunks. DMA reads 3 x 575 = 1725 slots (~1000 real pts + blanks)
+const PTS_FULL = 575;                    // points per full chunk (chunk 0) - single-chunk fill target
+// Two data chunks (0 + 1) carry up to 2*PTS_FULL real points; chunk 2 is the
+// completion/home-hold chunk. This is the maximum the 3-chunk wire format can
+// carry without relying on the overrun garbage region.
+const PTS_MAX = PTS_FULL * 2;            // 1150 - hard hardware capacity for the 3-chunk format
+// Chunk stagger is tunable for testing (inter-chunk spacing). Override via env
+// var SHOWBRIDGE_CHUNK_STAGGER_MS or the setter below. Default 6ms matches the
+// original behaviour; captures show ~2ms on Truwave hardware.
+let CHUNK_STAGGER_MS = Number(process.env.SHOWBRIDGE_CHUNK_STAGGER_MS) || 6;
+const TOTAL_CHUNKS = 3; // 2 data chunks + 1 completion, matches Truwave behavior (tunable via future settings)
+const MAX_CHUNKS = TOTAL_CHUNKS - 1;  // 2 data chunks -> up to PTS_MAX = 1150 real points
 // Firmware (FUN_08012310) shows each 0x1204-byte datagram carries 0x1200 (4608)
 // payload bytes reassembled into a 0x4e24 (20004) frame buffer; points are 8 bytes.
 //
-// AUTO-SIZE: the hardware copies each chunk into the frame buffer at a fixed
-// 0x1200 stride. Because a chunk is 4608 bytes and the frame header is 4 bytes,
-// the first chunk fits exactly 575 points (4 + 575*8 = 4604) + 4 spare bytes.
-// That 4-byte residue breaks byte alignment when a frame crosses into a second
-// chunk, so the DMA injects a dark center point at the boundary -> a visible arc
-// (last point -> center -> first point). The clean fix is to keep every frame
-// within a single data chunk (<= PTS_FULL). FILL_TARGET is set to PTS_FULL so the
-// padding/interpolation fill only targets the one-chunk budget (never 1000).
-// srcPts is otherwise whatever the optimizer produces; frames whose real content
-// fits in one chunk are auto-clipped below so they never trigger the 2-chunk arc.
+// AUTO-SIZE: each data chunk carries 575 points (4-byte header + 575*8 = 4604
+// bytes + 4 spare). A frame may span up to PTS_MAX (2 chunks = 1150 points);
+// the firmware inserts a blanked virtual point at every chunk boundary, so the
+// boundary itself is invisible. FILL_TARGET stays at PTS_FULL so small frames are
+// padded to one full chunk (avoiding over-padding that would stretch a short
+// frame past its 1/fps window). Larger frames use the second chunk as needed,
+// bounded by the timing budget (targetPps/targetFps) and PTS_MAX.
 const FILL_TARGET = PTS_FULL;
-const PPS = 30;
+// Tunable testing knobs (defaults preserve original behaviour).
+let LEAD_IN_COUNT = Number(process.env.SHOWBRIDGE_LEAD_IN_COUNT) || 10;
+let HOLD_COUNT = Number(process.env.SHOWBRIDGE_HOLD_COUNT) || 20;
+let CLOSE_SHAPE_THRESHOLD = Number(process.env.SHOWBRIDGE_CLOSE_SHAPE_THRESHOLD) || 0.05;
+let INTERP_STEP_SIZE = Number(process.env.SHOWBRIDGE_INTERP_STEP_SIZE) || 0.05;
+let SHOWBRIDGE_PPS = Number(process.env.SHOWBRIDGE_PPS) || 30;
 
-// The firmware reads the LASER ENABLE from the first two bytes of the frame
-// payload (bytes 4-5 of the chunk, which land on the frame buffer's word 0):
-// the high byte 0x00 means "laser off", anything else means "on". The
-// bench-verified probe (main/showbridge-probe.cjs) sent 0x01d2 for a live
-// frame.
-//
-// The POINT COUNT used to live in that word. It only read as "on" because a
-// full 575-point frame happens to encode as 0x023f - but a frame with fewer
-// than 256 points encodes as 0x00xx, whose high byte is 0x00, so the DAC
-// switched the laser off and that output stayed dark. The count is now written
-// nowhere: the enable word carries the documented value instead.
-const LASER_CTRL_ON = 0x01d2;
+// Bytes 4-5 of the chunk payload (frame buffer word 0) carry the frame's
+// POINT COUNT as a little-endian uint16, followed by the status byte (6) and
+// the PPS byte (7). Captures of both Truwave and TrueLazer traffic confirm
+// this layout (e.g. 9d 01 00 1e = 413 points, status 0, 30 kpps). The
+// firmware overwrites the status byte with 0xFA once all chunks have arrived,
+// which is what actually arms the DMA output - so the sender's job here is just
+// to report how many points the frame carries.
+const LASER_CTRL_ON = 0x01d2; // retained for backwards compat; no longer written
 
 const DAC_TYPE = 'Showbridge';
 
@@ -242,7 +247,7 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
         // also sits at firstSrcX/Y, so the loop transition back to this lead-in
         // is zero-distance — no between-frame jump.
         const srcLen = totalPoints;
-        const LEAD_IN = Math.min(10, FILL_TARGET - srcLen);
+        const LEAD_IN = Math.min(LEAD_IN_COUNT, FILL_TARGET - srcLen);
         const firstSrcX = points[0];
         const firstSrcY = points[1];
         homeX = firstSrcX;
@@ -262,7 +267,7 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
         const firstX = points[0], firstY = points[1];
         const lastX = points[lastSrcOff] || 0, lastY = points[lastSrcOff + 1] || 0;
         const closeDist = Math.sqrt(Math.pow(firstX - lastX, 2) + Math.pow(firstY - lastY, 2));
-        const isOpenShape = closeDist >= 0.05;
+        const isOpenShape = closeDist >= CLOSE_SHAPE_THRESHOLD;
 
         const availableSlots = FILL_TARGET - LEAD_IN;
         let padStart;
@@ -307,7 +312,7 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
             const lastBodyOff = (padStart - 1) * 8;
             const holdX = padded[lastBodyOff] || 0;
             const holdY = padded[lastBodyOff + 1] || 0;
-            const holdCount = Math.min(20, FILL_TARGET - padStart);
+            const holdCount = Math.min(HOLD_COUNT, FILL_TARGET - padStart);
             for (let h = 0; h < holdCount; h++) {
                 const off = (padStart + h) * 8;
                 padded[off] = holdX;
@@ -327,7 +332,7 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
             const dy = firstSrcY - ly;
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist > 0.02) {
-                const interpSteps = Math.min(Math.ceil(dist / 0.05), FILL_TARGET - padStart);
+                const interpSteps = Math.min(Math.ceil(dist / INTERP_STEP_SIZE), FILL_TARGET - padStart);
                 for (let s = 1; s <= interpSteps; s++) {
                     const t = s / (interpSteps + 1);
                     const off = (padStart + s - 1) * 8;
@@ -375,7 +380,7 @@ function buildFrameChunks(chType, pps, points, mode, fps) {
     // single contiguous 8-byte point by the DMA.  Only 1 point may straddle the
     // boundary and that point is fully preserved (zero data loss).
     const frameBuf = Buffer.alloc(dataChunks * payloadLen);
-    frameBuf.writeInt16LE(LASER_CTRL_ON, 0);  // laser enable (payload bytes 4-5)
+    frameBuf.writeInt16LE(totalPoints, 0);     // point count (payload bytes 4-5), LE16
     frameBuf.writeUInt8(0, 2);              // status (firmware overwrites with 0xfa when complete)
 
     // Mode-aware PPS byte. The DMA loops the FULL wire frame (after fill/clip),
@@ -673,8 +678,8 @@ function logFrameOnce(key, ip, channel, chType, totalPoints) {
     const logKey = `${key}#pts`;
     if (loggedChannels.has(logKey)) return;
     loggedChannels.add(logKey);
-    console.log(`[Showbridge] ${ip} channel ${channel}: ${totalPoints} points/frame, laser enable word 0x${LASER_CTRL_ON.toString(16).padStart(4, '0')}` +
-        ` (high byte 0x${((LASER_CTRL_ON >> 8) & 0xff).toString(16).padStart(2, '0')} = on), header byte 3 = 0x${chType.toString(16).padStart(2, '0')}`);
+    console.log(`[Showbridge] ${ip} channel ${channel}: ${totalPoints} points/frame, point count word 0x${totalPoints.toString(16).padStart(4, '0')}` +
+        `, header byte 3 = 0x${chType.toString(16).padStart(2, '0')}`);
 }
 
 function sendFrame(ip, channel, points, fps, type, options) {
@@ -682,7 +687,7 @@ function sendFrame(ip, channel, points, fps, type, options) {
     const chType = channelTypeFor(ip, channel);
     // Showbridge control byte 3 expects Points Per Second / 1000 (Kpps),
     // e.g. 30 for 30000 PPS. options.pps arrives as full PPS, so divide here.
-    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
+    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : SHOWBRIDGE_PPS;
 
     const st = ensureChannel(ip, key);
     if (!st.running) return;
@@ -719,7 +724,7 @@ function sendFrame(ip, channel, points, fps, type, options) {
 function sendIdleFrame(ip, channel, options) {
     const key = `${ip}:${channel}`;
     const chType = channelTypeFor(ip, channel);
-    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : PPS;
+    const pps = (options && options.pps != null) ? Math.max(1, Math.min(255, Math.round(options.pps / 1000))) : SHOWBRIDGE_PPS;
 
     const st = ensureChannel(ip, key);
     if (!st.running) return;
@@ -760,7 +765,7 @@ function sendBlankFrame(ip, channel) {
         if (ci === 0) {
             buf.writeInt16LE(0, 4);
             buf.writeUInt8(0, 6);
-            buf.writeUInt8(PPS, 7);
+            buf.writeUInt8(SHOWBRIDGE_PPS, 7);
         } else {
             buf.writeUInt16LE(0, 4);
             buf.writeUInt16LE(0, 6);
@@ -873,6 +878,19 @@ module.exports = {
     closeAll,
     setStatusCallback,
     PTS_FULL,
+    PTS_MAX,
+    getChunkStaggerMs: () => CHUNK_STAGGER_MS,
+    setChunkStaggerMs: (ms) => { if (Number.isFinite(ms) && ms >= 0) CHUNK_STAGGER_MS = ms; },
+    getLeadInCount: () => LEAD_IN_COUNT,
+    setLeadInCount: (v) => { if (Number.isFinite(v) && v >= 0) LEAD_IN_COUNT = Math.round(v); },
+    getHoldCount: () => HOLD_COUNT,
+    setHoldCount: (v) => { if (Number.isFinite(v) && v >= 0) HOLD_COUNT = Math.round(v); },
+    getCloseShapeThreshold: () => CLOSE_SHAPE_THRESHOLD,
+    setCloseShapeThreshold: (v) => { if (Number.isFinite(v) && v >= 0) CLOSE_SHAPE_THRESHOLD = v; },
+    getInterpStepSize: () => INTERP_STEP_SIZE,
+    setInterpStepSize: (v) => { if (Number.isFinite(v) && v > 0) INTERP_STEP_SIZE = v; },
+    getShowbridgePps: () => SHOWBRIDGE_PPS,
+    setShowbridgePps: (v) => { if (Number.isFinite(v) && v >= 1 && v <= 255) SHOWBRIDGE_PPS = Math.round(v); },
     frameUses255Scale,
     // Test hook: seed the discovery order of a unit the way a scan would.
     __setDiscoveryOrder: (ip, order) => {
