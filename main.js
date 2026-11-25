@@ -2442,7 +2442,7 @@ function createWindow() {
     }
     if (type === 'button') {
       menuItems.push(
-        { label: 'Temp Trigger (hold)', type: 'checkbox', checked: !!momentary, click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'toggle-quick-assign-momentary', controlType: type, index: index }); } }
+        { label: momentary ? 'Disable Temp Trigger (hold)' : 'Enable Temp Trigger (hold)', click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'toggle-quick-assign-momentary', controlType: type, index: index }); } }
       );
     }
     menuItems.push(

@@ -1556,7 +1556,8 @@ function reducer(state, action) {
         case 'TOGGLE_QUICK_BUTTON_MOMENTARY': {
             const { index } = action.payload || {};
             const newAssigns = { ...state.quickAssigns, buttons: [...state.quickAssigns.buttons] };
-            newAssigns.buttons[index] = { ...newAssigns.buttons[index], momentary: !newAssigns.buttons[index].momentary };
+            const cur = !!newAssigns.buttons[index]?.momentary;
+            newAssigns.buttons[index] = { ...newAssigns.buttons[index], momentary: !cur };
             return { ...state, quickAssigns: newAssigns };
         }
         case 'UPDATE_CLIP_FILE_PATH': {
@@ -2258,6 +2259,8 @@ function App() {
     const workerLoadedFontsRef = useRef(new Set()); // Track fonts already sent to worker
     const lastMidiValuesRef = useRef({}); // For 'fake_relative' mode mapping
     const tapTempoTimesRef = useRef([]); // Timestamps for tap tempo (shared by TAP button + mappings)
+    const quickAssignsRef = useRef(state.quickAssigns);
+    useEffect(() => { quickAssignsRef.current = state.quickAssigns; }, [state.quickAssigns]);
     const lastTapMidiValueRef = useRef(0); // Rising-edge guard for mapped tap triggers
 
     // DJ-Link Clip Transport clock: workerId -> { active, progress, bpm, deck, ... }.
@@ -7373,7 +7376,14 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     handleUpdateQuickControl('knob', index, normalizedValue);
                 } else if (finalId.startsWith('quick_btn_')) {
                     const index = parseInt(finalId.split('_')[2]);
-                    if (value > 0) { // Toggle on press
+                    const momentary = !!quickAssignsRef.current?.buttons?.[index]?.momentary;
+                    if (momentary) {
+                        if (value > 0) {
+                            dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index, value: true } });
+                        } else {
+                            dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index, value: false } });
+                        }
+                    } else if (value > 0) { // Toggle on press
                         handleToggleQuickButton(index);
                     }
                 } else if (finalId.startsWith('dimmer_')) {
