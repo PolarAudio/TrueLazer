@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import Mappable from './Mappable';
 import RadialKnob from './RadialKnob';
 
-const QuickButton = ({ value, onToggle, label, fullTitle, onDrop, isAssigned, onContextMenu, className: extraClassName, ...props }) => {
+const QuickButton = ({ value, onToggle, label, fullTitle, onDrop, isAssigned, onContextMenu, momentary, onMomentaryStart, onMomentaryEnd, className: extraClassName, ...props }) => {
     const handleDragOver = (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'link';
@@ -37,20 +37,24 @@ const QuickButton = ({ value, onToggle, label, fullTitle, onDrop, isAssigned, on
              onDrop={handleDrop}
              onContextMenu={onContextMenu}
              {...props}
-			 onClick={isAssigned ? onToggle : (e) => e.preventDefault()}
+              onMouseDown={momentary && isAssigned ? (e) => { e.preventDefault(); onMomentaryStart && onMomentaryStart(); } : undefined}
+              onMouseUp={momentary && isAssigned ? (e) => { e.preventDefault(); onMomentaryEnd && onMomentaryEnd(); } : undefined}
+              onMouseLeave={momentary && isAssigned && value ? (e) => { onMomentaryEnd && onMomentaryEnd(); } : undefined}
+			 onClick={!momentary && isAssigned ? onToggle : (e) => e.preventDefault()}
         >
             <div className="button-label" title={fullTitle || label || "Empty"}>{label || "Assign"}</div>
         </div>
     );
 };
 
-const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign }) => {
+const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign, onSetButtonValue }) => {
     const getControlLinks = (control) => Array.isArray(control.links) ? control.links : (control.link ? [control.link] : []);
 
     const handleContextMenu = (e, type, index, assignments = []) => {
         e.preventDefault();
+        const momentary = type === 'button' ? !!(assigns?.buttons?.[index]?.momentary) : false;
         if (window.electronAPI && window.electronAPI.showQuickAssignContextMenu) {
-            window.electronAPI.showQuickAssignContextMenu(type, index, assignments);
+            window.electronAPI.showQuickAssignContextMenu(type, index, assignments, momentary);
         }
     };
 
@@ -92,7 +96,10 @@ const GlobalQuickAssigns = ({ assigns, onUpdateKnob, onToggleButton, onAssign })
                                 label={btn?.label}
                                 fullTitle={labels.join(' · ')}
                                 isAssigned={isAssigned}
+                                momentary={!!btn?.momentary}
                                 onToggle={() => onToggleButton(i)}
+                                onMomentaryStart={() => onSetButtonValue && onSetButtonValue(i, true)}
+                                onMomentaryEnd={() => onSetButtonValue && onSetButtonValue(i, false)}
                                 onContextMenu={(e) => handleContextMenu(e, 'button', i, labels)}
                                 onDrop={(data) => {
                                     console.log(`[GlobalQuickAssigns] Button ${i} Drop Data:`, data);

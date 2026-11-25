@@ -17,7 +17,7 @@ export const REPO_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}`;
 export const MAX_ISSUE_URL_LENGTH = 6000;
 
 export const REPORT_AREAS = [
-    'Show Editor',
+    'Show Control',
     'Timeline Editor',
     'Shape Builder',
     'Output Settings',

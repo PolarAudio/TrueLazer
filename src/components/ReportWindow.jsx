@@ -15,7 +15,7 @@ import { getGpuInfo } from '../utils/gpuInfo';
 // reporting: a bug that only happens in the Shape Builder is a very different
 // bug from one that only happens in the Timeline.
 const PAGE_LABELS = {
-    main: 'Show Editor',
+    main: 'Show Control',
     timeline: 'Timeline Editor',
     shapeBuilder: 'Shape Builder',
 };
@@ -23,7 +23,7 @@ const PAGE_LABELS = {
 const emptyBug = () => ({
     title: '',
     severity: 'broken',
-    area: 'Show Editor',
+    area: 'Show Control',
     whatHappened: '',
     expected: '',
     steps: '',
@@ -31,7 +31,7 @@ const emptyBug = () => ({
 
 const emptyFeature = () => ({
     title: '',
-    area: 'Show Editor',
+    area: 'Show Control',
     problem: '',
     proposal: '',
     why: '',

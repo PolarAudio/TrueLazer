@@ -13,6 +13,7 @@ const SettingsPanel = ({
   onUpdateKnob,
   onToggleButton,
   onAssign,
+  onSetButtonValue,
   renderSettings = {},
   onSetRenderSetting
 }) => {
@@ -141,6 +142,7 @@ const SettingsPanel = ({
                   onUpdateKnob={onUpdateKnob}
                   onToggleButton={onToggleButton}
                   onAssign={onAssign}
+                  onSetButtonValue={onSetButtonValue}
               />
           </CollapsiblePanel>
       )}

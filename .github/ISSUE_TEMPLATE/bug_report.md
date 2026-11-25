@@ -22,7 +22,7 @@ is the single most useful thing you can paste into a bug report.
 
 ## Area
 
-<!-- Show Editor, Timeline Editor, Shape Builder, Output Settings, DAC Communication, MIDI / Keyboard Shortcuts, ArtNet / DMX, OSC, Audio / FFT, ILDA Export / Import, DJ Link / ProLink / StageLinq, Startup / Installation, Other -->
+<!-- Show Control, Timeline Editor, Shape Builder, Output Settings, DAC Communication, MIDI / Keyboard Shortcuts, ArtNet / DMX, OSC, Audio / FFT, ILDA Export / Import, DJ Link / ProLink / StageLinq, Startup / Installation, Other -->
 
 ## What happened
 

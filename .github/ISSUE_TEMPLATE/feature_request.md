@@ -17,7 +17,7 @@ window.
 
 ## Area
 
-<!-- Show Editor, Timeline Editor, Shape Builder, Output Settings, DAC Communication, MIDI / Keyboard Shortcuts, ArtNet / DMX, OSC, Audio / FFT, ILDA Export / Import, DJ Link / ProLink / StageLinq, Startup / Installation, Other -->
+<!-- Show Control, Timeline Editor, Shape Builder, Output Settings, DAC Communication, MIDI / Keyboard Shortcuts, ArtNet / DMX, OSC, Audio / FFT, ILDA Export / Import, DJ Link / ProLink / StageLinq, Startup / Installation, Other -->
 
 ## The problem you are trying to solve
 

@@ -2429,7 +2429,7 @@ function createWindow() {
     buildApplicationMenu(currentThumbnailRenderMode);
   });
 
-  ipcMain.on('show-quick-assign-context-menu', (event, type, index, assignments = []) => {
+  ipcMain.on('show-quick-assign-context-menu', (event, type, index, assignments = [], momentary = false) => {
     const menuItems = [];
     if (Array.isArray(assignments) && assignments.length > 0) {
       assignments.forEach((label, linkIndex) => {
@@ -2439,6 +2439,11 @@ function createWindow() {
         });
       });
       menuItems.push({ type: 'separator' });
+    }
+    if (type === 'button') {
+      menuItems.push(
+        { label: 'Temp Trigger (hold)', type: 'checkbox', checked: !!momentary, click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'toggle-quick-assign-momentary', controlType: type, index: index }); } }
+      );
     }
     menuItems.push(
       { label: m('menu.reset_value', 'Reset Value'), click: () => { if (mainWindow) mainWindow.webContents.send('context-menu-action-from-main', { type: 'reset-quick-assign', controlType: type, index: index }); } },

@@ -60,7 +60,7 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
         e.preventDefault();
         const newMapping = {
           key: e.code,
-          label: e.code.replace('Key', '').replace('Digit', '')
+          label: e.code.replace('Key', '').replace('Digit', '').replace('Numpad', 'Num '), code: e.code, keyValue: e.key
         };
         setMappings(prev => ({ ...prev, [learningId]: newMapping }));
         setLearningId(null);
@@ -68,7 +68,7 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
       }
 
       Object.entries(mappings).forEach(([controlId, mapping]) => {
-        if (e.code === mapping.key) {
+        if (e.code === mapping.key || e.code === mapping.code || (mapping && mapping.keyValue && e.key === mapping.keyValue)) {
           e.preventDefault();
           if (onCommandRef.current) {
             onCommandRef.current(controlId, 1, 1, 'keydown');
@@ -85,7 +85,7 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
       }
 
       Object.entries(mappings).forEach(([controlId, mapping]) => {
-        if (e.code === mapping.key) {
+        if (e.code === mapping.key || e.code === mapping.code || (mapping && mapping.keyValue && e.key === mapping.keyValue)) {
           e.preventDefault();
           if (onCommandRef.current) {
             onCommandRef.current(controlId, 0, 1, 'keyup');

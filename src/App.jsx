@@ -263,7 +263,7 @@ const getInitialState = (initialSettings) => ({
     projectPresets: initialSettings?.projectPresets ?? {}, // Add projectPresets for portability
     quickAssigns: {
         knobs: Array(8).fill(null).map(() => ({ value: 0, label: null, link: null, links: [] })),
-        buttons: Array(8).fill(null).map(() => ({ value: false, label: null, link: null, links: [] }))
+        buttons: Array(8).fill(null).map(() => ({ value: false, momentary: false, label: null, link: null, links: [] }))
     },
 });
 
@@ -1463,9 +1463,9 @@ function reducer(state, action) {
             return newState;
         }
         case 'TOGGLE_QUICK_BUTTON': {
-            const { index } = action.payload;
+            const { index, value: forcedValue } = action.payload || {};
             const currentVal = state.quickAssigns.buttons[index].value;
-            const newValue = !currentVal;
+            const newValue = (forcedValue !== undefined) ? !!forcedValue : !currentVal;
 
             const newAssigns = {
                 ...state.quickAssigns,
@@ -1552,6 +1552,12 @@ function reducer(state, action) {
                 }
             }
             return newState;
+        }
+        case 'TOGGLE_QUICK_BUTTON_MOMENTARY': {
+            const { index } = action.payload || {};
+            const newAssigns = { ...state.quickAssigns, buttons: [...state.quickAssigns.buttons] };
+            newAssigns.buttons[index] = { ...newAssigns.buttons[index], momentary: !newAssigns.buttons[index].momentary };
+            return { ...state, quickAssigns: newAssigns };
         }
         case 'UPDATE_CLIP_FILE_PATH': {
             const { oldPath, newPath } = action.payload;
@@ -4699,6 +4705,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     dispatch({ type: 'CLEAR_QUICK_CONTROL', payload: { type: action.controlType, index: action.index } });
                 } else if (action.type === 'remove-quick-assign-link') {
                     dispatch({ type: 'REMOVE_QUICK_ASSIGN_LINK', payload: { type: action.controlType, index: action.index, linkIndex: action.linkIndex } });
+                } else if (action.type === 'toggle-quick-assign-momentary') {
+                    dispatch({ type: 'TOGGLE_QUICK_BUTTON_MOMENTARY', payload: { index: action.index } });
                 }
             });
         }
@@ -8011,6 +8019,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         handleToggleQuickButton(i);
                     }}
                     onAssign={handleAssignQuickControl}
+                    onSetButtonValue={(i, v) => dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index: i, value: v } })}
                     onClearThumbnailCache={handleClearThumbnailCache}
                 />
             </div>
