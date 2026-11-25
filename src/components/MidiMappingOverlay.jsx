@@ -130,7 +130,7 @@ const MidiMappingOverlay = () => {
           </div>
       )}
 
-      {overlays.map(overlay => {
+      {overlays.map((overlay, index) => {
         let mappingLabel = null;
         const isMidi = isMidiMapping;
         const isArtnet = isArtnetMapping;
@@ -161,8 +161,11 @@ const MidiMappingOverlay = () => {
                            (isArtnet && artnetLearningId === overlay.id) ||
                            (isKeyboard && keyboardLearningId === overlay.id);
 
+        // Multiple effect instances can share a mapping id (e.g. two Color
+        // effects both expose `color_blackout`). The DOM index keeps each
+        // overlay React child unique without changing the mapping target.
         return (
-          <React.Fragment key={overlay.id}>
+          <React.Fragment key={`${overlay.id}-${index}`}>
             <div
                 className={`midi-mapping-label-box ${isLearning ? 'learning' : ''} ${mappingLabel ? 'mapped' : ''} ${isArtnet ? 'artnet-mapping' : ''} ${isKeyboard ? 'keyboard-mapping' : ''}`}
                 style={{

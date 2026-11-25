@@ -1,6 +1,6 @@
 {
   "name": "TrueLazer",
-  "version": "0.3.2-experimental",
+  "version": "0.3.3-experimental",
   "description": "development build",
   "main": "main.js",
   "scripts": {

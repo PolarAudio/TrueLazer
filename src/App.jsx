@@ -9,6 +9,7 @@ import EffectPanel from './components/EffectPanel';
 import DacPanel from './components/DacPanel';
 import ClipSettingsPanel from './components/ClipSettingsPanel';
 import LayerSettingsPanel from './components/LayerSettingsPanel'; // Add this
+import MasterSettingsPanel from './components/MasterSettingsPanel';
 import NotificationPopup from './components/NotificationPopup';
 import IldaPlayer from './components/IldaPlayer';
 import WorldPreview from './components/WorldPreview';
@@ -53,6 +54,7 @@ import { KeyboardProvider, useKeyboard } from './contexts/KeyboardContext'; // A
 import MidiMappingOverlay from './components/MidiMappingOverlay'; // Add this
 import GlobalQuickAssigns from './components/GlobalQuickAssigns'; // Add this
 import { applyEffects, applyOutputProcessing, applyOutputProcessingWithDwell, resolveParam, calculateAnimPhase } from './utils/effects';
+import { scopeMasterEffects } from './utils/masterEffects';
 import { optimizePoints } from './utils/optimizer';
 import { resampleFrameToStep, DEFAULT_MAX_STEP } from './utils/pointResample';
 import { DEFAULT_PRESET, getPreset, OPT_DEFAULTS, resolvePointBudget } from './utils/hardwarePresets';
@@ -224,6 +226,9 @@ const getInitialState = (initialSettings) => ({
     layerSolos: Array(5).fill(false), // Add layer solos
     layerEffectSpeeds: Array(5).fill(null), // Per-layer effect speed control (null = follow clip timing)
     layerSyncSettings: Array(5).fill({}), // Per-layer effect param speed sync (F/T/B/FFT)
+    masterEffects: initialSettings?.masterEffects ?? [],
+    masterSyncSettings: initialSettings?.masterSyncSettings ?? {},
+    masterUiState: {},
     masterIntensity: 1, // Add this
     globalBlackout: false, // Add global blackout
     selectedLayerIndex: null,
@@ -503,6 +508,30 @@ function reducer(state, action) {
             }
             return { ...state, layerEffects: newLayerEffects };
         }
+        case 'ADD_MASTER_EFFECT': {
+            const newMasterEffects = [...(state.masterEffects || [])];
+            const newEffectInstance = {
+                ...action.payload.effect,
+                instanceId: action.payload.effect.instanceId || generateId(),
+                params: { ...action.payload.effect.defaultParams }
+            };
+            newMasterEffects.push(newEffectInstance);
+            return { ...state, masterEffects: newMasterEffects };
+        }
+        case 'REMOVE_MASTER_EFFECT': {
+            const newMasterEffects = [...(state.masterEffects || [])];
+            newMasterEffects.splice(action.payload.effectIndex, 1);
+            return { ...state, masterEffects: newMasterEffects };
+        }
+        case 'UPDATE_MASTER_EFFECT_PARAM': {
+            const newMasterEffects = [...(state.masterEffects || [])];
+            if (newMasterEffects[action.payload.effectIndex]) {
+                const effect = { ...newMasterEffects[action.payload.effectIndex] };
+                effect.params = { ...effect.params, [action.payload.paramName]: action.payload.value };
+                newMasterEffects[action.payload.effectIndex] = effect;
+            }
+            return { ...state, masterEffects: newMasterEffects };
+        }
         case 'ADD_CLIP_EFFECT': {
             const pageIdx = state.activePageId;
             const newClipContentsWithEffect = [...state.clipContents];
@@ -704,6 +733,9 @@ function reducer(state, action) {
             newLayerUiStates[layerIndex] = mergeUiState(newLayerUiStates[layerIndex], uiState);
             return { ...state, layerUiStates: newLayerUiStates };
         }
+        case 'UPDATE_MASTER_UI_STATE': {
+            return { ...state, masterUiState: mergeUiState(state.masterUiState, action.payload?.uiState) };
+        }
         case 'SET_LAYER_EFFECT_SPEED': {
             const { layerIndex, settings } = action.payload;
             const newLayerEffectSpeeds = [...state.layerEffectSpeeds];
@@ -736,6 +768,17 @@ function reducer(state, action) {
                 [paramId]: nextSyncValue
             };
             return { ...state, layerSyncSettings: newLayerSyncSettings };
+        }
+        case 'SET_MASTER_PARAM_SYNC': {
+            const { paramId, syncMode } = action.payload;
+            const currentSync = state.masterSyncSettings || {};
+            let nextSyncValue;
+            if (typeof syncMode === 'string') {
+                nextSyncValue = currentSync[paramId] === syncMode ? null : syncMode;
+            } else {
+                nextSyncValue = syncMode;
+            }
+            return { ...state, masterSyncSettings: { ...currentSync, [paramId]: nextSyncValue } };
         }
         case 'REMOVE_CLIP_EFFECT': {
             const pageIdx = state.activePageId;
@@ -1334,9 +1377,10 @@ function reducer(state, action) {
                 buttons: [...state.quickAssigns.buttons]
             };
             const collection = type === 'knob' ? 'knobs' : 'buttons';
+            const control = newAssigns[collection][index];
             newAssigns[collection][index] = type === 'knob'
-                ? { value: 0, label: null, links: [] }
-                : { value: false, label: null, links: [] };
+                ? { ...control, value: 0, label: null, links: [] }
+                : { ...control, value: false, label: null, links: [] };
             return { ...state, quickAssigns: newAssigns };
         }
         case 'REMOVE_QUICK_ASSIGN_LINK': {
@@ -1350,8 +1394,8 @@ function reducer(state, action) {
             const remainingLinks = getQuickControlLinks(control).filter((_, i) => i !== linkIndex);
             if (remainingLinks.length === 0) {
                 newAssigns[collection][index] = type === 'knob'
-                    ? { value: 0, label: null, links: [] }
-                    : { value: false, label: null, links: [] };
+                    ? { ...control, value: 0, label: null, links: [] }
+                    : { ...control, value: false, label: null, links: [] };
             } else {
                 newAssigns[collection][index] = {
                     ...control,
@@ -1412,6 +1456,16 @@ function reducer(state, action) {
                                 newLayerEffects[layerIndex][effectIndex] = effect;
                                 newState = { ...newState, layerEffects: newLayerEffects };
                             }
+                        }
+                    } else if (targetType === 'masterEffect') {
+                        const newMasterEffects = [...(newState.masterEffects || [])];
+                        if (newMasterEffects[effectIndex]) {
+                            const effect = { ...newMasterEffects[effectIndex] };
+                            effect.params = { ...effect.params, [paramName]: targetValue };
+                            const partner = getLinkedPartnerParam(link.effectId, paramName, effect.params);
+                            if (partner) effect.params = { ...effect.params, [partner]: targetValue };
+                            newMasterEffects[effectIndex] = effect;
+                            newState = { ...newState, masterEffects: newMasterEffects };
                         }
                     } else if (targetType === 'global') {
                         if (paramName === 'master_intensity') newState = { ...newState, masterIntensity: targetValue };
@@ -1524,6 +1578,14 @@ function reducer(state, action) {
                             newState = { ...newState, layerEffects: newLayerEffects };
                         }
                     }
+                } else if (targetType === 'masterEffect') {
+                    const newMasterEffects = [...(newState.masterEffects || [])];
+                    if (newMasterEffects[effectIndex]) {
+                        const effect = { ...newMasterEffects[effectIndex] };
+                        effect.params = { ...effect.params, [paramName]: newValue };
+                        newMasterEffects[effectIndex] = effect;
+                        newState = { ...newState, masterEffects: newMasterEffects };
+                    }
                 } else {
                     const updatedClipContents = [...newState.clipContents];
                     const pageIdx = link.pageId ?? state.activePageId;
@@ -1556,8 +1618,9 @@ function reducer(state, action) {
         case 'TOGGLE_QUICK_BUTTON_MOMENTARY': {
             const { index } = action.payload || {};
             const newAssigns = { ...state.quickAssigns, buttons: [...state.quickAssigns.buttons] };
-            const cur = !!newAssigns.buttons[index]?.momentary;
-            newAssigns.buttons[index] = { ...newAssigns.buttons[index], momentary: !cur };
+            const control = newAssigns.buttons[index] || {};
+            const cur = !!control.momentary;
+            newAssigns.buttons[index] = { ...control, momentary: !cur, value: false };
             return { ...state, quickAssigns: newAssigns };
         }
         case 'UPDATE_CLIP_FILE_PATH': {
@@ -1918,9 +1981,11 @@ const SidePanelContainer = React.memo(({
     liveClipContentsRef,
     activeClipIndexesRef, // Use Ref
     layerEffectsRef, // Use Ref
+    masterEffectsRef, // Use Ref
     bpmRef, // Use Ref
     layerEffectSpeedsRef, // Use Ref
     layerSyncSettingsRef, // Use Ref
+    masterSyncSettingsRef, // Use Ref
     playbackFpsRef, // Use Ref
     masterIntensityRef, // Use Ref
     layerIntensitiesRef, // Use Ref
@@ -1988,7 +2053,9 @@ const SidePanelContainer = React.memo(({
             (layerBlackoutsRef.current || []).join(','),
             (layerSolosRef.current || []).join(','),
             (layerEffectSpeedsRef.current || []).map(s => (s ? `${s.mode}:${s.beats}:${s.duration}:${s.speedMultiplier}` : '')).join('|'),
-            JSON.stringify(layerSyncSettingsRef.current || [])
+            JSON.stringify(layerSyncSettingsRef.current || []),
+            JSON.stringify(masterEffectsRef.current || []),
+            JSON.stringify(masterSyncSettingsRef.current || {})
         );
 
         return sig;
@@ -2047,9 +2114,11 @@ const SidePanelContainer = React.memo(({
     const pageIdx = activePageId;
     const activeClipIndexes = activeClipIndexesRef.current;
     const layerEffects = layerEffectsRef.current;
+    const masterEffects = masterEffectsRef.current || [];
     const bpm = bpmRef.current;
     const layerEffectSpeeds = (layerEffectSpeedsRef || { current: [] }).current || [];
     const layerSyncSettings = (layerSyncSettingsRef || { current: [] }).current || [];
+    const masterSyncSettings = masterSyncSettingsRef.current || {};
     const playbackFps = playbackFpsRef.current;
     const masterIntensity = masterIntensityRef.current;
     const layerIntensities = layerIntensitiesRef.current;
@@ -2068,6 +2137,7 @@ const SidePanelContainer = React.memo(({
     const selectedClipProgress = targetPreviewWorkerId ? (progressRef.current[targetPreviewWorkerId] || 0) : 0;
 
     let selectedClipEffects = [];
+    let selectedClipSyncSettings = {};
     let selectedClipFinalIntensity = 1;
 
     if (selectedLayerIndex !== null) {
@@ -2082,6 +2152,15 @@ const SidePanelContainer = React.memo(({
             } else {
                 selectedClipEffects = lEffects;
             }
+        }
+
+        // Master effects complete the same chain the DAC output uses: clip,
+        // layer, then master. The scoped copies keep their animation state
+        // isolated from every other preview/output clip.
+        if (masterEffects.length > 0 && targetPreviewWorkerId) {
+            const scopedMaster = scopeMasterEffects(masterEffects, `selected:${targetPreviewWorkerId}`, masterSyncSettings);
+            selectedClipEffects = [...selectedClipEffects, ...scopedMaster.effects];
+            selectedClipSyncSettings = scopedMaster.syncSettings;
         }
 
         const isAnySolo = layerSolos.some(s => s);
@@ -2110,11 +2189,22 @@ const SidePanelContainer = React.memo(({
                             playbackFps,
                             clip.totalFrames
                         );
+                        const scopedMaster = masterEffects.length > 0
+                            ? scopeMasterEffects(masterEffects, `world:${workerId}`, masterSyncSettings)
+                            : null;
                         frames[workerId] = {
                             frame: liveFramesRef.current[workerId],
-                            effects: [...(clip.effects || []), ...(layerEffects[layerIndex] || [])],
+                            effects: [
+                                ...(clip.effects || []),
+                                ...(layerEffects[layerIndex] || []),
+                                ...(scopedMaster ? scopedMaster.effects : [])
+                            ],
                             layerIndex,
-                            syncSettings: { ...(clip.syncSettings || {}), ...(layerSyncSettings[layerIndex] || {}) },
+                            syncSettings: {
+                                ...(clip.syncSettings || {}),
+                                ...(layerSyncSettings[layerIndex] || {}),
+                                ...(scopedMaster ? scopedMaster.syncSettings : {})
+                            },
                             bpm: bpm,
                             clipDuration: layerFxDuration !== null ? layerFxDuration : (() => {
                                 const pb = clip.playbackSettings || {};
@@ -2134,7 +2224,7 @@ const SidePanelContainer = React.memo(({
             }
         });
         return frames;
-    }, [tick, liveFramesRef, layerEffects, layerSyncSettings, layerEffectSpeeds, bpm, playbackFps]); // Driven by tick
+    }, [tick, liveFramesRef, layerEffects, masterEffects, layerSyncSettings, masterSyncSettings, layerEffectSpeeds, bpm, playbackFps]); // Driven by tick
 
     const effectiveLayerIntensities = useMemo(() => {
         const isAnySolo = layerSolos.some(s => s);
@@ -2165,7 +2255,11 @@ const SidePanelContainer = React.memo(({
                 previewScanRate={previewScanRate}
                 beamRenderMode={beamRenderMode}
                 intensity={selectedClipFinalIntensity}
-                syncSettings={{ ...(selectedClip?.syncSettings || {}), ...(selectedLayerIndex !== null ? (layerSyncSettings[selectedLayerIndex] || {}) : {}) }}
+                syncSettings={{
+                    ...(selectedClip?.syncSettings || {}),
+                    ...(selectedLayerIndex !== null ? (layerSyncSettings[selectedLayerIndex] || {}) : {}),
+                    ...selectedClipSyncSettings
+                }}
                 bpm={bpm}
                 clipDuration={(() => {
                     const pb = selectedClip?.playbackSettings || {};
@@ -2356,6 +2450,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
     const [state, dispatch] = useReducer(reducer, getInitialState(initialSettingsLoaded ? initialSettings : {}));
     const quickAssignsRef = useRef(state.quickAssigns);
+    // Context-menu IPC handlers are registered in a long-lived effect; this ref
+    // lets them call the latest quick-button writer without re-subscribing.
+    const handleSetQuickButtonValueRef = useRef(null);
     useEffect(() => { quickAssignsRef.current = state.quickAssigns; }, [state.quickAssigns]);
 
     const throttledDispatchesRef = useRef(new Map()); // id -> throttled function
@@ -2389,6 +2486,9 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         clipNames,
         thumbnailFrameIndexes,
         layerEffects,
+        masterEffects,
+        masterSyncSettings,
+        masterUiState,
         layerAssignedDacs,
         layerIntensities,
         layerAutopilots, // Add layer autopilots
@@ -2572,6 +2672,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
     const layerAutopilotsRef = useRef(layerAutopilots);
 
     const layerEffectsRef = useRef(layerEffects); // Update this
+    const masterEffectsRef = useRef(masterEffects || []);
+    const masterSyncSettingsRef = useRef(masterSyncSettings || {});
 
     // Temporary diagnostic: log if the "Layer Effects" list ever renders two
     // entries that share a key (indicates the same effect added twice).
@@ -2724,6 +2826,8 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         layerIntensitiesRef.current = layerIntensities;
         layerAutopilotsRef.current = layerAutopilots;
         layerEffectsRef.current = layerEffects; // Update this
+        masterEffectsRef.current = masterEffects || [];
+        masterSyncSettingsRef.current = masterSyncSettings || {};
         layerEffectSpeedsRef.current = layerEffectSpeeds;
         layerSyncSettingsRef.current = layerSyncSettings;
         masterIntensityRef.current = masterIntensity;
@@ -2741,7 +2845,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         clipNamesRef.current = clipNames;
         selectedIldaWorkerIdRef.current = selectedIldaWorkerId;
         selectedIldaTotalFramesRef.current = selectedIldaTotalFrames;
-    }, [layerIntensities, layerAssignedDacs, layerAutopilots, layerEffects, layerEffectSpeeds, layerSyncSettings, masterIntensity, layerBlackouts, layerSolos, globalBlackout, dacOutputSettings, dacs, activeClipsData, clipContents, activeClipIndexes, clipNames, selectedIldaWorkerId, selectedIldaTotalFrames]);
+    }, [layerIntensities, layerAssignedDacs, layerAutopilots, layerEffects, masterEffects, masterSyncSettings, layerEffectSpeeds, layerSyncSettings, masterIntensity, layerBlackouts, layerSolos, globalBlackout, dacOutputSettings, dacs, activeClipsData, clipContents, activeClipIndexes, clipNames, selectedIldaWorkerId, selectedIldaTotalFrames]);
 
     const generateTestLineFrame = useCallback((yPos, compStart, compEnd, shiftX) => {
         const y = 1 - (yPos * 2);
@@ -3203,6 +3307,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
 
             const now = performance.now();
             if (now - lastFrameTime >= dacFrameInterval) {
+                const currentMasterEffects = masterEffectsRef.current || [];
                 // Fixed-step cadence: advance the frame clock to the CURRENT slot
                 // instead of `lastFrameTime = now`. Under a main-thread stall the
                 // accumulated delay is collapsed into whole missed slots (dropped
@@ -3365,6 +3470,25 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                     ...effectContext,
                                     syncSettings: (layerSyncSettingsRef.current || [])[layerIdx] || {},
                                     clipDuration: layerEffectDuration
+                                });
+                            }
+
+                            // Master effects are the last creative stage on every
+                            // active clip, matching what the previews show. Scoped
+                            // instance ids keep their phase/history independent per
+                            // clip, and the global clock gives them a master-level
+                            // timeline rather than one clip's playhead.
+                            if (currentMasterEffects.length > 0) {
+                                const scopedMaster = scopeMasterEffects(
+                                    currentMasterEffects,
+                                    `dac:${clip.workerId}`,
+                                    masterSyncSettingsRef.current || {}
+                                );
+                                modifiedFrame = applyEffects(modifiedFrame, scopedMaster.effects, {
+                                    ...effectContext,
+                                    syncSettings: scopedMaster.syncSettings,
+                                    progress: now * 0.001,
+                                    clipDuration: 1
                                 });
                             }
 
@@ -4710,6 +4834,11 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     dispatch({ type: 'REMOVE_QUICK_ASSIGN_LINK', payload: { type: action.controlType, index: action.index, linkIndex: action.linkIndex } });
                 } else if (action.type === 'toggle-quick-assign-momentary') {
                     dispatch({ type: 'TOGGLE_QUICK_BUTTON_MOMENTARY', payload: { index: action.index } });
+                    // Switching between latch and hold must start from OFF;
+                    // otherwise a previously latched target stays active.
+                    if (handleSetQuickButtonValueRef.current) {
+                        handleSetQuickButtonValueRef.current(action.index, false);
+                    }
                 }
             });
         }
@@ -5632,6 +5761,46 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         dispatch({ type: 'REMOVE_LAYER_EFFECT', payload: { layerIndex: selectedLayerIndex, effectIndex } });
     }, [dispatch, selectedLayerIndex]);
 
+    const handleAddMasterEffect = useCallback((effect) => {
+        // Same double-drop guard as clip/layer panels: a single drag can fire
+        // multiple drop events in quick succession.
+        const nowAdd = Date.now();
+        const effKey = effect.id || effect.name;
+        const lastAdd = lastEffectAddRef.current['master'];
+        if (lastAdd && lastAdd.id === effKey && nowAdd - lastAdd.time < 350) return;
+        lastEffectAddRef.current['master'] = { id: effKey, time: nowAdd };
+
+        const effectInstance = {
+            ...effect,
+            instanceId: generateId(),
+            params: { ...effect.defaultParams }
+        };
+        if (masterEffectsRef.current) {
+            masterEffectsRef.current = [...masterEffectsRef.current, effectInstance];
+        }
+        dispatch({ type: 'ADD_MASTER_EFFECT', payload: { effect: effectInstance } });
+    }, [dispatch]);
+
+    const handleRemoveMasterEffect = useCallback((effectIndex) => {
+        if (masterEffectsRef.current) {
+            const next = [...masterEffectsRef.current];
+            next.splice(effectIndex, 1);
+            masterEffectsRef.current = next;
+        }
+        dispatch({ type: 'REMOVE_MASTER_EFFECT', payload: { effectIndex } });
+    }, [dispatch]);
+
+    const handleMasterEffectParameterChange = useCallback((effectIndex, paramName, newValue) => {
+        if (masterEffectsRef.current && masterEffectsRef.current[effectIndex]) {
+            const next = [...masterEffectsRef.current];
+            const effect = { ...next[effectIndex] };
+            effect.params = { ...effect.params, [paramName]: newValue };
+            next[effectIndex] = effect;
+            masterEffectsRef.current = next;
+        }
+        dispatch({ type: 'UPDATE_MASTER_EFFECT_PARAM', payload: { effectIndex, paramName, value: newValue } });
+    }, [dispatch]);
+
     // Shared live-ref mutation helper for clip edits that are dispatched to the
     // reducer. The ClipSettingsPanel renders from liveClipContentsRef (the same
     // object the DAC loop reads), which is only re-synced from committed state
@@ -5743,6 +5912,13 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             { type: 'SET_LAYER_PARAM_SYNC', payload: { layerIndex: selectedLayerIndex, paramId, syncMode } }
         );
     }, [debouncedDispatch, selectedLayerIndex]);
+
+    const handleSetMasterParamSync = useCallback((paramId, syncMode) => {
+        debouncedDispatch(
+            `master-param-sync-${paramId}`,
+            { type: 'SET_MASTER_PARAM_SYNC', payload: { paramId, syncMode } }
+        );
+    }, [debouncedDispatch]);
 
 
     // Re-run generator when parameters of the selected clip change - REMOVED TO PREVENT LOOP
@@ -6947,6 +7123,12 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     const partner = getLinkedPartnerParam(link.effectId, paramName, layerEffectsRef.current[layerIndex][effectIndex].params);
                     if (partner) layerEffectsRef.current[layerIndex][effectIndex].params[partner] = targetValue;
                 }
+            } else if (targetType === 'masterEffect') {
+                if (masterEffectsRef.current && masterEffectsRef.current[effectIndex]) {
+                    masterEffectsRef.current[effectIndex].params[paramName] = targetValue;
+                    const partner = getLinkedPartnerParam(link.effectId, paramName, masterEffectsRef.current[effectIndex].params);
+                    if (partner) masterEffectsRef.current[effectIndex].params[partner] = targetValue;
+                }
             } else if (targetType === 'effect' || targetType === 'generator') {
                 const pageIdx = link.pageId ?? state.activePageId;
                 if (liveClipContentsRef.current && liveClipContentsRef.current[pageIdx] && liveClipContentsRef.current[pageIdx][layerIndex] && liveClipContentsRef.current[pageIdx][layerIndex][colIndex]) {
@@ -6973,10 +7155,14 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
         );
     }, [state.quickAssigns, debouncedDispatch]);
 
-    const handleToggleQuickButton = useCallback((index) => {
+    // Shared by latching clicks and temp/hold presses. `forcedValue` lets the
+    // mouse/keyboard release write an explicit OFF without waiting for a React
+    // state round-trip, which is what makes momentary effects release reliably.
+    const handleSetQuickButtonValue = useCallback((index, forcedValue) => {
         const btn = state.quickAssigns.buttons[index];
+        if (!btn) return;
         const links = getQuickControlLinks(btn);
-        const newValue = !btn.value;
+        const newValue = forcedValue !== undefined ? !!forcedValue : !btn.value;
         const isSingle = links.length === 1;
 
         for (const link of links) {
@@ -6984,9 +7170,11 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             const paramName = link.paramName || link.paramId;
 
             if (targetType === 'transport') {
-                if (paramName === 'play') handlePlay();
-                else if (paramName === 'pause') handlePause();
-                else if (paramName === 'stop') handleStop();
+                if (newValue) {
+                    if (paramName === 'play') handlePlay();
+                    else if (paramName === 'pause') handlePause();
+                    else if (paramName === 'stop') handleStop();
+                }
                 // These functions handle their own dispatch
                 if (isSingle) return;
                 continue;
@@ -6995,11 +7183,11 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             if (targetType === 'global') {
                 if (paramName === 'blackout') globalBlackoutRef.current = newValue;
                 else if (paramName === 'laser_output') {
-                    handleToggleWorldOutput();
+                    if (newValue) handleToggleWorldOutput();
                     if (isSingle) return;
                     continue;
                 } else if (paramName === 'clear') {
-                    handleClearAllActive();
+                    if (newValue) handleClearAllActive();
                     if (isSingle) return;
                     continue;
                 }
@@ -7015,6 +7203,10 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 if (layerEffectsRef.current[layerIndex] && layerEffectsRef.current[layerIndex][effectIndex]) {
                     layerEffectsRef.current[layerIndex][effectIndex].params[paramName] = newValue;
                 }
+            } else if (targetType === 'masterEffect') {
+                if (masterEffectsRef.current && masterEffectsRef.current[effectIndex]) {
+                    masterEffectsRef.current[effectIndex].params[paramName] = newValue;
+                }
             } else if (targetType === 'effect' || targetType === 'generator') {
                 const pageIdx = link.pageId ?? state.activePageId;
                 if (liveClipContentsRef.current && liveClipContentsRef.current[pageIdx] && liveClipContentsRef.current[pageIdx][layerIndex] && liveClipContentsRef.current[pageIdx][layerIndex][colIndex]) {
@@ -7029,8 +7221,14 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
             }
         }
 
-        dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index } });
+        dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index, value: newValue } });
     }, [state.quickAssigns, handlePlay, handlePause, handleStop, handleToggleWorldOutput, handleClearAllActive, state.activePageId]);
+
+    const handleToggleQuickButton = useCallback((index) => {
+        handleSetQuickButtonValue(index);
+    }, [handleSetQuickButtonValue]);
+
+    handleSetQuickButtonValueRef.current = handleSetQuickButtonValue;
 
     const handleTapTempo = useCallback(() => {
         const now = Date.now();
@@ -7378,11 +7576,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     const index = parseInt(finalId.split('_')[2]);
                     const momentary = !!quickAssignsRef.current?.buttons?.[index]?.momentary;
                     if (momentary) {
-                        if (value > 0) {
-                            dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index, value: true } });
-                        } else {
-                            dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index, value: false } });
-                        }
+                        handleSetQuickButtonValue(index, value > 0);
                     } else if (value > 0) { // Toggle on press
                         handleToggleQuickButton(index);
                     }
@@ -7447,7 +7641,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     }
                 }
         }
-    }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, state.activePageId, handleClipPreview, handleActivateClick, handleColumnTrigger, clipContents, selectedLayerIndex, selectedColIndex, dacOutputSettings, handleTapTempo]);
+    }, [handlePlay, handlePause, handleStop, handleClearAllActive, handleDeactivateLayerClips, handlePlaybackFpsChange, state.bpm, state.activePageId, handleClipPreview, handleActivateClick, handleColumnTrigger, clipContents, selectedLayerIndex, selectedColIndex, dacOutputSettings, handleTapTempo, handleSetQuickButtonValue]);
 
     const handleToggleBeamEffect = useCallback((target) => {
         if (target === 'world') {
@@ -7927,6 +8121,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                     <div className="bottom-panel-tabs-2">
                         <button className={`tab-button-2 ${activeBottomTab_2 === 'clip' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('clip')}>{t('ui.clip_settings')}</button>
                         <button className={`tab-button-2 ${activeBottomTab_2 === 'layer' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('layer')}>{t('ui.layer_settings')}</button>
+                        <button className={`tab-button-2 ${activeBottomTab_2 === 'master' ? 'active' : ''}`} onClick={() => setActiveBottomTab_2('master')}>{t('ui.master_settings')}</button>
                     </div>
                     <div className="bottom-panel-tab-content-2">
                         {activeBottomTab_2 === 'clip' && <ClipSettingsPanel
@@ -7975,6 +8170,20 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                             onRegisterPreset={handleRegisterPreset}
                             liveFramesRef={liveFramesRef}
                             activePageId={activePageId}
+                        />}
+                        {activeBottomTab_2 === 'master' && <MasterSettingsPanel
+                            masterEffects={masterEffects || []}
+                            onAddEffect={handleAddMasterEffect}
+                            onRemoveEffect={handleRemoveMasterEffect}
+                            onParamChange={handleMasterEffectParameterChange}
+                            onSetParamSync={handleSetMasterParamSync}
+                            syncSettings={masterSyncSettings}
+                            uiState={masterUiState}
+                            onUpdateUiState={(uiState) => dispatch({ type: 'UPDATE_MASTER_UI_STATE', payload: { uiState } })}
+                            progressRef={progressRef}
+                            getFftLevels={getFftLevels}
+                            bpm={bpm}
+                            onRegisterPreset={handleRegisterPreset}
                         />}
                         {activeBottomTab_2 === 'layer' && <LayerSettingsPanel
                             selectedLayerIndex={selectedLayerIndex}
@@ -8029,7 +8238,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                         handleToggleQuickButton(i);
                     }}
                     onAssign={handleAssignQuickControl}
-                    onSetButtonValue={(i, v) => dispatch({ type: 'TOGGLE_QUICK_BUTTON', payload: { index: i, value: v } })}
+                    onSetButtonValue={handleSetQuickButtonValue}
                     onClearThumbnailCache={handleClearThumbnailCache}
                 />
             </div>
@@ -8050,7 +8259,7 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                 />
             </div>
         </>
-    ), [activeBottomTab_1, activeBottomTab_2, fileBrowserViewMode, fileBrowserPath, ildaParserWorker, activePageId, setActiveBottomTab_1, setActiveBottomTab_2, dispatch, selectedLayerIndex, selectedColIndex, selectedClip, getAudioInfo, bpm, getFftLevels, stopAudio, setClipVolume, handleEffectParameterChange, handleAddEffect, handleRemoveEffect, handleReorderEffects, handleAddLayerEffect, handleRemoveLayerEffect, handleSetParamSync, handleSetLayerParamSync, handleToggleDacMirror, handleRemoveDac, handleReorderDacs, handleAudioError, handleRegisterPreset, liveFramesRef, layerAutopilots, layerEffects, layerUiStates, layerEffectSpeeds, layerSyncSettings, layerAssignedDacs, dacs, dacOutputSettings, handleDacSelected, handleDacsDiscovered, handleUpdateDacSettings, handleApplyDacGroup, enabledShortcuts, quickAssigns, setShowOutputSettingsWindow, setShowShortcutsWindow, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, worldShowBeamEffect, worldBeamRenderMode, state.settingsPanelCollapsed, optimizationEnabled, optimizationMaxDist, optimizationPathDwell, optimizationSettings, handleUpdateQuickControl, handleToggleQuickButton, handleOpenOutputSettings, handleOpenShortcutsSettings, handleSetRenderSetting, handleAssignQuickControl, handleClearThumbnailCache, settingsPanelRenderSettings, playbackFps, progressRef, selectedLayerActiveClip, committedPlaybackSettings, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef, t]);
+    ), [activeBottomTab_1, activeBottomTab_2, fileBrowserViewMode, fileBrowserPath, ildaParserWorker, activePageId, setActiveBottomTab_1, setActiveBottomTab_2, dispatch, selectedLayerIndex, selectedColIndex, selectedClip, getAudioInfo, bpm, getFftLevels, stopAudio, setClipVolume, handleEffectParameterChange, handleAddEffect, handleRemoveEffect, handleReorderEffects, handleAddLayerEffect, handleRemoveLayerEffect, handleSetParamSync, handleSetLayerParamSync, handleToggleDacMirror, handleRemoveDac, handleReorderDacs, handleAudioError, handleRegisterPreset, liveFramesRef, layerAutopilots, layerEffects, masterEffects, masterSyncSettings, masterUiState, handleAddMasterEffect, handleRemoveMasterEffect, handleMasterEffectParameterChange, handleSetMasterParamSync, layerUiStates, layerEffectSpeeds, layerSyncSettings, layerAssignedDacs, dacs, dacOutputSettings, handleDacSelected, handleDacsDiscovered, handleUpdateDacSettings, handleApplyDacGroup, enabledShortcuts, quickAssigns, setShowOutputSettingsWindow, setShowShortcutsWindow, showBeamEffect, beamAlpha, fadeAlpha, previewScanRate, beamRenderMode, worldShowBeamEffect, worldBeamRenderMode, state.settingsPanelCollapsed, optimizationEnabled, optimizationMaxDist, optimizationPathDwell, optimizationSettings, handleUpdateQuickControl, handleToggleQuickButton, handleSetQuickButtonValue, handleOpenOutputSettings, handleOpenShortcutsSettings, handleSetRenderSetting, handleAssignQuickControl, handleClearThumbnailCache, settingsPanelRenderSettings, playbackFps, progressRef, selectedLayerActiveClip, committedPlaybackSettings, previewFrameCountRef, totalPointsSentRef, activeChannelsCountRef, lastStatUpdateTimeRef, t]);
 
     // Memoized middle-bar subtree: none of its inputs change on a clip trigger, so
     // React reuses this element and skips diffing it, reducing per-trigger work.
@@ -8454,8 +8663,10 @@ const djJitterProbe = useRef({ samples: [], lastP: 0, lastF: 0, broken: false })
                                         liveClipContentsRef={liveClipContentsRef}
                                         activeClipIndexesRef={activeClipIndexesRef}
                                         layerEffectsRef={layerEffectsRef}
+                                        masterEffectsRef={masterEffectsRef}
                                         layerEffectSpeedsRef={layerEffectSpeedsRef}
                                         layerSyncSettingsRef={layerSyncSettingsRef}
+                                        masterSyncSettingsRef={masterSyncSettingsRef}
                                         bpmRef={bpmRef}
                                         playbackFpsRef={playbackFpsRef}
                                         masterIntensityRef={masterIntensityRef}

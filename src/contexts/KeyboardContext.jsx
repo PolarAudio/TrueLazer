@@ -12,6 +12,10 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
   const [mappings, setMappings] = useState({}); // { controlId: { key: 'Space', label: 'SPACE' } }
   
   const onCommandRef = useRef(onCommand);
+  // A held key emits repeated keydown events. Momentary quick-assign buttons
+  // must see exactly one press and one release, otherwise every repeat creates
+  // another state update and can lock the renderer in dev.
+  const pressedKeysRef = useRef(new Set());
   useEffect(() => {
     onCommandRef.current = onCommand;
   }, [onCommand]);
@@ -56,6 +60,10 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
         return;
       }
 
+      const keyId = e.code || e.key;
+      if (e.repeat || pressedKeysRef.current.has(keyId)) return;
+      pressedKeysRef.current.add(keyId);
+
       if (isMapping && learningId) {
         e.preventDefault();
         const newMapping = {
@@ -80,6 +88,8 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
     const handleKeyUp = (e) => {
       if (!enabled) return;
 
+      pressedKeysRef.current.delete(e.code || e.key);
+
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) {
         return;
       }
@@ -94,11 +104,17 @@ export const KeyboardProvider = ({ children, onCommand, enabled = false }) => {
       });
     };
 
+    // Losing focus can swallow the keyup; clear pressed state so the next press
+    // still counts as a fresh momentary trigger.
+    const handleBlur = () => pressedKeysRef.current.clear();
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
   }, [enabled, isMapping, learningId, mappings]);
 

@@ -49,7 +49,7 @@ software. Here's what sets us apart:
     (Loop/Once/Bounce — experimental), Audio Track.
   - Clip and World previews: render preview, beam rendering (points/lines) and scan-rate display.
 
-- **Effects System (Clip & Layer Effects)**
+- **Effects System (Clip, Layer & Master Effects)**
   - Transform: Translate, Scale, Rotate, Move (Bounce), Invert, Mirror.
   - Spatial/Point: Wave, Warp, Noise, Grow, Threshold.
   - Temporal/Channel: Delay, Chase with configurable channel order for assigned DACs.
@@ -66,6 +66,9 @@ software. Here's what sets us apart:
     Translate, Scale) keep both axes in lockstep by default — a chain icon on the second axis unlinks them.
   - **Layer Effect Speed Control:** layer effects can be timed from the global BPM, the global FPS target or a
     fixed timeline duration, so clip effects and layer effects play in sync.
+  - **Master Effects:** the Master Settings tab holds effects applied after clip and layer effects on every
+    active clip and DAC channel, so they appear in both previews and live output. Drop an effect there, then
+    drag its on/off toggle (or any parameter) onto a quick-assign button/knob to control it live.
 
 - **Generative Content System**
   - Shape generators (dots, lines, circles, text, and more) as base layers.

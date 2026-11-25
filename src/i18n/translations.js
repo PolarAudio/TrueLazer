@@ -358,6 +358,7 @@ export const TRANSLATIONS = {
 
         'layerSettings.assignedDacs': 'Assigned DACs',
         'layerSettings.layerEffects': 'Layer Effects',
+        'masterSettings.masterEffects': 'Master Effects',
 
         // Menus
         'menu.file': 'File',
@@ -907,6 +908,7 @@ export const TRANSLATIONS = {
         'ui.loop': 'LOOP',
         'ui.layer_blend_z_order_priority': 'Layer blend / z-order priority',
         'ui.layer_settings': 'Layer-Settings',
+        'ui.master_settings': 'Master Settings',
         'ui.license': 'License',
         'ui.lit_dwell': 'Lit Dwell',
         'ui.lit_interp_dist': 'Lit Interp Dist',
@@ -1489,6 +1491,7 @@ export const TRANSLATIONS = {
 
         'layerSettings.assignedDacs': '已分配的 DAC',
         'layerSettings.layerEffects': '图层效果',
+        'masterSettings.masterEffects': 'Master Effects',
 
         'menu.file': '文件',
         'menu.edit': '编辑',
@@ -2027,6 +2030,7 @@ export const TRANSLATIONS = {
         'ui.loop': '循环',
         'ui.layer_blend_z_order_priority': '图层混合 / Z 顺序优先级',
         'ui.layer_settings': '图层设置',
+        'ui.master_settings': 'Master Settings',
         'ui.license': '许可证',
         'ui.lit_dwell': '点亮驻留',
         'ui.lit_interp_dist': '点亮插值距离',

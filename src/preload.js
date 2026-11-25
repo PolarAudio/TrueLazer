@@ -47,9 +47,14 @@ contextBridge.exposeInMainWorld(
   showClipContextMenu: (...args) => ipcRenderer.send('show-clip-context-menu', ...args),
   showColumnHeaderClipContextMenu: (colIndex) => ipcRenderer.send('show-column-header-clip-context-menu', colIndex),
   showQuickAssignContextMenu: (type, index, assignments = [], momentary = false) => ipcRenderer.send('show-quick-assign-context-menu', type, index, assignments, momentary),
-  sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action), onContextMenuActionFromMain: (callback) => {
-    ipcRenderer.on('context-menu-action-from-main', (event, action) => callback(action));
-    return () => ipcRenderer.removeListener('context-menu-action-from-main', callback);
+  sendContextMenuAction: (action) => ipcRenderer.send('context-menu-action', action),
+  onContextMenuActionFromMain: (callback) => {
+    // Keep the wrapper: removing `callback` would never match the function
+    // actually registered with ipcRenderer. Leaked listeners make non-idempotent
+    // actions (like toggling a quick button's temp mode) fire multiple times.
+    const listener = (event, action) => callback(action);
+    ipcRenderer.on('context-menu-action-from-main', listener);
+    return () => ipcRenderer.removeListener('context-menu-action-from-main', listener);
   },
   onClipContextMenuCommand: (callback) => {
     const listener = (event, ...args) => callback(...args);
@@ -90,8 +95,9 @@ contextBridge.exposeInMainWorld(
   toggleOutputSettingsWindow: () => ipcRenderer.send('toggle-output-settings-window'),
   // New IPC functions for thumbnail mode synchronization
   onUpdateThumbnailRenderMode: (callback) => { // Listener for main process to renderer
-    ipcRenderer.on('update-thumbnail-render-mode', (event, mode) => callback(mode));
-    return () => ipcRenderer.removeListener('update-thumbnail-render-mode', callback);
+    const listener = (event, mode) => callback(mode);
+    ipcRenderer.on('update-thumbnail-render-mode', listener);
+    return () => ipcRenderer.removeListener('update-thumbnail-render-mode', listener);
   },
   sendRendererThumbnailModeChanged: (mode) => ipcRenderer.send('renderer-thumbnail-mode-changed', mode), // Renderer to main for mode changes
   onRequestRendererThumbnailMode: (callback) => { // Listener for main process requesting mode from renderer
