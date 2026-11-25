@@ -2,18 +2,20 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vites
 import dgram from 'dgram';
 
 // The Showbridge firmware picks the target channel from header byte 3
-// (0x00 -> CH1, 0x01 -> CH2) and reads the laser enable from the first two
-// bytes of the frame payload: the high byte 0x00 means "laser off".
+// (0x00 -> CH1, 0x01 -> CH2). The first two bytes of the frame payload carry
+// the frame's point count as a little-endian uint16 (bytes 4-5 of the chunk),
+// followed by the status byte and the PPS byte. The firmware overwrites the
+// status byte with 0xFA once all chunks have arrived, which arms the DMA.
 //
 // Two bugs lived here:
 //   - the channel constant was derived from the channel NUMBER ("channel 2 is
 //     0x01, everything else is 0x00"), so a unit numbering its channels 0/1
 //     put BOTH of them in the CH1 buffer and its second channel stayed dark.
 //     It now follows the channel's POSITION in the unit.
-//   - the POINT COUNT occupied the laser-enable word. A full 575-point frame
-//     encodes as 0x023f, whose high byte is non-zero, so it read as "on" - but
-//     any frame with fewer than 256 points encoded as 0x00xx and the DAC
-//     switched the laser off.
+//   - the control word was misread as a "laser enable": a fixed 0x01d2 was
+//     written instead of the actual point count, which made small frames
+//     ambiguous and could confuse the device's DMA timing. The count is now
+//     written.
 
 const IP = '127.0.0.1';
 const UDP_PACKET_SIZE = 0x1204;
@@ -93,24 +95,24 @@ describe('showbridge channel mapping', () => {
     });
 });
 
-describe('showbridge laser enable word', () => {
-    it('is on for a full frame', () => {
+describe('showbridge point count word', () => {
+    it('carries the (padded) point count for a full frame', () => {
         showbridge.__setDiscoveryOrder(IP, [1, 2]);
         sendFrame(1, new Float32Array(8 * 4));
         const f = frames()[0];
-        expect(f.readUInt8(5)).not.toBe(0);
+        // 4 source points are padded up to a full PTS_FULL (575) chunk.
+        expect(f.readUInt16LE(4)).toBe(575);
     });
 
-    it('is on for a small plain-array frame', () => {
-        // The Show Control grid path sends plain point objects. 30 points used
-        // to encode as 0x001e in the enable word, whose high byte is 0x00 ->
-        // the DAC switched the laser off and the output stayed dark.
+    it('carries the (padded) point count for a small plain-array frame', () => {
+        // The Show Control grid path sends plain point objects. The frame is
+        // padded up to a full chunk, so the count reflects the wire frame.
         showbridge.__setDiscoveryOrder(IP, [1, 2]);
         const plain = [];
         for (let i = 0; i < 30; i++) plain.push({ x: 0.1, y: 0.1, r: 1, g: 1, b: 1, blanking: 1 });
         sendFrame(1, plain);
         const f = frames()[0];
-        expect(f.readUInt8(5)).not.toBe(0);
+        expect(f.readUInt16LE(4)).toBe(575);
     });
 
     it('pads a plain-array frame out to a full chunk', () => {

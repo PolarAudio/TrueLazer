@@ -214,9 +214,10 @@ usable, with continuous improvements to performance, DAC communication and the e
 - ☑ Project scaffolding and basic file structure are in place.
 - ☑ Initial UI components for the clip deck, layers, and controls.
 - ☒ ILDA file parsing and rendering.
-- ☒ Showbridge DAC communication protocol (reverse-engineered and implemented; the trailing
-  line/centre-arc artefact is mitigated by keeping every frame inside one data chunk —
-  `FILL_TARGET = PTS_FULL = 575`).
+- ☒ Showbridge DAC communication protocol (reverse-engineered and implemented; frames may now
+  use up to two data chunks — `PTS_MAX = 1150` points — capped by the timing budget
+  `targetPps/targetFps`; small frames are still padded to `PTS_FULL = 575`. The trailing
+  line/centre-arc artefact is avoided by the firmware's blanked virtual boundary point).
 - ☒ EtherDream DAC communication protocol (built on the `@laser-dac/*` packages), needs further adjustments.
 - ☑ IDN communication protocol re-written in JavaScript and working great with the LaserVR test application.
 

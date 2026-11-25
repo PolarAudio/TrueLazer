@@ -109,7 +109,12 @@ function sendFrame(ip, channel, points, fps, type, options) {
     // the 2-chunk boundary arc. The budget is enforced on a CLONE (decimate
     // returns a new array when it cuts), so the renderer's source buffer is
     // never mutated.
-    const showbridgeCap = type === 'Showbridge' ? showbridge.PTS_FULL : 0;
+    // Showbridge can carry up to PTS_MAX (2 data chunks = 1150 points) in the
+    // 3-chunk wire format. The timing budget (targetPps/targetFps) still binds
+    // first, so a 30kpps/30fps stream stays at ~1000 points; only higher-PPS
+    // or lower-FPS streams fill the second chunk. This replaces the old hard
+    // 575 (single-chunk) cap that discarded content above one chunk.
+    const showbridgeCap = type === 'Showbridge' ? showbridge.PTS_MAX : 0;
     const pointBudget = computePointBudget({ targetPps, targetFps, cap: showbridgeCap });
     const contentCount = countPoints(points);
     const decimated = decimatePoints(points, pointBudget);
